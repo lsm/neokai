@@ -640,42 +640,43 @@ export interface UpdateSpaceWorkflowParams {
 // ============================================================================
 
 /**
- * A single workflow step in the exported format.
+ * A single workflow step (graph node) in the exported format.
  *
  * Differences from `WorkflowStep`:
  * - `id` is stripped (space-specific, regenerated on import)
  * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
  *   reference portable across Space instances that may have different UUIDs.
- * - `order` is retained for readability, though array position is authoritative.
  *
- * There is no `agentRefType` field — all agents (preset and user-created) are
- * `SpaceAgent` records referenced uniformly by name in the export format.
+ * Step names are used as cross-references throughout the exported format
+ * (in `ExportedWorkflowTransition.fromStep`/`toStep`,
+ * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
+ * Step names must therefore be unique within an exported workflow.
  */
 export interface ExportedWorkflowStep {
 	/** Name of the SpaceAgent assigned to this step (portable, not a UUID) */
 	agentRef: string;
-	/** Human-readable step name */
+	/** Human-readable step name — used as the stable cross-reference key in the export */
 	name: string;
-	/** Gate checked before this step begins */
-	entryGate?: WorkflowGate;
-	/** Gate checked after this step's agent finishes */
-	exitGate?: WorkflowGate;
 	/** Step-specific instructions appended to the agent's system prompt */
 	instructions?: string;
-	/**
-	 * Zero-based execution order for this step.
-	 *
-	 * **On import**: array position is authoritative — the importer assigns new
-	 * order indices from the array index and ignores this field.
-	 *
-	 * **For `appliesTo` in `ExportedWorkflowRule`**: the indices stored in
-	 * `appliesTo` correspond to this field's value (not to the step's position in
-	 * the `steps` array). Because order values are always sequential and 0-based
-	 * after a round-trip through the DB, the two are equivalent in practice —
-	 * but importers should match `appliesTo` values against `order` fields, not
-	 * array indices, for correctness when order values diverge.
-	 */
-	order: number;
+}
+
+/**
+ * A directed edge in the exported workflow graph.
+ *
+ * Differences from `WorkflowTransition`:
+ * - `id` is stripped (space-specific, regenerated on import)
+ * - `from`/`to` step UUIDs are replaced by step **names** for portability
+ */
+export interface ExportedWorkflowTransition {
+	/** Name of the source step */
+	fromStep: string;
+	/** Name of the target step */
+	toStep: string;
+	/** Optional condition guarding this transition. Absent = unconditional. */
+	condition?: WorkflowCondition;
+	/** Sort order among transitions with the same source step. Lower = evaluated first. */
+	order?: number;
 }
 
 /**
@@ -683,7 +684,7 @@ export interface ExportedWorkflowStep {
  *
  * Differences from `WorkflowRule`:
  * - `id` is stripped (space-specific, regenerated on import)
- * - `appliesTo` contains step **order indices** (numbers) instead of step UUIDs (strings),
+ * - `appliesTo` contains step **names** instead of step UUIDs (strings),
  *   so the reference survives re-import with freshly generated step IDs.
  */
 export interface ExportedWorkflowRule {
@@ -692,10 +693,10 @@ export interface ExportedWorkflowRule {
 	/** Rule content — markdown prose describing the constraint or guideline */
 	content: string;
 	/**
-	 * Zero-based order indices of the steps this rule applies to.
+	 * Names of the steps this rule applies to.
 	 * Empty array or omitted means the rule applies to ALL steps.
 	 */
-	appliesTo?: number[];
+	appliesTo?: string[];
 }
 
 /**
@@ -716,10 +717,11 @@ export interface ExportedSpaceAgent {
 	/** Provider name override */
 	provider?: string;
 	/**
-	 * Builtin role preset ('planner' | 'coder' | 'general' | 'reviewer').
-	 * NOTE: 'leader' is intentionally absent — it is never user-configurable.
+	 * Role label — free-form string describing the agent's purpose (e.g. 'coder', 'reviewer').
+	 * Used for display and default system prompt labeling; has no runtime routing effect.
+	 * Mirrors `SpaceAgent.role`.
 	 */
-	role: BuiltinAgentRole;
+	role: string;
 	/** Custom system prompt */
 	systemPrompt?: string;
 	/**
@@ -742,7 +744,8 @@ export interface ExportedSpaceAgent {
 /**
  * A Space workflow in the portable export format.
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
- * Step IDs are stripped; rule `appliesTo` uses step order indices.
+ * Step IDs are stripped; cross-references use step names.
+ * Transition IDs are stripped; `from`/`to` use step names.
  */
 export interface ExportedSpaceWorkflow {
 	/** Format version — always 1 for this revision */
@@ -753,9 +756,13 @@ export interface ExportedSpaceWorkflow {
 	name: string;
 	/** Optional description */
 	description?: string;
-	/** Ordered steps — array position is authoritative for execution order */
+	/** Graph nodes — step order in this array is not significant */
 	steps: ExportedWorkflowStep[];
-	/** Rules with `appliesTo` expressed as step order indices */
+	/** Graph edges — directed transitions between steps */
+	transitions: ExportedWorkflowTransition[];
+	/** Name of the step where execution begins */
+	startStep: string;
+	/** Rules governing agent behavior; `appliesTo` uses step names */
 	rules: ExportedWorkflowRule[];
 	/** Tags for categorization */
 	tags: string[];

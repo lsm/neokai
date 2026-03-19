@@ -6,8 +6,10 @@
  *
  * Key remappings performed during export:
  * - Step `id` fields are stripped (regenerated on import)
- * - Rule `appliesTo` step UUIDs → step order indices (stable across re-import)
- * - Custom agent `agentRef` UUIDs → agent names (portable across Space instances)
+ * - Step `agentId` UUID → agent name (`agentRef`) — portable across Spaces
+ * - Transition `id` stripped; `from`/`to` step UUIDs → step names
+ * - `startStepId` UUID → step name (`startStep`)
+ * - Rule `appliesTo` step UUIDs → step names (stable across re-import)
  *
  * Version policy:
  * - Accept: version === 1
@@ -22,6 +24,7 @@ import type {
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
 	ExportedWorkflowStep,
+	ExportedWorkflowTransition,
 	ExportedWorkflowRule,
 	SpaceExportBundle,
 } from '@neokai/shared';
@@ -30,9 +33,9 @@ import type {
 // Zod schemas
 // ============================================================================
 
-const workflowGateSchema = z.object({
-	type: z.enum(['auto', 'human_approval', 'quality_check', 'pr_review', 'custom']),
-	command: z.string().optional(),
+const workflowConditionSchema = z.object({
+	type: z.enum(['always', 'human', 'condition']),
+	expression: z.string().optional(),
 	description: z.string().optional(),
 	maxRetries: z.number().int().nonnegative().optional(),
 	timeoutMs: z.number().int().nonnegative().optional(),
@@ -41,16 +44,20 @@ const workflowGateSchema = z.object({
 const exportedWorkflowStepSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
-	entryGate: workflowGateSchema.optional(),
-	exitGate: workflowGateSchema.optional(),
 	instructions: z.string().optional(),
-	order: z.number().int().nonnegative(),
+});
+
+const exportedWorkflowTransitionSchema = z.object({
+	fromStep: z.string().min(1),
+	toStep: z.string().min(1),
+	condition: workflowConditionSchema.optional(),
+	order: z.number().int().optional(),
 });
 
 const exportedWorkflowRuleSchema = z.object({
 	name: z.string().min(1),
 	content: z.string().min(1),
-	appliesTo: z.array(z.number().int().nonnegative()).optional(),
+	appliesTo: z.array(z.string()).optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -70,7 +77,7 @@ const exportedAgentBaseSchema = z.object({
 	description: z.string().optional(),
 	model: z.string().optional(),
 	provider: z.string().optional(),
-	role: z.enum(['planner', 'coder', 'general', 'reviewer']),
+	role: z.string().min(1),
 	systemPrompt: z.string().optional(),
 	tools: z.array(z.string()).optional(),
 	config: z.record(z.string(), z.unknown()).optional(),
@@ -81,6 +88,8 @@ const exportedWorkflowBaseSchema = z.object({
 	name: z.string().min(1),
 	description: z.string().optional(),
 	steps: z.array(exportedWorkflowStepSchema),
+	transitions: z.array(exportedWorkflowTransitionSchema),
+	startStep: z.string().min(1),
 	rules: z.array(exportedWorkflowRuleSchema),
 	tags: z.array(z.string()),
 	config: z.record(z.string(), z.unknown()).optional(),
@@ -133,21 +142,24 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
  * Convert a SpaceWorkflow to the portable export format.
  *
  * Remappings:
- * 1. Step `id` fields are stripped.
- * 2. Step `agentId` UUID is replaced by the agent's **name** (`agentRef`),
- *    making the reference portable across Space instances.
- *    If no matching agent is found in `agents`, the UUID is preserved as-is
- *    (graceful degradation).
- * 3. `rules[].appliesTo` is converted from step UUIDs to step order indices.
+ * 1. Step `id` fields are stripped; step `agentId` UUID → agent name (`agentRef`).
+ *    Falls back to the UUID string when no matching agent is found in `agents`.
+ * 2. Transition `id` stripped; `from`/`to` step UUIDs → step names.
+ *    Falls back to the UUID string when no matching step is found.
+ * 3. `startStepId` UUID → step name (`startStep`).
+ * 4. Rule `appliesTo` step UUIDs → step names (stable cross-references on re-import).
+ *    If a UUID has no matching step (stale data), it is silently dropped from
+ *    `appliesTo`. If all UUIDs are stale the field is omitted, treating the rule
+ *    as global (applies to all steps) rather than discarding it entirely.
  */
 export function exportWorkflow(
 	workflow: SpaceWorkflow,
 	agents: SpaceAgent[]
 ): ExportedSpaceWorkflow {
-	// Build a map from step UUID → order index for rule appliesTo remapping
-	const stepIdToOrder = new Map<string, number>();
+	// Build a map from step UUID → step name
+	const stepIdToName = new Map<string, string>();
 	for (const step of workflow.steps) {
-		stepIdToOrder.set(step.id, step.order);
+		stepIdToName.set(step.id, step.name);
 	}
 
 	// Build a map from agent UUID → agent name
@@ -158,32 +170,39 @@ export function exportWorkflow(
 
 	// Export steps — strip `id`, remap agentId UUID → agent name
 	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		// Remap agentId UUID → agent name (fallback to UUID when agent not found)
 		const agentRef = agentIdToName.get(step.agentId) ?? step.agentId;
-		const exported: ExportedWorkflowStep = { agentRef, name: step.name, order: step.order };
-		if (step.entryGate !== undefined) exported.entryGate = step.entryGate;
-		if (step.exitGate !== undefined) exported.exitGate = step.exitGate;
+		const exported: ExportedWorkflowStep = { agentRef, name: step.name };
 		if (step.instructions !== undefined) exported.instructions = step.instructions;
 		return exported;
 	});
 
-	// Export rules — strip `id`, remap appliesTo UUID[] → order index[]
+	// Export transitions — strip `id`, remap from/to step UUIDs → step names
+	const exportedTransitions: ExportedWorkflowTransition[] = workflow.transitions.map((t) => {
+		const fromStep = stepIdToName.get(t.from) ?? t.from;
+		const toStep = stepIdToName.get(t.to) ?? t.to;
+		const exported: ExportedWorkflowTransition = { fromStep, toStep };
+		if (t.condition !== undefined) exported.condition = t.condition;
+		if (t.order !== undefined) exported.order = t.order;
+		return exported;
+	});
+
+	// Export startStepId UUID → step name
+	const startStep = stepIdToName.get(workflow.startStepId) ?? workflow.startStepId;
+
+	// Export rules — strip `id`, remap appliesTo step UUIDs → step names
 	const exportedRules: ExportedWorkflowRule[] = workflow.rules.map((rule) => {
-		const exported: ExportedWorkflowRule = {
-			name: rule.name,
-			content: rule.content,
-		};
+		const exported: ExportedWorkflowRule = { name: rule.name, content: rule.content };
 		if (rule.appliesTo !== undefined && rule.appliesTo.length > 0) {
-			const orderIndices = rule.appliesTo
-				.map((stepId) => stepIdToOrder.get(stepId))
-				.filter((idx): idx is number => idx !== undefined);
+			const stepNames = rule.appliesTo
+				.map((stepId) => stepIdToName.get(stepId))
+				.filter((n): n is string => n !== undefined);
 			// If all referenced step UUIDs are absent from the workflow (e.g., stale data),
-			// orderIndices will be empty and `appliesTo` is omitted. This changes the rule
+			// stepNames will be empty and `appliesTo` is omitted. This changes the rule
 			// semantics from "applies to specific steps" to "applies to all steps" — an
 			// intentional graceful degradation: a rule that can't resolve its targets is
-			// treated as a global rule rather than silently dropped.
-			if (orderIndices.length > 0) {
-				exported.appliesTo = orderIndices;
+			// treated as global rather than silently dropped.
+			if (stepNames.length > 0) {
+				exported.appliesTo = stepNames;
 			}
 		}
 		return exported;
@@ -194,6 +213,8 @@ export function exportWorkflow(
 		type: 'workflow',
 		name: workflow.name,
 		steps: exportedSteps,
+		transitions: exportedTransitions,
+		startStep,
 		rules: exportedRules,
 		tags: workflow.tags,
 	};

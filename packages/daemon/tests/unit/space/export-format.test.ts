@@ -4,13 +4,14 @@
  * Covers:
  * - exportAgent: strips space-specific fields, maps agent.tools (string[]) → exported.tools
  * - exportWorkflow: strips step IDs, remaps step agentId UUID → agent name (agentRef),
- *   remaps rule appliesTo step UUIDs → order indices
+ *   remaps transition from/to step UUIDs → step names, remaps startStepId UUID → step name,
+ *   remaps rule appliesTo step UUIDs → step names
  * - exportBundle: wraps agents + workflows, adds exportedAt
- * - validateExportedAgent: accepts v1, rejects malformed, version checks, reviewer role
- * - validateExportedWorkflow: accepts v1, rejects malformed, version checks
+ * - validateExportedAgent: accepts v1, rejects malformed, version checks
+ * - validateExportedWorkflow: accepts v1, rejects malformed, version checks, transitions/startStep
  * - validateExportBundle: accepts v1, nested agent/workflow validation
  * - Round-trip: export → JSON serialize → deserialize → validate
- * - rule appliesTo round-trip: verify order indices in JSON, verify on re-import
+ * - rule appliesTo round-trip: verify step names in JSON, verify on re-import
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -76,26 +77,26 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'CI Workflow',
 		description: 'Runs CI pipeline',
 		steps: [
-			{
-				id: 'step-uuid-1',
-				agentId: 'agent-uuid-1',
-				name: 'Code step',
-				order: 0,
-			},
+			{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Code step' },
 			{
 				id: 'step-uuid-2',
 				agentId: 'agent-uuid-3',
 				name: 'Review step',
-				order: 1,
 				instructions: 'Review carefully',
 			},
+			{ id: 'step-uuid-3', agentId: 'agent-uuid-2', name: 'Plan step' },
+		],
+		transitions: [
+			{ id: 'trans-uuid-1', from: 'step-uuid-1', to: 'step-uuid-2' },
 			{
-				id: 'step-uuid-3',
-				agentId: 'agent-uuid-2',
-				name: 'Plan step',
-				order: 2,
+				id: 'trans-uuid-2',
+				from: 'step-uuid-2',
+				to: 'step-uuid-3',
+				condition: { type: 'human' },
+				order: 0,
 			},
 		],
+		startStepId: 'step-uuid-1',
 		rules: [
 			{
 				id: 'rule-uuid-1',
@@ -171,7 +172,7 @@ describe('exportAgent', () => {
 		expect(exported.role).toBe('reviewer');
 	});
 
-	test('does not export toolConfig (legacy field)', () => {
+	test('does not export toolConfig (runtime-only field)', () => {
 		const agent = makeAgent({ toolConfig: { foo: true } });
 		const exported = exportAgent(agent) as Record<string, unknown>;
 		expect('toolConfig' in exported).toBe(false);
@@ -214,17 +215,15 @@ describe('exportWorkflow', () => {
 		}
 	});
 
-	test('retains step order, name, and other fields', () => {
+	test('retains step name and instructions', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		expect(exported.steps[0].order).toBe(0);
 		expect(exported.steps[0].name).toBe('Code step');
-		expect(exported.steps[1].order).toBe(1);
 		expect(exported.steps[1].name).toBe('Review step');
 		expect(exported.steps[1].instructions).toBe('Review carefully');
-		expect(exported.steps[2].order).toBe(2);
+		expect(exported.steps[2].name).toBe('Plan step');
 	});
 
 	test('remaps agentId UUID → agent name as agentRef', () => {
@@ -250,21 +249,56 @@ describe('exportWorkflow', () => {
 		expect(exported.steps[2].agentRef).toBe('agent-uuid-2');
 	});
 
-	test('no agentRefType field on exported steps', () => {
-		const workflow = makeWorkflow();
-		const exported = exportWorkflow(workflow, []);
-		for (const step of exported.steps) {
-			expect('agentRefType' in step).toBe(false);
-		}
-	});
-
-	test('remaps rule appliesTo step UUIDs → order indices', () => {
+	test('exports transitions with step names replacing UUIDs', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// rule 0: appliesTo step-uuid-1 (order 0) and step-uuid-2 (order 1)
-		expect(exported.rules[0].appliesTo).toEqual([0, 1]);
+		expect(exported.transitions).toHaveLength(2);
+		expect(exported.transitions[0].fromStep).toBe('Code step');
+		expect(exported.transitions[0].toStep).toBe('Review step');
+		expect(exported.transitions[1].fromStep).toBe('Review step');
+		expect(exported.transitions[1].toStep).toBe('Plan step');
+		expect(exported.transitions[1].condition).toEqual({ type: 'human' });
+		expect(exported.transitions[1].order).toBe(0);
+	});
+
+	test('strips transition IDs', () => {
+		const workflow = makeWorkflow();
+		const exported = exportWorkflow(workflow, []);
+		for (const t of exported.transitions) {
+			expect('id' in t).toBe(false);
+		}
+	});
+
+	test('falls back to UUID when transition step not found', () => {
+		const workflow = makeWorkflow({
+			transitions: [{ id: 'trans-uuid-1', from: 'step-uuid-UNKNOWN', to: 'step-uuid-1' }],
+		});
+		const exported = exportWorkflow(workflow, []);
+		expect(exported.transitions[0].fromStep).toBe('step-uuid-UNKNOWN');
+		expect(exported.transitions[0].toStep).toBe('Code step');
+	});
+
+	test('exports startStep as step name', () => {
+		const workflow = makeWorkflow();
+		const exported = exportWorkflow(workflow, []);
+		expect(exported.startStep).toBe('Code step');
+	});
+
+	test('falls back to UUID for startStep when not found', () => {
+		const workflow = makeWorkflow({ startStepId: 'step-uuid-MISSING' });
+		const exported = exportWorkflow(workflow, []);
+		expect(exported.startStep).toBe('step-uuid-MISSING');
+	});
+
+	test('remaps rule appliesTo step UUIDs → step names', () => {
+		const workflow = makeWorkflow();
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		// rule 0: appliesTo step-uuid-1 and step-uuid-2 → names
+		expect(exported.rules[0].appliesTo).toEqual(['Code step', 'Review step']);
 	});
 
 	test('omits appliesTo for rule with empty appliesTo array', () => {
@@ -277,13 +311,13 @@ describe('exportWorkflow', () => {
 	});
 
 	test('partial appliesTo resolution — keeps resolved subset, drops stale UUIDs', () => {
-		// Workflow has 2 steps: step-uuid-1 (order 0) and step-uuid-2 (order 1).
-		// Rule references step-uuid-1 (valid) and step-uuid-STALE (not in steps list).
 		const workflow = makeWorkflow({
 			steps: [
-				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A', order: 0 },
-				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B', order: 1 },
+				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
+				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
 			],
+			transitions: [],
+			startStepId: 'step-uuid-1',
 			rules: [
 				{
 					id: 'rule-uuid-1',
@@ -295,8 +329,28 @@ describe('exportWorkflow', () => {
 		});
 		const exported = exportWorkflow(workflow, []);
 
-		// Only the resolved index (0) should appear; stale UUID is dropped
-		expect(exported.rules[0].appliesTo).toEqual([0]);
+		// Only the resolved name 'Step A' appears; stale UUID is dropped
+		expect(exported.rules[0].appliesTo).toEqual(['Step A']);
+	});
+
+	test('all-stale appliesTo → appliesTo omitted (rule becomes global)', () => {
+		const workflow = makeWorkflow({
+			steps: [{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' }],
+			transitions: [],
+			startStepId: 'step-uuid-1',
+			rules: [
+				{
+					id: 'rule-uuid-1',
+					name: 'Stale rule',
+					content: 'All refs are stale.',
+					appliesTo: ['step-uuid-STALE-1', 'step-uuid-STALE-2'],
+				},
+			],
+		});
+		const exported = exportWorkflow(workflow, []);
+
+		// All UUIDs unresolvable → omitted (rule applies to all steps)
+		expect(exported.rules[0].appliesTo).toBeUndefined();
 	});
 
 	test('strips rule IDs', () => {
@@ -388,6 +442,13 @@ describe('validateExportedAgent', () => {
 		expect(result.ok).toBe(true);
 	});
 
+	test('accepts any free-form role string', () => {
+		// role is a free-form label — no enum validation
+		const data = { version: 1, type: 'agent', name: 'Bot', role: 'leader' };
+		const result = validateExportedAgent(data);
+		expect(result.ok).toBe(true);
+	});
+
 	test('accepts agent with string[] tools', () => {
 		const data = { version: 1, type: 'agent', name: 'Bot', role: 'coder', tools: ['bash'] };
 		const result = validateExportedAgent(data);
@@ -437,15 +498,6 @@ describe('validateExportedAgent', () => {
 		expect(result.ok).toBe(false);
 	});
 
-	test('rejects invalid role (leader)', () => {
-		const data = { version: 1, type: 'agent', name: 'Bot', role: 'leader' };
-		const result = validateExportedAgent(data);
-		expect(result.ok).toBe(false);
-		if (!result.ok) {
-			expect(result.error).toContain('invalid');
-		}
-	});
-
 	test('rejects missing name', () => {
 		const data = { version: 1, type: 'agent', role: 'coder' };
 		const result = validateExportedAgent(data);
@@ -473,6 +525,8 @@ describe('validateExportedWorkflow', () => {
 		if (result.ok) {
 			expect(result.value.name).toBe('CI Workflow');
 			expect(result.value.version).toBe(1);
+			expect(result.value.transitions).toHaveLength(2);
+			expect(result.value.startStep).toBe('Code step');
 		}
 	});
 
@@ -482,6 +536,8 @@ describe('validateExportedWorkflow', () => {
 			type: 'workflow',
 			name: 'Simple',
 			steps: [],
+			transitions: [],
+			startStep: 'first',
 			rules: [],
 			tags: [],
 		};
@@ -494,7 +550,9 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [{ agentRef: 'My Coder', name: 'Step', order: 0 }],
+			steps: [{ agentRef: 'My Coder', name: 'Step' }],
+			transitions: [],
+			startStep: 'Step',
 			rules: [],
 			tags: [],
 		};
@@ -510,7 +568,9 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agentRef: '', name: 'Step', order: 0 }],
+			steps: [{ agentRef: '', name: 'Step' }],
+			transitions: [],
+			startStep: 'Step',
 			rules: [],
 			tags: [],
 		};
@@ -523,7 +583,45 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ name: 'Step', order: 0 }],
+			steps: [{ name: 'Step' }],
+			transitions: [],
+			startStep: 'Step',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+	});
+
+	test('accepts valid transition', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			steps: [],
+			transitions: [
+				{ fromStep: 'Step A', toStep: 'Step B', condition: { type: 'human' }, order: 0 },
+			],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.transitions[0].fromStep).toBe('Step A');
+			expect(result.value.transitions[0].condition).toEqual({ type: 'human' });
+		}
+	});
+
+	test('rejects transition with empty fromStep', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [],
+			transitions: [{ fromStep: '', toStep: 'Step B' }],
+			startStep: 'Step B',
 			rules: [],
 			tags: [],
 		};
@@ -537,6 +635,8 @@ describe('validateExportedWorkflow', () => {
 			type: 'workflow',
 			name: 'Simple',
 			steps: [],
+			transitions: [],
+			startStep: 'x',
 			rules: [],
 			tags: [],
 		};
@@ -548,24 +648,28 @@ describe('validateExportedWorkflow', () => {
 	});
 
 	test('rejects missing version', () => {
-		const data = { type: 'workflow', name: 'Simple', steps: [], rules: [], tags: [] };
+		const data = {
+			type: 'workflow',
+			name: 'Simple',
+			steps: [],
+			transitions: [],
+			startStep: 'x',
+			rules: [],
+			tags: [],
+		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
 	});
 
 	test('rejects negative version', () => {
-		const data = { version: -1, type: 'workflow', name: 'Simple', steps: [], rules: [], tags: [] };
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-	});
-
-	test('rejects rule with negative appliesTo index', () => {
 		const data = {
-			version: 1,
+			version: -1,
 			type: 'workflow',
-			name: 'Bad',
+			name: 'Simple',
 			steps: [],
-			rules: [{ name: 'Rule', content: 'Content', appliesTo: [-1] }],
+			transitions: [],
+			startStep: 'x',
+			rules: [],
 			tags: [],
 		};
 		const result = validateExportedWorkflow(data);
@@ -699,6 +803,12 @@ describe('round-trip: export → JSON → validate', () => {
 			expect(result.value.steps[0].agentRef).toBe('My Coder');
 			expect(result.value.steps[1].agentRef).toBe('Reviewer');
 			expect(result.value.steps[2].agentRef).toBe('Simple Agent');
+			// transitions preserved with step names
+			expect(result.value.transitions).toHaveLength(2);
+			expect(result.value.transitions[0].fromStep).toBe('Code step');
+			expect(result.value.transitions[0].toStep).toBe('Review step');
+			// startStep preserved as step name
+			expect(result.value.startStep).toBe('Code step');
 		}
 	});
 
@@ -722,11 +832,11 @@ describe('round-trip: export → JSON → validate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// rule appliesTo round-trip (verify order indices in JSON)
+// rule appliesTo round-trip (verify step names in JSON)
 // ---------------------------------------------------------------------------
 
 describe('rule appliesTo round-trip', () => {
-	test('order indices appear in serialized JSON, not UUIDs', () => {
+	test('step names appear in serialized JSON, not UUIDs', () => {
 		const workflow = makeWorkflow();
 		const exported = exportWorkflow(workflow, []);
 		const json = JSON.stringify(exported);
@@ -736,12 +846,16 @@ describe('rule appliesTo round-trip', () => {
 		expect(json).not.toContain('step-uuid-2');
 		expect(json).not.toContain('step-uuid-3');
 
-		// appliesTo must contain numbers (0 and 1)
-		const parsed = JSON.parse(json) as { rules: Array<{ appliesTo?: number[] }> };
-		expect(parsed.rules[0].appliesTo).toEqual([0, 1]);
+		// transition UUIDs must NOT appear
+		expect(json).not.toContain('trans-uuid-1');
+		expect(json).not.toContain('trans-uuid-2');
+
+		// appliesTo must contain step names (strings)
+		const parsed = JSON.parse(json) as { rules: Array<{ appliesTo?: string[] }> };
+		expect(parsed.rules[0].appliesTo).toEqual(['Code step', 'Review step']);
 	});
 
-	test('workflow round-trip preserves rule appliesTo order indices', () => {
+	test('workflow round-trip preserves rule appliesTo step names', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -751,7 +865,7 @@ describe('rule appliesTo round-trip', () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.value.rules[0].appliesTo).toEqual([0, 1]);
+			expect(result.value.rules[0].appliesTo).toEqual(['Code step', 'Review step']);
 		}
 	});
 
