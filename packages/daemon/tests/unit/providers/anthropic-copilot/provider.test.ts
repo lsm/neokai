@@ -227,22 +227,32 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(status.error).toContain('Classic PATs');
 		});
 
-		it('canLogout is false when authenticated via COPILOT_GITHUB_TOKEN env var', async () => {
+		it('canLogout is false when COPILOT_GITHUB_TOKEN env var is set with no stored token', async () => {
+			// auth.json has highest priority; if no stored token, env var is the active source → no-op logout
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
 			expect(status.canLogout).toBe(false);
 		});
 
-		it('canLogout is false when authenticated via GH_TOKEN env var', async () => {
+		it('canLogout is false when GH_TOKEN env var is set with no stored token', async () => {
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
 			expect(status.canLogout).toBe(false);
 		});
 
-		it('canLogout is true when authenticated via NeoKai-stored token in auth.json (no env vars)', async () => {
-			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+		it('canLogout is true when NeoKai-stored token in auth.json is the active source', async () => {
+			// auth.json takes priority in discoverGitHubToken — stored token is active even when env vars also set
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never

@@ -344,13 +344,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	}
 
 	/**
-	 * Returns true when NeoKai has stored credentials in auth.json that will be
-	 * the active token source (i.e. no env-var override takes priority).
+	 * Returns true when NeoKai has stored credentials in auth.json that are the
+	 * active token source. auth.json is checked first in discoverGitHubToken(), so
+	 * if a stored token exists it is what is currently being used — logout will work.
 	 * Used to determine whether the Logout button in the UI will have any effect.
 	 */
 	private async hasNeoKaiManagedCredentials(): Promise<boolean> {
-		// Env vars take priority in discoverGitHubToken — if set, logout is a no-op
-		if (this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN) return false;
+		// auth.json has highest priority in discoverGitHubToken — if a stored token
+		// exists, that is the active credential and logout will remove it successfully.
 		const stored = await this.loadStoredGitHubToken();
 		return !!stored;
 	}

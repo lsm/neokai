@@ -540,6 +540,117 @@ describe('ProvidersSettings', () => {
 				expect(mockToastError).toHaveBeenCalledWith('Failed to logout');
 			});
 		});
+
+		it('should show error toast when logoutProvider returns success: false', async () => {
+			const mockProviders = [
+				createMockProvider('anthropic', 'Anthropic', { isAuthenticated: true, method: 'api_key' }),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockLogoutProvider.mockResolvedValue({ success: false, error: 'Logout not supported' });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Anthropic');
+			});
+
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			logoutButton?.click();
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Logout not supported');
+				// Success toast must NOT be shown
+				expect(mockToastSuccess).not.toHaveBeenCalled();
+			});
+		});
+
+		it('should show fallback error message when logoutProvider returns success: false without error', async () => {
+			const mockProviders = [
+				createMockProvider('anthropic', 'Anthropic', { isAuthenticated: true, method: 'api_key' }),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockLogoutProvider.mockResolvedValue({ success: false });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Anthropic');
+			});
+
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			logoutButton?.click();
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Failed to logout from Anthropic');
+				expect(mockToastSuccess).not.toHaveBeenCalled();
+			});
+		});
+
+		it('should hide Logout button when canLogout is false', async () => {
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI (Codex)', {
+					isAuthenticated: true,
+					method: 'api_key',
+					canLogout: false,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('OpenAI (Codex)');
+			});
+
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			expect(logoutButton).toBeUndefined();
+		});
+
+		it('should show Logout button when canLogout is true', async () => {
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI (Codex)', {
+					isAuthenticated: true,
+					method: 'oauth',
+					canLogout: true,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Logout')
+				);
+				expect(logoutButton).toBeDefined();
+			});
+		});
+
+		it('should show Logout button when canLogout is undefined (backward compat)', async () => {
+			const mockProviders = [
+				createMockProvider('anthropic', 'Anthropic', {
+					isAuthenticated: true,
+					method: 'api_key',
+					// canLogout not set — defaults to showing the button
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Logout')
+				);
+				expect(logoutButton).toBeDefined();
+			});
+		});
 	});
 
 	describe('OAuth Modal', () => {
