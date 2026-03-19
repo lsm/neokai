@@ -9,7 +9,7 @@ Build a new **Spaces** system — a fully parallel, isolated multi-agent workflo
 **No existing code is modified.** Spaces are an entirely new parallel system that coexists with the existing Rooms implementation:
 
 - **New DB tables**: `spaces`, `space_agents`, `space_workflows`, `space_workflow_steps`, `space_workflow_runs`, `space_tasks`, `space_session_groups`, `space_session_group_members` — no modifications to any existing table (no ALTER TABLE on `tasks`, `goals`, `rooms`, etc.)
-- **New API routes**: `space.*`, `spaceAgent.*`, `spaceWorkflow.*`, `spaceExport.*`, `spaceImport.*` — no touching existing RPC handlers
+- **New API routes**: `space.*`, `spaceAgent.*`, `spaceWorkflow.*`, `spaceWorkflowRun.*`, `spaceExport.*`, `spaceImport.*` — no touching existing RPC handlers
 - **New frontend pages/components**: `/space/:spaceId` routes, new islands, new stores — no modifying existing UI components. All Space UI lives under `packages/web/src/components/space/`
 - **New navigation entry point**: "Spaces" section in sidebar alongside existing "Rooms"
 - **New runtime**: `SpaceRuntime` in `packages/daemon/src/lib/space/runtime/` — workflow-first orchestration engine, no modifications to `RoomRuntime`
@@ -91,7 +91,7 @@ Spaces require a **workspace path** at creation time — the directory where age
 1. **Space Core Data Model & Infrastructure** — All Space types in `space.ts`, single DB migration (all tables including `space_workflow_runs`), repositories, managers, RPC handlers for Space container + tasks + workflow runs + session groups.
 2. **Custom Agent Data & Runtime** — Agent types in `space.ts`, `SpaceAgentRepository`, `SpaceAgentManager`, agent RPC handlers, `createCustomAgentInit()` factory, agent resolution helper.
 3. **Workflow Data Model** — Workflow/step/gate/rule types in `space.ts`, `SpaceWorkflowRepository`, `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`, workflow RPC handlers (`spaceWorkflow.*`), built-in templates.
-4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, gate evaluation, step advancement, rule injection. Operates on workflow runs and tasks (no goals).
+4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, `spaceWorkflowRun.*` RPC handlers, gate evaluation, step advancement, rule injection. Operates on workflow runs and tasks (no goals).
 5. **Space Frontend Foundation** — Navigation entry point, URL routing, `SpaceStore`, Space creation UX with workspace path picker, minimalist 3-column layout shell (right pane shows placeholder states until M4 provides a running runtime).
 6. **Frontend: Agent & Workflow UI** — Agent creation/editing, visual workflow builder, rules editor — all under `packages/web/src/components/space/`.
 7. **Workflow Selection & Agent Tools** — Workflow selection logic, Space agent tools in `packages/daemon/src/lib/space/tools/`, prompt enhancement with workflow awareness.
