@@ -289,7 +289,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 			const assistantMessages = sdkMessages.filter(
 				(m) => (m as { type?: string }).type === 'assistant'
@@ -332,7 +332,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 
 			// At least one tool_use block proves the bridge fired.
@@ -423,7 +423,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			// proves the tool was exposed; whether the model uses it is out of scope.
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 			if (hasToolUseBlock(sdkMessages, 'get_answer')) {
 				const text = sdkMessages
