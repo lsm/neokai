@@ -686,4 +686,81 @@ describe('RoomRuntime leader tools', () => {
 			}
 		});
 	});
+
+	describe('progress_summary handling', () => {
+		it('persists progress_summary to group metadata when provided with send_to_worker', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+			const summary =
+				'Task adds GET /health endpoint. Worker created the route but tests are failing.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Fix the failing tests',
+				progress_summary: summary,
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe(summary);
+		});
+
+		it('persists progress_summary to group metadata when provided with fail_task', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+			const summary = 'Task adds GET /health. Worker could not resolve a dependency conflict.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'fail_task', {
+				reason: 'Dependency conflict unresolvable',
+				progress_summary: summary,
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe(summary);
+		});
+
+		it('emits a leader_summary group event when progress_summary is provided', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+			const summary = 'Task adds a health endpoint. Worker created route; tests pass.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Looks good, approve',
+				progress_summary: summary,
+			});
+
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const summaryEvent = events.find((e) => e.kind === 'leader_summary');
+			expect(summaryEvent).toBeDefined();
+			const payload = JSON.parse(summaryEvent!.payloadJson!);
+			expect(payload.text).toContain(summary);
+		});
+
+		it('does not persist or emit event when progress_summary is absent', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Fix the tests',
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBeNull();
+
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const summaryEvent = events.find((e) => e.kind === 'leader_summary');
+			expect(summaryEvent).toBeUndefined();
+		});
+
+		it('updates progress_summary on subsequent tool calls', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Fix the tests',
+				progress_summary: 'First iteration: route created, tests failing.',
+			});
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Update docs too',
+				progress_summary: 'Second iteration: tests fixed, docs missing.',
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe('Second iteration: tests fixed, docs missing.');
+		});
+	});
 });

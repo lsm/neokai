@@ -55,12 +55,21 @@ export interface LeaderToolCallbacks {
 	sendToWorker(
 		groupId: string,
 		message: string,
-		mode?: 'steer' | 'queue'
+		mode?: 'steer' | 'queue',
+		progressSummary?: string
 	): Promise<LeaderToolResult>;
-	completeTask(groupId: string, summary: string): Promise<LeaderToolResult>;
-	failTask(groupId: string, reason: string): Promise<LeaderToolResult>;
-	replanGoal(groupId: string, reason: string): Promise<LeaderToolResult>;
-	submitForReview(groupId: string, prUrl: string): Promise<LeaderToolResult>;
+	completeTask(
+		groupId: string,
+		summary: string,
+		progressSummary?: string
+	): Promise<LeaderToolResult>;
+	failTask(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
+	replanGoal(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
+	submitForReview(
+		groupId: string,
+		prUrl: string,
+		progressSummary?: string
+	): Promise<LeaderToolResult>;
 }
 
 export interface LeaderAgentConfig {
@@ -119,6 +128,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	return [
 		leaderRoleIntro(isPlanReview),
 		leaderToolContractSection(),
+		leaderProgressSummarySection(),
 		leaderPostApprovalSection(isPlanReview),
 		leaderPostRejectionSection(),
 		leaderWorkerQuestionsSection(),
@@ -166,6 +176,17 @@ You MUST call tools (no text-only final responses).
 - \`list_goals\`, \`list_tasks\`, \`get_task_detail\`, \`get_room_status\` — Inspect room state
 
 Do NOT respond with only text.`;
+}
+
+function leaderProgressSummarySection(): string {
+	return `\
+## Progress Summary (Required on every tool call)
+
+Every time you call a tool, include a \`progress_summary\` with 2-4 sentences covering:
+1. **What this task is about** — the goal and what needs to be accomplished
+2. **What has been done so far** — work completed across all iterations, key changes made
+
+This summary is shown to users so they can understand context when returning to a long-running task. Update it each turn to reflect cumulative progress.`;
 }
 
 function leaderPostApprovalSection(isPlanReview: boolean): string {
@@ -434,20 +455,33 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 		async send_to_worker(args: {
 			message: string;
 			mode?: 'steer' | 'queue';
+			progress_summary?: string;
 		}): Promise<LeaderToolResult> {
-			return callbacks.sendToWorker(groupId, args.message, args.mode);
+			return callbacks.sendToWorker(groupId, args.message, args.mode, args.progress_summary);
 		},
-		async complete_task(args: { summary: string }): Promise<LeaderToolResult> {
-			return callbacks.completeTask(groupId, args.summary);
+		async complete_task(args: {
+			summary: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.completeTask(groupId, args.summary, args.progress_summary);
 		},
-		async fail_task(args: { reason: string }): Promise<LeaderToolResult> {
-			return callbacks.failTask(groupId, args.reason);
+		async fail_task(args: {
+			reason: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.failTask(groupId, args.reason, args.progress_summary);
 		},
-		async replan_goal(args: { reason: string }): Promise<LeaderToolResult> {
-			return callbacks.replanGoal(groupId, args.reason);
+		async replan_goal(args: {
+			reason: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.replanGoal(groupId, args.reason, args.progress_summary);
 		},
-		async submit_for_review(args: { pr_url: string }): Promise<LeaderToolResult> {
-			return callbacks.submitForReview(groupId, args.pr_url);
+		async submit_for_review(args: {
+			pr_url: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.submitForReview(groupId, args.pr_url, args.progress_summary);
 		},
 	};
 }
@@ -459,6 +493,13 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCallbacks) {
 	const handlers = createLeaderToolHandlers(groupId, callbacks);
 
+	const progressSummaryField = z
+		.string()
+		.optional()
+		.describe(
+			'Progress summary: (1) what this task is about, (2) what has been done/changed so far in this task. Keep it concise (2-4 sentences). This is shown to users to provide context when they return to this task.'
+		);
+
 	const tools = [
 		tool(
 			'send_to_worker',
@@ -469,6 +510,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 					.enum(['steer', 'queue'])
 					.optional()
 					.describe('Delivery mode: queue (default) or steer (immediate)'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.send_to_worker(args)
 		),
@@ -479,6 +521,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 				summary: z
 					.string()
 					.describe('Summary of what was accomplished and how it meets requirements'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.complete_task(args)
 		),
@@ -487,6 +530,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 			'Mark the task as not achievable',
 			{
 				reason: z.string().describe('Explanation of why the task cannot be completed'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.fail_task(args)
 		),
@@ -497,6 +541,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 				reason: z
 					.string()
 					.describe('What was tried, what went wrong, and why a different approach is needed'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.replan_goal(args)
 		),
@@ -505,6 +550,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 			'Work is done with a PR ready — free the group slot and park the task for human approval',
 			{
 				pr_url: z.string().min(1).describe('The GitHub PR URL for human review'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.submit_for_review(args)
 		),
