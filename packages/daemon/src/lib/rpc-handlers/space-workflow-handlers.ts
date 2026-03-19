@@ -4,9 +4,9 @@
  * RPC handlers for SpaceWorkflow CRUD operations:
  * - spaceWorkflow.create    - Create a workflow in a Space
  * - spaceWorkflow.list      - List workflows in a Space
- * - spaceWorkflow.get       - Get a workflow by ID (optional spaceId ownership check)
- * - spaceWorkflow.update    - Update workflow fields (optional spaceId ownership check)
- * - spaceWorkflow.delete    - Delete a workflow (optional spaceId ownership check)
+ * - spaceWorkflow.get       - Get a workflow by ID (optional spaceId: existence + ownership check)
+ * - spaceWorkflow.update    - Update workflow fields (optional spaceId: existence + ownership check)
+ * - spaceWorkflow.delete    - Delete a workflow (optional spaceId: existence + ownership check)
  * - spaceWorkflow.setDefault - Unsupported (concept removed; use explicit workflowId or AI auto-select)
  *
  * Events emitted (space.* hierarchy):
@@ -89,12 +89,22 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error('id is required');
 		}
 
+		// When spaceId is provided: verify the space exists before fetching the workflow.
+		// This matches the space-task-handlers.ts pattern and surfaces "Space not found"
+		// correctly instead of silently returning an orphaned workflow.
+		if (params.spaceId) {
+			const space = await spaceManager.getSpace(params.spaceId);
+			if (!space) {
+				throw new Error(`Space not found: ${params.spaceId}`);
+			}
+		}
+
 		const workflow = workflowManager.getWorkflow(params.id);
 		if (!workflow) {
 			throw new Error(`Workflow not found: ${params.id}`);
 		}
 
-		// Optional spaceId ownership check — reject if caller provides a spaceId that doesn't match
+		// Ownership check — reject if caller's spaceId doesn't match the workflow's owner
 		if (params.spaceId && workflow.spaceId !== params.spaceId) {
 			throw new Error(`Workflow not found: ${params.id}`);
 		}
@@ -110,8 +120,14 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error('id is required');
 		}
 
-		// Ownership check before mutating: if spaceId is provided, verify ownership
+		// When spaceId is provided: verify space exists and ownership before mutating.
+		// The ownership check requires fetching the workflow here; updateWorkflow will
+		// re-fetch internally (synchronous SQLite — acceptable for this pattern).
 		if (params.spaceId) {
+			const space = await spaceManager.getSpace(params.spaceId);
+			if (!space) {
+				throw new Error(`Space not found: ${params.spaceId}`);
+			}
 			const existing = workflowManager.getWorkflow(params.id);
 			if (!existing) {
 				throw new Error(`Workflow not found: ${params.id}`);
@@ -150,13 +166,21 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error('id is required');
 		}
 
+		// When spaceId is provided: verify space exists before fetching the workflow.
+		if (params.spaceId) {
+			const space = await spaceManager.getSpace(params.spaceId);
+			if (!space) {
+				throw new Error(`Space not found: ${params.spaceId}`);
+			}
+		}
+
 		// Fetch before deleting — needed for the event payload and optional ownership check
 		const workflow = workflowManager.getWorkflow(params.id);
 		if (!workflow) {
 			throw new Error(`Workflow not found: ${params.id}`);
 		}
 
-		// Optional spaceId ownership check
+		// Ownership check
 		if (params.spaceId && workflow.spaceId !== params.spaceId) {
 			throw new Error(`Workflow not found: ${params.id}`);
 		}

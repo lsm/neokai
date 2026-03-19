@@ -5,11 +5,12 @@
  * - spaceWorkflow.create: happy path, missing spaceId, missing/empty name, space not found,
  *   validation error propagation, event emission (space.workflow.created)
  * - spaceWorkflow.list: happy path, missing spaceId, space not found
- * - spaceWorkflow.get: happy path, missing id, workflow not found, optional spaceId ownership
- * - spaceWorkflow.update: happy path, missing id, workflow not found, validation error,
- *   event emission (space.workflow.updated), optional spaceId ownership
- * - spaceWorkflow.delete: happy path, missing id, workflow not found, event emission
- *   (space.workflow.deleted), optional spaceId ownership
+ * - spaceWorkflow.get: happy path, missing id, workflow not found, optional spaceId space-existence
+ *   check, optional spaceId ownership check
+ * - spaceWorkflow.update: happy path, missing id, workflow not found, optional spaceId
+ *   space-existence check, ownership check, validation error, event emission (space.workflow.updated)
+ * - spaceWorkflow.delete: happy path, missing id, workflow not found, optional spaceId
+ *   space-existence check, ownership check, event emission (space.workflow.deleted)
  * - spaceWorkflow.setDefault: throws (unsupported — concept removed)
  */
 
@@ -261,7 +262,7 @@ describe('space-workflow-handlers', () => {
 	describe('spaceWorkflow.get', () => {
 		beforeEach(() => setup());
 
-		it('returns the workflow when found', async () => {
+		it('returns the workflow when found (no spaceId)', async () => {
 			const result = (await call('spaceWorkflow.get', { id: 'wf-1' })) as {
 				workflow: SpaceWorkflow;
 			};
@@ -275,6 +276,14 @@ describe('space-workflow-handlers', () => {
 				spaceId: 'space-1',
 			})) as { workflow: SpaceWorkflow };
 			expect(result.workflow).toEqual(mockWorkflow);
+		});
+
+		it('throws Space not found when spaceId is provided but space does not exist', async () => {
+			setup(null, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.get', { id: 'wf-1', spaceId: 'deleted-space' })
+			).rejects.toThrow('Space not found: deleted-space');
+			expect(workflowManager.getWorkflow).not.toHaveBeenCalled();
 		});
 
 		it('throws when spaceId does not match workflow owner', async () => {
@@ -317,6 +326,15 @@ describe('space-workflow-handlers', () => {
 				workflowId: 'wf-1',
 				workflow: updated,
 			});
+		});
+
+		it('throws Space not found when spaceId is provided but space does not exist', async () => {
+			setup(null, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.update', { id: 'wf-1', spaceId: 'deleted-space', name: 'X' })
+			).rejects.toThrow('Space not found: deleted-space');
+			expect(workflowManager.getWorkflow).not.toHaveBeenCalled();
+			expect(workflowManager.updateWorkflow).not.toHaveBeenCalled();
 		});
 
 		it('rejects when optional spaceId does not match workflow owner', async () => {
@@ -381,6 +399,16 @@ describe('space-workflow-handlers', () => {
 			});
 		});
 
+		it('throws Space not found when spaceId is provided but space does not exist', async () => {
+			setup(null, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.delete', { id: 'wf-1', spaceId: 'deleted-space' })
+			).rejects.toThrow('Space not found: deleted-space');
+			expect(workflowManager.getWorkflow).not.toHaveBeenCalled();
+			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+			expect(daemonHub.emit).not.toHaveBeenCalled();
+		});
+
 		it('rejects when optional spaceId does not match workflow owner', async () => {
 			await expect(
 				call('spaceWorkflow.delete', { id: 'wf-1', spaceId: 'space-other' })
@@ -423,9 +451,9 @@ describe('space-workflow-handlers', () => {
 		});
 
 		it('does not emit any event', async () => {
-			await call('spaceWorkflow.setDefault', { spaceId: 'space-1', workflowId: 'wf-1' }).catch(
-				() => {}
-			);
+			await expect(
+				call('spaceWorkflow.setDefault', { spaceId: 'space-1', workflowId: 'wf-1' })
+			).rejects.toThrow();
 			expect(daemonHub.emit).not.toHaveBeenCalled();
 		});
 	});
