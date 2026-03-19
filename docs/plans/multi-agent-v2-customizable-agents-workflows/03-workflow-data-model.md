@@ -123,6 +123,8 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description?: string;
      steps: Omit<WorkflowStep, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
+     /** Organizational tags (not used for automatic selection). */
+     tags?: string[];
      config?: Record<string, unknown>;
    }
 
@@ -131,6 +133,8 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description?: string;
      steps?: Omit<WorkflowStep, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
+     /** Replaces the tag list. Pass `[]` or `null` to clear. Organizational only. */
+     tags?: string[] | null;
      config?: Record<string, unknown>;
    }
    ```
