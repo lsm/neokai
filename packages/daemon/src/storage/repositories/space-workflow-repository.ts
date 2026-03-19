@@ -1,16 +1,16 @@
 /**
  * SpaceWorkflowRepository
  *
- * Data access layer for SpaceWorkflow and SpaceWorkflowStep records.
+ * Data access layer for SpaceWorkflow, SpaceWorkflowStep, and SpaceWorkflowTransition records.
  *
  * Storage layout:
- *   space_workflows  — id, space_id, name, description, config (JSON), created_at, updated_at
- *   space_workflow_steps — id, workflow_id, name, description, agent_id (SpaceAgent UUID),
- *                          order_index, config (JSON), created_at, updated_at
+ *   space_workflows             — id, space_id, name, description, start_step_id, config (JSON), created_at, updated_at
+ *   space_workflow_steps        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
+ *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
- * The `config` column on space_workflow_steps stores: { entryGate?, exitGate?, instructions? }
- * The `agent_id` column stores the SpaceAgent UUID for the step.
+ * The `config` column on space_workflow_steps stores: { instructions? }
+ * The `condition` column on space_workflow_transitions stores: WorkflowCondition JSON or null
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -19,8 +19,10 @@ import type {
 	SpaceWorkflow,
 	WorkflowStep,
 	WorkflowRule,
-	WorkflowGate,
+	WorkflowCondition,
+	WorkflowTransition,
 	WorkflowStepInput,
+	WorkflowTransitionInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
@@ -35,6 +37,7 @@ interface WorkflowRow {
 	space_id: string;
 	name: string;
 	description: string;
+	start_step_id: string | null;
 	config: string | null;
 	created_at: number;
 	updated_at: number;
@@ -44,10 +47,20 @@ interface StepRow {
 	id: string;
 	workflow_id: string;
 	name: string;
-	description: string;
 	agent_id: string | null;
 	order_index: number;
 	config: string | null;
+	created_at: number;
+	updated_at: number;
+}
+
+interface TransitionRow {
+	id: string;
+	workflow_id: string;
+	from_step_id: string;
+	to_step_id: string;
+	condition: string | null;
+	order_index: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -61,8 +74,6 @@ interface WorkflowConfigJson {
 
 // JSON stored inside space_workflow_steps.config
 interface StepConfigJson {
-	entryGate?: WorkflowGate;
-	exitGate?: WorkflowGate;
 	instructions?: string;
 }
 
@@ -88,21 +99,37 @@ function rowToStep(row: StepRow): WorkflowStep {
 		id: row.id,
 		name: row.name,
 		agentId: row.agent_id,
-		order: row.order_index,
-		entryGate: cfg.entryGate,
-		exitGate: cfg.exitGate,
 		instructions: cfg.instructions,
 	};
 }
 
-function rowToWorkflow(row: WorkflowRow, steps: WorkflowStep[]): SpaceWorkflow {
+function rowToTransition(row: TransitionRow): WorkflowTransition {
+	const condition = parseJson<WorkflowCondition | null>(row.condition, null);
+	return {
+		id: row.id,
+		from: row.from_step_id,
+		to: row.to_step_id,
+		condition: condition ?? undefined,
+		order: row.order_index,
+	};
+}
+
+function rowToWorkflow(
+	row: WorkflowRow,
+	steps: WorkflowStep[],
+	transitions: WorkflowTransition[]
+): SpaceWorkflow {
 	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
+	// Derive startStepId: use explicit column, fall back to first step
+	const startStepId = row.start_step_id ?? steps[0]?.id ?? '';
 	return {
 		id: row.id,
 		spaceId: row.space_id,
 		name: row.name,
 		description: row.description || undefined,
 		steps,
+		transitions,
+		startStepId,
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
 		config: cfg.extra,
@@ -123,8 +150,20 @@ export class SpaceWorkflowRepository {
 	// -------------------------------------------------------------------------
 
 	createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
-		const id = generateUUID();
+		const workflowId = generateUUID();
 		const now = Date.now();
+
+		// Pre-resolve step IDs so transitions can reference them
+		const stepInputs = params.steps ?? [];
+		const resolvedSteps: Array<{ id: string; input: WorkflowStepInput }> = stepInputs.map(
+			(input) => ({
+				id: input.id ?? generateUUID(),
+				input,
+			})
+		);
+
+		// Determine startStepId: use provided value or default to first step
+		const startStepId = params.startStepId ?? resolvedSteps[0]?.id ?? null;
 
 		const cfg: WorkflowConfigJson = {
 			tags: params.tags ?? [],
@@ -134,26 +173,33 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, config, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
-				id,
+				workflowId,
 				params.spaceId,
 				params.name.trim(),
 				params.description ?? '',
+				startStepId,
 				JSON.stringify(cfg),
 				now,
 				now
 			);
 
-		// Insert steps in order
-		const stepInputs = params.steps ?? [];
-		for (let i = 0; i < stepInputs.length; i++) {
-			this.insertStep(id, stepInputs[i], i, now);
+		// Insert step rows
+		for (let i = 0; i < resolvedSteps.length; i++) {
+			const { id, input } = resolvedSteps[i];
+			this.insertStep(workflowId, input, id, i, now);
 		}
 
-		return this.getWorkflow(id)!;
+		// Insert transition rows
+		const transitionInputs = params.transitions ?? [];
+		for (let i = 0; i < transitionInputs.length; i++) {
+			this.insertTransition(workflowId, transitionInputs[i], i, now);
+		}
+
+		return this.getWorkflow(workflowId)!;
 	}
 
 	// -------------------------------------------------------------------------
@@ -166,14 +212,15 @@ export class SpaceWorkflowRepository {
 			| undefined;
 		if (!row) return null;
 		const steps = this.fetchSteps(id);
-		return rowToWorkflow(row, steps);
+		const transitions = this.fetchTransitions(id);
+		return rowToWorkflow(row, steps, transitions);
 	}
 
 	listWorkflows(spaceId: string): SpaceWorkflow[] {
 		const rows = this.db
 			.prepare(`SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC`)
 			.all(spaceId) as WorkflowRow[];
-		return rows.map((r) => rowToWorkflow(r, this.fetchSteps(r.id)));
+		return rows.map((r) => rowToWorkflow(r, this.fetchSteps(r.id), this.fetchTransitions(r.id)));
 	}
 
 	// -------------------------------------------------------------------------
@@ -198,6 +245,10 @@ export class SpaceWorkflowRepository {
 			fields.push('description = ?');
 			values.push(params.description ?? '');
 		}
+		if (params.startStepId !== undefined) {
+			fields.push('start_step_id = ?');
+			values.push(params.startStepId ?? null);
+		}
 
 		// Build updated config
 		const existingCfg = parseJson<WorkflowConfigJson>(row.config, {});
@@ -209,7 +260,6 @@ export class SpaceWorkflowRepository {
 			cfgChanged = true;
 		}
 		if (params.rules !== undefined) {
-			// Rules in UpdateSpaceWorkflowParams are full WorkflowRule[] (with ids)
 			newCfg.rules = params.rules ?? [];
 			cfgChanged = true;
 		}
@@ -223,24 +273,40 @@ export class SpaceWorkflowRepository {
 			values.push(JSON.stringify(newCfg));
 		}
 
-		// Always bump updated_at if anything changed (scalar fields or steps)
 		const hasStepReplacement = params.steps !== undefined;
-		if (fields.length > 0 || hasStepReplacement) {
+		const hasTransitionReplacement = params.transitions !== undefined;
+
+		if (fields.length > 0 || hasStepReplacement || hasTransitionReplacement) {
 			fields.push('updated_at = ?');
 			values.push(now, id);
-			this.db
-				.prepare(`UPDATE space_workflows SET ${fields.join(', ')} WHERE id = ?`)
-				.run(...values);
+			if (fields.length > 0) {
+				this.db
+					.prepare(`UPDATE space_workflows SET ${fields.join(', ')} WHERE id = ?`)
+					.run(...values);
+			}
 		}
 
-		// Replace all steps if steps are provided
 		if (hasStepReplacement) {
+			// Must delete transitions before steps (FK constraint)
+			this.db.prepare(`DELETE FROM space_workflow_transitions WHERE workflow_id = ?`).run(id);
 			this.db.prepare(`DELETE FROM space_workflow_steps WHERE workflow_id = ?`).run(id);
 			const steps = params.steps ?? [];
 			for (let i = 0; i < steps.length; i++) {
-				// UpdateSpaceWorkflowParams has steps as WorkflowStep[] (with id/order)
-				// We replace them with new IDs to keep the DB consistent
-				this.insertStep(id, steps[i] as unknown as WorkflowStepInput, i, now);
+				const step = steps[i];
+				this.insertStep(id, step as WorkflowStepInput, step.id ?? generateUUID(), i, now);
+			}
+			// After replacing steps, also replace transitions if provided
+			if (hasTransitionReplacement) {
+				const transitions = params.transitions ?? [];
+				for (let i = 0; i < transitions.length; i++) {
+					this.insertTransition(id, transitions[i], i, now);
+				}
+			}
+		} else if (hasTransitionReplacement) {
+			this.db.prepare(`DELETE FROM space_workflow_transitions WHERE workflow_id = ?`).run(id);
+			const transitions = params.transitions ?? [];
+			for (let i = 0; i < transitions.length; i++) {
+				this.insertTransition(id, transitions[i], i, now);
 			}
 		}
 
@@ -283,25 +349,32 @@ export class SpaceWorkflowRepository {
 
 	private fetchSteps(workflowId: string): WorkflowStep[] {
 		const rows = this.db
-			.prepare(`SELECT * FROM space_workflow_steps WHERE workflow_id = ? ORDER BY order_index ASC`)
+			.prepare(
+				`SELECT * FROM space_workflow_steps WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
+			)
 			.all(workflowId) as StepRow[];
 		return rows.map(rowToStep);
+	}
+
+	private fetchTransitions(workflowId: string): WorkflowTransition[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM space_workflow_transitions WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
+			)
+			.all(workflowId) as TransitionRow[];
+		return rows.map(rowToTransition);
 	}
 
 	private insertStep(
 		workflowId: string,
 		input: WorkflowStepInput,
+		stepId: string,
 		index: number,
 		now: number
 	): void {
-		const stepId = generateUUID();
 		const stepCfg: StepConfigJson = {
-			entryGate: input.entryGate,
-			exitGate: input.exitGate,
 			instructions: input.instructions,
 		};
-
-		const agentId = input.agentId;
 
 		this.db
 			.prepare(
@@ -309,7 +382,44 @@ export class SpaceWorkflowRepository {
            (id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
-			.run(stepId, workflowId, input.name, '', agentId, index, JSON.stringify(stepCfg), now, now);
+			.run(
+				stepId,
+				workflowId,
+				input.name,
+				'',
+				input.agentId,
+				index,
+				JSON.stringify(stepCfg),
+				now,
+				now
+			);
+	}
+
+	private insertTransition(
+		workflowId: string,
+		input: WorkflowTransitionInput,
+		index: number,
+		now: number
+	): void {
+		const transitionId = generateUUID();
+		const conditionJson = input.condition ? JSON.stringify(input.condition) : null;
+
+		this.db
+			.prepare(
+				`INSERT INTO space_workflow_transitions
+           (id, workflow_id, from_step_id, to_step_id, condition, order_index, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				transitionId,
+				workflowId,
+				input.from,
+				input.to,
+				conditionJson,
+				input.order ?? index,
+				now,
+				now
+			);
 	}
 
 	private assignRuleIds(rules: WorkflowRuleInput[]): WorkflowRule[] {

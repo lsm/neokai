@@ -9,13 +9,29 @@
  * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
  *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
  *   replaced with real SpaceAgent UUIDs by `seedBuiltInWorkflows`.
- * - At Space creation time, preset SpaceAgent records are seeded for each role.
- *   `seedBuiltInWorkflows` must be called after those agents exist so that the
- *   `agentId` values resolve correctly.
+ * - Workflows are directed graphs: steps are nodes, transitions are edges.
+ *   A step with no outgoing transitions is a terminal step — the run
+ *   completes when that step is reached and advance() is called.
+ * - At Space creation time, preset SpaceAgent records are seeded for each
+ *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
+ *   exist so that the `agentId` values resolve correctly.
  */
 
-import type { SpaceWorkflow, WorkflowStepInput } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
+import type { BuiltinAgentRole, SpaceWorkflow } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+
+// ---------------------------------------------------------------------------
+// Template step ID constants (used to wire up transitions)
+// ---------------------------------------------------------------------------
+
+const CODING_PLANNER_STEP = 'tpl-coding-planner';
+const CODING_CODER_STEP = 'tpl-coding-coder';
+
+const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
+const RESEARCH_GENERAL_STEP = 'tpl-research-general';
+
+const REVIEW_CODER_STEP = 'tpl-review-coder';
 
 // ---------------------------------------------------------------------------
 // Built-in templates
@@ -24,41 +40,42 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 /**
  * Coding Workflow
  *
- * Two-step workflow: Planner → Coder.
- * - Planner produces a plan; human must approve before coding begins.
- * - Coder implements the plan; a PR review is required before the run completes.
- *
- * Steps use role names as `agentId` placeholders. Call `seedBuiltInWorkflows`
- * to persist the workflow with real SpaceAgent IDs.
+ * Two-node graph: Planner → Coder.
+ * - The Planner → Coder transition uses a `human` condition: a human must
+ *   approve the plan before implementation begins.
+ * - The Coder step has no outgoing transitions — it is the terminal node.
+ *   The run completes when advance() is called from the Coder step.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
-	description:
-		'Plan-first coding workflow. A human reviews the plan before implementation starts, and a PR review gates completion.',
+	description: 'Plan-first coding workflow. A human reviews the plan before implementation starts.',
 	steps: [
 		{
-			id: 'tpl-coding-planner',
+			id: CODING_PLANNER_STEP,
 			name: 'Plan',
 			agentId: 'planner',
-			exitGate: {
-				type: 'human_approval',
+		},
+		{
+			id: CODING_CODER_STEP,
+			name: 'Code',
+			agentId: 'coder',
+		},
+	],
+	transitions: [
+		{
+			id: 'tpl-coding-plan-to-code',
+			from: CODING_PLANNER_STEP,
+			to: CODING_CODER_STEP,
+			condition: {
+				type: 'human',
 				description: 'Review and approve the plan before coding begins',
 			},
 			order: 0,
 		},
-		{
-			id: 'tpl-coding-coder',
-			name: 'Code',
-			agentId: 'coder',
-			exitGate: {
-				type: 'pr_review',
-				description: 'Wait for PR review and approval before completing',
-			},
-			order: 1,
-		},
 	],
+	startStepId: CODING_PLANNER_STEP,
 	rules: [],
 	tags: ['coding', 'default'],
 	createdAt: 0,
@@ -68,9 +85,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 /**
  * Research Workflow
  *
- * Two-step workflow: Planner → General.
- * Both steps use automatic gates — the workflow advances without human intervention,
- * suited for fully autonomous research and summarisation tasks.
+ * Two-node graph: Planner → General.
+ * Both transitions use `always` conditions — the workflow advances without
+ * human intervention, suited for fully autonomous research and summarisation tasks.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -80,26 +97,29 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		'Fully automated research workflow. Planner scopes the research; General agent executes and summarises findings.',
 	steps: [
 		{
-			id: 'tpl-research-planner',
+			id: RESEARCH_PLANNER_STEP,
 			name: 'Plan Research',
 			agentId: 'planner',
-			exitGate: {
-				type: 'auto',
+		},
+		{
+			id: RESEARCH_GENERAL_STEP,
+			name: 'Research',
+			agentId: 'general',
+		},
+	],
+	transitions: [
+		{
+			id: 'tpl-research-plan-to-research',
+			from: RESEARCH_PLANNER_STEP,
+			to: RESEARCH_GENERAL_STEP,
+			condition: {
+				type: 'always',
 				description: 'Automatically advance after planning is complete',
 			},
 			order: 0,
 		},
-		{
-			id: 'tpl-research-general',
-			name: 'Research',
-			agentId: 'general',
-			exitGate: {
-				type: 'auto',
-				description: 'Automatically complete after research is done',
-			},
-			order: 1,
-		},
 	],
+	startStepId: RESEARCH_PLANNER_STEP,
 	rules: [],
 	tags: ['research'],
 	createdAt: 0,
@@ -109,28 +129,26 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 /**
  * Review-Only Workflow
  *
- * Single-step workflow: Coder only.
+ * Single-node graph: Coder only (terminal step).
  * No planning phase — used when the task is well-defined and only
- * implementation + PR review are needed.
+ * implementation is needed. The run completes immediately when advance()
+ * is called from the Coder step.
  */
 export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Review-Only Workflow',
 	description:
-		'Single-step coding workflow with no planning phase. Coder implements directly; a PR review gates completion.',
+		'Single-step coding workflow with no planning phase. Coder implements directly; the run completes when done.',
 	steps: [
 		{
-			id: 'tpl-review-coder',
+			id: REVIEW_CODER_STEP,
 			name: 'Code',
 			agentId: 'coder',
-			exitGate: {
-				type: 'pr_review',
-				description: 'Wait for PR review and approval before completing',
-			},
-			order: 0,
 		},
 	],
+	transitions: [],
+	startStepId: REVIEW_CODER_STEP,
 	rules: [],
 	tags: ['coding', 'review'],
 	createdAt: 0,
@@ -163,23 +181,22 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
  *
  * Idempotent: if the space already has at least one workflow, this is a no-op.
  *
- * NOTE: This function is NOT wired to a call site yet — that happens in
- * Task 4.2 (inside the `space.create` RPC handler, after preset agents are
- * seeded). The resolver should map agent role label → real SpaceAgent ID.
+ * NOTE: This function must be called after preset SpaceAgent records have been
+ * seeded (inside the `space.create` RPC handler).
  *
  * Example call site:
  * ```ts
  * const agents = spaceAgentManager.listBySpaceId(spaceId);
- * await seedBuiltInWorkflows(spaceId, workflowManager, (role) =>
+ * seedBuiltInWorkflows(spaceId, workflowManager, (role) =>
  *   agents.find(a => a.role === role)?.id
  * );
  * ```
  */
-export async function seedBuiltInWorkflows(
+export function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
 	resolveAgentId: (role: string) => string | undefined
-): Promise<void> {
+): void {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
 		// Already seeded — nothing to do.
@@ -187,8 +204,7 @@ export async function seedBuiltInWorkflows(
 	}
 
 	// Pre-validate: resolve every role needed across ALL templates before
-	// persisting anything. This guarantees all-or-nothing behaviour — a failure
-	// on any role will throw before a single workflow is created.
+	// persisting anything. This guarantees all-or-nothing behaviour.
 	const templates = getBuiltInWorkflows();
 	const neededRoles = new Set<string>(templates.flatMap((t) => t.steps.map((s) => s.agentId)));
 	const resolvedIds = new Map<string, string>();
@@ -205,19 +221,35 @@ export async function seedBuiltInWorkflows(
 
 	// All roles resolved — safe to persist.
 	for (const template of templates) {
-		const steps: WorkflowStepInput[] = template.steps.map((s) => ({
+		// Assign real UUIDs to template step IDs
+		const stepIdMap = new Map<string, string>(); // templateId -> realUUID
+		for (const step of template.steps) {
+			stepIdMap.set(step.id, generateUUID());
+		}
+
+		const steps = template.steps.map((s) => ({
+			id: stepIdMap.get(s.id)!,
 			name: s.name,
-			agentId: resolvedIds.get(s.agentId)!,
-			entryGate: s.entryGate,
-			exitGate: s.exitGate,
+			agentId: resolvedIds.get(s.agentId as BuiltinAgentRole)!,
 			instructions: s.instructions,
 		}));
+
+		const transitions = template.transitions.map((t) => ({
+			from: stepIdMap.get(t.from)!,
+			to: stepIdMap.get(t.to)!,
+			condition: t.condition,
+			order: t.order,
+		}));
+
+		const startStepId = stepIdMap.get(template.startStepId)!;
 
 		workflowManager.createWorkflow({
 			spaceId,
 			name: template.name,
 			description: template.description,
 			steps,
+			transitions,
+			startStepId,
 			rules: [],
 			tags: [...template.tags],
 		});

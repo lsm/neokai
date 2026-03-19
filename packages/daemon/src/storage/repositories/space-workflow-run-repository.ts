@@ -13,7 +13,7 @@ export interface UpdateWorkflowRunParams {
 	title?: string;
 	description?: string;
 	status?: WorkflowRunStatus;
-	currentStepIndex?: number;
+	currentStepId?: string;
 	config?: Record<string, unknown>;
 }
 
@@ -28,8 +28,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, status, config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -38,7 +38,8 @@ export class SpaceWorkflowRunRepository {
 			params.workflowId,
 			params.title,
 			params.description ?? '',
-			0,
+			0, // keep current_step_index for backward compat
+			params.currentStepId,
 			'pending',
 			null,
 			now,
@@ -105,9 +106,9 @@ export class SpaceWorkflowRunRepository {
 				values.push(Date.now());
 			}
 		}
-		if (params.currentStepIndex !== undefined) {
-			fields.push('current_step_index = ?');
-			values.push(params.currentStepIndex);
+		if (params.currentStepId !== undefined) {
+			fields.push('current_step_id = ?');
+			values.push(params.currentStepId);
 		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
@@ -128,10 +129,10 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * Advance the current step index for a run
+	 * Advance the current step ID for a run
 	 */
-	updateStepIndex(id: string, stepIndex: number): SpaceWorkflowRun | null {
-		return this.updateRun(id, { currentStepIndex: stepIndex });
+	updateCurrentStep(id: string, stepId: string): SpaceWorkflowRun | null {
+		return this.updateRun(id, { currentStepId: stepId });
 	}
 
 	/**
@@ -163,7 +164,7 @@ export class SpaceWorkflowRunRepository {
 			workflowId: row.workflow_id as string,
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
-			currentStepIndex: row.current_step_index as number,
+			currentStepId: (row.current_step_id as string | null) ?? '',
 			status: row.status as WorkflowRunStatus,
 			config,
 			createdAt: row.created_at as number,

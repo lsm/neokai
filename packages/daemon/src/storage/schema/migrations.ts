@@ -121,6 +121,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 31: Remove hardcoded CHECK constraint on space_agents.role
 	// so that free-form role strings are accepted (role is now a display label, not an enum)
 	runMigration31(db);
+
+	// Migration 32: Add directed-graph fields to Space workflow tables:
+	// - start_step_id on space_workflows (entry point of the graph)
+	// - current_step_id on space_workflow_runs (replaces current_step_index)
+	// - new space_workflow_transitions table (edges between steps)
+	runMigration32(db);
 }
 
 /**
@@ -1764,4 +1770,54 @@ function runMigration31(db: BunDatabase): void {
 		db.exec(`ALTER TABLE space_agents_new RENAME TO space_agents`);
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
 	})();
+}
+
+/**
+ * Migration 32: Add directed-graph fields for workflow redesign.
+ *
+ * Changes:
+ * - space_workflows gains start_step_id TEXT (entry point of the graph)
+ * - space_workflow_runs gains current_step_id TEXT (step UUID, replaces index-based navigation)
+ * - New table space_workflow_transitions stores directed edges between steps
+ *
+ * The old current_step_index column is preserved for backward compatibility but is
+ * no longer used by application code.
+ */
+function runMigration32(db: BunDatabase): void {
+	// Add start_step_id to space_workflows (idempotent)
+	try {
+		db.prepare(`SELECT start_step_id FROM space_workflows LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN start_step_id TEXT`);
+	}
+
+	// Add current_step_id to space_workflow_runs (idempotent)
+	try {
+		db.prepare(`SELECT current_step_id FROM space_workflow_runs LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN current_step_id TEXT`);
+	}
+
+	// Create space_workflow_transitions table (directed edges)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			from_step_id TEXT NOT NULL,
+			to_step_id TEXT NOT NULL,
+			condition TEXT,
+			order_index INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
+			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_workflow_id ON space_workflow_transitions(workflow_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_step ON space_workflow_transitions(workflow_id, from_step_id)`
+	);
 }

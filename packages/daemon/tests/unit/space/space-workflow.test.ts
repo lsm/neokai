@@ -2,15 +2,15 @@
  * SpaceWorkflow Unit Tests
  *
  * Covers:
- * - Repository: full CRUD with step management
+ * - Repository: full CRUD with step and transition management
  * - Repository: getWorkflowsReferencingAgent
- * - Repository: JSON round-trips (rules, tags, gates)
+ * - Repository: JSON round-trips (rules, tags, transitions, conditions)
  * - Manager: name uniqueness within space
  * - Manager: at-least-one-step validation
  * - Manager: agentId validation (non-empty, optional SpaceAgentLookup)
- * - Manager: gate command validation (quality_check allowlist, custom relative path, no ..)
- * - Manager: timeoutMs bounds (0–300000)
- * - Manager: step ordering via array position
+ * - Manager: transition validation (from/to step ID refs)
+ * - Manager: condition validation (expression non-empty for 'condition' type)
+ * - Manager: startStepId validation
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -24,7 +24,7 @@ import {
 	WorkflowValidationError,
 } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { WorkflowGate, WorkflowStepInput } from '@neokai/shared';
+import type { WorkflowStepInput, WorkflowTransitionInput } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,11 +55,18 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// Arbitrary IDs — tests that use these fixtures construct the manager with agentLookup: null
-// so no DB lookup is performed and these IDs do not need to exist in the test database.
-const coderStep: WorkflowStepInput = { name: 'Code', agentId: 'agent-coder' };
-const plannerStep: WorkflowStepInput = { name: 'Plan', agentId: 'agent-planner' };
-const generalStep: WorkflowStepInput = { name: 'Review', agentId: 'agent-general' };
+// Step fixtures — no entryGate/exitGate/order in new model
+const coderStep: WorkflowStepInput = { id: 'step-coder', name: 'Code', agentId: 'agent-coder' };
+const plannerStep: WorkflowStepInput = {
+	id: 'step-planner',
+	name: 'Plan',
+	agentId: 'agent-planner',
+};
+const generalStep: WorkflowStepInput = {
+	id: 'step-general',
+	name: 'Review',
+	agentId: 'agent-general',
+};
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -105,11 +112,11 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.name).toBe('My Workflow');
 		expect(wf.steps).toHaveLength(2);
 		expect(wf.steps[0].name).toBe('Code');
-		expect(wf.steps[0].order).toBe(0);
 		expect(wf.steps[0].agentId).toBe('agent-coder');
-		expect(wf.steps[1].order).toBe(1);
+		expect(wf.steps[1].name).toBe('Plan');
 		expect(wf.tags).toEqual([]);
 		expect(wf.rules).toEqual([]);
+		expect(wf.transitions).toEqual([]);
 	});
 
 	test('createWorkflow stores tags and config', () => {
@@ -124,6 +131,44 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.config).toEqual({ priority: 'high' });
 	});
 
+	test('createWorkflow uses first step as startStepId by default', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Auto Start',
+			steps: [coderStep, plannerStep],
+		});
+		expect(wf.startStepId).toBe(coderStep.id);
+	});
+
+	test('createWorkflow respects explicit startStepId', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Explicit Start',
+			steps: [coderStep, plannerStep],
+			startStepId: plannerStep.id,
+		});
+		expect(wf.startStepId).toBe(plannerStep.id);
+	});
+
+	test('createWorkflow stores transitions', () => {
+		const transition: WorkflowTransitionInput = {
+			from: coderStep.id!,
+			to: plannerStep.id!,
+			condition: { type: 'always' },
+			order: 0,
+		};
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'With Transitions',
+			steps: [coderStep, plannerStep],
+			transitions: [transition],
+		});
+		expect(wf.transitions).toHaveLength(1);
+		expect(wf.transitions[0].from).toBe(coderStep.id);
+		expect(wf.transitions[0].to).toBe(plannerStep.id);
+		expect(wf.transitions[0].condition?.type).toBe('always');
+	});
+
 	test('getWorkflow returns null for missing id', () => {
 		expect(repo.getWorkflow('no-such-id')).toBeNull();
 	});
@@ -133,7 +178,9 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'Full',
 			description: 'A full workflow',
-			steps: [coderStep],
+			steps: [coderStep, plannerStep],
+			transitions: [{ from: coderStep.id!, to: plannerStep.id!, condition: { type: 'human' } }],
+			startStepId: coderStep.id,
 			rules: [{ name: 'Rule1', content: 'Follow TDD', appliesTo: [] }],
 			tags: ['a', 'b'],
 			config: { key: 'value' },
@@ -145,16 +192,23 @@ describe('SpaceWorkflowRepository', () => {
 		expect(fetched.tags).toEqual(['a', 'b']);
 		expect(fetched.rules).toHaveLength(1);
 		expect(fetched.rules[0].name).toBe('Rule1');
-		expect(fetched.rules[0].id).toBeTruthy(); // assigned by repo
+		expect(fetched.rules[0].id).toBeTruthy();
 		expect(fetched.config).toEqual({ key: 'value' });
+		expect(fetched.startStepId).toBe(coderStep.id);
+		expect(fetched.transitions).toHaveLength(1);
+		expect(fetched.transitions[0].condition?.type).toBe('human');
 	});
 
 	test('listWorkflows returns all workflows for a space', () => {
 		repo.createWorkflow({ spaceId: 'space-1', name: 'WF1', steps: [coderStep] });
 		repo.createWorkflow({ spaceId: 'space-1', name: 'WF2', steps: [plannerStep] });
-		// Another space — should not appear
+		// Another space — should not appear; use anonymous step (no fixed id) to avoid PK collision
 		seedSpace(db, 'space-2');
-		repo.createWorkflow({ spaceId: 'space-2', name: 'WF3', steps: [coderStep] });
+		repo.createWorkflow({
+			spaceId: 'space-2',
+			name: 'WF3',
+			steps: [{ name: 'Code', agentId: 'agent-coder' }],
+		});
 
 		const wfs = repo.listWorkflows('space-1');
 		expect(wfs).toHaveLength(2);
@@ -174,7 +228,7 @@ describe('SpaceWorkflowRepository', () => {
 		// Small delay to ensure timestamp difference
 		await new Promise((r) => setTimeout(r, 2));
 		const updated = repo.updateWorkflow(wf.id, {
-			steps: [{ id: 'x', order: 0, name: 'Plan', agentId: 'agent-planner' }],
+			steps: [{ id: 'new-step', name: 'Plan', agentId: 'agent-planner' }],
 		});
 		expect(updated?.updatedAt).toBeGreaterThan(before);
 	});
@@ -188,10 +242,25 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.steps).toHaveLength(2);
 
 		const updated = repo.updateWorkflow(wf.id, {
-			steps: [{ id: 'ignored', order: 0, name: 'Review', agentId: 'agent-general' }],
+			steps: [{ id: 'step-review', name: 'Review', agentId: 'agent-general' }],
 		});
 		expect(updated?.steps).toHaveLength(1);
 		expect(updated?.steps[0].agentId).toBe('agent-general');
+	});
+
+	test('updateWorkflow replaces transitions when provided', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			steps: [coderStep, plannerStep],
+			transitions: [{ from: coderStep.id!, to: plannerStep.id!, condition: { type: 'always' } }],
+		});
+		expect(wf.transitions).toHaveLength(1);
+
+		const updated = repo.updateWorkflow(wf.id, {
+			transitions: [],
+		});
+		expect(updated?.transitions).toHaveLength(0);
 	});
 
 	test('updateWorkflow returns null for missing id', () => {
@@ -208,6 +277,21 @@ describe('SpaceWorkflowRepository', () => {
 		expect(rows).toHaveLength(0);
 	});
 
+	test('deleteWorkflow removes transitions (CASCADE)', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			steps: [coderStep, plannerStep],
+			transitions: [{ from: coderStep.id!, to: plannerStep.id! }],
+		});
+		expect(repo.deleteWorkflow(wf.id)).toBe(true);
+
+		const rows = db
+			.prepare(`SELECT * FROM space_workflow_transitions WHERE workflow_id = ?`)
+			.all(wf.id);
+		expect(rows).toHaveLength(0);
+	});
+
 	test('deleteWorkflow returns false for missing id', () => {
 		expect(repo.deleteWorkflow('no-such-id')).toBe(false);
 	});
@@ -221,7 +305,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF With Agent',
-			steps: [{ name: 'Step', agentId: 'agent-1' }],
+			steps: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
 		});
 		const results = repo.getWorkflowsReferencingAgent('agent-1');
 		expect(results).toHaveLength(1);
@@ -241,33 +325,59 @@ describe('SpaceWorkflowRepository', () => {
 	// JSON round-trips
 	// -------------------------------------------------------------------------
 
-	test('JSON round-trip: entryGate and exitGate on steps', () => {
-		const entry: WorkflowGate = { type: 'human_approval', description: 'Please review' };
-		const exit: WorkflowGate = {
-			type: 'quality_check',
-			command: 'bun test',
-			timeoutMs: 60000,
-			maxRetries: 2,
-		};
-		const step: WorkflowStepInput = {
-			name: 'Code',
-			agentId: 'agent-coder',
-			entryGate: entry,
-			exitGate: exit,
-			instructions: 'Write clean code',
-		};
-
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'Gated', steps: [step] });
+	test('JSON round-trip: condition with expression', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Condition WF',
+			steps: [coderStep, plannerStep],
+			transitions: [
+				{
+					from: coderStep.id!,
+					to: plannerStep.id!,
+					condition: {
+						type: 'condition',
+						expression: 'bun test',
+						timeoutMs: 30000,
+						maxRetries: 2,
+					},
+				},
+			],
+		});
 		const fetched = repo.getWorkflow(wf.id)!;
-		const s = fetched.steps[0];
+		const t = fetched.transitions[0];
+		expect(t.condition?.type).toBe('condition');
+		expect(t.condition?.expression).toBe('bun test');
+		expect(t.condition?.timeoutMs).toBe(30000);
+		expect(t.condition?.maxRetries).toBe(2);
+	});
 
-		expect(s.entryGate?.type).toBe('human_approval');
-		expect(s.entryGate?.description).toBe('Please review');
-		expect(s.exitGate?.type).toBe('quality_check');
-		expect(s.exitGate?.command).toBe('bun test');
-		expect(s.exitGate?.timeoutMs).toBe(60000);
-		expect(s.exitGate?.maxRetries).toBe(2);
-		expect(s.instructions).toBe('Write clean code');
+	test('JSON round-trip: human condition', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Human WF',
+			steps: [coderStep, plannerStep],
+			transitions: [
+				{
+					from: coderStep.id!,
+					to: plannerStep.id!,
+					condition: { type: 'human', description: 'Please review' },
+				},
+			],
+		});
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.transitions[0].condition?.type).toBe('human');
+		expect(fetched.transitions[0].condition?.description).toBe('Please review');
+	});
+
+	test('JSON round-trip: transition with no condition (unconditional)', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'No Cond WF',
+			steps: [coderStep, plannerStep],
+			transitions: [{ from: coderStep.id!, to: plannerStep.id! }],
+		});
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.transitions[0].condition).toBeUndefined();
 	});
 
 	test('JSON round-trip: rules with appliesTo', () => {
@@ -291,7 +401,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			steps: [{ name: 'Step', agentId: 'agent-99' }],
+			steps: [{ id: 'step-99', name: 'Step', agentId: 'agent-99' }],
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
 		expect(fetched.steps[0].agentId).toBe('agent-99');
@@ -348,8 +458,12 @@ describe('SpaceWorkflowManager', () => {
 	test('createWorkflow allows same name in different spaces', () => {
 		seedSpace(db, 'space-2');
 		manager.createWorkflow({ spaceId: 'space-1', name: 'Same', steps: [coderStep] });
-		// Should not throw
-		const wf2 = manager.createWorkflow({ spaceId: 'space-2', name: 'Same', steps: [coderStep] });
+		// Use anonymous step (no fixed id) to avoid PK collision across spaces in the same DB
+		const wf2 = manager.createWorkflow({
+			spaceId: 'space-2',
+			name: 'Same',
+			steps: [{ name: 'Code', agentId: 'agent-coder' }],
+		});
 		expect(wf2.name).toBe('Same');
 	});
 
@@ -369,7 +483,6 @@ describe('SpaceWorkflowManager', () => {
 
 	test('name is trimmed before storage — whitespace variants collide', () => {
 		manager.createWorkflow({ spaceId: 'space-1', name: 'Foo', steps: [coderStep] });
-		// '  Foo  ' should trim to 'Foo' and fail uniqueness
 		expect(() =>
 			manager.createWorkflow({ spaceId: 'space-1', name: '  Foo  ', steps: [plannerStep] })
 		).toThrow(WorkflowValidationError);
@@ -475,7 +588,6 @@ describe('SpaceWorkflowManager', () => {
 	});
 
 	test('createWorkflow skips lookup when agentLookup is null', () => {
-		// Without agentLookup, any non-empty agentId is accepted
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No-Lookup WF',
@@ -489,340 +601,143 @@ describe('SpaceWorkflowManager', () => {
 		const lookup: SpaceAgentLookup = { getAgentById: () => null };
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
-			mgr.updateWorkflow(wf.id, { steps: [{ name: 'Step', agentId: 'non-existent' }] })
-		).toThrow(WorkflowValidationError);
-	});
-
-	// -------------------------------------------------------------------------
-	// Gate command validation — quality_check allowlist
-	// -------------------------------------------------------------------------
-
-	test('quality_check gate accepts allowlisted commands', () => {
-		const allowedCmds = ['bun test', 'npm test', 'npm run lint', 'bun run check', 'make test'];
-		for (const cmd of allowedCmds) {
-			const wf = manager.createWorkflow({
-				spaceId: 'space-1',
-				name: `QC-${cmd}`,
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check', command: cmd },
-					},
-				],
-			});
-			expect(wf.steps[0].exitGate?.command).toBe(cmd);
-		}
-	});
-
-	test('quality_check gate rejects non-allowlisted command', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad QC',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check', command: 'rm -rf /' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('quality_check gate rejects missing command', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'No Cmd QC',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('quality_check gate rejects shell injection via semicolon', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Inject Semi',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check', command: 'bun test; rm -rf /' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('quality_check gate rejects shell injection via &&', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Inject And',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check', command: 'bun test && curl http://evil.example' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('quality_check gate rejects shell injection via $()', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Inject Sub',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check', command: 'bun test $(cat /etc/passwd)' },
-					},
-				],
+			mgr.updateWorkflow(wf.id, {
+				steps: [{ id: 'step-x', name: 'Step', agentId: 'non-existent' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
 
 	// -------------------------------------------------------------------------
-	// Gate command validation — custom relative path
+	// Transition validation
 	// -------------------------------------------------------------------------
 
-	test('custom gate accepts valid relative path', () => {
+	test('createWorkflow accepts valid transitions referencing step IDs', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
-			name: 'Custom Gate WF',
-			steps: [
+			name: 'Trans WF',
+			steps: [coderStep, plannerStep],
+			transitions: [{ from: coderStep.id!, to: plannerStep.id!, condition: { type: 'always' } }],
+		});
+		expect(wf.transitions).toHaveLength(1);
+	});
+
+	test('createWorkflow rejects transition with empty from', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Trans',
+				steps: [coderStep, plannerStep],
+				transitions: [{ from: '', to: plannerStep.id! }],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects transition with empty to', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Trans2',
+				steps: [coderStep, plannerStep],
+				transitions: [{ from: coderStep.id!, to: '' }],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects transition referencing non-existent from step', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Trans From',
+				steps: [coderStep, plannerStep],
+				transitions: [{ from: 'no-such-step', to: plannerStep.id! }],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects transition referencing non-existent to step', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Trans To',
+				steps: [coderStep, plannerStep],
+				transitions: [{ from: coderStep.id!, to: 'no-such-step' }],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	// -------------------------------------------------------------------------
+	// Condition validation
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow rejects condition type with empty expression', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Empty Expr',
+				steps: [coderStep, plannerStep],
+				transitions: [
+					{
+						from: coderStep.id!,
+						to: plannerStep.id!,
+						condition: { type: 'condition', expression: '' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow accepts condition type with non-empty expression', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Good Expr',
+			steps: [coderStep, plannerStep],
+			transitions: [
 				{
-					name: 'Step',
-					agentId: 'agent-coder',
-					exitGate: { type: 'custom', command: './scripts/verify.sh' },
+					from: coderStep.id!,
+					to: plannerStep.id!,
+					condition: { type: 'condition', expression: 'bun test' },
 				},
 			],
 		});
-		expect(wf.steps[0].exitGate?.command).toBe('./scripts/verify.sh');
+		expect(wf.transitions[0].condition?.expression).toBe('bun test');
 	});
 
-	test('custom gate rejects absolute path', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Abs Path',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: '/etc/passwd' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects path with .. traversal', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Traversal',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: './scripts/../../../etc/passwd' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects command without ./ prefix', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'No Dot Slash',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: 'scripts/verify.sh' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects missing command', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'No Cmd Custom',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects shell injection via semicolon', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Custom Inject Semi',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: './scripts/verify.sh; rm -rf /' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects shell injection via pipe', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Custom Inject Pipe',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: './scripts/verify.sh | cat /etc/passwd' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects shell injection via backtick', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Custom Inject Backtick',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: './scripts/verify.sh `whoami`' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('quality_check gate rejects newline injection', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'QC Newline Inject',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'quality_check', command: 'bun test\nrm -rf /' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('custom gate rejects newline injection', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Custom Newline Inject',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'custom', command: './scripts/verify.sh\nrm -rf /' },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	// -------------------------------------------------------------------------
-	// Gate timeoutMs validation
-	// -------------------------------------------------------------------------
-
-	test('gate accepts timeoutMs = 0', () => {
+	test('createWorkflow accepts any expression (no allowlist)', () => {
+		// No allowlist — any expression is accepted at storage time
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
-			name: 'Zero Timeout',
-			steps: [
+			name: 'Any Expr',
+			steps: [coderStep, plannerStep],
+			transitions: [
 				{
-					name: 'Step',
-					agentId: 'agent-coder',
-					exitGate: { type: 'human_approval', timeoutMs: 0 },
+					from: coderStep.id!,
+					to: plannerStep.id!,
+					condition: { type: 'condition', expression: 'rm -rf /tmp' },
 				},
 			],
 		});
-		expect(wf.steps[0].exitGate?.timeoutMs).toBe(0);
+		expect(wf.transitions[0].condition?.expression).toBe('rm -rf /tmp');
 	});
 
-	test('gate accepts timeoutMs = 300000', () => {
+	test('createWorkflow accepts human condition without expression', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
-			name: 'Max Timeout',
-			steps: [
+			name: 'Human WF',
+			steps: [coderStep, plannerStep],
+			transitions: [
 				{
-					name: 'Step',
-					agentId: 'agent-coder',
-					exitGate: { type: 'human_approval', timeoutMs: 300_000 },
+					from: coderStep.id!,
+					to: plannerStep.id!,
+					condition: { type: 'human', description: 'Please review' },
 				},
 			],
 		});
-		expect(wf.steps[0].exitGate?.timeoutMs).toBe(300_000);
+		expect(wf.transitions[0].condition?.type).toBe('human');
 	});
 
-	test('gate rejects timeoutMs > 300000', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Over Timeout',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'human_approval', timeoutMs: 300_001 },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('gate rejects negative timeoutMs', () => {
-		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Neg Timeout',
-				steps: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder',
-						exitGate: { type: 'human_approval', timeoutMs: -1 },
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
+	// -------------------------------------------------------------------------
+	// Delete
+	// -------------------------------------------------------------------------
 
 	test('deleteWorkflow removes an existing workflow', () => {
 		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
@@ -835,21 +750,18 @@ describe('SpaceWorkflowManager', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Step ordering
+	// Steps stored in insertion order
 	// -------------------------------------------------------------------------
 
-	test('steps are stored and retrieved in array order', () => {
+	test('steps are stored and retrieved in insertion order', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Ordered',
 			steps: [plannerStep, coderStep, generalStep],
 		});
 		expect(wf.steps[0].name).toBe('Plan');
-		expect(wf.steps[0].order).toBe(0);
 		expect(wf.steps[1].name).toBe('Code');
-		expect(wf.steps[1].order).toBe(1);
 		expect(wf.steps[2].name).toBe('Review');
-		expect(wf.steps[2].order).toBe(2);
 	});
 
 	// -------------------------------------------------------------------------
@@ -861,7 +773,7 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Uses Alpha',
-			steps: [{ name: 'Step', agentId: 'agent-1' }],
+			steps: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
 		});
 		manager.createWorkflow({
 			spaceId: 'space-1',

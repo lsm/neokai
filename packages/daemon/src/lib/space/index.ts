@@ -22,20 +22,17 @@ export {
 	WorkflowExecutor,
 	WorkflowGateError,
 } from './runtime/workflow-executor';
-export type { GateContext, GateResult, CommandRunner } from './runtime/workflow-executor';
-export {
-	GATE_QUALITY_CHECK_ALLOWLIST,
-	DEFAULT_GATE_TIMEOUT_MS,
-	MAX_GATE_TIMEOUT_MS,
-} from './runtime/gate-allowlist';
+export type { ConditionContext, ConditionResult, CommandRunner } from './runtime/workflow-executor';
 
 // Types — re-exported from @neokai/shared for convenience
 export type {
 	SpaceWorkflow,
 	WorkflowStep,
 	WorkflowRule,
-	WorkflowGate,
-	WorkflowGateType,
+	WorkflowCondition,
+	WorkflowConditionType,
+	WorkflowTransition,
+	WorkflowTransitionInput,
 	WorkflowStepInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,

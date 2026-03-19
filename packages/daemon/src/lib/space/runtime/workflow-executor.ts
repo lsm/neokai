@@ -1,74 +1,68 @@
 /**
  * WorkflowExecutor
  *
- * Manages workflow run progression within a Space.  It advances a
- * SpaceWorkflowRun through its ordered steps, evaluating entry/exit gates
- * at each boundary and creating SpaceTask DB records for each new step.
+ * Manages workflow run progression within a Space using a directed graph model.
+ * Steps are nodes; transitions are edges with optional conditions.
  *
  * Responsibilities:
- * - Step navigation (getCurrentStep, getNextStep, isComplete)
- * - Gate evaluation with security enforcement (allowlist, path traversal)
- * - Timeout enforcement on shell-executing gates
- * - Retry logic: re-evaluate gate only (NOT re-run agent)
- * - Persisting step index on SpaceWorkflowRun after advance
- * - Creating SpaceTask records (pending only) — does NOT spawn sessions
+ * - Graph navigation (getCurrentStep, getOutgoingTransitions, isComplete)
+ * - Condition evaluation for transitions (always, human, condition)
+ * - Timeout enforcement on condition-type transitions
+ * - Retry logic: re-evaluate condition only (NOT re-run agent)
+ * - Persisting currentStepId on SpaceWorkflowRun after advance
+ * - Creating SpaceTask DB records (pending only) — does NOT spawn sessions
+ *
+ * advance() evaluates outgoing transitions from the current step in ascending
+ * order and follows the first one whose condition passes. A step with no
+ * outgoing transitions is terminal — calling advance() on it marks the run
+ * as 'completed' and returns the terminal step with an empty tasks list.
  */
 
 import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	SpaceTask,
-	WorkflowGate,
+	WorkflowCondition,
+	WorkflowTransition,
 	WorkflowStep,
 } from '@neokai/shared';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import {
-	GATE_QUALITY_CHECK_ALLOWLIST,
-	DEFAULT_GATE_TIMEOUT_MS,
-	MAX_GATE_TIMEOUT_MS,
-} from './gate-allowlist';
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
 /**
- * Context passed to gate evaluation.
- * Holds external state that non-automated gates may need to check.
+ * Context passed to condition evaluation.
  */
-export interface GateContext {
-	/** Absolute path to the workspace (cwd for shell-executing gates) */
+export interface ConditionContext {
+	/** Absolute path to the workspace (cwd for condition-type expressions) */
 	workspacePath: string;
 	/**
 	 * Whether a human has explicitly approved advancement.
 	 * Set externally (e.g. via RPC) into run.config.humanApproved before retry.
 	 */
 	humanApproved?: boolean;
-	/**
-	 * Whether a PR review has been approved.
-	 * Set externally into run.config.prApproved before retry.
-	 */
-	prApproved?: boolean;
 }
 
-/** Result of a single gate evaluation attempt */
-export interface GateResult {
-	/** Whether the gate passed */
+/** Result of a single condition evaluation attempt */
+export interface ConditionResult {
+	/** Whether the condition passed */
 	passed: boolean;
-	/** Human-readable explanation when the gate did not pass */
+	/** Human-readable explanation when the condition did not pass */
 	reason?: string;
 }
 
 /**
- * Error thrown by advance() when a gate fails after all retries.
+ * Error thrown by advance() when a transition condition fails after all retries.
  * The run's status will already be set to 'needs_attention' when this is thrown.
  */
 export class WorkflowGateError extends Error {
 	constructor(
 		message: string,
-		/** Which gate position failed: 'exit' (current step) or 'entry' (next step) */
-		public readonly gatePosition: 'exit' | 'entry'
+		/** Always 'transition' in the graph model */
+		public readonly gatePosition: 'transition'
 	) {
 		super(message);
 		this.name = 'WorkflowGateError';
@@ -80,7 +74,7 @@ export class WorkflowGateError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Injectable command runner for quality_check and custom gates.
+ * Injectable command runner for condition-type transitions.
  * The default uses Bun.spawn; tests inject a mock to avoid real subprocess calls.
  */
 export type CommandRunner = (
@@ -90,54 +84,11 @@ export type CommandRunner = (
 ) => Promise<{ exitCode: number | null; timedOut?: boolean; stderr?: string }>;
 
 // ---------------------------------------------------------------------------
-// Shell security helpers (re-applied at execution time for defence-in-depth)
+// Default timeout constants
 // ---------------------------------------------------------------------------
 
-/**
- * Shell metacharacters that are never allowed in gate commands, regardless of
- * allowlist.  Mirrors the validation in SpaceWorkflowManager — we re-check at
- * execution time so that stored values cannot be exploited even if the storage
- * validation is somehow bypassed.
- */
-const SHELL_METACHAR_RE = /[;&|`$<>\\\n\r]/;
-
-/**
- * Returns true only when `command` exactly matches an allowlisted entry.
- *
- * Exact matching (not prefix) prevents callers from appending arbitrary
- * arguments to an allowlisted command (e.g. `bun test /etc/shadow` must not
- * pass even though it starts with the allowlisted `bun test`).
- */
-function isAllowlistedCommand(command: string): boolean {
-	const trimmed = command.trim();
-	if (SHELL_METACHAR_RE.test(trimmed)) return false;
-	const lower = trimmed.toLowerCase();
-	return GATE_QUALITY_CHECK_ALLOWLIST.some((allowed) => lower === allowed.toLowerCase());
-}
-
-interface PathValidation {
-	valid: boolean;
-	reason?: string;
-}
-
-function validateCustomPath(command: string): PathValidation {
-	const trimmed = command.trim();
-
-	if (SHELL_METACHAR_RE.test(trimmed)) {
-		return { valid: false, reason: 'command contains shell metacharacters or control characters' };
-	}
-	if (trimmed.startsWith('/')) {
-		return { valid: false, reason: 'command must be a relative path, not absolute' };
-	}
-	const parts = trimmed.split('/');
-	if (parts.some((p) => p === '..')) {
-		return { valid: false, reason: "command must not contain '..' path traversal" };
-	}
-	if (!trimmed.startsWith('./')) {
-		return { valid: false, reason: "command must start with './' (relative to workspace root)" };
-	}
-	return { valid: true };
-}
+const DEFAULT_CONDITION_TIMEOUT_MS = 60_000;
+const MAX_CONDITION_TIMEOUT_MS = 300_000;
 
 // ---------------------------------------------------------------------------
 // Default command runner (real Bun.spawn)
@@ -146,11 +97,10 @@ function validateCustomPath(command: string): PathValidation {
 const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
 	const proc = Bun.spawn(args, {
 		cwd,
-		// stdout is ignored — only the exit code matters for gate evaluation.
+		// stdout is ignored — only the exit code matters for condition evaluation.
 		// stderr is piped so we can capture it for failure diagnostics.
-		// IMPORTANT: we must drain stderr before awaiting proc.exited, otherwise
-		// a process that writes more than ~64KB to stderr will fill the OS pipe
-		// buffer and block indefinitely (deadlock).
+		// IMPORTANT: drain stderr concurrently with proc.exited to prevent pipe deadlock
+		// when the process writes more than ~64KB to stderr.
 		stdout: 'ignore',
 		stderr: 'pipe',
 	});
@@ -165,8 +115,6 @@ const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
 		}, timeoutMs);
 	}
 
-	// Drain stderr and wait for exit concurrently.  Both must complete before
-	// we inspect the exit code.  The concurrent drain prevents pipe deadlock.
 	const [stderr] = await Promise.all([
 		new Response(proc.stderr).text().catch(() => ''),
 		proc.exited,
@@ -199,69 +147,77 @@ export class WorkflowExecutor {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Returns the step currently being executed (at run.currentStepIndex), or
-	 * null if the run has advanced past all steps (i.e. the workflow is complete).
+	 * Returns the step currently being executed, or null if the run has completed
+	 * or been cancelled.
 	 */
 	getCurrentStep(): WorkflowStep | null {
-		const sorted = this.getSortedSteps();
-		return sorted[this.run.currentStepIndex] ?? null;
+		if (this.run.status === 'completed' || this.run.status === 'cancelled') {
+			return null;
+		}
+		return this.workflow.steps.find((s) => s.id === this.run.currentStepId) ?? null;
 	}
 
 	/**
-	 * Returns the next step (at currentStepIndex + 1), or null if the current
-	 * step is the last one.
+	 * Returns all outgoing transitions from the current step, sorted ascending by order.
 	 */
-	getNextStep(): WorkflowStep | null {
-		const sorted = this.getSortedSteps();
-		return sorted[this.run.currentStepIndex + 1] ?? null;
+	getOutgoingTransitions(): WorkflowTransition[] {
+		return this.workflow.transitions
+			.filter((t) => t.from === this.run.currentStepId)
+			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 	}
 
 	/**
-	 * Returns true when all steps have been executed (or the run is in a
-	 * terminal status that prevents further advancement).
+	 * Returns true when the run has reached a terminal state.
+	 * A run becomes terminal when:
+	 * - status is 'completed' or 'cancelled' (set by advance() or external cancellation)
 	 */
 	isComplete(): boolean {
-		if (this.run.status === 'completed' || this.run.status === 'cancelled') {
-			return true;
-		}
-		return this.run.currentStepIndex >= this.getSortedSteps().length;
+		return this.run.status === 'completed' || this.run.status === 'cancelled';
 	}
 
 	// -------------------------------------------------------------------------
-	// Gate checks (single evaluation, no retry)
+	// Condition checks (single evaluation, no retry)
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Evaluates the exit gate of the current step.
-	 * Returns `{ allowed: true }` when no exit gate is defined (auto-advance).
+	 * Evaluates a single condition against the given context.
+	 * Does NOT apply retries — call evaluateConditionWithRetry for retry semantics.
+	 *
+	 * Condition types:
+	 *   always    — always passes
+	 *   human     — passes when context.humanApproved is true
+	 *   condition — runs the expression as a shell command; passes on exit code 0
 	 */
-	async canAdvance(): Promise<{ allowed: boolean; reason?: string }> {
-		const step = this.getCurrentStep();
-		if (!step) {
-			return { allowed: false, reason: 'No current step — workflow may already be complete' };
+	async evaluateCondition(
+		condition: WorkflowCondition,
+		context: ConditionContext
+	): Promise<ConditionResult> {
+		switch (condition.type) {
+			case 'always':
+				return { passed: true };
+
+			case 'human':
+				if (context.humanApproved) {
+					return { passed: true };
+				}
+				return { passed: false, reason: 'Waiting for human approval' };
+
+			case 'condition': {
+				if (!condition.expression || !condition.expression.trim()) {
+					return { passed: false, reason: 'condition type requires a non-empty expression' };
+				}
+				return this.runConditionExpression(
+					condition.expression,
+					context.workspacePath,
+					condition.timeoutMs
+				);
+			}
+
+			default: {
+				const _exhaustive: never = condition.type;
+				return { passed: false, reason: `Unknown condition type: ${_exhaustive}` };
+			}
 		}
-		if (!step.exitGate) return { allowed: true };
-
-		const result = await this.evaluateGate(step.exitGate, this.getGateContext());
-		return { allowed: result.passed, reason: result.reason };
-	}
-
-	/**
-	 * Evaluates the entry gate of the step at `stepIndex`.
-	 * Called by advance() before entering the next step, and by SpaceRuntime
-	 * before starting the first step (index 0).
-	 * Returns `{ allowed: true }` when no entry gate is defined.
-	 */
-	async canEnterStep(stepIndex: number): Promise<{ allowed: boolean; reason?: string }> {
-		const sorted = this.getSortedSteps();
-		const step = sorted[stepIndex];
-		if (!step) {
-			return { allowed: false, reason: `No step at index ${stepIndex}` };
-		}
-		if (!step.entryGate) return { allowed: true };
-
-		const result = await this.evaluateGate(step.entryGate, this.getGateContext());
-		return { allowed: result.passed, reason: result.reason };
 	}
 
 	// -------------------------------------------------------------------------
@@ -269,18 +225,17 @@ export class WorkflowExecutor {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Advances the workflow run to the next step.
+	 * Advances the workflow run along a matching outgoing transition.
 	 *
 	 * Flow:
-	 *   1. Evaluate exit gate of current step (with retry up to gate.maxRetries)
-	 *   2. Evaluate entry gate of the next step (with retry)
-	 *   3. Persist the new currentStepIndex on SpaceWorkflowRun
-	 *   4. Create SpaceTask DB records (pending status) for the next step
+	 *   1. Guard: throw if run is complete or needs_attention
+	 *   2. Get outgoing transitions from current step (sorted by order)
+	 *   3. If no transitions → mark run completed, return { step: current, tasks: [] }
+	 *   4. Evaluate each transition's condition (with retry) until one passes
+	 *   5. Persist currentStepId pointing to the transition's target step
+	 *   6. Create a pending SpaceTask for the target step
 	 *
-	 * When the current step is the last step and the exit gate passes, the run is
-	 * marked as 'completed' and an empty tasks array is returned.
-	 *
-	 * If a gate fails after all retries the run status is set to 'needs_attention'
+	 * If no transition's condition passes, the run is set to 'needs_attention'
 	 * and a WorkflowGateError is thrown.
 	 *
 	 * Does NOT spawn session groups — that is SpaceRuntime's responsibility.
@@ -290,11 +245,11 @@ export class WorkflowExecutor {
 			throw new Error('Cannot advance: workflow run is already complete');
 		}
 
-		// A gate failure sets status to needs_attention; require explicit external
+		// A condition failure sets status to needs_attention; require explicit external
 		// reset (e.g. updating run.config with the approval flag) before retrying.
 		if (this.run.status === 'needs_attention') {
 			throw new Error(
-				'Cannot advance: run status is needs_attention — resolve the gate failure and reset status before retrying'
+				'Cannot advance: run status is needs_attention — resolve the condition failure and reset status before retrying'
 			);
 		}
 
@@ -303,136 +258,101 @@ export class WorkflowExecutor {
 			throw new Error('Cannot advance: no current step');
 		}
 
-		// --- 1. Evaluate exit gate of current step ---
-		if (current.exitGate) {
-			const exitResult = await this.evaluateGateWithRetry(current.exitGate, this.getGateContext());
-			if (!exitResult.passed) {
-				this.markNeedsAttention();
-				throw new WorkflowGateError(
-					`Exit gate failed for step "${current.name}": ${exitResult.reason ?? 'gate evaluation failed'}`,
-					'exit'
-				);
-			}
-		}
+		const transitions = this.getOutgoingTransitions();
 
-		const nextIndex = this.run.currentStepIndex + 1;
-		const sorted = this.getSortedSteps();
-		const next = sorted[nextIndex];
-
-		// --- No next step → mark run completed ---
-		if (!next) {
-			const updated = this.workflowRunRepo.updateRun(this.run.id, {
-				currentStepIndex: nextIndex,
-				status: 'completed',
-			});
+		// No outgoing transitions → terminal step → mark run completed
+		if (transitions.length === 0) {
+			const updated = this.workflowRunRepo.updateRun(this.run.id, { status: 'completed' });
 			if (updated) this.run = updated;
 			return { step: current, tasks: [] };
 		}
 
-		// --- 2. Evaluate entry gate of next step ---
-		if (next.entryGate) {
-			const entryResult = await this.evaluateGateWithRetry(next.entryGate, this.getGateContext());
-			if (!entryResult.passed) {
-				await this.markNeedsAttention();
-				throw new WorkflowGateError(
-					`Entry gate failed for step "${next.name}": ${entryResult.reason ?? 'gate evaluation failed'}`,
-					'entry'
-				);
+		// Evaluate transitions in order, follow first matching one
+		const context = this.getConditionContext();
+		let lastReason: string | undefined;
+
+		for (const transition of transitions) {
+			const condition = transition.condition;
+
+			// No condition or 'always' → unconditionally follow this transition
+			if (!condition || condition.type === 'always') {
+				return this.followTransition(transition);
 			}
+
+			const result = await this.evaluateConditionWithRetry(condition, context);
+			if (result.passed) {
+				return this.followTransition(transition);
+			}
+
+			lastReason = result.reason;
+
+			// Blocking condition failed after retries → needs_attention
+			this.markNeedsAttention();
+			throw new WorkflowGateError(
+				`Transition condition failed from step "${current.name}": ${lastReason ?? 'condition evaluation failed'}`,
+				'transition'
+			);
 		}
 
-		// --- 3. Persist new step index ---
-		const updatedRun = this.workflowRunRepo.updateStepIndex(this.run.id, nextIndex);
-		if (!updatedRun) throw new Error('Failed to persist step index update');
-		this.run = updatedRun;
-
-		// --- 4. Create SpaceTask records for next step ---
-		const task = await this.taskManager.createTask({
-			title: next.name,
-			description: next.instructions ?? '',
-			workflowRunId: this.run.id,
-			workflowStepId: next.id,
-			customAgentId: next.agentId,
-			status: 'pending',
-		});
-
-		return { step: next, tasks: [task] };
-	}
-
-	// -------------------------------------------------------------------------
-	// Gate evaluation (public — callable by SpaceRuntime for one-off checks)
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Evaluates a single gate against the given context.
-	 * Does NOT apply retries — call evaluateGateWithRetry for retry semantics.
-	 *
-	 * Gate types:
-	 *   auto           — always passes
-	 *   human_approval — passes when context.humanApproved is true
-	 *   quality_check  — runs an allowlisted command; passes on exit code 0
-	 *   pr_review      — passes when context.prApproved is true
-	 *   custom         — runs a validated relative-path script; passes on exit code 0
-	 */
-	async evaluateGate(gate: WorkflowGate, context: GateContext): Promise<GateResult> {
-		switch (gate.type) {
-			case 'auto':
-				return { passed: true };
-
-			case 'human_approval':
-				if (context.humanApproved) {
-					return { passed: true };
-				}
-				return { passed: false, reason: 'Waiting for human approval' };
-
-			case 'pr_review':
-				if (context.prApproved) {
-					return { passed: true };
-				}
-				return { passed: false, reason: 'Waiting for PR review approval' };
-
-			case 'quality_check':
-				return this.runQualityCheck(gate, context);
-
-			case 'custom':
-				return this.runCustomScript(gate, context);
-
-			default: {
-				const _exhaustive: never = gate.type;
-				return { passed: false, reason: `Unknown gate type: ${_exhaustive}` };
-			}
-		}
+		// All transitions evaluated but none passed (shouldn't reach here given the loop structure,
+		// but guard against it for type safety)
+		this.markNeedsAttention();
+		throw new WorkflowGateError(
+			`No matching transition from step "${current.name}": ${lastReason ?? 'no condition passed'}`,
+			'transition'
+		);
 	}
 
 	// -------------------------------------------------------------------------
 	// Private helpers
 	// -------------------------------------------------------------------------
 
-	/** Returns steps sorted ascending by their order field. */
-	private getSortedSteps(): WorkflowStep[] {
-		return [...this.workflow.steps].sort((a, b) => a.order - b.order);
-	}
-
-	/** Builds a GateContext from the current run's config and workspacePath. */
-	private getGateContext(): GateContext {
+	/** Builds a ConditionContext from the current run's config and workspacePath. */
+	private getConditionContext(): ConditionContext {
 		const config = (this.run.config ?? {}) as Record<string, unknown>;
 		return {
 			workspacePath: this.workspacePath,
 			humanApproved: config.humanApproved === true,
-			prApproved: config.prApproved === true,
 		};
 	}
 
-	/** Evaluates a gate with retry semantics as specified by gate.maxRetries. */
-	private async evaluateGateWithRetry(
-		gate: WorkflowGate,
-		context: GateContext
-	): Promise<GateResult> {
-		const maxAttempts = 1 + (gate.maxRetries ?? 0);
-		let lastResult: GateResult = { passed: false, reason: 'Gate never evaluated' };
+	/** Follows a transition: updates currentStepId and creates a SpaceTask for the target step. */
+	private async followTransition(
+		transition: WorkflowTransition
+	): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }> {
+		const nextStep = this.workflow.steps.find((s) => s.id === transition.to);
+		if (!nextStep) {
+			throw new Error(`Target step "${transition.to}" not found in workflow "${this.workflow.id}"`);
+		}
+
+		// Persist new currentStepId
+		const updatedRun = this.workflowRunRepo.updateCurrentStep(this.run.id, nextStep.id);
+		if (!updatedRun) throw new Error('Failed to persist step ID update');
+		this.run = updatedRun;
+
+		// Create a pending SpaceTask for the new step
+		const task = await this.taskManager.createTask({
+			title: nextStep.name,
+			description: nextStep.instructions ?? '',
+			workflowRunId: this.run.id,
+			workflowStepId: nextStep.id,
+			customAgentId: nextStep.agentId,
+			status: 'pending',
+		});
+
+		return { step: nextStep, tasks: [task] };
+	}
+
+	/** Evaluates a condition with retry semantics as specified by condition.maxRetries. */
+	private async evaluateConditionWithRetry(
+		condition: WorkflowCondition,
+		context: ConditionContext
+	): Promise<ConditionResult> {
+		const maxAttempts = 1 + (condition.maxRetries ?? 0);
+		let lastResult: ConditionResult = { passed: false, reason: 'Condition never evaluated' };
 
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
-			lastResult = await this.evaluateGate(gate, context);
+			lastResult = await this.evaluateCondition(condition, context);
 			if (lastResult.passed) return lastResult;
 		}
 
@@ -445,49 +365,14 @@ export class WorkflowExecutor {
 		if (updated) this.run = updated;
 	}
 
-	/** Executes a quality_check gate command. */
-	private async runQualityCheck(gate: WorkflowGate, context: GateContext): Promise<GateResult> {
-		if (!gate.command || !gate.command.trim()) {
-			return { passed: false, reason: 'quality_check gate has no command' };
-		}
-
-		// Security: re-validate at execution time
-		if (!isAllowlistedCommand(gate.command)) {
-			return {
-				passed: false,
-				reason: `Command "${gate.command}" is not in the quality_check allowlist`,
-			};
-		}
-
-		return this.spawnGateCommand(gate.command, context.workspacePath, gate.timeoutMs);
-	}
-
-	/** Executes a custom gate script. */
-	private async runCustomScript(gate: WorkflowGate, context: GateContext): Promise<GateResult> {
-		if (!gate.command || !gate.command.trim()) {
-			return { passed: false, reason: 'custom gate has no command' };
-		}
-
-		// Security: re-validate path at execution time
-		const pathCheck = validateCustomPath(gate.command);
-		if (!pathCheck.valid) {
-			return { passed: false, reason: `Invalid custom gate command: ${pathCheck.reason}` };
-		}
-
-		return this.spawnGateCommand(gate.command, context.workspacePath, gate.timeoutMs);
-	}
-
-	/**
-	 * Spawns a gate command and returns whether it exited with code 0.
-	 * Enforces timeout (default 60 s, max 300 s).
-	 */
-	private async spawnGateCommand(
-		command: string,
+	/** Executes a condition expression and returns whether it exited with code 0. */
+	private async runConditionExpression(
+		expression: string,
 		cwd: string,
 		timeoutMs?: number
-	): Promise<GateResult> {
+	): Promise<ConditionResult> {
 		const effectiveTimeout = resolveTimeout(timeoutMs);
-		const args = command.trim().split(/\s+/);
+		const args = expression.trim().split(/\s+/);
 
 		let result: { exitCode: number | null; timedOut?: boolean; stderr?: string };
 		try {
@@ -495,20 +380,19 @@ export class WorkflowExecutor {
 		} catch (err) {
 			return {
 				passed: false,
-				reason: `Command execution error: ${(err as Error).message}`,
+				reason: `Expression execution error: ${(err as Error).message}`,
 			};
 		}
 
 		if (result.timedOut) {
-			return { passed: false, reason: `Gate command timed out after ${effectiveTimeout}ms` };
+			return { passed: false, reason: `Expression timed out after ${effectiveTimeout}ms` };
 		}
 
 		if (result.exitCode !== 0) {
-			// Include the last 500 chars of stderr to make failures actionable.
 			const stderrSnippet = result.stderr?.trim() ? `: ${result.stderr.slice(-500).trim()}` : '';
 			return {
 				passed: false,
-				reason: `Command exited with code ${result.exitCode ?? 'null'}${stderrSnippet}`,
+				reason: `Expression exited with code ${result.exitCode ?? 'null'}${stderrSnippet}`,
 			};
 		}
 
@@ -520,8 +404,8 @@ export class WorkflowExecutor {
 // Module-level helpers
 // ---------------------------------------------------------------------------
 
-/** Clamps/resolves the gate timeout to the valid range. */
+/** Clamps/resolves the condition timeout to the valid range. */
 function resolveTimeout(timeoutMs?: number): number {
-	if (!timeoutMs || timeoutMs <= 0) return DEFAULT_GATE_TIMEOUT_MS;
-	return Math.min(timeoutMs, MAX_GATE_TIMEOUT_MS);
+	if (!timeoutMs || timeoutMs <= 0) return DEFAULT_CONDITION_TIMEOUT_MS;
+	return Math.min(timeoutMs, MAX_CONDITION_TIMEOUT_MS);
 }
