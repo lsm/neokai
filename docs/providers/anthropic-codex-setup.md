@@ -106,14 +106,14 @@ Choose one of the authentication methods above:
 #### Option A: Using OPENAI_API_KEY
 
 ```bash
-# Add to ~/.env or export in shell
+# Add to .env or export in shell
 OPENAI_API_KEY=sk-your-openai-key
 ```
 
 #### Option B: Using CODEX_API_KEY
 
 ```bash
-# Add to ~/.env or export in shell
+# Add to .env or export in shell
 CODEX_API_KEY=your-codex-key
 ```
 
