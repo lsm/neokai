@@ -18,14 +18,21 @@ export {
 	getBuiltInWorkflows,
 	seedBuiltInWorkflows,
 } from './workflows/built-in-workflows';
+export {
+	WorkflowExecutor,
+	WorkflowGateError,
+} from './runtime/workflow-executor';
+export type { ConditionContext, ConditionResult, CommandRunner } from './runtime/workflow-executor';
 
 // Types — re-exported from @neokai/shared for convenience
 export type {
 	SpaceWorkflow,
 	WorkflowStep,
 	WorkflowRule,
-	WorkflowGate,
-	WorkflowGateType,
+	WorkflowCondition,
+	WorkflowConditionType,
+	WorkflowTransition,
+	WorkflowTransitionInput,
 	WorkflowStepInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,

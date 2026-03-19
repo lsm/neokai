@@ -30,11 +30,28 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agents (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			role TEXT NOT NULL,
+			provider TEXT,
+			model TEXT,
+			instructions TEXT,
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflows (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
+			start_step_id TEXT,
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
@@ -58,6 +75,22 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			from_step_id TEXT NOT NULL,
+			to_step_id TEXT NOT NULL,
+			condition TEXT,
+			order_index INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
+			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_runs (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -65,6 +98,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			current_step_index INTEGER NOT NULL DEFAULT 0,
+			current_step_id TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
 				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
 			config TEXT,

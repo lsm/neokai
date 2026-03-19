@@ -92,21 +92,18 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.steps[1].agentId).toBe('coder');
 	});
 
-	test('planner step exit gate is human_approval', () => {
-		expect(CODING_WORKFLOW.steps[0].exitGate?.type).toBe('human_approval');
+	test('has one transition (planner → coder) with human condition', () => {
+		expect(CODING_WORKFLOW.transitions).toHaveLength(1);
+		expect(CODING_WORKFLOW.transitions[0].condition?.type).toBe('human');
 	});
 
-	test('coder step exit gate is pr_review', () => {
-		expect(CODING_WORKFLOW.steps[1].exitGate?.type).toBe('pr_review');
+	test('startStepId points to the planner step', () => {
+		const plannerStep = CODING_WORKFLOW.steps.find((s) => s.agentId === 'planner');
+		expect(CODING_WORKFLOW.startStepId).toBe(plannerStep?.id);
 	});
 
 	test('does not reference leader', () => {
 		expect(hasLeaderAgentId(CODING_WORKFLOW)).toBe(false);
-	});
-
-	test('steps have ascending order values', () => {
-		const orders = CODING_WORKFLOW.steps.map((s) => s.order);
-		expect(orders).toEqual([0, 1]);
 	});
 
 	test('template id and spaceId are empty (not space-specific)', () => {
@@ -128,21 +125,18 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.steps[1].agentId).toBe('general');
 	});
 
-	test('planner step exit gate is auto', () => {
-		expect(RESEARCH_WORKFLOW.steps[0].exitGate?.type).toBe('auto');
+	test('has one transition (planner → general) with always condition', () => {
+		expect(RESEARCH_WORKFLOW.transitions).toHaveLength(1);
+		expect(RESEARCH_WORKFLOW.transitions[0].condition?.type).toBe('always');
 	});
 
-	test('general step exit gate is auto', () => {
-		expect(RESEARCH_WORKFLOW.steps[1].exitGate?.type).toBe('auto');
+	test('startStepId points to the planner step', () => {
+		const plannerStep = RESEARCH_WORKFLOW.steps.find((s) => s.agentId === 'planner');
+		expect(RESEARCH_WORKFLOW.startStepId).toBe(plannerStep?.id);
 	});
 
 	test('does not reference leader', () => {
 		expect(hasLeaderAgentId(RESEARCH_WORKFLOW)).toBe(false);
-	});
-
-	test('steps have ascending order values', () => {
-		const orders = RESEARCH_WORKFLOW.steps.map((s) => s.order);
-		expect(orders).toEqual([0, 1]);
 	});
 
 	test('template id and spaceId are empty (not space-specific)', () => {
@@ -160,16 +154,16 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 		expect(REVIEW_ONLY_WORKFLOW.steps[0].agentId).toBe('coder');
 	});
 
-	test('coder step exit gate is pr_review', () => {
-		expect(REVIEW_ONLY_WORKFLOW.steps[0].exitGate?.type).toBe('pr_review');
+	test('has no transitions (terminal step — run completes immediately on advance)', () => {
+		expect(REVIEW_ONLY_WORKFLOW.transitions).toHaveLength(0);
+	});
+
+	test('startStepId points to the coder step', () => {
+		expect(REVIEW_ONLY_WORKFLOW.startStepId).toBe(REVIEW_ONLY_WORKFLOW.steps[0].id);
 	});
 
 	test('does not reference leader', () => {
 		expect(hasLeaderAgentId(REVIEW_ONLY_WORKFLOW)).toBe(false);
-	});
-
-	test('step order is 0', () => {
-		expect(REVIEW_ONLY_WORKFLOW.steps[0].order).toBe(0);
 	});
 
 	test('template id and spaceId are empty (not space-specific)', () => {
@@ -268,13 +262,13 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('seeds all three built-in templates for an empty space', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
 		expect(workflows).toHaveLength(3);
 	});
 
 	test('seeded workflow names match all three templates', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
@@ -282,7 +276,7 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('CODING_WORKFLOW seeded correctly — planner + coder steps with real agent IDs', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.steps).toHaveLength(2);
@@ -290,50 +284,50 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.steps[1].agentId).toBe(CODER_ID);
 	});
 
-	test('CODING_WORKFLOW seeded with human_approval + pr_review gates', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+	test('CODING_WORKFLOW seeded with human condition on planner→coder transition', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		expect(wf!.steps[0].exitGate?.type).toBe('human_approval');
-		expect(wf!.steps[1].exitGate?.type).toBe('pr_review');
+		expect(wf!.transitions).toHaveLength(1);
+		expect(wf!.transitions[0].condition?.type).toBe('human');
 	});
 
-	test('RESEARCH_WORKFLOW seeded correctly — planner + general with auto gates', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+	test('RESEARCH_WORKFLOW seeded correctly — planner + general with always transition', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.steps).toHaveLength(2);
 		expect(wf!.steps[0].agentId).toBe(PLANNER_ID);
 		expect(wf!.steps[1].agentId).toBe(GENERAL_ID);
-		expect(wf!.steps[0].exitGate?.type).toBe('auto');
-		expect(wf!.steps[1].exitGate?.type).toBe('auto');
+		expect(wf!.transitions).toHaveLength(1);
+		expect(wf!.transitions[0].condition?.type).toBe('always');
 	});
 
-	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step with pr_review gate', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step, no transitions', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.steps).toHaveLength(1);
 		expect(wf!.steps[0].agentId).toBe(CODER_ID);
-		expect(wf!.steps[0].exitGate?.type).toBe('pr_review');
+		expect(wf!.transitions).toHaveLength(0);
 	});
 
 	test('all seeded workflows have the real spaceId assigned', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
 			expect(wf.spaceId).toBe(SPACE_ID);
 		}
 	});
 
 	test('all seeded workflows have non-empty ids assigned', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
 			expect(wf.id).toBeTruthy();
 		}
 	});
 
 	test('is idempotent — second call does not create additional workflows', async () => {
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
 		expect(workflows).toHaveLength(3);
 	});
@@ -346,19 +340,19 @@ describe('seedBuiltInWorkflows()', () => {
 			steps: [{ name: 'Code', agentId: CODER_ID }],
 		});
 
-		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
 		const workflows = manager.listWorkflows(SPACE_ID);
 		expect(workflows).toHaveLength(1);
 		expect(workflows[0].name).toBe('My Custom Workflow');
 	});
 
-	test('throws if resolveAgentId returns undefined for a required role', async () => {
+	test('throws if resolveAgentId returns undefined for a required role', () => {
 		// Resolver that cannot resolve 'planner'
 		const brokenResolver = (role: string): string | undefined =>
 			role === 'planner' ? undefined : roleMap[role];
 
-		await expect(seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).rejects.toThrow(
+		expect(() => seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).toThrow(
 			"no SpaceAgent found for role 'planner'"
 		);
 	});
@@ -369,7 +363,7 @@ describe('seedBuiltInWorkflows()', () => {
 			role === 'planner' ? undefined : roleMap[role];
 
 		try {
-			await seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
+			seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
 		} catch {
 			// expected
 		}
@@ -384,7 +378,7 @@ describe('seedBuiltInWorkflows()', () => {
 			role === 'general' ? undefined : roleMap[role];
 
 		try {
-			await seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
+			seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
 		} catch {
 			// expected
 		}

@@ -46,7 +46,7 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(run.workflowId).toBe(WORKFLOW_ID);
 			expect(run.title).toBe('Run #1');
 			expect(run.status).toBe('pending');
-			expect(run.currentStepIndex).toBe(0);
+			expect(run.currentStepId).toBe('');
 			expect(run.config).toBeUndefined();
 			expect(run.completedAt).toBeUndefined();
 		});
@@ -120,11 +120,11 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
-	describe('updateStepIndex', () => {
-		it('updates the current step index', () => {
+	describe('updateCurrentStep', () => {
+		it('updates the current step ID', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
-			const updated = repo.updateStepIndex(run.id, 2);
-			expect(updated!.currentStepIndex).toBe(2);
+			const updated = repo.updateCurrentStep(run.id, 'step-abc');
+			expect(updated!.currentStepId).toBe('step-abc');
 		});
 	});
 

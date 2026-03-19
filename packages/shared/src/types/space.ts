@@ -253,8 +253,8 @@ export interface SpaceWorkflowRun {
 	title: string;
 	/** Optional description or goal for this run */
 	description?: string;
-	/** Zero-based index of the step currently being executed */
-	currentStepIndex: number;
+	/** ID of the step currently being executed */
+	currentStepId: string;
 	/** Current execution status */
 	status: WorkflowRunStatus;
 	/** Optional runtime configuration for this run */
@@ -275,6 +275,8 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
+	/** ID of the step to start execution from — should be set to workflow.startStepId */
+	currentStepId: string;
 }
 
 // ============================================================================
@@ -399,58 +401,71 @@ export interface UpdateSpaceAgentParams {
 // ============================================================================
 
 /**
- * The type of gate used at workflow step boundaries.
+ * Primitive condition type for workflow transitions.
  *
- * - `auto`: Gate passes automatically when the agent step finishes
- * - `human_approval`: Requires a human to explicitly approve before proceeding
- * - `quality_check`: Runs an allowlisted command and passes only on exit code 0
- * - `pr_review`: Waits for a GitHub PR review to approve before proceeding
- * - `custom`: Runs a custom script at a relative workspace path (must be allowlisted)
+ * - `always`: The transition fires unconditionally.
+ * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
+ * - `condition`: A user-supplied shell expression; the transition fires when it exits with code 0.
+ *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
  */
-export type WorkflowGateType = 'auto' | 'human_approval' | 'quality_check' | 'pr_review' | 'custom';
+export type WorkflowConditionType = 'always' | 'human' | 'condition';
 
 /**
- * A gate that controls whether a workflow step may start (entry gate) or
- * whether the workflow may advance to the next step (exit gate).
+ * A condition that guards a workflow transition.
+ * Conditions determine whether a transition may fire when advance() is called.
  */
-export interface WorkflowGate {
+export interface WorkflowCondition {
+	/** Condition type. */
+	type: WorkflowConditionType;
 	/**
-	 * Type of gate.
-	 * - 'auto': passes immediately
-	 * - 'human_approval': blocks until a human approves
-	 * - 'quality_check': runs an allowlisted shell command
-	 * - 'pr_review': waits for GitHub PR approval
-	 * - 'custom': runs a script at a relative workspace path
+	 * Shell expression to evaluate for the `condition` type.
+	 * The transition fires when the expression exits with code 0.
+	 * No allowlist is applied — users are responsible for the expression content.
 	 */
-	type: WorkflowGateType;
-	/**
-	 * Command or script to execute for 'quality_check' and 'custom' gate types.
-	 *
-	 * - For `quality_check`: must be an allowlisted command (e.g., 'bun test', 'npm run lint').
-	 *   Gate passes on exit code 0, fails on any non-zero exit.
-	 * - For `custom`: must be a path relative to the workspace root (e.g., './scripts/verify.sh').
-	 *   The script is resolved relative to the Space's workspacePath.
-	 */
-	command?: string;
-	/** Human-readable description of what this gate checks */
+	expression?: string;
+	/** Human-readable description of what this condition checks */
 	description?: string;
 	/**
-	 * Maximum number of times the gate evaluation is retried on failure.
-	 *
-	 * IMPORTANT: retries re-evaluate the gate only — they do NOT re-run the
-	 * agent step that preceded the gate. To re-run the step itself, the entire
-	 * workflow step must be retried at a higher level.
-	 *
+	 * Maximum number of times to retry condition evaluation on failure.
 	 * Defaults to 0 (no retries — fail immediately on first failure).
 	 */
 	maxRetries?: number;
-	/** Timeout for gate evaluation in milliseconds (0 = no timeout) */
+	/** Timeout for condition evaluation in milliseconds (0 = use default) */
 	timeoutMs?: number;
 }
 
 /**
- * A single step within a SpaceWorkflow.
- * Each step runs one agent and optionally has entry/exit gates.
+ * A directed edge in the workflow graph.
+ * Transitions connect steps and carry optional conditions that determine
+ * whether the edge may be followed during advance().
+ *
+ * advance() evaluates transitions from the current step in ascending `order`
+ * and follows the first one whose condition passes.
+ * A step with no outgoing transitions is a terminal step — advance() marks the
+ * run as 'completed' when reached.
+ */
+export interface WorkflowTransition {
+	/** Unique identifier */
+	id: string;
+	/** Source step ID */
+	from: string;
+	/** Target step ID */
+	to: string;
+	/** Optional condition guarding this transition. Absent = 'always' (unconditional). */
+	condition?: WorkflowCondition;
+	/** Sort order among transitions with the same `from` step. Lower = evaluated first. */
+	order?: number;
+}
+
+/**
+ * Input shape for a transition at creation time.
+ * `id` is backend-assigned.
+ */
+export type WorkflowTransitionInput = Omit<WorkflowTransition, 'id'>;
+
+/**
+ * A single node in the workflow graph.
+ * Each step runs one agent. Steps are connected by WorkflowTransitions.
  *
  * All agents are referenced by ID — there is no separate builtin/custom distinction.
  * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
@@ -463,20 +478,8 @@ export interface WorkflowStep {
 	name: string;
 	/** ID of the SpaceAgent assigned to execute this step */
 	agentId: string;
-	/**
-	 * Gate checked before this step begins execution.
-	 * If absent, the step starts automatically when the previous step's exit gate passes.
-	 */
-	entryGate?: WorkflowGate;
-	/**
-	 * Gate checked after this step's agent finishes.
-	 * If absent, the workflow advances to the next step automatically.
-	 */
-	exitGate?: WorkflowGate;
 	/** Step-specific instructions appended to the agent's system prompt */
 	instructions?: string;
-	/** Zero-based execution order within the workflow */
-	order: number;
 }
 
 /**
@@ -501,10 +504,17 @@ export interface WorkflowRule {
 
 /**
  * Input shape for a workflow step at creation time.
- * `id` and `order` are backend-assigned and must not be provided by callers.
- * The backend assigns `id` (UUID) and derives `order` from the array position.
+ * `id` is optional — if provided the backend uses it, otherwise a UUID is generated.
+ * Providing an explicit `id` allows transitions in the same CreateSpaceWorkflowParams
+ * call to reference the step before it has been persisted.
  */
-export type WorkflowStepInput = Omit<WorkflowStep, 'id' | 'order'>;
+export interface WorkflowStepInput {
+	/** Optional pre-assigned step ID. Generated by backend when omitted. */
+	id?: string;
+	name: string;
+	agentId: string;
+	instructions?: string;
+}
 
 /**
  * Input shape for a workflow rule at creation time.
@@ -514,7 +524,7 @@ export type WorkflowRuleInput = Omit<WorkflowRule, 'id'>;
 
 /**
  * A named, reusable workflow definition within a Space.
- * Workflows define an ordered sequence of agent steps with gates and rules.
+ * Workflows are directed graphs: steps are nodes, transitions are edges.
  * The SpaceRuntime executes workflows by creating SpaceWorkflowRun instances.
  */
 export interface SpaceWorkflow {
@@ -526,8 +536,12 @@ export interface SpaceWorkflow {
 	name: string;
 	/** Optional description of what this workflow accomplishes */
 	description?: string;
-	/** Ordered list of steps — executed in ascending `order` */
+	/** Nodes in the workflow graph */
 	steps: WorkflowStep[];
+	/** Directed edges in the workflow graph */
+	transitions: WorkflowTransition[];
+	/** ID of the step where execution begins */
+	startStepId: string;
 	/** Rules that govern agent behavior during this workflow */
 	rules: WorkflowRule[];
 	/**
@@ -554,10 +568,20 @@ export interface CreateSpaceWorkflowParams {
 	name: string;
 	description?: string;
 	/**
-	 * Steps in execution order. `id` and `order` are backend-assigned;
-	 * the array position determines execution order.
+	 * Step nodes. Steps may include an optional `id` field — if provided, the backend
+	 * uses it as the step's UUID so that `transitions` in the same call can reference it.
 	 */
 	steps?: WorkflowStepInput[];
+	/**
+	 * Directed edges connecting steps. `from` and `to` must reference step IDs
+	 * (either pre-assigned via `WorkflowStepInput.id` or backend-generated UUIDs).
+	 */
+	transitions?: WorkflowTransitionInput[];
+	/**
+	 * ID of the step where execution begins.
+	 * Defaults to the first step in the `steps` array when omitted.
+	 */
+	startStepId?: string;
 	/**
 	 * Rules governing agent behavior. `id` is backend-assigned.
 	 */
@@ -575,7 +599,7 @@ export interface CreateSpaceWorkflowParams {
  * Parameters for updating an existing SpaceWorkflow.
  * All fields are optional — only provided fields are updated.
  *
- * For array fields (`steps`, `rules`, `tags`):
+ * For array fields (`steps`, `transitions`, `rules`, `tags`):
  * - Pass a new array to replace the entire collection.
  * - Pass `null` to explicitly clear the field to an empty collection.
  * - Pass `[]` to clear all entries (equivalent to null for arrays).
@@ -585,9 +609,16 @@ export interface UpdateSpaceWorkflowParams {
 	description?: string | null;
 	/**
 	 * Replaces the entire step list. Pass `[]` or `null` to clear all steps.
-	 * The backend re-assigns `order` from the array position.
 	 */
 	steps?: WorkflowStep[] | null;
+	/**
+	 * Replaces the entire transition list. Pass `[]` or `null` to clear all transitions.
+	 */
+	transitions?: WorkflowTransitionInput[] | null;
+	/**
+	 * Updates the workflow entry point. Pass `null` to reset to first step.
+	 */
+	startStepId?: string | null;
 	/**
 	 * Replaces the entire rule list. Pass `[]` or `null` to clear all rules.
 	 */

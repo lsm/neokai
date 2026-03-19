@@ -4,7 +4,7 @@
  * Business logic layer for SpaceWorkflow operations within a Space.
  *
  * Responsibilities:
- * - Validate workflow integrity (unique name, step agent refs, gate security)
+ * - Validate workflow integrity (unique name, step agent refs, transition graph validity)
  * - Protect custom agents that are referenced by steps
  *
  * Workflow selection: either explicit workflowId provided by the caller, or
@@ -14,59 +14,13 @@
 
 import type {
 	SpaceWorkflow,
-	WorkflowGate,
+	WorkflowCondition,
 	WorkflowStepInput,
+	WorkflowTransitionInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/**
- * Allowlisted command prefixes for quality_check gates.
- * Commands must start with one of these prefixes to be accepted.
- *
- * Each entry ends with a space (or is already a full command word) so that
- * prefix matching cannot be satisfied by a command that merely *starts with*
- * the same letters (e.g., 'tsc-wrapper' must not match 'tsc ').
- */
-const QUALITY_CHECK_ALLOWLIST: readonly string[] = [
-	'bun test',
-	'bun run ',
-	'npm test',
-	'npm run ',
-	'npx ',
-	'yarn test',
-	'yarn run ',
-	'pnpm test',
-	'pnpm run ',
-	'make ',
-	'cargo test',
-	'cargo check',
-	'go test ',
-	'pytest ',
-	'python -m pytest',
-	'tsc ',
-	'biome ',
-	'eslint ',
-	'oxlint ',
-];
-
-/**
- * Shell metacharacters (and control characters) that are rejected in gate
- * commands regardless of gate type.  The gate executor is expected to invoke
- * commands directly without a shell, but we validate at storage time so that
- * stored commands are safe even if the execution path changes.
- *
- * Covers: ; & | ` $ < > \ and the newline/carriage-return control characters.
- */
-const SHELL_METACHAR_RE = /[;&|`$<>\\\n\r]/;
-
-/** Maximum allowed timeout for gate evaluation (ms) */
-const MAX_GATE_TIMEOUT_MS = 300_000;
 
 // ---------------------------------------------------------------------------
 // Dependency interfaces
@@ -109,7 +63,9 @@ export class SpaceWorkflowManager {
 	createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
 		const trimmedName = params.name.trim();
 		this.validateName(params.spaceId, trimmedName, null);
-		this.validateSteps(params.spaceId, params.steps ?? []);
+		const steps = params.steps ?? [];
+		this.validateSteps(params.spaceId, steps);
+		this.validateTransitions(steps, params.transitions ?? [], params.startStepId);
 		return this.repo.createWorkflow({ ...params, name: trimmedName });
 	}
 
@@ -139,17 +95,31 @@ export class SpaceWorkflowManager {
 			params = { ...params, name: trimmedName };
 		}
 		if (params.steps !== undefined) {
-			// UpdateSpaceWorkflowParams uses WorkflowStep[] (with id/order) — treat as inputs
 			const inputs: WorkflowStepInput[] = (params.steps ?? []).map(
 				(s): WorkflowStepInput => ({
+					id: s.id,
 					name: s.name,
 					agentId: s.agentId,
-					entryGate: s.entryGate,
-					exitGate: s.exitGate,
 					instructions: s.instructions,
 				})
 			);
 			this.validateSteps(existing.spaceId, inputs);
+			if (params.transitions !== undefined) {
+				this.validateTransitions(inputs, params.transitions ?? [], params.startStepId ?? null);
+			}
+		} else if (params.transitions !== undefined) {
+			// Validate transitions against existing steps
+			const existingStepInputs: WorkflowStepInput[] = existing.steps.map((s) => ({
+				id: s.id,
+				name: s.name,
+				agentId: s.agentId,
+				instructions: s.instructions,
+			}));
+			this.validateTransitions(
+				existingStepInputs,
+				params.transitions ?? [],
+				params.startStepId ?? null
+			);
 		}
 
 		return this.repo.updateWorkflow(id, params);
@@ -182,7 +152,6 @@ export class SpaceWorkflowManager {
 	// -------------------------------------------------------------------------
 
 	private validateName(spaceId: string, name: string, excludeId: string | null): void {
-		// name is already trimmed by callers (createWorkflow / updateWorkflow)
 		if (!name) {
 			throw new WorkflowValidationError('Workflow name must not be empty');
 		}
@@ -202,10 +171,7 @@ export class SpaceWorkflowManager {
 		}
 
 		for (let i = 0; i < steps.length; i++) {
-			const step = steps[i];
-			this.validateStepAgentRef(spaceId, step, i);
-			if (step.entryGate) this.validateGate(step.entryGate, `step[${i}].entryGate`);
-			if (step.exitGate) this.validateGate(step.exitGate, `step[${i}].exitGate`);
+			this.validateStepAgentRef(spaceId, steps[i], i);
 		}
 	}
 
@@ -225,80 +191,60 @@ export class SpaceWorkflowManager {
 		}
 	}
 
-	private validateGate(gate: WorkflowGate, location: string): void {
-		if (gate.timeoutMs !== undefined) {
-			if (gate.timeoutMs < 0 || gate.timeoutMs > MAX_GATE_TIMEOUT_MS) {
+	private validateTransitions(
+		steps: WorkflowStepInput[],
+		transitions: WorkflowTransitionInput[],
+		startStepId: string | null | undefined
+	): void {
+		const knownStepIds = new Set<string>(steps.filter((s) => s.id).map((s) => s.id as string));
+
+		// When transitions reference step IDs but some steps have no explicit id, we cannot
+		// validate the references at all — an invalid transition would only surface at runtime.
+		// Require all steps to have explicit IDs when transitions are provided.
+		if (transitions.length > 0 && knownStepIds.size < steps.length) {
+			throw new WorkflowValidationError(
+				'All steps must have explicit id values when transitions are specified'
+			);
+		}
+
+		for (let i = 0; i < transitions.length; i++) {
+			const t = transitions[i];
+			if (!t.from || !t.from.trim()) {
+				throw new WorkflowValidationError(`transition[${i}]: 'from' step ID must not be empty`);
+			}
+			if (!t.to || !t.to.trim()) {
+				throw new WorkflowValidationError(`transition[${i}]: 'to' step ID must not be empty`);
+			}
+			if (!knownStepIds.has(t.from)) {
 				throw new WorkflowValidationError(
-					`${location}: timeoutMs must be between 0 and ${MAX_GATE_TIMEOUT_MS}, got ${gate.timeoutMs}`
+					`transition[${i}]: 'from' step ID "${t.from}" does not match any step in this workflow`
 				);
+			}
+			if (!knownStepIds.has(t.to)) {
+				throw new WorkflowValidationError(
+					`transition[${i}]: 'to' step ID "${t.to}" does not match any step in this workflow`
+				);
+			}
+			if (t.condition) {
+				this.validateCondition(t.condition, `transition[${i}].condition`);
 			}
 		}
 
-		if (gate.type === 'quality_check') {
-			if (!gate.command || !gate.command.trim()) {
-				throw new WorkflowValidationError(`${location}: quality_check gate requires a command`);
-			}
-			if (!this.isAllowlistedCommand(gate.command)) {
-				throw new WorkflowValidationError(
-					`${location}: quality_check gate command "${gate.command}" is not in the allowlist. ` +
-						`Allowlisted prefixes: ${QUALITY_CHECK_ALLOWLIST.join(', ')}`
-				);
-			}
-		}
-
-		if (gate.type === 'custom') {
-			if (!gate.command || !gate.command.trim()) {
-				throw new WorkflowValidationError(
-					`${location}: custom gate requires a command (relative path to script)`
-				);
-			}
-			this.validateCustomGateCommand(gate.command, location);
+		// Validate startStepId if provided
+		if (startStepId && knownStepIds.size > 0 && !knownStepIds.has(startStepId)) {
+			throw new WorkflowValidationError(
+				`startStepId "${startStepId}" does not match any step in this workflow`
+			);
 		}
 	}
 
-	private isAllowlistedCommand(command: string): boolean {
-		const trimmed = command.trim().toLowerCase();
-		if (!QUALITY_CHECK_ALLOWLIST.some((prefix) => trimmed.startsWith(prefix.toLowerCase()))) {
-			return false;
-		}
-		if (SHELL_METACHAR_RE.test(command)) {
-			return false;
-		}
-		return true;
-	}
-
-	private validateCustomGateCommand(command: string, location: string): void {
-		const trimmed = command.trim();
-
-		// Reject shell metacharacters and control characters in the path.
-		if (SHELL_METACHAR_RE.test(trimmed)) {
-			throw new WorkflowValidationError(
-				`${location}: custom gate command must not contain shell metacharacters or control characters: "${trimmed}"`
-			);
-		}
-
-		// Must be a relative path (not absolute)
-		if (trimmed.startsWith('/')) {
-			throw new WorkflowValidationError(
-				`${location}: custom gate command must be a relative path, not absolute: "${trimmed}"`
-			);
-		}
-
-		// Must not contain '..' traversal
-		const parts = trimmed.split(/[/]/);
-		for (const part of parts) {
-			if (part === '..') {
+	private validateCondition(condition: WorkflowCondition, location: string): void {
+		if (condition.type === 'condition') {
+			if (!condition.expression || !condition.expression.trim()) {
 				throw new WorkflowValidationError(
-					`${location}: custom gate command must not contain '..' path traversal: "${trimmed}"`
+					`${location}: 'condition' type requires a non-empty expression`
 				);
 			}
-		}
-
-		// Should start with './' for clarity
-		if (!trimmed.startsWith('./')) {
-			throw new WorkflowValidationError(
-				`${location}: custom gate command must start with './' (relative to workspace root): "${trimmed}"`
-			);
 		}
 	}
 }
