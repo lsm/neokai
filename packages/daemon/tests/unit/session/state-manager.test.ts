@@ -266,6 +266,52 @@ describe('StateManager', () => {
 			expect(result).toHaveProperty('error');
 			expect(result).toHaveProperty('timestamp');
 		});
+
+		it('should prefer processingStateCache over ghost session in-memory state', async () => {
+			// Simulate a room leader/worker session where the SessionCache has a "ghost"
+			// (an AgentSession loaded from DB) with stale idle state. The live session
+			// in RoomRuntimeService has transitioned to waiting_for_input, which was
+			// propagated to processingStateCache via session.updated event.
+			const pendingQuestion = {
+				toolUseId: 'tool-use-123',
+				questions: [
+					{
+						question: 'Which approach?',
+						header: 'Architecture',
+						options: [{ label: 'Option A', description: 'First option' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+
+			// Ghost session loaded from DB has stale idle state
+			const ghostAgentSession = {
+				getSessionData: mock(() => ({ id: 'leader-session-id', title: 'Leader' })),
+				getProcessingState: mock(() => ({ status: 'idle' as const })),
+				getSlashCommands: mock(async () => []),
+				getContextInfo: mock(() => null),
+			};
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+				ghostAgentSession
+			);
+
+			// Simulate session.updated event from ProcessingStateManager populating the cache
+			const updateHandler = eventHandlers.get('session.updated');
+			await updateHandler!({
+				sessionId: 'leader-session-id',
+				processingState: { status: 'waiting_for_input', pendingQuestion },
+			});
+
+			// The state.session RPC should return cached waiting_for_input, not ghost's idle
+			const handler = requestHandlers.get(STATE_CHANNELS.SESSION);
+			const result = await handler!({ sessionId: 'leader-session-id' });
+
+			expect(result.agentState.status).toBe('waiting_for_input');
+			expect(result.agentState.pendingQuestion).toEqual(pendingQuestion);
+			// Confirm the ghost's getProcessingState was NOT used as the final value
+			expect(ghostAgentSession.getProcessingState).toHaveBeenCalledTimes(0);
+		});
 	});
 
 	describe('getSessionSnapshot', () => {
