@@ -17,6 +17,7 @@ import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
 import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
+import { SpaceManager } from './lib/space/managers/space-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -54,6 +55,8 @@ export interface DaemonAppContext {
 	liveQueries: LiveQueryEngine;
 	/** Space agent manager for Space multi-agent system */
 	spaceAgentManager: SpaceAgentManager;
+	/** Space manager for Space CRUD and workspace path validation */
+	spaceManager: SpaceManager;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -93,6 +96,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize Space agent manager
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
+
+	// Initialize Space manager
+	const spaceManager = new SpaceManager(db.getDatabase());
 
 	// Initialize authentication manager
 	const authManager = new AuthManager(db, config);
@@ -426,6 +432,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		reactiveDb,
 		liveQueries,
 		spaceAgentManager,
+		spaceManager,
 		cleanup,
 	};
 }

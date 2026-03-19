@@ -42,6 +42,13 @@ import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
 import { TaskManager } from '../room/managers/task-manager';
 import { setupDialogHandlers } from './dialog-handlers';
+// Space handlers
+import { setupSpaceHandlers } from './space-handlers';
+import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
+import { SpaceManager } from '../space/managers/space-manager';
+import { SpaceTaskManager } from '../space/managers/space-task-manager';
+import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -157,6 +164,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
+
+	// Space handlers
+	const spaceManager = new SpaceManager(deps.db.getDatabase());
+	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
+	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
+
+	setupSpaceHandlers(
+		deps.messageHub,
+		spaceManager,
+		spaceTaskRepo,
+		spaceWorkflowRunRepo,
+		deps.daemonHub
+	);
+
+	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
+		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
+	};
+
+	setupSpaceTaskHandlers(deps.messageHub, spaceManager, spaceTaskManagerFactory, deps.daemonHub);
 
 	// Return cleanup function to stop background services
 	return () => {

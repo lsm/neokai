@@ -402,6 +402,43 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		templateId: string;
 	};
 
+	// Space events (global events - use 'global' as sessionId)
+	'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.updated': {
+		sessionId: string;
+		spaceId: string;
+		space?: Partial<import('@neokai/shared').Space>;
+	};
+	'space.deleted': { sessionId: string; spaceId: string };
+
+	// Space task events (global events - use 'global' as sessionId)
+	'space.task.created': {
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+	};
+	'space.task.updated': {
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task?: Partial<import('@neokai/shared').SpaceTask>;
+	};
+
+	// Space workflow run events (global events - use 'global' as sessionId)
+	'space.workflowRun.created': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run: import('@neokai/shared').SpaceWorkflowRun;
+	};
+	'space.workflowRun.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+	};
+
 	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)
 	'featureFlag.updated': {
 		sessionId: string;
