@@ -76,11 +76,27 @@ This dual-mode approach means we need two rendering modes: `tray` (full interact
    - Keep the rose/pink color scheme for active options (selected state).
    - The submit/cancel buttons remain unchanged.
 5. Update `SDKAssistantMessage` → `ToolUseBlock` (`AskUserQuestion` branch):
-   - If `resolvedState` is not null: render `<QuestionPrompt mode='inline' ... />` (compact view in stream)
-   - If pending (active): do NOT render QuestionPrompt inline. Instead, the `ChatContainer` should detect the pending question and pass it to the ActionTray. Emit a signal or use a prop to communicate this to the parent.
-6. In `ChatContainer.tsx`, add logic:
-   - When `pendingQuestion` is non-null, wrap it in `<ActionTray label="Claude needs your input">` above the `MessageInput`.
-   - Pass all required QuestionPrompt props into the ActionTray content as `<QuestionPrompt mode='tray' ... />`.
+   - If `resolvedState` is not null: render `<QuestionPrompt mode='inline' ... />` (compact view in stream).
+   - If pending (active): do NOT render QuestionPrompt inline — render nothing (an empty fragment) for this tool block. The ActionTray in `ChatContainer` will display the active question (see step 6).
+   - Concretely, remove the `pendingQuestion` prop from `SDKAssistantMessage`'s interface — it is no longer needed there. The component receives `resolvedQuestions: Map<string, ResolvedQuestion>` to determine resolved state; for unresolved tool IDs it simply renders nothing.
+6. In `ChatContainer.tsx`, wire the ActionTray using the **existing `pendingQuestion` local variable** already computed at line ~396:
+   ```ts
+   const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
+   ```
+   This variable is derived from `agentState.status === 'waiting_for_input'` (which is the live session state from the `state.session` channel — no new signal needed). Add the following JSX between `<SessionStatusBar>` and `<MessageInput>`:
+   ```tsx
+   {pendingQuestion && (
+     <ActionTray label="Claude needs your input" onDismiss={undefined}>
+       <QuestionPrompt
+         mode="tray"
+         sessionId={sessionId}
+         pendingQuestion={pendingQuestion}
+         onResolved={handleQuestionResolved}
+       />
+     </ActionTray>
+   )}
+   ```
+   The `handleQuestionResolved` callback already exists in `ChatContainer` (currently passed to `SDKAssistantMessage` as `onQuestionResolved`). Reuse it.
 7. Run `bun run typecheck`, `bun run lint`.
 
 **Acceptance criteria:**

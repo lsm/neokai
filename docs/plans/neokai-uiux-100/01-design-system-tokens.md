@@ -17,22 +17,22 @@ Establish a complete, coherent design token system that all subsequent milestone
 **Agent type:** coder
 
 **Description:**
-The current `styles.css` only defines 7 `--color-dark-*` variables and one blue RGB triplet. We need a complete CSS custom property vocabulary covering: colors, border-radius, shadows, and transition durations. This will be referenced by Tailwind's `@theme` directive and by component-level inline styles where Tailwind classes cannot reach.
+The current `styles.css` defines `--color-dark-*` variables, `--color-dark-850-rgb`, `--color-dark-800-rgb`, and one blue RGB triplet inside an `@theme {}` block. We need to extend this with a complete CSS custom property vocabulary covering: semantic colors, border-radius, and transition durations. Because the project uses Tailwind v4 (via `@import "tailwindcss"` with an `@theme {}` block), any variable added to `@theme` automatically creates a corresponding Tailwind utility class. This will be referenced by Tailwind utilities and by component-level inline styles where Tailwind classes cannot reach.
 
 **Subtasks (in order):**
-1. Open `packages/web/src/styles.css` and identify all existing `@theme` variables.
+1. Open `packages/web/src/styles.css` and read all existing `@theme` variables. Note that `--color-dark-800-rgb: 31 31 35` and `--color-dark-850-rgb: 24 24 27` are already present — do NOT re-add them.
 2. Add the following new custom properties inside the existing `@theme {}` block:
    - Accent color: `--color-accent: 99 102 241` (indigo-500) and `--color-accent-hover: 79 70 229` (indigo-600)
    - Surface colors: `--color-surface-0: var(--color-dark-950)`, `--color-surface-1: var(--color-dark-900)`, `--color-surface-2: var(--color-dark-800)`
    - Text scale: `--color-text-primary: 243 244 246`, `--color-text-secondary: 156 163 175`, `--color-text-muted: 107 114 128`
    - Border: `--color-border-default: 42 42 48`, `--color-border-subtle: 58 58 66`
    - Status: success (`34 197 94`), warning (`251 191 36`), error (`239 68 68`), info (`99 102 241`)
-3. Add transition duration tokens below the theme block as CSS variables on `:root`:
-   - `--duration-instant: 0ms`
+   - **Transition duration (Tailwind v4 utility registration):** `--duration-250: 250ms` — this registers the `duration-250` Tailwind utility class (built-in Tailwind only provides 75, 100, 150, 200, 300, 500, 700, 1000; 250ms is missing and must be explicitly registered). Also add `--duration-instant: 0ms` and `--duration-deliberate: 400ms` for completeness (150ms and 300ms already exist as built-ins).
+3. Add semantic duration aliases as CSS variables on `:root` (these are for use in raw CSS rules, not Tailwind classes):
    - `--duration-quick: 150ms`
    - `--duration-smooth: 250ms`
    - `--duration-deliberate: 400ms`
-4. Add a single `--radius-base: 8px` and `--radius-lg: 12px` and `--radius-xl: 20px` (for message bubbles).
+4. Add a single `--radius-base: 8px` and `--radius-lg: 12px` and `--radius-xl: 20px` (for message bubbles) — add inside `@theme {}` so they register as Tailwind utilities.
 5. Verify the file still passes the Biome format check: `bun run format:check`.
 
 **Acceptance criteria:**
@@ -65,7 +65,7 @@ The file `packages/web/src/lib/design-tokens.ts` currently exports four separate
    - `tokens.color.status` = `{ success: 'text-green-400', warning: 'text-amber-400', error: 'text-red-400', info: 'text-indigo-400' }`
 4. Under `tokens.spacing`, add the standard chat container max-width: `tokens.spacing.chatMaxWidth = 'max-w-4xl'`.
 5. Under `tokens.radius`, consolidate the existing `borderRadius` entries plus add `tokens.radius.panel = 'rounded-xl'`.
-6. Under `tokens.transition`, add: `tokens.transition.quick = 'transition-all duration-150 ease-out'`, `tokens.transition.smooth = 'transition-all duration-250 ease-out'`.
+6. Under `tokens.transition`, add: `tokens.transition.quick = 'transition-all duration-150 ease-out'`, `tokens.transition.smooth = 'transition-all duration-250 ease-out'`. The `duration-250` class is valid here because Task 1.1 registers `--duration-250: 250ms` in the `@theme` block.
 7. Keep all existing named exports (`messageSpacing`, `borderRadius`, `messageColors`, `customColors`, `borderColors`) pointing to their corresponding new locations — do NOT remove them, only re-export from the new structure. This prevents any component breakage.
 8. Export `tokens` as the default export and as a named export.
 9. Run `bun run typecheck` and `bun run lint` to verify no type errors or lint issues.
@@ -92,7 +92,7 @@ The current `styles.css` prose styles use a mix of hardcoded hex colors and `rgb
 **Subtasks (in order):**
 1. Read `packages/web/src/styles.css` to understand the current prose and scrollbar rules.
 2. Update `.prose p` to use `line-height: 1.7` (slightly tighter, more precise).
-3. Update `.prose code` background and color to reference the new CSS variables: `background: rgb(var(--color-dark-800-rgb))`.
+3. Update `.prose code` background and color to reference the existing CSS variable: `background: rgb(var(--color-dark-800-rgb))`. Note: `--color-dark-800-rgb: 31 31 35` is already defined in `styles.css` (present since the initial codebase — not added by Task 1.1). No addition is needed; this subtask only updates the prose rule to consume it.
 4. Update `::-webkit-scrollbar-track` to use `rgb(var(--color-dark-950))` (currently uses dark-900, making it slightly lighter than the body — fix this visual inconsistency).
 5. Update `::-webkit-scrollbar-thumb` to use `rgb(var(--color-dark-600))` (currently uses dark-700, making it barely visible on dark-900 tracks).
 6. Add a `.text-balance` utility class using `text-wrap: balance` with a fallback comment.

@@ -87,31 +87,38 @@ The Room page (`Room.tsx`) currently uses a manual tab bar implemented with five
 
 ---
 
-## Task 6.3 — Room Dashboard Card Layout
+## Task 6.3 — Room Dashboard Visual Upgrade
 
 **Agent type:** coder
 
 **Description:**
-`RoomDashboard.tsx` renders the Room overview tab. It shows session list, task list, and agent status for the room. The current implementation likely uses a flat list or basic grid. This task ensures the overview uses a clear card-based layout consistent with the design system.
+`RoomDashboard.tsx` renders the Room overview tab. Reading the actual file reveals the current implementation:
+- Outer layout: `<div class="p-4 space-y-6">` (flat vertical stack, no grid)
+- Runtime state section: `bg-dark-850 border border-dark-700 rounded-lg px-4 py-3` with inline `<button>` elements (raw strings, not `Button` component) for Pause/Resume/Stop/Start
+- Model indicator row: `bg-dark-800 rounded-md` with leader/worker model display, plus a raw archive `<button>`
+- Tasks section: delegates to `<RoomTasks>` component
+- Sessions section: delegates to `<RoomSessions>` component
+- Four `<ConfirmModal>` instances (pause, stop, approve, archive)
+
+This task upgrades the layout and components to match the design system without changing any logic.
 
 **Subtasks (in order):**
-1. Read `packages/web/src/components/room/RoomDashboard.tsx`.
-2. Ensure the dashboard uses a two-column grid on medium screens (`grid grid-cols-1 md:grid-cols-2 gap-4`).
-3. Each section (Sessions, Tasks, Agents) should be a card: `bg-dark-800 border border-dark-700 rounded-xl p-4`.
-4. Section headings within each card: `text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3`.
-5. For the Sessions list, ensure each session item shows: session title (truncated), workspace path (truncated, text-gray-500 text-xs), and last-active time (right-aligned, text-gray-500 text-xs).
-6. For the Tasks list, ensure each task shows: task status badge, task title (truncated).
-   - Status badge styles: `px-1.5 py-0.5 rounded text-xs font-medium` with colors from `tokens.color.status`.
-7. Empty state for each section: `py-8 text-center text-sm text-gray-500` with a relevant icon.
+1. Read `packages/web/src/components/room/RoomDashboard.tsx` in full (already reviewed — proceed with changes).
+2. **Layout**: Change the outer wrapper from `p-4 space-y-6` to `p-4 grid grid-cols-1 md:grid-cols-2 gap-4`. The runtime controls section and model section span both columns via `md:col-span-2`; the Tasks and Sessions sections each occupy one column on medium+ screens.
+3. **Runtime state card**: Upgrade `bg-dark-850 border border-dark-700 rounded-lg` to `bg-dark-800 border border-dark-700 rounded-xl`. Replace the four raw `<button>` elements (Pause/Resume/Stop/Start) with `<Button variant='ghost' size='sm'>` from the component library, retaining all existing `onClick`, `disabled`, and color-intent props. Replace the `RuntimeStateIndicator` component's `rounded-full` with `rounded-sm` to match the new component language (still same color logic).
+4. **Model indicator row**: Wrap it in a `bg-dark-800 border border-dark-700 rounded-xl px-4 py-3` card (same card style as runtime). Replace the raw archive `<button>` with `<Button variant='ghost' size='sm' danger>Archive</Button>`.
+5. **Section headings**: Change both `<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">` (Tasks and Sessions) to `text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2` — aligning with the design system label style.
+6. **Wrap sub-component sections in cards**: Wrap the Tasks `<div class="space-y-2">` and Sessions `<div class="space-y-2">` in `<div class="bg-dark-800 border border-dark-700 rounded-xl p-4">` cards. The heading and `<RoomTasks>` / `<RoomSessions>` live inside each card.
+7. **ConfirmModal dialogs**: No visual changes needed — they already use `ConfirmModal` from the component library. Verify they still open correctly after the layout changes.
 8. Run `bun run typecheck` and `bun run lint`.
 
 **Acceptance criteria:**
 - `bun run typecheck` and `bun run lint` pass
-- Dashboard uses two-column grid on medium+ screens
-- Each section is a card with `rounded-xl bg-dark-800`
-- Section headings are small-caps labels
-- Status badges use token colors
-- Empty states are present for all sections
+- Dashboard uses two-column grid on medium+ screens; runtime + model sections span full width
+- Runtime state and model indicator use `rounded-xl bg-dark-800` card style (not `rounded-lg bg-dark-850`)
+- Pause/Resume/Stop/Start/Archive buttons use `Button` component (not raw `<button>`)
+- Section headings use small-caps token style
+- Tasks and Sessions wrapped in cards
 
 **Depends on:** Task 6.2
 
