@@ -77,7 +77,7 @@ Create the `WorkflowExecutor` class that manages workflow run progression within
    - Retry logic (re-evaluate condition, not re-run step)
    - Human approval consumed and cleared after use (no stale re-use in cycles)
    - Completion detection (terminal step with no outgoing transitions)
-   - Error handling (`WorkflowGateError` thrown when all transitions fail)
+   - Error handling (`WorkflowTransitionError` thrown when all transitions fail)
 
 **Acceptance criteria:**
 - `WorkflowExecutor` advances workflow runs through step sequences via directed graph transitions
@@ -168,7 +168,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
 - Standalone tasks work without a workflow
 - Executors rehydrated on startup, cleaned up on completion
 - `advance()` creates `SpaceTask` DB records only; tick loop handles group spawning
-- No `seedDefaultWorkflow` — workflow selection uses explicit workflowId or AI auto-select only
+- No auto-seeding of default workflows — `seedBuiltInWorkflows()` (Task 3.4) seeds built-in templates as user-selectable options, not as automatic defaults. Workflow selection uses explicit workflowId or AI auto-select only.
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define the workflow types, repository, manager, RPC handlers, and built-in templates for custom workflows within Spaces. A workflow defines a sequence of agent steps with runtime gates between them and configurable rules. All code lives in the Space namespace — no existing Room code is modified.
+Define the workflow types, repository, manager, RPC handlers, and built-in templates for custom workflows within Spaces. A workflow defines a directed graph of agent steps connected by transitions with optional conditions and configurable rules. All code lives in the Space namespace — no existing Room code is modified.
 
 ## Isolation Checklist
 
@@ -17,7 +17,7 @@ Define the workflow types, repository, manager, RPC handlers, and built-in templ
 
 ## Scope
 
-- Workflow shared types (gates, steps, rules) in `space.ts`
+- Workflow shared types (transitions, conditions, steps, rules) in `space.ts`
 - `SpaceWorkflowRepository` and `SpaceWorkflowManager`
 - RPC handlers for workflow CRUD (`spaceWorkflow.*`)
 - DaemonEventMap registration (`spaceWorkflow.created/updated/deleted`)
@@ -41,32 +41,38 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
 1. Add the following types to `packages/shared/src/types/space.ts`:
 
    ```typescript
-   /** Gate type — runtime checkpoints between workflow steps */
-   type WorkflowGateType =
-     | 'auto'           // Automatically proceed
-     | 'human_approval' // Pause for human approval
-     | 'quality_check'  // Run automated checks from allowlist
-     | 'pr_review'      // PR review gate
-     | 'custom';        // Custom workspace-scoped script
+   /** Condition type for a workflow transition */
+   type WorkflowConditionType = 'always' | 'human' | 'condition';
 
-   /** A gate between workflow steps */
-   interface WorkflowGate {
-     type: WorkflowGateType;
+   /**
+    * A condition that guards a workflow transition.
+    * Conditions determine whether a transition may fire when advance() is called.
+    */
+   interface WorkflowCondition {
+     type: WorkflowConditionType;
      /**
-      * For quality_check: must be an allowlisted command (e.g., 'bun run check').
-      * For custom: relative path to script within workspace (no '..', no absolute paths).
-      * See 00-overview.md "Gate Security Model".
+      * Shell expression to evaluate for the `condition` type.
+      * The transition fires when the expression exits with code 0.
       */
-     command?: string;
+     expression?: string;
      description?: string;
-     /**
-      * Max retries before escalating (0 = no retry).
-      * Retry re-evaluates the gate only, does NOT re-run the agent step.
-      * After retries exhausted, gate fails and task → 'needs_attention'.
-      */
+     /** Max retries on failure (0 = no retry). Retry re-evaluates condition only, NOT re-run agent. */
      maxRetries?: number;
-     /** Timeout in ms for gate command. Default: 60000. Max: 300000. */
+     /** Timeout for condition evaluation in ms (0 = use default 60000ms, max 300000ms) */
      timeoutMs?: number;
+   }
+
+   /**
+    * A directed edge in the workflow graph.
+    * Transitions connect steps and carry optional conditions.
+    */
+   interface WorkflowTransition {
+     id: string;
+     from: string;
+     to: string;
+     condition?: WorkflowCondition;
+     /** Sort order among transitions with the same `from` step. Lower = evaluated first. */
+     order?: number;
    }
 
    /** A single step in a workflow */
@@ -74,16 +80,12 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      id: string;
      name: string;
      /**
-      * Which agent executes this step.
-      * - builtin: 'planner', 'coder', 'general' (NOT 'leader' — Leader is implicit)
-      * - custom: a SpaceAgent ID
+      * ID of the SpaceAgent assigned to execute this step.
+      * Preset agents (coder, general, planner, reviewer) are seeded at Space creation time
+      * as regular SpaceAgent records with well-known role labels.
       */
-     agentRef: string;
-     agentRefType: 'builtin' | 'custom';
-     entryGate?: WorkflowGate | null;
-     exitGate?: WorkflowGate | null;
+     agentId: string;
      instructions?: string;
-     order: number;
    }
 
    /** Rule injected into agent prompts */
@@ -105,6 +107,7 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      name: string;
      description: string;
      steps: WorkflowStep[];
+     transitions: WorkflowTransition[];
      rules: WorkflowRule[];
      /**
       * @deprecated Not used for workflow selection. Workflow selection uses only
@@ -122,6 +125,7 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      name: string;
      description?: string;
      steps: Omit<WorkflowStep, 'id'>[];
+     transitions?: Omit<WorkflowTransition, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
      /** Organizational tags (not used for automatic selection). */
      tags?: string[];
@@ -132,7 +136,8 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      name?: string;
      description?: string;
      steps?: Omit<WorkflowStep, 'id'>[];
-     rules?: Omit<WorkflowRule, 'id'>[];
+     transitions?: Omit<WorkflowTransition, 'id'>[] | null;
+     rules?: Omit<WorkflowRule, 'id'>[] | null;
      /** Replaces the tag list. Pass `[]` or `null` to clear. Organizational only. */
      tags?: string[] | null;
      config?: Record<string, unknown>;
@@ -170,7 +175,7 @@ Build the data access and business logic layers for workflows within Spaces. The
    - `deleteWorkflow(id: string): boolean`
    - `getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[]` — finds workflows referencing a custom agent (used for deletion protection in `SpaceAgentManager`)
    - Handle step CRUD within workflow transactions (replace all steps on update)
-   - JSON serialization for `rules`, `entry_gate`, `exit_gate`
+   - JSON serialization for `rules` and `transitions`
    - `rowToWorkflow()` and `rowToStep()` mapping functions
    - **No `getDefaultWorkflow`/`setDefaultWorkflow`** — workflow selection uses only explicit workflowId or AI auto-select.
 
@@ -180,7 +185,7 @@ Build the data access and business logic layers for workflows within Spaces. The
      - Step agent references valid: builtin must be `'planner'|'coder'|'general'` (NOT `'leader'`); custom must reference existing `SpaceAgent` in same space (query `SpaceAgentManager`)
      - At least one step required
      - Step order contiguous (0, 1, 2, ...)
-     - Gate command validation: `quality_check` → allowlist only; `custom` → relative path, no `..`; `timeoutMs` within range 0–300000
+     - Condition validation: `condition` type requires non-empty `expression`; `timeoutMs` within range 0–300000
    - Business logic: workflow selection is either explicit workflowId (caller-provided) or AI auto-select via `list_workflows` + `start_workflow_run`. No default workflow concept, no `isDefault` flag.
 
 3. Export from `packages/daemon/src/lib/space/index.ts`
@@ -190,13 +195,13 @@ Build the data access and business logic layers for workflows within Spaces. The
    - Step ordering validation
    - Agent reference validation (builtin + custom via `SpaceAgentManager`)
    - Rejection of 'leader' as builtin agent ref
-   - Gate command validation (allowlist, path validation)
-   - JSON round-trip for gates and rules
+   - Condition validation (expression required, timeoutMs range)
+   - JSON round-trip for transitions and rules
    - `getWorkflowsReferencingAgent` returns correct results
 
 **Acceptance criteria:**
 - Repository handles CRUD with proper step management using `space_workflows`/`space_workflow_steps` tables
-- Manager validates workflow integrity including gate security
+- Manager validates workflow integrity including transition/condition validation
 - Agent reference validation queries `SpaceAgentManager` (NOT a nonexistent `CustomAgentManager`)
 - No `isDefault` flag on `SpaceWorkflow` — workflow selection is explicit workflowId or AI auto-select only
 - All files in Space namespace — nothing in `packages/daemon/src/lib/room/`
@@ -261,11 +266,11 @@ Create built-in workflow templates that serve as examples. All files in Space na
 **Subtasks:**
 
 1. Create `packages/daemon/src/lib/space/workflows/built-in-workflows.ts`:
-   - `CODING_WORKFLOW`: Planner → Coder (with `human_approval` exit gate on Planner, `pr_review` exit gate on Coder) — mirrors current multi-agent behavior. Leader is implicit per group, not a step.
-   - `RESEARCH_WORKFLOW`: Planner → General (with `auto` gates)
-   - `REVIEW_ONLY_WORKFLOW`: Coder (single step, `pr_review` exit gate, no planning)
+   - `CODING_WORKFLOW`: Planner → Coder (with `human` condition on Planner→Coder transition) — mirrors current multi-agent behavior. Leader is implicit per group, not a step.
+   - `RESEARCH_WORKFLOW`: Planner → General (with `always` conditions)
+   - `REVIEW_ONLY_WORKFLOW`: Coder (single terminal step, no outgoing transitions)
 
-2. Each template includes appropriate gates with only allowlisted commands
+2. Each template includes appropriate transition conditions
 
 3. `getBuiltInWorkflows(): SpaceWorkflow[]` — returns templates without space-specific IDs (no `isDefault` flag, no seeding logic)
 

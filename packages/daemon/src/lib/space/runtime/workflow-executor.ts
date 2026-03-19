@@ -58,10 +58,10 @@ export interface ConditionResult {
  * Error thrown by advance() when all outgoing transition conditions fail after retries.
  * The run's status will already be set to 'needs_attention' when this is thrown.
  */
-export class WorkflowGateError extends Error {
+export class WorkflowTransitionError extends Error {
 	constructor(message: string) {
 		super(message);
-		this.name = 'WorkflowGateError';
+		this.name = 'WorkflowTransitionError';
 	}
 }
 
@@ -232,7 +232,7 @@ export class WorkflowExecutor {
 	 *   6. Create a pending SpaceTask for the target step
 	 *
 	 * If no transition's condition passes, the run is set to 'needs_attention'
-	 * and a WorkflowGateError is thrown.
+	 * and a WorkflowTransitionError is thrown.
 	 *
 	 * Does NOT spawn session groups — that is SpaceRuntime's responsibility.
 	 */
@@ -266,7 +266,7 @@ export class WorkflowExecutor {
 		// Evaluate transitions in order; follow the first one whose condition passes.
 		// A failing condition does NOT stop evaluation — the next transition is tried.
 		// Only when every transition has been evaluated and none passed is the run marked
-		// needs_attention and a WorkflowGateError thrown.
+		// needs_attention and a WorkflowTransitionError thrown.
 		const context = this.getConditionContext();
 		let lastReason: string | undefined;
 
@@ -296,7 +296,7 @@ export class WorkflowExecutor {
 
 		// All transitions evaluated; none passed → needs_attention
 		this.markNeedsAttention();
-		throw new WorkflowGateError(
+		throw new WorkflowTransitionError(
 			`No matching transition from step "${current.name}": ${lastReason ?? 'no condition passed'}`
 		);
 	}

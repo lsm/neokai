@@ -78,8 +78,6 @@ Define a standardized JSON format for exporting and importing custom agents and 
         */
        agentRef: string;
        agentRefType: 'builtin' | 'custom';
-       entryGate?: WorkflowGate | null;
-       exitGate?: WorkflowGate | null;
        instructions?: string;
        order: number;
      }>;
@@ -158,7 +156,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
    - `spaceExport.agents { spaceId, agentIds? }` → `{ bundle: SpaceExportBundle }`
    - `spaceExport.workflows { spaceId, workflowIds? }` → `{ bundle: SpaceExportBundle }`
    - `spaceExport.bundle { spaceId, agentIds?, workflowIds? }` → full bundle
-   - `spaceImport.preview { bundle, spaceId }` → `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors }` — dry run with conflict detection AND full `SpaceWorkflowManager` validation (gate security checks)
+   - `spaceImport.preview { bundle, spaceId }` → `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors }` — dry run with conflict detection AND full `SpaceWorkflowManager` validation (transition/condition validation)
    - `spaceImport.execute { spaceId, bundle, conflictResolution }` → creates entities (re-validates)
 
 2. Conflict resolution:
@@ -173,7 +171,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
 
 5. Write unit tests:
    - Export includes correct data from `space_agents`/`space_workflows` tables
-   - Preview detects conflicts and gate validation errors
+   - Preview detects conflicts and validation errors
    - All conflict resolutions work
    - Cross-reference mapping (agent name→UUID remapping for custom steps + step ID remapping for rules.appliesTo)
    - All handlers use `spaceId` (NOT `roomId`)
@@ -183,7 +181,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
 - All handlers use `spaceId` context (NOT `roomId`)
 - Export reads from `space_agents`/`space_workflows` tables
 - Import writes to `space_agents`/`space_workflows` tables
-- Preview detects conflicts, missing references, AND gate validation errors
+- Preview detects conflicts, missing references, AND validation errors
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
