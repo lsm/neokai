@@ -52,6 +52,10 @@ function createMockSessionFactory() {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
 			return true;
 		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
+			return true;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
