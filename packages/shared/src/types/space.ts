@@ -553,7 +553,13 @@ export interface SpaceWorkflow {
 	steps: WorkflowStep[];
 	/** Rules that govern agent behavior during this workflow */
 	rules: WorkflowRule[];
-	/** Tags for categorization */
+	/**
+	 * @deprecated isDefault is no longer used for workflow selection.
+	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
+	 * This field is retained for backward compatibility but has no runtime effect.
+	 */
+	isDefault?: boolean;
+	/** Tags for organizational categorization. Not used for automatic workflow selection. */
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
@@ -579,7 +585,11 @@ export interface CreateSpaceWorkflowParams {
 	 * Rules governing agent behavior. `id` is backend-assigned.
 	 */
 	rules?: WorkflowRuleInput[];
-	/** Tags for categorization (default: []). */
+	/**
+	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
+	 */
+	isDefault?: boolean;
+	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
 	config?: Record<string, unknown>;
 }
@@ -606,7 +616,12 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	rules?: WorkflowRule[] | null;
 	/**
+	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
+	 */
+	isDefault?: boolean;
+	/**
 	 * Replaces the tag list. Pass `[]` or `null` to clear all tags.
+	 * Tags are for organizational categorization only — not used for automatic workflow selection.
 	 */
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;

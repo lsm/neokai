@@ -106,6 +106,12 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description: string;
      steps: WorkflowStep[];
      rules: WorkflowRule[];
+     /**
+      * @deprecated Not used for workflow selection. Workflow selection uses only
+      * explicit workflowId or AI auto-select. Retained for backward compatibility.
+      */
+     isDefault: boolean;
+     /** Organizational tags. Not used for automatic workflow selection. */
      tags: string[];
      config?: Record<string, unknown>;
      createdAt: number;
@@ -117,6 +123,7 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description?: string;
      steps: Omit<WorkflowStep, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
+     /** Organizational tags (not used for automatic selection). */
      tags?: string[];
      config?: Record<string, unknown>;
    }
@@ -126,7 +133,8 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description?: string;
      steps?: Omit<WorkflowStep, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
-     tags?: string[];
+     /** Replaces the tag list. Pass `[]` or `null` to clear. Organizational only. */
+     tags?: string[] | null;
      config?: Record<string, unknown>;
    }
    ```
@@ -162,8 +170,9 @@ Build the data access and business logic layers for workflows within Spaces. The
    - `deleteWorkflow(id: string): boolean`
    - `getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[]` — finds workflows referencing a custom agent (used for deletion protection in `SpaceAgentManager`)
    - Handle step CRUD within workflow transactions (replace all steps on update)
-   - JSON serialization for `rules`, `tags`, `entry_gate`, `exit_gate`
+   - JSON serialization for `rules`, `entry_gate`, `exit_gate`
    - `rowToWorkflow()` and `rowToStep()` mapping functions
+   - **No `getDefaultWorkflow`/`setDefaultWorkflow`** — workflow selection uses only explicit workflowId or AI auto-select.
 
 2. Create `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
    - Validation:
@@ -190,7 +199,7 @@ Build the data access and business logic layers for workflows within Spaces. The
 - Repository handles CRUD with proper step management using `space_workflows`/`space_workflow_steps` tables
 - Manager validates workflow integrity including gate security
 - Agent reference validation queries `SpaceAgentManager` (NOT a nonexistent `CustomAgentManager`)
-- Default workflow switching works correctly
+- **No default-workflow selection logic** — `isDefault` field is deprecated and has no runtime effect
 - All files in Space namespace — nothing in `packages/daemon/src/lib/room/`
 - Unit tests cover all paths
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -218,12 +227,12 @@ Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Regist
    Import `SpaceWorkflow` from `@neokai/shared`.
 
 2. Create `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`:
-   - `spaceWorkflow.create { spaceId, name, description, steps, rules, tags }` → `{ workflow }`
+   - `spaceWorkflow.create { spaceId, name, description, steps, rules }` → `{ workflow }`
    - `spaceWorkflow.list { spaceId }` → `{ workflows }`
    - `spaceWorkflow.get { id }` → `{ workflow }`
    - `spaceWorkflow.update { id, ... }` → `{ workflow }`
    - `spaceWorkflow.delete { id }` → `{ success }`
-   - `spaceWorkflow.setDefault { spaceId, workflowId }` → `{ success }`
+   - **No `spaceWorkflow.setDefault`** — default selection is removed from the design
 
 3. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration only, do not modify existing handler setup)
 
@@ -261,20 +270,20 @@ Create built-in workflow templates that serve as defaults and examples. Also cre
 
 3. `getBuiltInWorkflows(): SpaceWorkflow[]` — returns templates without space-specific IDs
 
-4. `seedDefaultWorkflow(spaceId: string, workflowManager: SpaceWorkflowManager): Promise<void>`:
-   - Idempotent: checks if space already has a default workflow
-   - Seeds `CODING_WORKFLOW` as default
+4. `seedBuiltInWorkflows(spaceId: string, workflowManager: SpaceWorkflowManager): Promise<void>`:
+   - Idempotent: checks if space already has any workflows before seeding
+   - Seeds all three built-in workflow templates when creating a new space (so the AI agent has workflows to choose from)
    - **Call site wired in Task 4.2** (in the `space.create` RPC handler, after `SpaceManager.createSpace()` returns), not here
 
 5. Write unit tests:
    - Template structure validation
    - All agent refs are valid builtins (no 'leader')
-   - Idempotent seeding
+   - Idempotent seeding (doesn't re-seed if workflows already exist)
 
 **Acceptance criteria:**
 - Three built-in workflow templates defined
 - Templates mirror existing behavior (Leader is implicit, not a step)
-- `seedDefaultWorkflow` implemented and tested but NOT wired (that's M4)
+- `seedBuiltInWorkflows` implemented and tested but NOT wired (that's M4)
 - All files in `packages/daemon/src/lib/space/workflows/` (NOT `room/workflows/`)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
