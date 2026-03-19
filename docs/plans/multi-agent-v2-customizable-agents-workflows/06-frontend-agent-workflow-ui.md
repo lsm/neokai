@@ -79,11 +79,11 @@ Build the visual workflow editor for composing agent steps with gates.
 **Subtasks:**
 
 1. Create `packages/web/src/components/space/WorkflowList.tsx`:
-   - Workflow cards: name, description, step count
+   - Workflow cards: name, description, step count, tag chips
    - "Create Workflow" button
    - Real-time updates via SpaceStore
    - Mini step visualization (horizontal dots/icons showing the step sequence)
-   - **No "Set as Default" button** — the AI agent selects the appropriate workflow based on user intent
+   - **No "default badge" or "Set as Default" action** — there is no default workflow concept
 
 2. Create `packages/web/src/components/space/WorkflowEditor.tsx`:
    - Workflow name and description fields at top
@@ -168,8 +168,9 @@ Add the rules editor to the workflow builder, tags editor, and integrate all age
 
 **Acceptance criteria:**
 - Rules can be created and associated with specific steps
+- Tags help categorize workflows (for display only — not used for selection heuristics)
 - Agent and workflow management integrated into Space layout
 - Full CRUD flows work end-to-end
-- No "Set as Default" toggle — workflow selection is handled by the AI agent
+- No "Set as Default" UI anywhere — workflow selection is explicit (UI picker) or AI auto-select
 - E2E tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

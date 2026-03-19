@@ -124,7 +124,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
 
 3. **Starting a workflow run**:
    - `startWorkflowRun(spaceId, workflowId, title, description?)` → creates `SpaceWorkflowRun` record, creates `WorkflowExecutor`, evaluates entry gate of first step, creates first step's `SpaceTask` records
-   - `workflowId` is always required — the AI agent calls `list_workflows` and decides before calling this method. No default-workflow fallback.
+   - `workflowId` is **always required** — either the caller provides it explicitly (UI picker, API) or the Space agent selects it via AI auto-select (`list_workflows` → reason → `start_workflow_run`). There is no default workflow fallback.
    - Store executor in map
 
 4. **Standalone tasks** (no workflow):
@@ -156,13 +156,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
    - Remove from map when: run completes, fails, is cancelled
    - Hook into `SpaceWorkflowRun` status change handlers
 
-9. **Wire `seedBuiltInWorkflows`** from Task 3.4:
-   - Call in the `space.create` RPC handler (in `space-handlers.ts`), **after** `SpaceManager.createSpace()` returns — the handler has access to both `SpaceManager` and `SpaceWorkflowManager`, whereas `SpaceManager` itself is constructed without workflow manager dependency
-   - Seeds all three built-in workflow templates so the AI agent has workflows to choose from
-   - Idempotent: safe if space already has workflows
-   - **This is in the Space RPC handler** — NOT in `room-manager.ts`
-
-10. Write integration tests:
+9. Write integration tests:
     - Start workflow run → executor created → first step tasks created
     - First step `SpaceTask` records created with correct agent and task-type
     - Planning-step tasks use planning group path + draft promotion
@@ -183,7 +177,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
 - Standalone tasks work without a workflow
 - Executors rehydrated on startup, cleaned up on completion
 - `advance()` creates `SpaceTask` DB records only; tick loop handles group spawning
-- `seedBuiltInWorkflows` wired into `space.create` RPC handler (NOT `room-manager.ts`)
+- No `seedDefaultWorkflow` — workflow selection uses explicit workflowId or AI auto-select only
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -222,8 +216,8 @@ Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure
 
 5. Create RPC handler for starting workflow runs in `packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts`:
    - `spaceWorkflowRun.start { spaceId, workflowId, title, description? }` → `{ run: SpaceWorkflowRun }`:
-     - `workflowId` is **required** — the AI agent always provides one (via `list_workflows` + its own reasoning). No default-workflow fallback.
-     - Validate `workflowId` exists in the space (error if not found)
+     - `workflowId` is **required** — callers must provide it (UI workflow picker) or the Space agent selects it via AI auto-select (the Space agent calls `list_workflows`, reasons about the best fit, then calls `start_workflow_run` with its chosen `workflowId` — `workflowId` is always present at the RPC boundary). Return an error if omitted.
+     - Validate `workflowId` exists in the space
      - Creates `SpaceWorkflowRun` record via `SpaceWorkflowRunRepository`
      - Calls `SpaceRuntimeService.createOrGetRuntime(spaceId)` then `runtime.startWorkflowRun()` to create the executor and first step's tasks
      - Emits `space.workflowRun.created` event

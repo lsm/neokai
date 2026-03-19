@@ -189,7 +189,6 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      name TEXT NOT NULL,
      description TEXT NOT NULL DEFAULT '',
      rules TEXT NOT NULL DEFAULT '[]',
-     is_default INTEGER NOT NULL DEFAULT 0,
      tags TEXT NOT NULL DEFAULT '[]',
      config TEXT,
      created_at INTEGER NOT NULL,
@@ -299,6 +298,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
 - CASCADE deletes work correctly for the full entity hierarchy
 - All workflow/agent columns are built into tables from the start (no ALTER TABLE)
 - No `space_goals` table — goals are not part of the Space system
+- No `is_default` column in `space_workflows` — there is no default workflow concept; selection is explicit workflowId or AI auto-select
 - Migration test passes
 - No modifications to any existing tables
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
