@@ -634,3 +634,133 @@ export interface UpdateSpaceWorkflowParams {
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;
 }
+
+// ============================================================================
+// Export / Import Format Types (M8)
+// ============================================================================
+
+/**
+ * A single workflow step in the exported format.
+ *
+ * Differences from `WorkflowStep`:
+ * - `id` is stripped (space-specific, regenerated on import)
+ * - For `agentRefType: 'custom'`, `agentRef` holds the agent **name** (not UUID)
+ *   so the export is portable across different Space instances.
+ * - `order` is retained for readability, though array position is authoritative.
+ */
+export type ExportedWorkflowStep =
+	| {
+			agentRefType: 'builtin';
+			agentRef: BuiltinAgentRole;
+			name: string;
+			entryGate?: WorkflowGate;
+			exitGate?: WorkflowGate;
+			instructions?: string;
+			order: number;
+	  }
+	| {
+			agentRefType: 'custom';
+			agentRef: string;
+			name: string;
+			entryGate?: WorkflowGate;
+			exitGate?: WorkflowGate;
+			instructions?: string;
+			order: number;
+	  };
+
+/**
+ * A workflow rule in the exported format.
+ *
+ * Differences from `WorkflowRule`:
+ * - `id` is stripped (space-specific, regenerated on import)
+ * - `appliesTo` contains step **order indices** (numbers) instead of step UUIDs (strings),
+ *   so the reference survives re-import with freshly generated step IDs.
+ */
+export interface ExportedWorkflowRule {
+	/** Human-readable name for display */
+	name: string;
+	/** Rule content — markdown prose describing the constraint or guideline */
+	content: string;
+	/**
+	 * Zero-based order indices of the steps this rule applies to.
+	 * Empty array or omitted means the rule applies to ALL steps.
+	 */
+	appliesTo?: number[];
+}
+
+/**
+ * A Space agent in the portable export format.
+ * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
+ */
+export interface ExportedSpaceAgent {
+	/** Format version — always 1 for this revision */
+	version: 1;
+	/** Discriminator for the exported entity type */
+	type: 'agent';
+	/** Human-readable name */
+	name: string;
+	/** Optional description of this agent's specialization */
+	description?: string;
+	/** Model ID override */
+	model?: string;
+	/** Provider name override */
+	provider?: string;
+	/**
+	 * Builtin role preset ('planner' | 'coder' | 'general').
+	 * NOTE: 'leader' is intentionally absent — it is never user-configurable.
+	 */
+	role: BuiltinAgentRole;
+	/** Custom system prompt */
+	systemPrompt?: string;
+	/** Tool configuration */
+	tools?: Record<string, unknown>;
+	/** Additional configuration */
+	config?: Record<string, unknown>;
+}
+
+/**
+ * A Space workflow in the portable export format.
+ * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
+ * Step IDs are stripped; rule `appliesTo` uses step order indices.
+ */
+export interface ExportedSpaceWorkflow {
+	/** Format version — always 1 for this revision */
+	version: 1;
+	/** Discriminator for the exported entity type */
+	type: 'workflow';
+	/** Human-readable name */
+	name: string;
+	/** Optional description */
+	description?: string;
+	/** Ordered steps — array position is authoritative for execution order */
+	steps: ExportedWorkflowStep[];
+	/** Rules with `appliesTo` expressed as step order indices */
+	rules: ExportedWorkflowRule[];
+	/** Tags for categorization */
+	tags: string[];
+	/** Additional runtime configuration */
+	config?: Record<string, unknown>;
+}
+
+/**
+ * A bundle containing one or more exported agents and/or workflows.
+ * The bundle is the top-level unit of the export/import file format.
+ */
+export interface SpaceExportBundle {
+	/** Format version — always 1 for this revision */
+	version: 1;
+	/** Discriminator for the top-level type */
+	type: 'bundle';
+	/** Human-readable bundle name */
+	name: string;
+	/** Optional description of the bundle's purpose */
+	description?: string;
+	/** Exported agents (may be empty) */
+	agents: ExportedSpaceAgent[];
+	/** Exported workflows (may be empty) */
+	workflows: ExportedSpaceWorkflow[];
+	/** Export timestamp (milliseconds since epoch) */
+	exportedAt: number;
+	/** Source Space identifier (name or workspace path) for informational purposes */
+	exportedFrom?: string;
+}
