@@ -81,7 +81,6 @@ export interface UpdateSpaceParams {
 	instructions?: string;
 	defaultModel?: string | null;
 	allowedModels?: string[];
-	status?: SpaceStatus;
 	config?: Record<string, unknown>;
 }
 
@@ -258,6 +257,8 @@ export interface SpaceWorkflowRun {
 	currentStepIndex: number;
 	/** Current execution status */
 	status: WorkflowRunStatus;
+	/** Optional runtime configuration for this run */
+	config?: Record<string, unknown>;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -290,8 +291,8 @@ export interface SpaceSessionGroupMember {
 	groupId: string;
 	/** ID of the session */
 	sessionId: string;
-	/** Display role or label for this session within the group (e.g., 'leader', 'worker-1') */
-	role?: string;
+	/** Role of this session within the group */
+	role: 'worker' | 'leader';
 	/** Display order within the group */
 	orderIndex: number;
 	/** Creation timestamp (milliseconds since epoch) */
