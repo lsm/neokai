@@ -179,12 +179,26 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 
+	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
+	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
+	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+	const agentLookup: SpaceAgentLookup = {
+		getAgentById(spaceId: string, id: string) {
+			const agent = spaceAgentRepo.getById(id);
+			if (!agent || agent.spaceId !== spaceId) return null;
+			return { id: agent.id, name: agent.name };
+		},
+	};
+	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
+
 	setupSpaceHandlers(
 		deps.messageHub,
 		deps.spaceManager,
 		spaceTaskRepo,
 		spaceWorkflowRunRepo,
-		deps.daemonHub
+		deps.daemonHub,
+		deps.spaceAgentManager,
+		spaceWorkflowManager
 	);
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
@@ -200,19 +214,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Space agent handlers
 	setupSpaceAgentHandlers(deps.messageHub, deps.daemonHub, deps.spaceAgentManager);
-
-	// Space workflow handlers — wire SpaceAgentRepository as agentLookup so custom
-	// agent refs in workflow steps are validated against actual SpaceAgent records.
-	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
-	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
-	const agentLookup: SpaceAgentLookup = {
-		getAgentById(spaceId: string, id: string) {
-			const agent = spaceAgentRepo.getById(id);
-			if (!agent || agent.spaceId !== spaceId) return null;
-			return { id: agent.id, name: agent.name };
-		},
-	};
-	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
 
 	setupSpaceWorkflowHandlers(
 		deps.messageHub,

@@ -23,6 +23,8 @@ export {
 	WorkflowGateError,
 } from './runtime/workflow-executor';
 export type { ConditionContext, ConditionResult, CommandRunner } from './runtime/workflow-executor';
+export { SpaceRuntime } from './runtime/space-runtime';
+export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
 
 // Types — re-exported from @neokai/shared for convenience
 export type {
