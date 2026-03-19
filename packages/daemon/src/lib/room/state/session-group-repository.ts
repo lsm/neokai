@@ -73,7 +73,7 @@ interface TaskGroupMetadata {
 	approved?: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit?: RateLimitBackoff | null;
-	/** Persisted bootstrap config for deferred Leader creation */
+	/** Persisted bootstrap config for the leader session (restart-recovery and first-routing context) */
 	deferredLeader?: LeaderBootstrapConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted?: boolean;
@@ -154,7 +154,7 @@ export interface SessionGroup {
 	approved: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit: RateLimitBackoff | null;
-	/** Persisted bootstrap config for deferred Leader creation */
+	/** Persisted bootstrap config for the leader session (restart-recovery and first-routing context) */
 	deferredLeader: LeaderBootstrapConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted: boolean;

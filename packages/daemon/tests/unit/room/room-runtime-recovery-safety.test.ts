@@ -295,6 +295,47 @@ describe('Zombie detection in tick', () => {
 
 		expect(ctx.observer.isObserving(leaderSessionId)).toBe(true);
 	});
+
+	it('should set leaderHasWork before injecting "continue reviewing" when restoring zombie leader with feedbackIteration > 0', async () => {
+		// Simulate a group that has already had at least one worker→leader routing round
+		// (feedbackIteration > 0) and then the daemon restarted — the leader is a zombie.
+		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx);
+		const group = ctx.groupRepo.getGroup(groupId)!;
+
+		// Manually advance feedbackIteration to simulate post-routing state.
+		// Also set eagerlyCreated so findZombieGroups treats the leader as expected.
+		ctx.groupRepo.incrementFeedbackIteration(groupId, group.version);
+		ctx.groupRepo.setDeferredLeader(groupId, {
+			roomId: 'room-1',
+			goalId: null,
+			eagerlyCreated: true,
+		});
+
+		// Leader is missing from cache (zombie) but restorable
+		const restoredSessions = new Set<string>();
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === leaderSessionId && !restoredSessions.has(sessionId)) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async (sessionId: string) => {
+			restoredSessions.add(sessionId);
+			return true;
+		};
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// recoverZombieGroups should have injected "continue reviewing"
+		const injectCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
+		);
+		expect(injectCalls).toHaveLength(1);
+		expect(injectCalls[0].args[1]).toContain('Continue reviewing');
+
+		// leaderHasWork must be true so onLeaderTerminalState won't drop the terminal event
+		const updated = ctx.groupRepo.getGroup(groupId)!;
+		expect(updated.leaderHasWork).toBe(true);
+	});
 });
 
 describe('resumeWorkerFromHuman rollback', () => {

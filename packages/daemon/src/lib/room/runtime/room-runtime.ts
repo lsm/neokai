@@ -1422,6 +1422,8 @@ export class RoomRuntime {
 		let injected = false;
 		if (leaderAvailable) {
 			try {
+				// Set leaderHasWork before injecting so the terminal event is not dropped.
+				this.groupRepo.setLeaderHasWork(group.id);
 				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 				injected = true;
 			} catch (error) {
@@ -1679,6 +1681,8 @@ export class RoomRuntime {
 		}
 
 		try {
+			// Set leaderHasWork before injecting so the terminal event is not dropped.
+			this.groupRepo.setLeaderHasWork(group.id);
 			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
@@ -2090,6 +2094,10 @@ export class RoomRuntime {
 					// has not been given any worker output yet — it will receive work when the
 					// worker finishes and routeWorkerToLeader() fires.
 					if (group.feedbackIteration > 0) {
+						// Set leaderHasWork before injecting so the terminal event is not
+						// dropped by onLeaderTerminalState. Defensive: if leaderHasWork was
+						// already true (normal case for feedbackIteration>0), this is a no-op.
+						this.groupRepo.setLeaderHasWork(group.id);
 						await this.sessionFactory.injectMessage(
 							group.leaderSessionId,
 							'The system was restarted. Continue reviewing from where you left off.'
