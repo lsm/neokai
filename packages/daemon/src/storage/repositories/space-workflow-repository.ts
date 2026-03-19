@@ -5,7 +5,7 @@
  *
  * Storage layout:
  *   space_workflows  — id, space_id, name, description, config (JSON), created_at, updated_at
- *   space_workflow_steps — id, workflow_id, name, description, agent_id (custom UUID | null),
+ *   space_workflow_steps — id, workflow_id, name, description, agent_id (SpaceAgent UUID),
  *                          order_index, config (JSON), created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
@@ -80,11 +80,14 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function rowToStep(row: StepRow): WorkflowStep {
+	if (!row.agent_id) {
+		throw new Error(`WorkflowStep ${row.id}: agent_id is null in DB`);
+	}
 	const cfg = parseJson<StepConfigJson>(row.config, {});
 	return {
 		id: row.id,
 		name: row.name,
-		agentId: row.agent_id ?? '',
+		agentId: row.agent_id,
 		order: row.order_index,
 		entryGate: cfg.entryGate,
 		exitGate: cfg.exitGate,

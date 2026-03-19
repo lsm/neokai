@@ -55,6 +55,8 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
+// Arbitrary IDs — tests that use these fixtures construct the manager with agentLookup: null
+// so no DB lookup is performed and these IDs do not need to exist in the test database.
 const coderStep: WorkflowStepInput = { name: 'Code', agentId: 'agent-coder' };
 const plannerStep: WorkflowStepInput = { name: 'Plan', agentId: 'agent-planner' };
 const generalStep: WorkflowStepInput = { name: 'Review', agentId: 'agent-general' };
@@ -480,6 +482,15 @@ describe('SpaceWorkflowManager', () => {
 			steps: [{ name: 'Step', agentId: 'anything' }],
 		});
 		expect(wf.steps[0].agentId).toBe('anything');
+	});
+
+	test('updateWorkflow rejects invalid agentId via lookup', () => {
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const lookup: SpaceAgentLookup = { getAgentById: () => null };
+		const mgr = new SpaceWorkflowManager(repo, lookup);
+		expect(() =>
+			mgr.updateWorkflow(wf.id, { steps: [{ name: 'Step', agentId: 'non-existent' }] })
+		).toThrow(WorkflowValidationError);
 	});
 
 	// -------------------------------------------------------------------------
