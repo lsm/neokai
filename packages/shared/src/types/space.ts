@@ -354,7 +354,7 @@ export interface SpaceAgent {
 	description?: string;
 	/**
 	 * Builtin role preset — determines default tools and behavior.
-	 * One of: 'planner', 'coder', 'general'.
+	 * One of: 'planner', 'coder', 'general', 'reviewer'.
 	 * NOTE: 'leader' is NOT a valid role here — Leader is implicit in SpaceRuntime.
 	 */
 	role: BuiltinAgentRole;

@@ -290,6 +290,11 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
  *     giving the agent access to all standard Claude Code tools.
  *
  * Model resolution: SpaceAgent.model → Space.defaultModel → hardcoded default.
+ *
+ * NOTE: The task message (context delivered as the first user turn) is NOT embedded
+ * here. SpaceRuntime (M4) must call `buildCustomAgentTaskMessage(config)` separately
+ * and inject it via `injectMessage()` after the session is created — this mirrors the
+ * room-runtime pattern where the initial user message is sent after session start.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
 	const { customAgent, space, sessionId, workspacePath } = config;
@@ -427,6 +432,13 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 /**
  * Sanitize an agent name into a valid SDK agent key.
  * Keys must be alphanumeric + hyphens, max 40 chars.
+ *
+ * Collision note: two different agent names that normalize to the same key (e.g.
+ * "My Agent" and "my-agent") would conflict here. In practice this cannot happen
+ * because `SpaceAgentManager` enforces case-insensitive name uniqueness within a
+ * Space at the DB level — any two agents in the same Space have distinct names, and
+ * the normalized keys derived from those names are therefore distinct within a single
+ * `createCustomAgentInit` call (which is always for one agent at a time).
  */
 function sanitizeAgentKey(name: string): string {
 	return (

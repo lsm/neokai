@@ -542,3 +542,42 @@ describe('SpaceAgent tools field', () => {
 		expect(init.agents).toBeUndefined();
 	});
 });
+
+// ============================================================================
+// sanitizeAgentKey edge cases (via observable init.agent key)
+// ============================================================================
+
+describe('sanitizeAgentKey (via init.agent)', () => {
+	function initWithName(name: string): ReturnType<typeof createCustomAgentInit> {
+		return createCustomAgentInit(makeConfig({ customAgent: makeAgent({ name, tools: ['Read'] }) }));
+	}
+
+	it('lowercases the name', () => {
+		expect(initWithName('MyBot').agent).toBe('mybot');
+	});
+
+	it('replaces spaces with hyphens', () => {
+		expect(initWithName('My Agent').agent).toBe('my-agent');
+	});
+
+	it('collapses consecutive non-alphanumeric chars to a single hyphen', () => {
+		expect(initWithName('foo  --  bar').agent).toBe('foo-bar');
+	});
+
+	it('strips leading and trailing hyphens', () => {
+		expect(initWithName('---agent---').agent).toBe('agent');
+	});
+
+	it('truncates to 40 chars', () => {
+		const longName = 'a'.repeat(50);
+		expect(initWithName(longName).agent).toBe('a'.repeat(40));
+	});
+
+	it('falls back to custom-agent when name is all special characters', () => {
+		expect(initWithName('!!!###').agent).toBe('custom-agent');
+	});
+
+	it('handles Unicode/emoji gracefully (strips to fallback)', () => {
+		expect(initWithName('🤖🔥').agent).toBe('custom-agent');
+	});
+});
