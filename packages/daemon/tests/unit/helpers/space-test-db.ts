@@ -34,13 +34,15 @@ export function createSpaceTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
-			role TEXT NOT NULL,
-			provider TEXT,
+			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
-			instructions TEXT,
+			tools TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT '',
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
+			role TEXT NOT NULL DEFAULT 'coder',
+			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
