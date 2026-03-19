@@ -3,15 +3,15 @@
  *
  * Covers:
  * - spaceWorkflow.create: happy path, missing spaceId, missing/empty name, space not found,
- *   validation error propagation, event emission (space.workflow.created)
+ *   validation error propagation, event emission (spaceWorkflow.created)
  * - spaceWorkflow.list: happy path, missing spaceId, space not found
  * - spaceWorkflow.get: happy path, missing id, workflow not found, optional spaceId space-existence
  *   check, optional spaceId ownership check
  * - spaceWorkflow.update: happy path, missing id, workflow not found, optional spaceId
- *   space-existence check, ownership check, validation error, event emission (space.workflow.updated)
+ *   space-existence check, ownership check, validation error, event emission (spaceWorkflow.updated)
  * - spaceWorkflow.delete: happy path, missing id, workflow not found, optional spaceId
- *   space-existence check, ownership check, event emission (space.workflow.deleted)
- * - spaceWorkflow.setDefault: throws (unsupported — concept removed)
+ *   space-existence check, ownership check, event emission (spaceWorkflow.deleted)
+ * - spaceWorkflow.setDefault: NOT registered (concept removed from design)
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
@@ -149,7 +149,7 @@ describe('space-workflow-handlers', () => {
 	describe('spaceWorkflow.create', () => {
 		beforeEach(() => setup());
 
-		it('creates a workflow and emits space.workflow.created', async () => {
+		it('creates a workflow and emits spaceWorkflow.created', async () => {
 			const result = (await call('spaceWorkflow.create', {
 				spaceId: 'space-1',
 				name: 'Test Workflow',
@@ -158,10 +158,9 @@ describe('space-workflow-handlers', () => {
 
 			expect(result.workflow).toEqual(mockWorkflow);
 			expect(workflowManager.createWorkflow).toHaveBeenCalledTimes(1);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflow.created', {
+			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.created', {
 				sessionId: 'global',
 				spaceId: 'space-1',
-				workflowId: mockWorkflow.id,
 				workflow: mockWorkflow,
 			});
 		});
@@ -309,7 +308,7 @@ describe('space-workflow-handlers', () => {
 	describe('spaceWorkflow.update', () => {
 		beforeEach(() => setup());
 
-		it('updates a workflow and emits space.workflow.updated', async () => {
+		it('updates a workflow and emits spaceWorkflow.updated', async () => {
 			const updated = { ...mockWorkflow, name: 'Updated' };
 			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(updated);
 
@@ -320,10 +319,9 @@ describe('space-workflow-handlers', () => {
 
 			expect(result.workflow.name).toBe('Updated');
 			expect(workflowManager.updateWorkflow).toHaveBeenCalledWith('wf-1', { name: 'Updated' });
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflow.updated', {
+			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.updated', {
 				sessionId: 'global',
 				spaceId: updated.spaceId,
-				workflowId: 'wf-1',
 				workflow: updated,
 			});
 		});
@@ -387,12 +385,12 @@ describe('space-workflow-handlers', () => {
 	describe('spaceWorkflow.delete', () => {
 		beforeEach(() => setup());
 
-		it('deletes a workflow and emits space.workflow.deleted', async () => {
+		it('deletes a workflow and emits spaceWorkflow.deleted', async () => {
 			const result = (await call('spaceWorkflow.delete', { id: 'wf-1' })) as { success: boolean };
 
 			expect(result.success).toBe(true);
 			expect(workflowManager.deleteWorkflow).toHaveBeenCalledWith('wf-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflow.deleted', {
+			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.deleted', {
 				sessionId: 'global',
 				spaceId: mockWorkflow.spaceId,
 				workflowId: 'wf-1',
@@ -439,22 +437,13 @@ describe('space-workflow-handlers', () => {
 		});
 	});
 
-	// ─── spaceWorkflow.setDefault ──────────────────────────────────────────────
+	// ─── spaceWorkflow.setDefault (removed from design) ───────────────────────
 
 	describe('spaceWorkflow.setDefault', () => {
 		beforeEach(() => setup());
 
-		it('throws — default workflow concept is not supported', async () => {
-			await expect(
-				call('spaceWorkflow.setDefault', { spaceId: 'space-1', workflowId: 'wf-1' })
-			).rejects.toThrow('spaceWorkflow.setDefault is not supported');
-		});
-
-		it('does not emit any event', async () => {
-			await expect(
-				call('spaceWorkflow.setDefault', { spaceId: 'space-1', workflowId: 'wf-1' })
-			).rejects.toThrow();
-			expect(daemonHub.emit).not.toHaveBeenCalled();
+		it('does not register spaceWorkflow.setDefault (removed from design)', () => {
+			expect(handlers.has('spaceWorkflow.setDefault')).toBe(false);
 		});
 	});
 });

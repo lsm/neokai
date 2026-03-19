@@ -7,12 +7,14 @@
  * - spaceWorkflow.get       - Get a workflow by ID (optional spaceId: existence + ownership check)
  * - spaceWorkflow.update    - Update workflow fields (optional spaceId: existence + ownership check)
  * - spaceWorkflow.delete    - Delete a workflow (optional spaceId: existence + ownership check)
- * - spaceWorkflow.setDefault - Unsupported (concept removed; use explicit workflowId or AI auto-select)
  *
- * Events emitted (space.* hierarchy):
- * - space.workflow.created
- * - space.workflow.updated
- * - space.workflow.deleted
+ * No spaceWorkflow.setDefault — default selection is removed from the design.
+ * Workflow selection uses only explicit workflowId or AI auto-select.
+ *
+ * Events emitted (spaceWorkflow.* namespace — matches SpaceStore subscriptions in M5):
+ * - spaceWorkflow.created
+ * - spaceWorkflow.updated
+ * - spaceWorkflow.deleted
  */
 
 import type { MessageHub } from '@neokai/shared';
@@ -50,14 +52,13 @@ export function setupSpaceWorkflowHandlers(
 		const workflow = workflowManager.createWorkflow(params);
 
 		daemonHub
-			.emit('space.workflow.created', {
+			.emit('spaceWorkflow.created', {
 				sessionId: 'global',
 				spaceId: params.spaceId,
-				workflowId: workflow.id,
 				workflow,
 			})
 			.catch((err) => {
-				log.warn('Failed to emit space.workflow.created:', err);
+				log.warn('Failed to emit spaceWorkflow.created:', err);
 			});
 
 		return { workflow };
@@ -145,14 +146,13 @@ export function setupSpaceWorkflowHandlers(
 		}
 
 		daemonHub
-			.emit('space.workflow.updated', {
+			.emit('spaceWorkflow.updated', {
 				sessionId: 'global',
 				spaceId: workflow.spaceId,
-				workflowId: id,
 				workflow,
 			})
 			.catch((err) => {
-				log.warn('Failed to emit space.workflow.updated:', err);
+				log.warn('Failed to emit spaceWorkflow.updated:', err);
 			});
 
 		return { workflow };
@@ -191,25 +191,15 @@ export function setupSpaceWorkflowHandlers(
 		}
 
 		daemonHub
-			.emit('space.workflow.deleted', {
+			.emit('spaceWorkflow.deleted', {
 				sessionId: 'global',
 				spaceId: workflow.spaceId,
 				workflowId: params.id,
 			})
 			.catch((err) => {
-				log.warn('Failed to emit space.workflow.deleted:', err);
+				log.warn('Failed to emit spaceWorkflow.deleted:', err);
 			});
 
 		return { success: true };
-	});
-
-	// ─── spaceWorkflow.setDefault ────────────────────────────────────────────
-	// The default workflow concept was removed in the design (Task 3.2).
-	// Workflow selection uses either an explicit workflowId or AI auto-select at runtime.
-	// Callers that attempt to set a default will receive a clear error rather than silent failure.
-	messageHub.onRequest('spaceWorkflow.setDefault', async (_data) => {
-		throw new Error(
-			'spaceWorkflow.setDefault is not supported. Use explicit workflowId or AI auto-select.'
-		);
 	});
 }
