@@ -159,16 +159,8 @@ describe('buildCustomAgentSystemPrompt', () => {
 		expect(prompt).toContain('pullrequestreview');
 	});
 
-	it('reviewer role includes review-specific instructions', () => {
-		const agent = makeAgent({ role: 'reviewer' });
-		const prompt = buildCustomAgentSystemPrompt(agent);
-		expect(prompt).toContain('Review Responsibilities');
-		expect(prompt).toContain('specialized Worker');
-		expect(prompt).toContain('NOT a Leader replacement');
-	});
-
-	it('non-reviewer roles do not include Review Responsibilities section', () => {
-		for (const role of ['coder', 'general', 'planner'] as const) {
+	it('no role produces role-specific instructions (roles are display labels only)', () => {
+		for (const role of ['coder', 'general', 'planner', 'reviewer', 'custom-role']) {
 			const agent = makeAgent({ role });
 			const prompt = buildCustomAgentSystemPrompt(agent);
 			expect(prompt).not.toContain('Review Responsibilities');
@@ -257,24 +249,18 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(msg).toContain('Task B: Added user model');
 	});
 
-	it('includes review instructions for review task type', () => {
-		const config = makeConfig({
-			task: makeTask({ taskType: 'review' }),
-			customAgent: makeAgent({ role: 'coder' }), // non-reviewer role but review task
-		});
-		const msg = buildCustomAgentTaskMessage(config);
-		expect(msg).toContain('Review Instructions');
-		expect(msg).toContain('Approved');
-		expect(msg).toContain('Changes Requested');
-	});
-
-	it('includes review instructions for reviewer role agent', () => {
-		const config = makeConfig({
-			customAgent: makeAgent({ role: 'reviewer' }),
-			task: makeTask({ taskType: 'coding' }), // non-review task but reviewer agent
-		});
-		const msg = buildCustomAgentTaskMessage(config);
-		expect(msg).toContain('Review Instructions');
+	it('does not include review instructions for any role or task type', () => {
+		// Review instructions were removed — role is a display label only
+		for (const role of ['coder', 'reviewer']) {
+			for (const taskType of ['coding', 'review'] as const) {
+				const config = makeConfig({
+					task: makeTask({ taskType }),
+					customAgent: makeAgent({ role }),
+				});
+				const msg = buildCustomAgentTaskMessage(config);
+				expect(msg).not.toContain('Review Instructions');
+			}
+		}
 	});
 
 	it('ends with begin working prompt', () => {
@@ -397,7 +383,7 @@ describe('createCustomAgentInit', () => {
 		expect(init.features?.sessionInfo).toBe(false);
 	});
 
-	it('builds correct init for reviewer role', () => {
+	it('builds correct init for reviewer role (no role-specific instructions)', () => {
 		const config = makeConfig({
 			customAgent: makeAgent({ role: 'reviewer', name: 'CodeReviewer' }),
 		});
@@ -405,7 +391,7 @@ describe('createCustomAgentInit', () => {
 
 		expect(init.type).toBe('worker');
 		expect(init.systemPrompt?.append).toContain('Reviewer Agent');
-		expect(init.systemPrompt?.append).toContain('Review Responsibilities');
+		expect(init.systemPrompt?.append).not.toContain('Review Responsibilities');
 	});
 
 	it('builds correct init for planner role (treated as worker)', () => {

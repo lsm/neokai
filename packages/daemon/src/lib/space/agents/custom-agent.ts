@@ -4,14 +4,6 @@
  * Handles user-defined Space agents with configurable system prompts, tools, and models.
  * Custom agents follow the same execution model as built-in coder/general agents but
  * allow per-agent customization within the Space system.
- *
- * Role handling:
- *   - 'coder'    → worker: standard coding tools, git workflow
- *   - 'general'  → worker: same as coder, broader scope
- *   - 'planner'  → orchestrator (reserved); treated as worker for now
- *   - 'reviewer' → worker with review-specific instructions in the system prompt
- *
- * Reviewer context can also be indicated via task.taskType === 'review'.
  */
 
 import type { AgentSessionInit } from '../../agent/agent-session';
@@ -66,10 +58,9 @@ export interface CustomAgentConfig {
  * Structure:
  *   1. Role identification (agent name + role label)
  *   2. Custom system prompt from SpaceAgent.systemPrompt (if provided)
- *   3. Reviewer-specific instructions (if role is 'reviewer')
- *   4. Mandatory git workflow instructions
- *   5. Bypass markers for research-only tasks
- *   6. Review feedback handling section
+ *   3. Mandatory git workflow instructions
+ *   4. Bypass markers for research-only tasks
+ *   5. Review feedback handling section
  */
 export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	const sections: string[] = [];
@@ -86,26 +77,6 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	if (customAgent.systemPrompt) {
 		sections.push(`\n## Agent Instructions\n`);
 		sections.push(customAgent.systemPrompt);
-	}
-
-	// Reviewer-specific instructions (for agents with role 'reviewer')
-	if (customAgent.role === 'reviewer') {
-		sections.push(`\n## Review Responsibilities\n`);
-		sections.push(
-			`As a Reviewer Agent, your primary job is to evaluate the quality of completed work:`
-		);
-		sections.push(
-			`- **Review code changes**: Examine the implementation for correctness, style, and completeness`
-		);
-		sections.push(`- **Verify tests**: Check that tests cover the new behavior and pass`);
-		sections.push(`- **Check PR description**: Ensure the PR clearly describes what was done`);
-		sections.push(`- **Provide actionable feedback**: Be specific about what needs to change`);
-		sections.push(`- **Approve or request changes**: Conclude with a clear verdict`);
-		sections.push(``);
-		sections.push(
-			`You are a specialized Worker — NOT a Leader replacement. ` +
-				`You do NOT orchestrate other agents or manage task assignment.`
-		);
 	}
 
 	// Mandatory Git workflow
@@ -205,7 +176,7 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
  * and previous task summaries.
  */
 export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
-	const { task, workflowRun, space, previousTaskSummaries, customAgent } = config;
+	const { task, workflowRun, space, previousTaskSummaries } = config;
 
 	const sections: string[] = [];
 
@@ -218,22 +189,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 	}
 	if (task.taskType) {
 		sections.push(`**Type:** ${task.taskType}`);
-	}
-
-	// Review-specific instructions (when task is a review or agent is a reviewer)
-	if (task.taskType === 'review' || customAgent.role === 'reviewer') {
-		sections.push(`\n## Review Instructions\n`);
-		sections.push(`This task requires reviewing work that has been completed.`);
-		sections.push(`Focus on:`);
-		sections.push(`- Correctness of the implementation`);
-		sections.push(`- Test coverage and test quality`);
-		sections.push(`- Code style and maintainability`);
-		sections.push(`- PR description completeness`);
-		sections.push(``);
-		sections.push(
-			`Conclude your review with a clear verdict: **Approved** or **Changes Requested**, ` +
-				`with specific actionable feedback for any requested changes.`
-		);
 	}
 
 	// Workflow run context
@@ -444,15 +399,7 @@ function sanitizeAgentKey(name: string): string {
 	);
 }
 
-function getRoleLabel(role: SpaceAgent['role']): string {
-	switch (role) {
-		case 'coder':
-			return 'Coder';
-		case 'general':
-			return 'General';
-		case 'planner':
-			return 'Planner';
-		case 'reviewer':
-			return 'Reviewer';
-	}
+function getRoleLabel(role: string): string {
+	if (!role) return 'Custom';
+	return role.charAt(0).toUpperCase() + role.slice(1);
 }

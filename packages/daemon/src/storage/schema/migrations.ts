@@ -117,6 +117,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 30: Add role and provider columns to space_agents
 	runMigration30(db);
+
+	// Migration 31: Remove hardcoded CHECK constraint on space_agents.role
+	// so that free-form role strings are accepted (role is now a display label, not an enum)
+	runMigration31(db);
 }
 
 /**
@@ -1704,4 +1708,65 @@ function runMigration30(db: BunDatabase): void {
 	} catch {
 		db.exec(`ALTER TABLE space_agents ADD COLUMN provider TEXT`);
 	}
+}
+
+/**
+ * Migration 31: Remove the hardcoded CHECK constraint on space_agents.role.
+ *
+ * In migration 30 the role column was added with CHECK(role IN ('planner','coder','general','reviewer')).
+ * Role is now a free-form display label — no fixed enum. We rebuild the table without the constraint.
+ *
+ * SQLite does not support DROP CONSTRAINT, so we use the standard table-rebuild pattern:
+ *   1. Create new table without CHECK
+ *   2. Copy all data
+ *   3. Drop old table
+ *   4. Rename new table
+ */
+function runMigration31(db: BunDatabase): void {
+	// Detect whether the constraint is still present by checking the schema text.
+	// On databases where migration 30 ran (column added via ALTER TABLE), the CHECK
+	// appears in the column definition stored in sqlite_master.
+	const schema = db
+		.prepare<{ sql: string }, []>(
+			`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_agents'`
+		)
+		.get();
+
+	// If the table doesn't exist yet (fresh DB where migration 29 hasn't run), skip.
+	if (!schema) return;
+
+	// If the CHECK constraint is not present, migration is already applied — skip.
+	if (!schema.sql.includes('CHECK(role IN')) return;
+
+	db.exec(`
+		CREATE TABLE space_agents_new (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			model TEXT,
+			tools TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT '',
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			role TEXT NOT NULL DEFAULT 'coder',
+			provider TEXT,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		INSERT INTO space_agents_new
+			(id, space_id, name, description, model, tools, system_prompt, config,
+			 created_at, updated_at, role, provider)
+		SELECT
+			id, space_id, name, description, model, tools, system_prompt, config,
+			created_at, updated_at, role, provider
+		FROM space_agents
+	`);
+
+	db.exec(`DROP TABLE space_agents`);
+	db.exec(`ALTER TABLE space_agents_new RENAME TO space_agents`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
 }
