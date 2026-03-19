@@ -41,6 +41,7 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import {
 	sendMessage,
 	waitForIdle,
+	waitForProcessing,
 	getProcessingState,
 	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
@@ -492,6 +493,10 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 
 			// Send a message and verify the copilot backend responds.
 			await sendMessage(daemon, sessionId, 'Reply with exactly: COPILOT_OK');
+			// Explicitly wait for the session to enter 'processing' before waiting for
+			// 'idle', to avoid the race where waitForIdle resolves against the pre-send
+			// idle state (before the query has actually started).
+			await waitForProcessing(daemon, sessionId, 15_000);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
 			const state = await getProcessingState(daemon, sessionId);

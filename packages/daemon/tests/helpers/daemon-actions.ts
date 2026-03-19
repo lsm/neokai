@@ -175,6 +175,20 @@ export async function waitForIdle(
 }
 
 /**
+ * Wait for the agent to enter processing state
+ *
+ * Use this before waitForIdle to avoid the race where waitForIdle resolves
+ * against the pre-send idle state (before the session starts processing).
+ */
+export async function waitForProcessing(
+	daemon: DaemonServerContext,
+	sessionId: string,
+	timeout = 10000
+): Promise<void> {
+	return waitForProcessingState(daemon, sessionId, 'processing', timeout);
+}
+
+/**
  * Collect SDK messages from the session via subscription
  *
  * Returns an async generator that yields SDK messages as they arrive.
