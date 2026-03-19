@@ -184,7 +184,6 @@ If installed but not found, add the Codex installation directory to your PATH.
 2. Ensure there are no extra spaces or quotes in your environment variable
 3. Check that you're using a valid API key from [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 4. For Codex-specific keys, use `CODEX_API_KEY` instead
-5. Alternatively, try running `kai openai login` to authenticate via CLI
 
 ---
 

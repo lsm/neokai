@@ -179,6 +179,13 @@ Extended thinking (thinking blocks in API responses) is not supported by Copilot
 
 Token usage (`input_tokens`, `output_tokens`) is estimated based on character count (1 token ≈ 4 characters) rather than actual counts from Copilot. This is due to SDK limitations.
 
+### Text-Flattened Conversation Semantics
+
+The Copilot bridge flattens the full block-structured Anthropic conversation to plain text rather than preserving the structured message format. This means:
+- Multi-message conversations are converted to a single text prompt
+- Role information is preserved through bracketed prefixes (e.g., `[User]:`, `[Assistant]:`)
+- Some semantic nuances of structured messages may be lost
+
 ### tool_choice Limitations
 
 The `tool_choice` parameter is accepted for API compatibility but is **not honored** by the Copilot bridge. The model will decide which tool to use regardless of the parameter value.
