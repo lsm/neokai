@@ -106,7 +106,6 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description: string;
      steps: WorkflowStep[];
      rules: WorkflowRule[];
-     isDefault: boolean;
      tags: string[];
      config?: Record<string, unknown>;
      createdAt: number;
@@ -161,8 +160,6 @@ Build the data access and business logic layers for workflows within Spaces. The
    - `listWorkflows(spaceId: string): SpaceWorkflow[]`
    - `updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null`
    - `deleteWorkflow(id: string): boolean`
-   - `getDefaultWorkflow(spaceId: string): SpaceWorkflow | null`
-   - `setDefaultWorkflow(spaceId: string, workflowId: string): void`
    - `getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[]` — finds workflows referencing a custom agent (used for deletion protection in `SpaceAgentManager`)
    - Handle step CRUD within workflow transactions (replace all steps on update)
    - JSON serialization for `rules`, `tags`, `entry_gate`, `exit_gate`
@@ -176,8 +173,7 @@ Build the data access and business logic layers for workflows within Spaces. The
      - Step order contiguous (0, 1, 2, ...)
      - Gate command validation: `quality_check` → allowlist only; `custom` → relative path, no `..`; `timeoutMs` within range 0–300000
    - Business logic:
-     - Setting new default unsets previous default
-     - Deleting default workflow clears the space's default
+     - Workflow selection is either explicit workflowId (caller-provided) or AI auto-select via `list_workflows` + `start_workflow_run`. No default workflow concept.
 
 3. Export from `packages/daemon/src/lib/space/index.ts`
 
@@ -187,7 +183,6 @@ Build the data access and business logic layers for workflows within Spaces. The
    - Agent reference validation (builtin + custom via `SpaceAgentManager`)
    - Rejection of 'leader' as builtin agent ref
    - Gate command validation (allowlist, path validation)
-   - Default workflow management
    - JSON round-trip for gates and rules
    - `getWorkflowsReferencingAgent` returns correct results
 

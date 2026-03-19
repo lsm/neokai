@@ -124,7 +124,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
 
 3. **Starting a workflow run**:
    - `startWorkflowRun(spaceId, workflowId, title, description?)` → creates `SpaceWorkflowRun` record, creates `WorkflowExecutor`, evaluates entry gate of first step, creates first step's `SpaceTask` records
-   - If no explicit `workflowId`, use space's default workflow via `SpaceWorkflowManager.getDefaultWorkflow(spaceId)`
+   - `workflowId` is always required — either provided explicitly by the caller or chosen by the Space agent via `list_workflows` + `start_workflow_run` (AI auto-select). No default workflow fallback.
    - Store executor in map
 
 4. **Standalone tasks** (no workflow):
