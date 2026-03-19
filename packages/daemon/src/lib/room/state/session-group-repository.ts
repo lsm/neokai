@@ -79,6 +79,11 @@ interface TaskGroupMetadata {
 	humanInterrupted?: boolean;
 	/** Gate failure history for dead loop detection */
 	gateFailures?: GateFailureRecord[];
+	/**
+	 * Latest progress summary provided by the leader at the end of each turn.
+	 * Summarizes (1) what the task is about and (2) what has been done/changed so far.
+	 */
+	leaderProgressSummary?: string;
 	/** Whether the group is paused waiting for a question to be answered */
 	waitingForQuestion?: boolean;
 	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
@@ -181,6 +186,11 @@ export interface SessionGroup {
 	 * Used by onLeaderTerminalState to drop spurious pre-work idle events.
 	 */
 	leaderHasWork: boolean;
+	/**
+	 * Latest progress summary provided by the leader at the end of each turn.
+	 * Summarizes (1) what the task is about and (2) what has been done/changed so far.
+	 */
+	leaderProgressSummary: string | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -632,6 +642,24 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Update the leader progress summary for a group without version check.
+	 * Called at the end of each leader turn to persist a summary of task progress.
+	 */
+	setLeaderProgressSummary(groupId: string, summary: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, leaderProgressSummary: summary };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Persist deferred Leader bootstrap configuration.
 	 * Stored in metadata so runtime restart can still lazy-create the leader session.
 	 */
@@ -855,6 +883,7 @@ export class SessionGroupRepository {
 			approvalSource: meta.approvalSource ?? null,
 			executionId: meta.executionId,
 			leaderHasWork: meta.leaderHasWork === true,
+			leaderProgressSummary: meta.leaderProgressSummary ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

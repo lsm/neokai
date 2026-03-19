@@ -104,24 +104,29 @@ function makeCallbacks(): LeaderToolCallbacks & {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	return {
 		calls,
-		async sendToWorker(groupId: string, message: string, mode?: 'steer' | 'queue') {
-			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
+		async sendToWorker(
+			groupId: string,
+			message: string,
+			mode?: 'steer' | 'queue',
+			progressSummary?: string
+		) {
+			calls.push({ method: 'sendToWorker', args: [groupId, message, mode, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async completeTask(groupId: string, summary: string) {
-			calls.push({ method: 'completeTask', args: [groupId, summary] });
+		async completeTask(groupId: string, summary: string, progressSummary?: string) {
+			calls.push({ method: 'completeTask', args: [groupId, summary, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async failTask(groupId: string, reason: string) {
-			calls.push({ method: 'failTask', args: [groupId, reason] });
+		async failTask(groupId: string, reason: string, progressSummary?: string) {
+			calls.push({ method: 'failTask', args: [groupId, reason, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async replanGoal(groupId: string, reason: string) {
-			calls.push({ method: 'replanGoal', args: [groupId, reason] });
+		async replanGoal(groupId: string, reason: string, progressSummary?: string) {
+			calls.push({ method: 'replanGoal', args: [groupId, reason, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async submitForReview(groupId: string, prUrl: string) {
-			calls.push({ method: 'submitForReview', args: [groupId, prUrl] });
+		async submitForReview(groupId: string, prUrl: string, progressSummary?: string) {
+			calls.push({ method: 'submitForReview', args: [groupId, prUrl, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 	};
@@ -144,6 +149,19 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('cancel_task');
 			expect(prompt).toContain('update_task_status');
 			expect(prompt).toContain('Task Management Tools');
+		});
+
+		it('should include progress summary section', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('Progress Summary');
+			expect(prompt).toContain('progress_summary');
+			expect(prompt).toContain('What has been done so far');
+		});
+
+		it('should include progress summary section for plan review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('Progress Summary');
+			expect(prompt).toContain('progress_summary');
 		});
 
 		it('should NOT include task-specific context', () => {
@@ -325,7 +343,12 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling', undefined]);
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'Fix the error handling',
+				undefined,
+				undefined,
+			]);
 		});
 
 		it('should route send_to_worker mode to callback', async () => {
@@ -336,7 +359,26 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue', undefined]);
+		});
+
+		it('should route send_to_worker with progress_summary to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.send_to_worker({
+				message: 'Fix the tests',
+				progress_summary: 'Task adds a health endpoint. Worker created the route but tests fail.',
+			});
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('sendToWorker');
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'Fix the tests',
+				undefined,
+				'Task adds a health endpoint. Worker created the route but tests fail.',
+			]);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {
@@ -347,7 +389,25 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('completeTask');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'All requirements met']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'All requirements met', undefined]);
+		});
+
+		it('should route complete_task with progress_summary to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.complete_task({
+				summary: 'All requirements met',
+				progress_summary: 'Task adds GET /health. Endpoint implemented with tests, PR merged.',
+			});
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('completeTask');
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'All requirements met',
+				'Task adds GET /health. Endpoint implemented with tests, PR merged.',
+			]);
 		});
 
 		it('should route fail_task to callback with groupId', async () => {
@@ -358,7 +418,7 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('failTask');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this', undefined]);
 		});
 
 		it('should route submit_for_review to callback with groupId and prUrl', async () => {
@@ -369,7 +429,11 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('submitForReview');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'https://github.com/org/repo/pull/42']);
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'https://github.com/org/repo/pull/42',
+				undefined,
+			]);
 		});
 
 		it('should route replan_goal to callback with groupId', async () => {
@@ -383,6 +447,7 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls[0].args).toEqual([
 				'group-1',
 				'Wrong approach, need different strategy',
+				undefined,
 			]);
 		});
 	});

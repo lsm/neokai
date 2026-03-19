@@ -654,4 +654,38 @@ describe('SessionGroupRepository', () => {
 			expect(history).toHaveLength(1);
 		});
 	});
+
+	describe('setLeaderProgressSummary', () => {
+		it('should default to null when not set', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(group.leaderProgressSummary).toBeNull();
+		});
+
+		it('should persist a progress summary', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const summary =
+				'Task adds GET /health endpoint. Worker created the route; tests are failing.';
+			repo.setLeaderProgressSummary(group.id, summary);
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe(summary);
+		});
+
+		it('should overwrite an existing progress summary', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setLeaderProgressSummary(group.id, 'First summary');
+			repo.setLeaderProgressSummary(group.id, 'Updated summary after second iteration');
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe('Updated summary after second iteration');
+		});
+
+		it('should preserve existing metadata fields when setting summary', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setApproved(group.id, true);
+			repo.setLeaderProgressSummary(group.id, 'Progress so far');
+			const updated = repo.getGroup(group.id)!;
+			// Both fields should be set
+			expect(updated.approved).toBe(true);
+			expect(updated.leaderProgressSummary).toBe('Progress so far');
+		});
+	});
 });
