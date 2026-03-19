@@ -972,6 +972,34 @@ describe('RoomRuntime flow', () => {
 			expect(afterResume.waitingForQuestion).toBe(false);
 			expect(afterResume.waitingSession).toBeNull();
 		});
+
+		it('should ignore terminal event when feedbackIteration == 0 and leader has not received work', async () => {
+			// Spawn only — do NOT route worker to leader, so feedbackIteration stays at 0
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.feedbackIteration).toBe(0);
+			expect(group!.submittedForReview).toBe(false);
+
+			// Fire a spurious idle event on the leader (e.g. from a race or startup artifact)
+			await ctx.runtime.onLeaderTerminalState(group!.id, {
+				sessionId: group!.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Group must remain unchanged — no completion, no error, no inject
+			const updated = ctx.groupRepo.getGroup(group!.id)!;
+			expect(updated.completedAt).toBeNull();
+			expect(updated.feedbackIteration).toBe(0);
+
+			const injectToLeader = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group!.leaderSessionId
+			);
+			expect(injectToLeader).toHaveLength(0);
+		});
 	});
 
 	describe('lifecycle hooks', () => {

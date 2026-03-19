@@ -346,8 +346,10 @@ export class TaskGroupManager {
 			return null;
 		}
 
-		// Lazy-start leader session if this is the first review round.
-		// Deferred bootstrap data is persisted in DB metadata so restart is safe.
+		// Restart-recovery fallback: re-create the leader session from persisted bootstrap config.
+		// In the normal code path the leader is created eagerly in spawn(), so leaderAlreadyExists
+		// will be true and this block is skipped. This only runs after a daemon restart where the
+		// in-memory session cache was cleared.
 		const deferredLeader = group.deferredLeader;
 		let shouldClearDeferredLeader = false;
 

@@ -158,7 +158,7 @@ export class RoomRuntimeService {
 		const worktreeManager = new WorktreeManager();
 
 		return {
-			createAndStartSession: async (init, _role) => {
+			createAndStartSession: async (init, role) => {
 				const session = AgentSession.fromInit(
 					init,
 					ctx.db,
@@ -168,7 +168,12 @@ export class RoomRuntimeService {
 					ctx.defaultModel
 				);
 				agentSessions.set(init.sessionId, session);
-				await session.startStreamingQuery();
+				// Leader sessions are started lazily: injectMessage() calls ensureQueryStarted()
+				// before enqueuing the first message. Starting eagerly here would trigger the
+				// 15s SDK startup timeout because the leader has no queued message yet.
+				if (role !== 'leader') {
+					await session.startStreamingQuery();
+				}
 			},
 			injectMessage: async (sessionId, message, opts) => {
 				const session = agentSessions.get(sessionId);

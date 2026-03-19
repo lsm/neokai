@@ -768,6 +768,16 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
 
+		// Guard: leader hasn't received any work yet. This can happen if a spurious idle event
+		// fires before the first worker→leader routing (e.g. a race during startup). Ignore it.
+		if (group.feedbackIteration === 0 && !group.submittedForReview) {
+			log.debug(
+				`[onLeaderTerminalState] Group ${groupId}: ignoring terminal event ` +
+					`(feedbackIteration=0, submittedForReview=false) — leader hasn't received work yet`
+			);
+			return;
+		}
+
 		// Clear active session indicator — leader is no longer generating output
 		const leaderTask = await this.taskManager.getTask(group.taskId);
 		if (leaderTask?.activeSession === 'leader') {
