@@ -100,6 +100,7 @@ function extractSessionId(req: Request): string {
 	const auth = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? '';
 	const token = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
 	if (token.startsWith('codex-bridge-')) return token.slice('codex-bridge-'.length);
+	logger.warn('codex-bridge: no session ID in Authorization header, using default');
 	return 'default';
 }
 
