@@ -363,7 +363,7 @@ describe('seedBuiltInWorkflows()', () => {
 		);
 	});
 
-	test('does not persist any workflow when resolveAgentId fails mid-seed', async () => {
+	test('does not persist any workflow when resolveAgentId fails on first-template role', async () => {
 		// Resolver fails on 'planner' — first template's first step
 		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
 			role === 'planner' ? undefined : roleMap[role];
@@ -373,8 +373,22 @@ describe('seedBuiltInWorkflows()', () => {
 		} catch {
 			// expected
 		}
-		// CODING_WORKFLOW creation throws before any workflow is committed,
-		// so the space should still have zero workflows
+		// Pre-validation throws before any workflow is committed
+		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
+	});
+
+	test('does not persist any workflow when resolveAgentId fails on a later-template role', async () => {
+		// 'general' is only needed by RESEARCH_WORKFLOW (2nd template).
+		// Without pre-validation, CODING_WORKFLOW would already be committed when this throws.
+		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
+			role === 'general' ? undefined : roleMap[role];
+
+		try {
+			await seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
+		} catch {
+			// expected
+		}
+		// Pre-validation catches the missing role before any workflow is persisted
 		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
 	});
 });

@@ -186,24 +186,34 @@ export async function seedBuiltInWorkflows(
 		return;
 	}
 
-	for (const template of getBuiltInWorkflows()) {
-		const steps: WorkflowStepInput[] = template.steps.map((s) => {
-			const role = s.agentId as BuiltinAgentRole;
-			const agentId = resolveAgentId(role);
-			if (!agentId) {
-				throw new Error(
-					`seedBuiltInWorkflows: no SpaceAgent found for role '${role}' in space '${spaceId}'. ` +
-						`Preset agents must be seeded before calling seedBuiltInWorkflows.`
-				);
-			}
-			return {
-				name: s.name,
-				agentId,
-				entryGate: s.entryGate,
-				exitGate: s.exitGate,
-				instructions: s.instructions,
-			};
-		});
+	// Pre-validate: resolve every role needed across ALL templates before
+	// persisting anything. This guarantees all-or-nothing behaviour — a failure
+	// on any role will throw before a single workflow is created.
+	const templates = getBuiltInWorkflows();
+	const neededRoles = new Set<BuiltinAgentRole>(
+		templates.flatMap((t) => t.steps.map((s) => s.agentId as BuiltinAgentRole))
+	);
+	const resolvedIds = new Map<BuiltinAgentRole, string>();
+	for (const role of neededRoles) {
+		const agentId = resolveAgentId(role);
+		if (!agentId) {
+			throw new Error(
+				`seedBuiltInWorkflows: no SpaceAgent found for role '${role}' in space '${spaceId}'. ` +
+					`Preset agents must be seeded before calling seedBuiltInWorkflows.`
+			);
+		}
+		resolvedIds.set(role, agentId);
+	}
+
+	// All roles resolved — safe to persist.
+	for (const template of templates) {
+		const steps: WorkflowStepInput[] = template.steps.map((s) => ({
+			name: s.name,
+			agentId: resolvedIds.get(s.agentId as BuiltinAgentRole)!,
+			entryGate: s.entryGate,
+			exitGate: s.exitGate,
+			instructions: s.instructions,
+		}));
 
 		workflowManager.createWorkflow({
 			spaceId,
