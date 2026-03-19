@@ -426,6 +426,13 @@ describe('SpaceWorkflowManager', () => {
 		expect(() => manager.updateWorkflow(wf.id, { steps: [] })).toThrow(WorkflowValidationError);
 	});
 
+	test('updateWorkflow throws when steps is null (treated as empty replacement)', () => {
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		expect(() => manager.updateWorkflow(wf.id, { steps: null as unknown as [] })).toThrow(
+			WorkflowValidationError
+		);
+	});
+
 	// -------------------------------------------------------------------------
 	// Agent ref validation — builtins
 	// -------------------------------------------------------------------------
@@ -480,28 +487,28 @@ describe('SpaceWorkflowManager', () => {
 	test('createWorkflow accepts custom ref when agent exists', () => {
 		seedAgent(db, 'agent-1', 'space-1', 'MyAgent');
 		const lookup: SpaceAgentLookup = {
-			getAgentByName: (_spaceId, name) =>
-				name === 'MyAgent' ? { id: 'agent-1', name: 'MyAgent' } : null,
+			getAgentById: (_spaceId, id) =>
+				id === 'agent-1' ? { id: 'agent-1', name: 'MyAgent' } : null,
 		};
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'MyAgent' }],
+			steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'agent-1' }],
 		});
-		expect(wf.steps[0].agentRef).toBe('MyAgent');
+		expect(wf.steps[0].agentRef).toBe('agent-1');
 	});
 
 	test('createWorkflow rejects custom ref when agent does not exist', () => {
 		const lookup: SpaceAgentLookup = {
-			getAgentByName: () => null,
+			getAgentById: () => null,
 		};
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Custom',
-				steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'NonExistent' }],
+				steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'non-existent-uuid' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});

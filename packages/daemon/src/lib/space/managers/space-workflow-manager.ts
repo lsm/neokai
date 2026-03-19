@@ -84,8 +84,8 @@ const MAX_GATE_TIMEOUT_MS = 300_000;
  * custom agent references in workflow steps.
  */
 export interface SpaceAgentLookup {
-	/** Returns the SpaceAgent with the given name in the given space, or null if not found. */
-	getAgentByName(spaceId: string, name: string): { id: string; name: string } | null;
+	/** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
+	getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,17 +237,17 @@ export class SpaceWorkflowManager {
 				);
 			}
 		} else {
-			// custom ref — validate that a SpaceAgent with this name exists
+			// custom ref — validate that a SpaceAgent with this UUID exists
 			if (!step.agentRef || !step.agentRef.trim()) {
 				throw new WorkflowValidationError(
-					`step[${index}]: custom agentRef must be a non-empty SpaceAgent name`
+					`step[${index}]: custom agentRef must be a non-empty SpaceAgent UUID`
 				);
 			}
 			if (this.agentLookup) {
-				const agent = this.agentLookup.getAgentByName(spaceId, step.agentRef);
+				const agent = this.agentLookup.getAgentById(spaceId, step.agentRef);
 				if (!agent) {
 					throw new WorkflowValidationError(
-						`step[${index}]: custom agentRef "${step.agentRef}" does not match any SpaceAgent in this space`
+						`step[${index}]: custom agentRef "${step.agentRef}" does not match any SpaceAgent ID in this space`
 					);
 				}
 			}

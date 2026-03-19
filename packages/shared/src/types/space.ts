@@ -456,7 +456,7 @@ export interface WorkflowGate {
  *
  * - `builtin`: agentRef is one of the BuiltinAgentRole values ('planner', 'coder', 'general').
  *   NOTE: 'leader' is NOT a valid builtin agentRef — Leader is always implicit in SpaceRuntime.
- * - `custom`: agentRef is the `name` of a SpaceAgent defined in this Space.
+ * - `custom`: agentRef is the UUID (`id`) of a SpaceAgent defined in this Space.
  */
 export type WorkflowStepAgent =
 	| { agentRefType: 'builtin'; agentRef: BuiltinAgentRole }

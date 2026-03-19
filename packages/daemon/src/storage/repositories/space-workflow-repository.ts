@@ -83,7 +83,7 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 	}
 }
 
-export function rowToStep(row: StepRow): WorkflowStep {
+function rowToStep(row: StepRow): WorkflowStep {
 	const cfg = parseJson<StepConfigJson>(row.config, {
 		agentRefType: 'builtin',
 		agentRef: 'general',
@@ -108,7 +108,7 @@ export function rowToStep(row: StepRow): WorkflowStep {
 	} as WorkflowStep;
 }
 
-export function rowToWorkflow(row: WorkflowRow, steps: WorkflowStep[]): SpaceWorkflow {
+function rowToWorkflow(row: WorkflowRow, steps: WorkflowStep[]): SpaceWorkflow {
 	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
 	return {
 		id: row.id,
