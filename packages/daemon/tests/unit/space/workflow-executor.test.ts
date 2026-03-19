@@ -879,7 +879,7 @@ describe('WorkflowExecutor', () => {
 	describe('multiple transitions — first matching wins', () => {
 		test('skips failing human condition and follows always fallback', async () => {
 			// Step A has two transitions: order 0 is human (blocked), order 1 is always (fallback).
-			// The executor should skip the failing human gate and follow the always fallback.
+			// The executor should skip the unapproved human transition and follow the always fallback.
 			const workflow = workflowRepo.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Trans-${Date.now()}`,
@@ -1003,7 +1003,7 @@ describe('WorkflowExecutor', () => {
 
 			await executor.advance();
 
-			// humanApproved should be cleared so a future human gate in a cycle is not auto-passed
+			// humanApproved should be cleared so a future human transition in a cycle is not auto-passed
 			const updated = runRepo.getRun(run.id)!;
 			expect(
 				(updated.config as Record<string, unknown> | undefined)?.humanApproved

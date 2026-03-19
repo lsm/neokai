@@ -87,7 +87,7 @@ Define the custom agent types and build the data access + business logic layers 
    - `updateAgent(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null`
    - `deleteAgent(id: string): boolean`
    - `getAgentsByIds(ids: string[]): SpaceAgent[]` — batch lookup for workflow validation
-   - `isAgentReferenced(agentId: string): { workflows: string[] }` — checks if agent is referenced by workflow steps (`space_workflow_steps.agent_ref` where `agent_ref_type = 'custom'`)
+   - `isAgentReferenced(agentId: string): { workflows: string[] }` — checks if agent is referenced by workflow steps (`space_workflow_steps.agent_id = agentId`)
    - Handle JSON serialization for `tools` and `config`
 
 4. Create `packages/daemon/src/lib/space/managers/space-agent-manager.ts`:

@@ -74,7 +74,7 @@ Build the UI for listing, creating, and editing custom agents within a Space.
 
 **Description:**
 
-Build the visual workflow editor for composing agent steps with gates.
+Build the visual workflow editor for composing agent steps with transitions and conditions.
 
 **Subtasks:**
 
@@ -92,37 +92,33 @@ Build the visual workflow editor for composing agent steps with gates.
    - Save/Cancel buttons
    - "Start from template" option for new workflows:
      - "Coding (Plan → Code)", "Research (Plan → Research)", "Quick Fix (Code only)"
-     - Templates populate steps and gates with sensible defaults
+     - Templates populate steps and transitions with sensible defaults
 
 3. Create `packages/web/src/components/space/WorkflowStepCard.tsx`:
-   - Collapsed: step number, agent name, gate type icons
+   - Collapsed: step number, agent name, outgoing transition condition indicator
    - Expanded: full configuration
    - Fields:
      - **Name**: text input
-     - **Agent**: dropdown with built-in agents (`planner`, `coder`, `general` — NOT `leader`) + custom agents from SpaceStore
-     - **Entry Gate**: gate type selector
-     - **Exit Gate**: gate type selector
+     - **Agent**: dropdown of all `SpaceAgent` records in the space (preset roles + custom agents)
      - **Instructions**: textarea for step-specific context
-   - Gate sub-forms:
-     - `quality_check`: dropdown of allowlisted commands (not free-text)
-     - `custom`: command input with hint "Relative path to script (e.g., scripts/check.sh)"
-     - `human_approval`, `pr_review`: no additional config needed
-     - Description and optional timeout fields
+   - Transition editor (below each step card):
+     - Add/remove outgoing transitions to other steps
+     - Condition type selector: `always`, `human`, `condition`
+     - For `condition` type: shell expression text input + optional timeout
    - Up/down reorder buttons (drag-and-drop as future enhancement)
    - Remove step button
 
 4. Write unit tests:
    - Step adding, removal, reordering
-   - Agent dropdown excludes 'leader', includes custom agents
-   - Gate config forms render correctly
-   - Quality check gate shows allowlisted commands only
-   - Template selection populates steps
+   - Agent dropdown shows all SpaceAgent records
+   - Transition condition forms render correctly for each condition type
+   - Template selection populates steps and transitions
 
 **Acceptance criteria:**
-- Visual workflow builder allows multi-step composition
+- Visual workflow builder allows multi-step composition with transitions
 - Steps can be added, removed, reordered
-- Agent selection includes builtins (minus 'leader') and custom agents
-- Gate configuration enforces security constraints visually
+- Agent selection shows all SpaceAgent records in the space
+- Transition conditions can be configured per-transition
 - Templates provide quick starts
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

@@ -148,8 +148,8 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
 
 **Acceptance criteria:**
 - All workflow types defined and exported from `@neokai/shared` via `space.ts`
-- JSDoc on all interfaces with clear semantics for `maxRetries`, `command` constraints, and `agentRef` valid values
-- `leader` explicitly documented as NOT a valid `agentRef`
+- JSDoc on all interfaces with clear semantics for `maxRetries`, `expression` (for `condition` type), and `agentId` (SpaceAgent UUID)
+- `agentId` must reference an existing `SpaceAgent` in the same space; preset roles (`planner`, `coder`, `general`, `reviewer`) are regular `SpaceAgent` records
 - No modifications to `packages/shared/src/types/neo.ts`
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 

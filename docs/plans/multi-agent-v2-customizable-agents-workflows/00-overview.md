@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a new **Spaces** system — a fully parallel, isolated multi-agent workflow container. Spaces allow users to create custom agents with configurable names, models, providers, tools, and system prompts. These agents can be composed into custom workflows that define agent interactions, runtime gates, and rules. A pure data layer underpins everything, enabling future sharing and marketplace capabilities.
+Build a new **Spaces** system — a fully parallel, isolated multi-agent workflow container. Spaces allow users to create custom agents with configurable names, models, providers, tools, and system prompts. These agents can be composed into custom workflows that define agent interactions, transition conditions, and rules. A pure data layer underpins everything, enabling future sharing and marketplace capabilities.
 
 ## Isolation Principle
 
@@ -33,7 +33,7 @@ The Space system deliberately **does not include goals**. In the existing Room s
 
 2. **Custom Agent Definitions** — a `space_agents` table so users can define agents with arbitrary names, models, tools, and system prompts. Each agent belongs to a Space. Managed by `SpaceAgentManager`.
 
-3. **Custom Workflows** — `space_workflows` and `space_workflow_steps` tables (created in the M1 migration) with `SpaceWorkflowRepository` and `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`. Workflows define sequences of agent steps, runtime gates, and rules. All types in `space.ts`.
+3. **Custom Workflows** — `space_workflows` and `space_workflow_steps` tables (created in the M1 migration) with `SpaceWorkflowRepository` and `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`. Workflows define directed graphs of agent steps connected by transitions with optional conditions, and rules. All types in `space.ts`.
 
 4. **SpaceRuntime** — a new workflow-first orchestration engine in `packages/daemon/src/lib/space/runtime/`. Unlike `RoomRuntime` which has a hardcoded planner→coder→leader flow, `SpaceRuntime` is designed from the ground up for workflow-driven orchestration via `WorkflowExecutor`. Workflow runs are the unit of orchestration — each run tracks step progression through a workflow. Managed by `SpaceRuntimeService`.
 
@@ -51,17 +51,18 @@ The existing `AgentType = 'coder' | 'general'` union is **kept as-is**. Custom a
 
 The `WorkflowExecutor` orchestrates **workflow run** progression within Spaces:
 - A `SpaceWorkflowRun` represents an active execution of a workflow (e.g., Step 1: Planner, Step 2: Coder, Step 3: Security Reviewer)
-- Each workflow step produces one or more `SpaceTask` records. When a step completes, the executor evaluates the exit gate and advances to the next step.
+- Each workflow step produces one or more `SpaceTask` records. When a step completes, the executor evaluates outgoing transition conditions and advances to the next step.
 - **The Leader role is preserved per group.** Every Worker group still gets a Leader session for review. Custom agents with `role: 'reviewer'` are specialized Workers whose output is reviewed by the Leader.
 - The `WorkflowExecutor` hooks into the **task completion** path within `SpaceRuntime`: when all tasks for a step complete (Leader approves), the executor checks whether to advance.
 
-### 3. Gate Security Model
+### 3. Transition Condition Model
 
-Shell-executing gates (`quality_check`, `custom`) pose security risks:
-- **Command allowlisting**: `quality_check` gates only accept predefined commands from a configurable allowlist
-- **Custom gate restrictions**: scripts must be within the workspace directory (no `..`, no absolute paths outside workspace)
-- **Execution timeout**: Default 60s, max 300s, enforced via `Bun.spawn`
-- **Authorization**: Only space owners can define `custom` gates with shell commands
+Transitions connect workflow steps and carry optional conditions that determine whether the transition fires:
+- **`always`** (default when no condition) — transition fires unconditionally
+- **`human`** — transition pauses and waits for explicit human approval before firing
+- **`condition`** — transition fires when a shell `expression` exits with code 0, evaluated via `Bun.spawn`
+- **Execution timeout**: Default 60s, max 300s, enforced per condition evaluation
+- **No allowlist**: condition expressions are arbitrary shell strings; users are responsible for expression content
 
 ### 4. Single Migration Strategy
 
@@ -90,8 +91,8 @@ Spaces require a **workspace path** at creation time — the directory where age
 
 1. **Space Core Data Model & Infrastructure** — All Space types in `space.ts`, single DB migration (all tables including `space_workflow_runs`), repositories, managers, RPC handlers for Space container + tasks + workflow runs + session groups.
 2. **Custom Agent Data & Runtime** — Agent types in `space.ts`, `SpaceAgentRepository`, `SpaceAgentManager`, agent RPC handlers, `createCustomAgentInit()` factory, agent resolution helper.
-3. **Workflow Data Model** — Workflow/step/gate/rule types in `space.ts`, `SpaceWorkflowRepository`, `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`, workflow RPC handlers (`spaceWorkflow.*`), built-in templates.
-4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, `spaceWorkflowRun.*` RPC handlers, gate evaluation, step advancement, rule injection. Operates on workflow runs and tasks (no goals).
+3. **Workflow Data Model** — Workflow/step/transition/condition/rule types in `space.ts`, `SpaceWorkflowRepository`, `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`, workflow RPC handlers (`spaceWorkflow.*`), built-in templates.
+4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, `spaceWorkflowRun.*` RPC handlers, transition condition evaluation, step advancement, rule injection. Operates on workflow runs and tasks (no goals).
 5. **Space Frontend Foundation** — Navigation entry point, URL routing, `SpaceStore`, Space creation UX with workspace path picker, minimalist 3-column layout shell (right pane shows placeholder states until M4 provides a running runtime).
 6. **Frontend: Agent & Workflow UI** — Agent creation/editing, visual workflow builder, rules editor — all under `packages/web/src/components/space/`.
 7. **Workflow Selection & Agent Tools** — Two-mode workflow selection (explicit workflowId OR AI auto-select via LLM reasoning), Space agent tools in `packages/daemon/src/lib/space/tools/`, prompt enhancement so the agent can intelligently choose workflows.

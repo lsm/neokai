@@ -201,8 +201,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      id TEXT PRIMARY KEY,
      workflow_id TEXT NOT NULL,
      name TEXT NOT NULL,
-     agent_ref TEXT NOT NULL,
-     agent_ref_type TEXT NOT NULL DEFAULT 'builtin' CHECK(agent_ref_type IN ('builtin', 'custom')),
+     agent_id TEXT NOT NULL,
      instructions TEXT,
      step_order INTEGER NOT NULL,
      FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
