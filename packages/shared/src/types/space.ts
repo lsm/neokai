@@ -558,7 +558,7 @@ export interface SpaceWorkflow {
 	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
 	 * This field is retained for backward compatibility but has no runtime effect.
 	 */
-	isDefault: boolean;
+	isDefault?: boolean;
 	/** Tags for organizational categorization. Not used for automatic workflow selection. */
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
