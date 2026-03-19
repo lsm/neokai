@@ -15,10 +15,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import {
-	createRuntimeTestContext,
-	type RuntimeTestContext,
-} from './room-runtime-test-helpers';
+import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
 
 // ============================================================

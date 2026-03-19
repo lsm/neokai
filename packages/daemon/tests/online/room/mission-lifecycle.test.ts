@@ -170,7 +170,12 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 			}
 			if (terminalPlan.status === 'review') {
 				await daemon.messageHub.request('task.approve', { roomId, taskId: terminalPlan.id });
-				await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, PLANNING_TIMEOUT);
+				await waitForTask(
+					daemon,
+					roomId,
+					{ taskType: 'planning', status: ['completed'] },
+					PLANNING_TIMEOUT
+				);
 			}
 
 			// 5. Wait for coding task
@@ -194,7 +199,12 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 			}
 			if (terminalCoding.status === 'review') {
 				await daemon.messageHub.request('task.approve', { roomId, taskId: terminalCoding.id });
-				await waitForTask(daemon, roomId, { taskType: 'coding', status: ['completed'] }, CODING_TIMEOUT);
+				await waitForTask(
+					daemon,
+					roomId,
+					{ taskType: 'coding', status: ['completed'] },
+					CODING_TIMEOUT
+				);
 			}
 
 			// 7. Goal should complete after all tasks done
@@ -206,292 +216,242 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 
 	// ─── 2. Measurable mission: structured metrics ───────────────────────────────
 
-	test(
-		'measurable mission: goal.create with structuredMetrics persists correctly',
-		async () => {
-			const roomId = await createRoom(daemon, 'Measurable Mission Metrics');
+	test('measurable mission: goal.create with structuredMetrics persists correctly', async () => {
+		const roomId = await createRoom(daemon, 'Measurable Mission Metrics');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Improve test coverage',
-				description: 'Bring test coverage to 80%',
-				missionType: 'measurable',
-				autonomyLevel: 'supervised',
-				structuredMetrics: [{ name: 'coverage', target: 80, current: 50, unit: '%' }],
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Improve test coverage',
+			description: 'Bring test coverage to 80%',
+			missionType: 'measurable',
+			autonomyLevel: 'supervised',
+			structuredMetrics: [{ name: 'coverage', target: 80, current: 50, unit: '%' }],
+		});
 
-			expect(mission.missionType).toBe('measurable');
-			expect(mission.structuredMetrics).toHaveLength(1);
-			expect(mission.structuredMetrics?.[0].name).toBe('coverage');
-			expect(mission.structuredMetrics?.[0].target).toBe(80);
-			expect(mission.structuredMetrics?.[0].current).toBe(50);
-		},
-		30_000
-	);
+		expect(mission.missionType).toBe('measurable');
+		expect(mission.structuredMetrics).toHaveLength(1);
+		expect(mission.structuredMetrics?.[0].name).toBe('coverage');
+		expect(mission.structuredMetrics?.[0].target).toBe(80);
+		expect(mission.structuredMetrics?.[0].current).toBe(50);
+	}, 30_000);
 
-	test(
-		'measurable mission: goal.update with structuredMetrics updates current value',
-		async () => {
-			const roomId = await createRoom(daemon, 'Measurable Mission Targets');
+	test('measurable mission: goal.update with structuredMetrics updates current value', async () => {
+		const roomId = await createRoom(daemon, 'Measurable Mission Targets');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Coverage mission',
-				description: 'Get coverage to 80%',
-				missionType: 'measurable',
-				structuredMetrics: [{ name: 'coverage', target: 80, current: 0, unit: '%' }],
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Coverage mission',
+			description: 'Get coverage to 80%',
+			missionType: 'measurable',
+			structuredMetrics: [{ name: 'coverage', target: 80, current: 0, unit: '%' }],
+		});
 
-			// Patch structuredMetrics.current via goal.update (simulates in-session metric recording)
-			const afterRecord = await recordMetric(daemon, roomId, mission.id, 'coverage', 60);
+		// Patch structuredMetrics.current via goal.update (simulates in-session metric recording)
+		const afterRecord = await recordMetric(daemon, roomId, mission.id, 'coverage', 60);
 
-			// The current value should be updated; target should be unchanged
-			const metric = afterRecord.structuredMetrics?.find((m) => m.name === 'coverage');
-			expect(metric?.current).toBe(60);
-			expect(metric?.target).toBe(80);
-		},
-		30_000
-	);
+		// The current value should be updated; target should be unchanged
+		const metric = afterRecord.structuredMetrics?.find((m) => m.name === 'coverage');
+		expect(metric?.current).toBe(60);
+		expect(metric?.target).toBe(80);
+	}, 30_000);
 
 	// ─── 3. Recurring mission: schedule and execution ────────────────────────────
 
-	test(
-		'recurring mission: setSchedule sets schedule and next_run_at',
-		async () => {
-			const roomId = await createRoom(daemon, 'Recurring Mission Schedule');
+	test('recurring mission: setSchedule sets schedule and next_run_at', async () => {
+		const roomId = await createRoom(daemon, 'Recurring Mission Schedule');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Daily health check',
-				description: 'Run every day',
-				missionType: 'recurring',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Daily health check',
+			description: 'Run every day',
+			missionType: 'recurring',
+		});
 
-			expect(mission.missionType).toBe('recurring');
+		expect(mission.missionType).toBe('recurring');
 
-			// Set a schedule
-			const scheduleResult = (await daemon.messageHub.request('goal.setSchedule', {
-				roomId,
-				goalId: mission.id,
-				cronExpression: '@daily',
-				timezone: 'UTC',
-			})) as { goal: RoomGoal; nextRunAt: number };
+		// Set a schedule
+		const scheduleResult = (await daemon.messageHub.request('goal.setSchedule', {
+			roomId,
+			goalId: mission.id,
+			cronExpression: '@daily',
+			timezone: 'UTC',
+		})) as { goal: RoomGoal; nextRunAt: number };
 
-			expect(scheduleResult.goal.schedule?.expression).toBe('@daily');
-			expect(scheduleResult.goal.schedule?.timezone).toBe('UTC');
-			expect(scheduleResult.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
-		},
-		30_000
-	);
+		expect(scheduleResult.goal.schedule?.expression).toBe('@daily');
+		expect(scheduleResult.goal.schedule?.timezone).toBe('UTC');
+		expect(scheduleResult.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+	}, 30_000);
 
-	test(
-		'recurring mission: pauseSchedule prevents trigger, resumeSchedule re-enables',
-		async () => {
-			const roomId = await createRoom(daemon, 'Recurring Schedule Control');
+	test('recurring mission: pauseSchedule prevents trigger, resumeSchedule re-enables', async () => {
+		const roomId = await createRoom(daemon, 'Recurring Schedule Control');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Pauseable mission',
-				description: 'Test pause/resume',
-				missionType: 'recurring',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Pauseable mission',
+			description: 'Test pause/resume',
+			missionType: 'recurring',
+		});
 
-			// Set schedule
-			await daemon.messageHub.request('goal.setSchedule', {
-				roomId,
-				goalId: mission.id,
-				cronExpression: '@daily',
-				timezone: 'UTC',
-			});
+		// Set schedule
+		await daemon.messageHub.request('goal.setSchedule', {
+			roomId,
+			goalId: mission.id,
+			cronExpression: '@daily',
+			timezone: 'UTC',
+		});
 
-			// Pause
-			const pausedResult = (await daemon.messageHub.request('goal.pauseSchedule', {
-				roomId,
-				goalId: mission.id,
-			})) as { goal: RoomGoal };
-			expect(pausedResult.goal.schedulePaused).toBe(true);
+		// Pause
+		const pausedResult = (await daemon.messageHub.request('goal.pauseSchedule', {
+			roomId,
+			goalId: mission.id,
+		})) as { goal: RoomGoal };
+		expect(pausedResult.goal.schedulePaused).toBe(true);
 
-			// Resume
-			const resumedResult = (await daemon.messageHub.request('goal.resumeSchedule', {
-				roomId,
-				goalId: mission.id,
-			})) as { goal: RoomGoal };
-			expect(resumedResult.goal.schedulePaused).toBe(false);
-		},
-		30_000
-	);
+		// Resume
+		const resumedResult = (await daemon.messageHub.request('goal.resumeSchedule', {
+			roomId,
+			goalId: mission.id,
+		})) as { goal: RoomGoal };
+		expect(resumedResult.goal.schedulePaused).toBe(false);
+	}, 30_000);
 
-	test(
-		'recurring mission: goal.listExecutions returns empty list initially',
-		async () => {
-			const roomId = await createRoom(daemon, 'Recurring Mission Executions');
+	test('recurring mission: goal.listExecutions returns empty list initially', async () => {
+		const roomId = await createRoom(daemon, 'Recurring Mission Executions');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Daily digest',
-				description: 'Run every day',
-				missionType: 'recurring',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Daily digest',
+			description: 'Run every day',
+			missionType: 'recurring',
+		});
 
-			const executions = await listExecutions(daemon, roomId, mission.id);
-			expect(executions).toHaveLength(0);
-		},
-		30_000
-	);
+		const executions = await listExecutions(daemon, roomId, mission.id);
+		expect(executions).toHaveLength(0);
+	}, 30_000);
 
 	// ─── 4. Semi-autonomous: auto-approve for coder tasks ───────────────────────
 
-	test(
-		'semi-autonomous mission: created with correct autonomy level',
-		async () => {
-			const roomId = await createRoom(daemon, 'Semi-Auto Mission');
+	test('semi-autonomous mission: created with correct autonomy level', async () => {
+		const roomId = await createRoom(daemon, 'Semi-Auto Mission');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Auto-approve task',
-				description: 'Coder tasks auto-approve',
-				missionType: 'one_shot',
-				autonomyLevel: 'semi_autonomous',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Auto-approve task',
+			description: 'Coder tasks auto-approve',
+			missionType: 'one_shot',
+			autonomyLevel: 'semi_autonomous',
+		});
 
-			expect(mission.autonomyLevel).toBe('semi_autonomous');
+		expect(mission.autonomyLevel).toBe('semi_autonomous');
 
-			// Verify it's persisted correctly
-			const fetched = await getGoal(daemon, roomId, mission.id);
-			expect(fetched.autonomyLevel).toBe('semi_autonomous');
-		},
-		30_000
-	);
+		// Verify it's persisted correctly
+		const fetched = await getGoal(daemon, roomId, mission.id);
+		expect(fetched.autonomyLevel).toBe('semi_autonomous');
+	}, 30_000);
 
 	// ─── 5. Migration: pre-V2 goal defaults ─────────────────────────────────────
 
-	test(
-		'migration: goal created without missionType defaults to one_shot and supervised',
-		async () => {
-			const roomId = await createRoom(daemon, 'Migration Test Room');
+	test('migration: goal created without missionType defaults to one_shot and supervised', async () => {
+		const roomId = await createRoom(daemon, 'Migration Test Room');
 
-			// Create a goal the old way (no V2 fields)
-			const goal = await createGoal(
-				daemon,
-				roomId,
-				'Legacy goal',
-				'Created without V2 mission fields'
-			);
+		// Create a goal the old way (no V2 fields)
+		const goal = await createGoal(
+			daemon,
+			roomId,
+			'Legacy goal',
+			'Created without V2 mission fields'
+		);
 
-			// Should default to one_shot / supervised
-			expect(goal.missionType ?? 'one_shot').toBe('one_shot');
-			expect(goal.autonomyLevel ?? 'supervised').toBe('supervised');
-			expect(goal.status).toBe('active');
-		},
-		30_000
-	);
+		// Should default to one_shot / supervised
+		expect(goal.missionType ?? 'one_shot').toBe('one_shot');
+		expect(goal.autonomyLevel ?? 'supervised').toBe('supervised');
+		expect(goal.status).toBe('active');
+	}, 30_000);
 
 	// ─── 6. goal.listExecutions RPC ─────────────────────────────────────────────
 
-	test(
-		'goal.listExecutions: returns correct structure for recurring mission',
-		async () => {
-			const roomId = await createRoom(daemon, 'List Executions Test');
+	test('goal.listExecutions: returns correct structure for recurring mission', async () => {
+		const roomId = await createRoom(daemon, 'List Executions Test');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Execution list test',
-				description: 'Test listExecutions RPC',
-				missionType: 'recurring',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Execution list test',
+			description: 'Test listExecutions RPC',
+			missionType: 'recurring',
+		});
 
-			// Initially empty
-			const empty = await listExecutions(daemon, roomId, mission.id);
-			expect(Array.isArray(empty)).toBe(true);
-			expect(empty).toHaveLength(0);
-		},
-		30_000
-	);
+		// Initially empty
+		const empty = await listExecutions(daemon, roomId, mission.id);
+		expect(Array.isArray(empty)).toBe(true);
+		expect(empty).toHaveLength(0);
+	}, 30_000);
 
-	test(
-		'goal.listExecutions: rejects non-existent goal with error',
-		async () => {
-			const roomId = await createRoom(daemon, 'List Executions Error Test');
+	test('goal.listExecutions: rejects non-existent goal with error', async () => {
+		const roomId = await createRoom(daemon, 'List Executions Error Test');
 
-			await expect(
-				daemon.messageHub.request('goal.listExecutions', {
-					roomId,
-					goalId: 'non-existent-goal-id',
-				})
-			).rejects.toThrow();
-		},
-		30_000
-	);
+		await expect(
+			daemon.messageHub.request('goal.listExecutions', {
+				roomId,
+				goalId: 'non-existent-goal-id',
+			})
+		).rejects.toThrow();
+	}, 30_000);
 
 	// ─── 7. Escalation: consecutive failures → needs_human ──────────────────────
 
-	test(
-		'escalation: goal.update tracks consecutiveFailures field',
-		async () => {
-			const roomId = await createRoom(daemon, 'Escalation Test Room');
+	test('escalation: goal.update tracks consecutiveFailures field', async () => {
+		const roomId = await createRoom(daemon, 'Escalation Test Room');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Escalation test mission',
-				description: 'Test consecutive failure tracking',
-				missionType: 'one_shot',
-				autonomyLevel: 'semi_autonomous',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Escalation test mission',
+			description: 'Test consecutive failure tracking',
+			missionType: 'one_shot',
+			autonomyLevel: 'semi_autonomous',
+		});
 
-			expect(mission.consecutiveFailures ?? 0).toBe(0);
+		expect(mission.consecutiveFailures ?? 0).toBe(0);
 
-			// Verify the field is present and accessible
-			const fetched = await getGoal(daemon, roomId, mission.id);
-			expect(typeof (fetched.consecutiveFailures ?? 0)).toBe('number');
-		},
-		30_000
-	);
+		// Verify the field is present and accessible
+		const fetched = await getGoal(daemon, roomId, mission.id);
+		expect(typeof (fetched.consecutiveFailures ?? 0)).toBe('number');
+	}, 30_000);
 
-	test(
-		'escalation: goal.needsHuman transitions goal to needs_human status',
-		async () => {
-			const roomId = await createRoom(daemon, 'Needs Human Test Room');
+	test('escalation: goal.needsHuman transitions goal to needs_human status', async () => {
+		const roomId = await createRoom(daemon, 'Needs Human Test Room');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Needs human mission',
-				description: 'Test needs_human transition',
-				missionType: 'one_shot',
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Needs human mission',
+			description: 'Test needs_human transition',
+			missionType: 'one_shot',
+		});
 
-			const result = (await daemon.messageHub.request('goal.needsHuman', {
-				roomId,
-				goalId: mission.id,
-			})) as { goal: RoomGoal };
+		const result = (await daemon.messageHub.request('goal.needsHuman', {
+			roomId,
+			goalId: mission.id,
+		})) as { goal: RoomGoal };
 
-			expect(result.goal.status).toBe('needs_human');
+		expect(result.goal.status).toBe('needs_human');
 
-			// Can reactivate
-			const reactivated = (await daemon.messageHub.request('goal.reactivate', {
-				roomId,
-				goalId: mission.id,
-			})) as { goal: RoomGoal };
-			expect(reactivated.goal.status).toBe('active');
-		},
-		30_000
-	);
+		// Can reactivate
+		const reactivated = (await daemon.messageHub.request('goal.reactivate', {
+			roomId,
+			goalId: mission.id,
+		})) as { goal: RoomGoal };
+		expect(reactivated.goal.status).toBe('active');
+	}, 30_000);
 
 	// ─── 8. Task listing with mission context ────────────────────────────────────
 
-	test(
-		'task.list: tasks from measurable mission are linked to goal',
-		async () => {
-			const roomId = await createRoom(daemon, 'Measurable Task Linking');
+	test('task.list: tasks from measurable mission are linked to goal', async () => {
+		const roomId = await createRoom(daemon, 'Measurable Task Linking');
 
-			const mission = await createMission(daemon, roomId, {
-				title: 'Coverage tracking',
-				description: 'Increase coverage',
-				missionType: 'measurable',
-				structuredMetrics: [{ name: 'coverage', target: 80, current: 60, unit: '%' }],
-			});
+		const mission = await createMission(daemon, roomId, {
+			title: 'Coverage tracking',
+			description: 'Increase coverage',
+			missionType: 'measurable',
+			structuredMetrics: [{ name: 'coverage', target: 80, current: 60, unit: '%' }],
+		});
 
-			// Verify goal is active and has no tasks yet
-			const tasks = await listTasks(daemon, roomId);
-			const linkedToMission = tasks.filter((t) =>
-				(mission.linkedTaskIds ?? []).includes(t.id)
-			);
-			expect(linkedToMission).toHaveLength(0); // No tasks yet, just created
+		// Verify goal is active and has no tasks yet
+		const tasks = await listTasks(daemon, roomId);
+		const linkedToMission = tasks.filter((t) => (mission.linkedTaskIds ?? []).includes(t.id));
+		expect(linkedToMission).toHaveLength(0); // No tasks yet, just created
 
-			// The goal should have empty linkedTaskIds initially
-			const fetched = await getGoal(daemon, roomId, mission.id);
-			expect(fetched.linkedTaskIds).toHaveLength(0);
-		},
-		30_000
-	);
+		// The goal should have empty linkedTaskIds initially
+		const fetched = await getGoal(daemon, roomId, mission.id);
+		expect(fetched.linkedTaskIds).toHaveLength(0);
+	}, 30_000);
 });

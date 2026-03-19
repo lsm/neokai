@@ -785,7 +785,9 @@ function GoalItem({
 	// Load execution history when recurring mission is expanded
 	useEffect(() => {
 		if (isExpanded && missionType === 'recurring' && onListExecutions && executions === null) {
-			onListExecutions(goal.id).then(setExecutions).catch(() => setExecutions([]));
+			onListExecutions(goal.id)
+				.then(setExecutions)
+				.catch(() => setExecutions([]));
 		}
 	}, [isExpanded, missionType, onListExecutions, goal.id, executions]);
 
@@ -969,9 +971,7 @@ function GoalItem({
 
 						{missionType === 'recurring' && onListExecutions && (
 							<div data-testid="execution-history-section">
-								<h5 class="text-xs font-medium text-gray-400 uppercase mb-2">
-									Execution History
-								</h5>
+								<h5 class="text-xs font-medium text-gray-400 uppercase mb-2">Execution History</h5>
 								{executions === null ? (
 									<Skeleton class="h-10 w-full" />
 								) : executions.length === 0 ? (
@@ -1002,7 +1002,10 @@ function GoalItem({
 													</span>
 												)}
 												{ex.resultSummary && (
-													<span class="text-gray-400 truncate max-w-[160px]" title={ex.resultSummary}>
+													<span
+														class="text-gray-400 truncate max-w-[160px]"
+														title={ex.resultSummary}
+													>
 														{ex.resultSummary}
 													</span>
 												)}
