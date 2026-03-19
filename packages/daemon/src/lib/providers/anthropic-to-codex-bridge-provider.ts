@@ -441,7 +441,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 */
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const workspace = sessionConfig?.workspacePath ?? process.cwd();
-		const sessionId = (sessionConfig as { sessionId?: string } | undefined)?.sessionId ?? 'default';
+		const sessionId = (sessionConfig?.sessionId as string | undefined) ?? 'default';
 		let bridgeServer = this.bridgeServers.get(workspace);
 
 		if (!bridgeServer) {

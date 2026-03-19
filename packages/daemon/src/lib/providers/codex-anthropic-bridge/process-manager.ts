@@ -51,6 +51,15 @@ class AsyncQueue<T> {
 		if (this.items.length > 0) return this.items.shift()!;
 		return new Promise<T>((resolve) => this.waiters.push(resolve));
 	}
+
+	/** Drain all pending items and reject all waiting callers. Used between turns. */
+	drain(): void {
+		this.items = [];
+		for (const reject of this.waiters) {
+			reject(null as unknown as T);
+		}
+		this.waiters = [];
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +480,9 @@ export class BridgeSession {
 	/** Start a new turn and return an async generator of BridgeEvents. */
 	async *startTurn(userText: string): AsyncGenerator<BridgeEvent> {
 		if (!this.threadId) throw new Error('BridgeSession not initialized');
+		// Drain any stale events from the previous turn that Codex may have sent
+		// after turn_done but before we called startTurn again.
+		this.queue.drain();
 		// Reset latestUsage so any stale value from a previous (erroneous) notification
 		// does not bleed into this turn's turn_done event.
 		this.latestUsage = null;

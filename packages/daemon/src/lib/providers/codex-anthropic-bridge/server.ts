@@ -20,6 +20,7 @@ import {
 	buildDynamicTools,
 	buildConversationText,
 	extractSystemText,
+	extractLastUserMessage,
 	isToolResultContinuation,
 	extractToolResults,
 	pingSSE,
@@ -115,8 +116,10 @@ type PersistentSession = {
 	toolsKey: string;
 	/** True until the first turn/start has been called (system message injected then). */
 	isFirstTurn: boolean;
+	/** True while a turn is in progress — prevents concurrent turns on same session. */
+	turnInProgress: boolean;
 	/** Idle TTL timer — fires when no activity for IDLE_SESSION_TTL_MS. */
-	idleTimer: ReturnType<typeof setTimeout>;
+	idleTimer?: ReturnType<typeof setTimeout>;
 };
 
 /** How long (ms) a persistent session stays alive with no activity. */
@@ -134,7 +137,8 @@ export async function drainToSSE(
 	controller: ReadableStreamDefaultController<Uint8Array>,
 	ttlMs: number,
 	sessionId: string,
-	onTurnDone: () => void
+	onTurnDone: () => void,
+	onError?: () => void
 ): Promise<void> {
 	const enc = new TextEncoder();
 	const send = (s: string) => controller.enqueue(enc.encode(s));
@@ -235,6 +239,7 @@ export async function drainToSSE(
 				// Emit an Anthropic-format error SSE event then close the stream
 				send(errorSSE('api_error', event.message));
 				session.kill();
+				onError?.();
 				controller.close();
 				return;
 			}
@@ -247,6 +252,7 @@ export async function drainToSSE(
 		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens }));
 		send(messageStopSSE());
 		session.kill();
+		onError?.();
 		controller.close();
 	} catch (error) {
 		if (isClosedControllerError(error)) {
@@ -417,7 +423,16 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 							controller,
 							ttlMs,
 							tsSessionId,
-							onTurnDone
+							onTurnDone,
+							() => {
+								// Error: clean up persistent session
+								if (toolContinuationPs) {
+									toolContinuationPs.turnInProgress = false;
+									clearTimeout(toolContinuationPs.idleTimer);
+									toolContinuationPs.session.kill();
+									persistentSessions.delete(tsSessionId);
+								}
+							}
 						);
 					},
 				});
@@ -443,6 +458,11 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				ps.session.kill();
 				persistentSessions.delete(neokaiSessionId);
 				ps = undefined;
+			}
+
+			// Check for concurrent turn — return 409 if a turn is already in progress
+			if (ps?.turnInProgress) {
+				return createAnthropicError(409, 'api_error', 'A turn is already in progress for this session');
 			}
 
 			let bridgeSession: BridgeSession;
@@ -473,17 +493,20 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					model,
 					toolsKey: currentToolsKey,
 					isFirstTurn: true,
-					idleTimer: setTimeout(() => {}, 0), // placeholder, set below
+					turnInProgress: false,
+					idleTimer: undefined,
 				};
 				persistentSessions.set(neokaiSessionId, ps);
 			}
+
+			// Mark turn as in progress (ps is guaranteed to be defined at this point)
+			ps!.turnInProgress = true;
 
 			// Build the text to send Codex for this turn.
 			// First turn: include the full conversation history (as structured text) so Codex
 			// has context from any messages that pre-date the persistent session.
 			// Subsequent turns: Codex already has the thread history — send only the new
 			// user message to avoid duplicating context.
-			const { extractLastUserMessage } = await import('./translator.js');
 			const userText = ps.isFirstTurn
 				? buildConversationText(body.messages, system)
 				: extractLastUserMessage(body.messages);
@@ -492,9 +515,10 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			const gen = bridgeSession.startTurn(userText);
 
 			// Schedule idle timer on turn completion
-			const capturedPs = ps;
+			const capturedPs = ps!;
 			const capturedSessionId = neokaiSessionId;
 			const onTurnDone = () => {
+				capturedPs.turnInProgress = false;
 				capturedPs.idleTimer = scheduleIdle(capturedSessionId);
 			};
 
@@ -508,7 +532,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 						controller,
 						ttlMs,
 						capturedSessionId,
-						onTurnDone
+						onTurnDone,
+						() => {
+							// Error: clean up persistent session
+							capturedPs.turnInProgress = false;
+							clearTimeout(capturedPs.idleTimer);
+							capturedPs.session.kill();
+							persistentSessions.delete(capturedSessionId);
+						}
 					);
 				},
 			});

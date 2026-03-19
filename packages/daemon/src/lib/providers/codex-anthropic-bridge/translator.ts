@@ -156,7 +156,7 @@ export function extractContentText(content: AnthropicMessage['content']): string
  */
 export function extractLastUserMessage(messages: AnthropicMessage[]): string {
 	const last = messages.at(-1);
-	if (!last) return '';
+	if (!last || last.role !== 'user') return '';
 	return extractContentText(last.content);
 }
 
