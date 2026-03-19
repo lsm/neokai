@@ -14,11 +14,13 @@ import { useState, useEffect } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import type { Room, ModelInfo } from '@neokai/shared';
+import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../../lib/connection-manager';
 import {
 	groupModelsByProvider,
 	getProviderLabel,
 	mapRawModelsToModelInfos,
+	filterModelsForPicker,
 } from '../../hooks/useModelSwitcher';
 import type { RawModelEntry } from '../../hooks/useModelSwitcher';
 
@@ -36,6 +38,20 @@ async function fetchAvailableModels(): Promise<import('@neokai/shared').ModelInf
 		models: RawModelEntry[];
 	};
 	return mapRawModelsToModelInfos(models);
+}
+
+/** Fetch provider auth statuses from the server */
+async function fetchProviderAuthStatuses(): Promise<Map<string, ProviderAuthStatus>> {
+	const hub = connectionManager.getHubIfConnected();
+	if (!hub) return new Map();
+	const result = (await hub.request('auth.providers', {})) as {
+		providers?: ProviderAuthStatus[];
+	} | null;
+	const map = new Map<string, ProviderAuthStatus>();
+	for (const p of result?.providers ?? []) {
+		map.set(p.id, p);
+	}
+	return map;
 }
 
 interface NewSessionModalProps {
@@ -72,6 +88,9 @@ export function NewSessionModal({
 	const [newRoomName, setNewRoomName] = useState('');
 	const [newRoomDescription, setNewRoomDescription] = useState('');
 	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
+		new Map()
+	);
 	// Empty string = "Default (server setting)"; non-empty = "provider:id"
 	const [selectedModelKey, setSelectedModelKey] = useState<string>('');
 
@@ -81,6 +100,11 @@ export function NewSessionModal({
 			.then((models) => setAvailableModels(models))
 			.catch(() => {
 				// silently ignore — model picker remains hidden
+			});
+		fetchProviderAuthStatuses()
+			.then((statuses) => setProviderAuthStatuses(statuses))
+			.catch(() => {
+				// silently ignore — all providers shown (optimistic)
 			});
 	}, [isOpen]);
 
@@ -166,6 +190,7 @@ export function NewSessionModal({
 		setSelectedRoomId(undefined);
 		setSelectedModelKey('');
 		setAvailableModels([]);
+		setProviderAuthStatuses(new Map());
 		setShowCreateRoom(false);
 		setNewRoomName('');
 		setNewRoomDescription('');
@@ -173,7 +198,10 @@ export function NewSessionModal({
 		onClose();
 	};
 
-	const groupedModels = groupModelsByProvider(availableModels);
+	// Filter out unauthenticated providers; no "current provider" to preserve in new session context
+	const groupedModels = groupModelsByProvider(
+		filterModelsForPicker(availableModels, providerAuthStatuses)
+	);
 
 	const handleBrowseFolder = () => {
 		// Trigger file browser dialog
@@ -255,18 +283,25 @@ export function NewSessionModal({
 							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
 						>
 							<option value="">Default (server setting)</option>
-							{Array.from(groupedModels.entries()).map(([provider, models]) => (
-								<optgroup key={provider} label={getProviderLabel(provider)}>
-									{models.map((model) => (
-										<option
-											key={`${model.provider}:${model.id}`}
-											value={`${model.provider}:${model.id}`}
-										>
-											{model.name}
-										</option>
-									))}
-								</optgroup>
-							))}
+							{Array.from(groupedModels.entries()).map(([provider, models]) => {
+								const authStatus = providerAuthStatuses.get(provider);
+								const needsRefresh = authStatus?.needsRefresh ?? false;
+								const groupLabel = needsRefresh
+									? `${getProviderLabel(provider)} ⚠ (token expiring)`
+									: getProviderLabel(provider);
+								return (
+									<optgroup key={provider} label={groupLabel}>
+										{models.map((model) => (
+											<option
+												key={`${model.provider}:${model.id}`}
+												value={`${model.provider}:${model.id}`}
+											>
+												{model.name}
+											</option>
+										))}
+									</optgroup>
+								);
+							})}
 						</select>
 					</div>
 				)}

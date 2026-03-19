@@ -51,10 +51,22 @@ const MOCK_MODELS = [
 	},
 ];
 
+const ALL_AUTH_OK = {
+	providers: [
+		{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true },
+		{ id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: true },
+		{ id: 'anthropic-codex', displayName: 'Codex', isAuthenticated: true },
+	],
+};
+
 describe('NewSessionModal — provider-aware session creation', () => {
 	beforeEach(() => {
 		document.body.innerHTML = '';
-		mockRequest.mockResolvedValue({ models: MOCK_MODELS });
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
+			if (method === 'auth.providers') return Promise.resolve(ALL_AUTH_OK);
+			return Promise.resolve(null);
+		});
 	});
 
 	afterEach(() => {
@@ -274,6 +286,80 @@ describe('NewSessionModal — provider-aware session creation', () => {
 
 			await waitFor(() => {
 				expect((modelSelect as HTMLSelectElement).value).toBe('');
+			});
+		});
+	});
+
+	describe('auth-based model filtering', () => {
+		it('hides optgroup for unauthenticated provider', async () => {
+			mockRequest.mockImplementation((method: string) => {
+				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
+				if (method === 'auth.providers') {
+					return Promise.resolve({
+						providers: [
+							{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true },
+							{ id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: false },
+							{ id: 'anthropic-codex', displayName: 'Codex', isAuthenticated: true },
+						],
+					});
+				}
+				return Promise.resolve(null);
+			});
+
+			render(<NewSessionModal {...DEFAULT_PROPS} />);
+			await waitFor(() => {
+				const optgroups = document.querySelectorAll('optgroup');
+				const labels = Array.from(optgroups).map((g) => g.getAttribute('label'));
+				// Copilot is unauthenticated — must not appear
+				expect(labels).not.toContain('Copilot');
+				// Anthropic and Codex are authenticated — must appear
+				expect(labels).toContain('Anthropic');
+				expect(labels).toContain('Codex');
+			});
+		});
+
+		it('shows needsRefresh provider with warning label', async () => {
+			mockRequest.mockImplementation((method: string) => {
+				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
+				if (method === 'auth.providers') {
+					return Promise.resolve({
+						providers: [
+							{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true },
+							{
+								id: 'anthropic-copilot',
+								displayName: 'Copilot',
+								isAuthenticated: true,
+								needsRefresh: true,
+							},
+						],
+					});
+				}
+				return Promise.resolve(null);
+			});
+
+			render(<NewSessionModal {...DEFAULT_PROPS} />);
+			await waitFor(() => {
+				const optgroups = document.querySelectorAll('optgroup');
+				const labels = Array.from(optgroups).map((g) => g.getAttribute('label'));
+				// Copilot is expiring — shown but with warning label
+				expect(labels.some((l) => l?.includes('Copilot') && l.includes('⚠'))).toBe(true);
+				// Anthropic is healthy — no warning
+				expect(labels.some((l) => l === 'Anthropic')).toBe(true);
+			});
+		});
+
+		it('shows all providers when auth.providers is unavailable (optimistic)', async () => {
+			mockRequest.mockImplementation((method: string) => {
+				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
+				if (method === 'auth.providers') return Promise.reject(new Error('unavailable'));
+				return Promise.resolve(null);
+			});
+
+			render(<NewSessionModal {...DEFAULT_PROPS} />);
+			await waitFor(() => {
+				const optgroups = document.querySelectorAll('optgroup');
+				// All three providers shown even though auth is unavailable
+				expect(optgroups.length).toBeGreaterThanOrEqual(3);
 			});
 		});
 	});
