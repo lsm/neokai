@@ -182,9 +182,9 @@ Build the data access and business logic layers for workflows within Spaces. The
 2. Create `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
    - Validation:
      - Name unique within space
-     - Step agent references valid: builtin must be `'planner'|'coder'|'general'` (NOT `'leader'`); custom must reference existing `SpaceAgent` in same space (query `SpaceAgentManager`)
+     - Each step's `agentId` must reference an existing `SpaceAgent` in the same space
      - At least one step required
-     - Step order contiguous (0, 1, 2, ...)
+     - All transition `from`/`to` values must reference step IDs that exist in the workflow
      - Condition validation: `condition` type requires non-empty `expression`; `timeoutMs` within range 0–300000
    - Business logic: workflow selection is either explicit workflowId (caller-provided) or AI auto-select via `list_workflows` + `start_workflow_run`. No default workflow concept, no `isDefault` flag.
 

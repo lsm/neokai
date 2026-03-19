@@ -78,16 +78,28 @@ Define a standardized JSON format for exporting and importing custom agents and 
        agentName: string;
        instructions?: string;
      }>;
+     transitions: Array<{
+       /** Source step name (step names must be unique within a workflow — used instead of UUID) */
+       from: string;
+       to: string;
+       condition?: {
+         type: 'always' | 'human' | 'condition';
+         expression?: string;
+         description?: string;
+         maxRetries?: number;
+         timeoutMs?: number;
+       };
+       order?: number;
+     }>;
      rules: Array<{
        name: string;
        content: string;
        /**
-        * Step references use step **order indices** (0, 1, 2, ...), NOT UUIDs.
-        * UUIDs are space-specific and stripped on export.
-        * exportWorkflow() remaps appliesTo from step IDs to order indices.
-        * importWorkflow() remaps order indices back to newly generated step IDs.
+        * Step references use step **names** (NOT UUIDs — step names must be unique within a workflow).
+        * exportWorkflow() remaps appliesTo from step IDs to step names.
+        * importWorkflow() remaps step names back to newly generated step IDs.
         */
-       appliesTo?: number[];
+       appliesTo?: string[];
      }>;
      tags: string[];
      config?: Record<string, unknown>;

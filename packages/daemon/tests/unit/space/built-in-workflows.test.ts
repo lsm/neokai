@@ -2,7 +2,7 @@
  * Built-in Workflow Templates Unit Tests
  *
  * Covers:
- * - Template structure: correct agentId placeholders, gate types, step count
+ * - Template structure: correct agentId placeholders, transition conditions, step count
  * - agentId placeholders are valid builtin role names (no 'leader')
  * - getBuiltInWorkflows() returns all three templates
  * - seedBuiltInWorkflows(): seeds all three templates with real agent IDs
