@@ -52,6 +52,11 @@ export interface SpaceRuntimeConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task repository for querying tasks by run/step */
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Interval between executeTick() calls in milliseconds.
+	 * Used by start(). Default: 5000 (5 seconds).
+	 */
+	tickIntervalMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,12 +103,59 @@ export class SpaceRuntime {
 	private executorMeta = new Map<string, ExecutorMeta>();
 
 	/**
+	 * Per-space SpaceTaskManager instances, cached to avoid creating a new
+	 * manager + repository on every executor build.
+	 */
+	private taskManagers = new Map<string, SpaceTaskManager>();
+
+	/**
 	 * Set to true after the first executeTick() call, after rehydrateExecutors()
 	 * has loaded in-progress runs from the DB. Prevents repeated rehydration.
 	 */
 	private rehydrated = false;
 
+	/** Handle returned by setInterval when the tick loop is running */
+	private tickTimer: ReturnType<typeof setInterval> | null = null;
+
 	constructor(private config: SpaceRuntimeConfig) {}
+
+	// -------------------------------------------------------------------------
+	// Lifecycle — start / stop
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Starts the periodic tick loop.
+	 * Calls executeTick() immediately and then every `tickIntervalMs` ms.
+	 * Errors from executeTick() are caught and logged so the loop keeps running.
+	 */
+	start(): void {
+		if (this.tickTimer !== null) return; // already running
+
+		const interval = this.config.tickIntervalMs ?? 5_000;
+
+		// Kick off the first tick immediately, then schedule the loop.
+		this.executeTick().catch(() => {
+			// Swallow initial tick error — the loop will retry on the next interval.
+		});
+
+		this.tickTimer = setInterval(() => {
+			this.executeTick().catch(() => {
+				// Swallow per-tick errors so the loop stays alive.
+			});
+		}, interval);
+	}
+
+	/**
+	 * Stops the periodic tick loop.
+	 * Does not affect in-progress executors — they remain in the map and can
+	 * be resumed by calling start() again.
+	 */
+	stop(): void {
+		if (this.tickTimer !== null) {
+			clearInterval(this.tickTimer);
+			this.tickTimer = null;
+		}
+	}
 
 	// -------------------------------------------------------------------------
 	// Public API
@@ -139,6 +191,7 @@ export class SpaceRuntime {
 	 * 4. Create a pending SpaceTask for the workflow's start step
 	 *
 	 * Returns the created run and the initial task(s).
+	 * Cleans up maps if task creation fails to prevent orphaned executor entries.
 	 */
 	async startWorkflowRun(
 		spaceId: string,
@@ -167,30 +220,39 @@ export class SpaceRuntime {
 
 		const run = this.config.workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;
 
-		// Store metadata for future executor recreation with fresh run state
+		// Register executor and meta. If a later step fails, we must clean these up.
 		const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
 		this.executorMeta.set(run.id, meta);
-
 		const executor = this.buildExecutor(workflow, run, spaceId, space.workspacePath);
 		this.executors.set(run.id, executor);
 
-		// Find the start step and create the initial task
+		// Find the start step and create the initial task. Roll back map entries if this fails.
 		const startStep = workflow.steps.find((s) => s.id === workflow.startStepId);
 		if (!startStep) {
+			this.executors.delete(run.id);
+			this.executorMeta.delete(run.id);
 			throw new Error(`Start step "${workflow.startStepId}" not found in workflow "${workflowId}"`);
 		}
 
 		const resolved = this.resolveTaskTypeForStep(startStep);
-		const taskManager = new SpaceTaskManager(this.config.db, spaceId);
-		const task = await taskManager.createTask({
-			title: startStep.name,
-			description: startStep.instructions ?? '',
-			workflowRunId: run.id,
-			workflowStepId: startStep.id,
-			taskType: resolved.taskType,
-			customAgentId: resolved.customAgentId ?? startStep.agentId,
-			status: 'pending',
-		});
+		const taskManager = this.getOrCreateTaskManager(spaceId);
+		let task: SpaceTask;
+		try {
+			task = await taskManager.createTask({
+				title: startStep.name,
+				description: startStep.instructions ?? '',
+				workflowRunId: run.id,
+				workflowStepId: startStep.id,
+				taskType: resolved.taskType,
+				customAgentId: resolved.customAgentId,
+				status: 'pending',
+			});
+		} catch (err) {
+			// Clean up the executor/meta entries so the run is not orphaned in the map.
+			this.executors.delete(run.id);
+			this.executorMeta.delete(run.id);
+			throw err;
+		}
 
 		return { run, tasks: [task] };
 	}
@@ -267,13 +329,17 @@ export class SpaceRuntime {
 	 * executors with the run's persisted currentStepId so the tick loop can
 	 * resume advancement from where it left off.
 	 *
-	 * Runs that reference a missing workflow are skipped (logged as a warning).
+	 * Runs that reference a missing workflow are skipped silently.
 	 */
 	async rehydrateExecutors(): Promise<void> {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 
 		for (const space of spaces) {
-			const activeRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
+			// getRehydratableRuns returns 'in_progress' AND 'needs_attention' runs.
+			// 'pending' is still excluded — it's transient (task creation may have failed).
+			// 'needs_attention' runs are included so a human-gate-blocked run gets its
+			// executor reloaded on restart, allowing it to advance once the gate is resolved.
+			const activeRuns = this.config.workflowRunRepo.getRehydratableRuns(space.id);
 
 			for (const run of activeRuns) {
 				// Skip if executor already registered (e.g. called twice)
@@ -312,74 +378,91 @@ export class SpaceRuntime {
 	 * If a gate condition fails, the run status becomes 'needs_attention'.
 	 * The executor is retained so the run can be re-examined after the gate is
 	 * manually resolved (e.g., humanApproved set in run.config).
+	 *
+	 * Errors from individual runs are caught and re-thrown after all runs have
+	 * been processed, so a single bad run cannot starve subsequent ones.
 	 */
 	private async processCompletedTasks(): Promise<void> {
+		let firstError: unknown = null;
+
 		for (const [runId] of this.executors) {
-			// Always re-read run from DB to pick up external status changes (e.g. human
-			// approval reset, external cancellation).
-			const run = this.config.workflowRunRepo.getRun(runId);
-			if (!run) continue;
-			if (
-				run.status === 'needs_attention' ||
-				run.status === 'cancelled' ||
-				run.status === 'completed'
-			) {
-				continue;
-			}
-
-			// Recreate the executor with the fresh run from DB. This ensures that
-			// external run mutations (e.g. status reset after human approval) are
-			// reflected in the executor's advance() guard checks. The executor is
-			// stateless beyond this.run (all workflow state is in the DB), so
-			// recreation is safe and cheap.
-			const meta = this.executorMeta.get(runId);
-			if (!meta) continue;
-
-			const freshExecutor = this.buildExecutor(
-				meta.workflow,
-				run,
-				meta.spaceId,
-				meta.workspacePath
-			);
-			this.executors.set(runId, freshExecutor);
-
-			const currentStep = freshExecutor.getCurrentStep();
-			if (!currentStep) continue;
-
-			// Find tasks that belong to the current step
-			const stepTasks = this.config.taskRepo
-				.listByWorkflowRun(runId)
-				.filter((t) => t.workflowStepId === currentStep.id);
-
-			// Only advance when there is at least one task and ALL are completed
-			if (stepTasks.length === 0) continue;
-			if (!stepTasks.every((t) => t.status === 'completed')) continue;
-
 			try {
-				const { step: nextStep, tasks: newTasks } = await freshExecutor.advance();
-
-				// Apply task-type assignment to tasks created by advance()
-				for (const task of newTasks) {
-					const resolved = this.resolveTaskTypeForStep(nextStep);
-					this.config.taskRepo.updateTask(task.id, {
-						taskType: resolved.taskType,
-						customAgentId: resolved.customAgentId ?? nextStep.agentId,
-					});
-				}
-
-				if (newTasks.length === 0) {
-					// Terminal step reached — run marked completed by advance(); clean up executor.
-					this.executors.delete(runId);
-					this.executorMeta.delete(runId);
-				}
+				await this.processRunTick(runId);
 			} catch (err) {
-				if (!(err instanceof WorkflowGateError)) {
-					// Unexpected error — re-throw so the caller's error boundary handles it
-					throw err;
-				}
-				// Gate blocked: run status already set to 'needs_attention' by the executor.
-				// Keep executor and meta in map — will be retried after gate is resolved.
+				// Capture first unexpected error; continue processing remaining runs.
+				if (firstError === null) firstError = err;
 			}
+		}
+
+		// Re-throw after all runs processed so callers see the error.
+		if (firstError !== null) throw firstError;
+	}
+
+	/**
+	 * Process a single workflow run tick: re-read from DB, recreate executor
+	 * with fresh state, check for completed step tasks, and advance if ready.
+	 */
+	private async processRunTick(runId: string): Promise<void> {
+		// Always re-read run from DB to pick up external status changes (e.g. human
+		// approval reset, external cancellation).
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return;
+		if (
+			run.status === 'needs_attention' ||
+			run.status === 'cancelled' ||
+			run.status === 'completed'
+		) {
+			return;
+		}
+
+		// Recreate the executor with the fresh run from DB. This ensures that
+		// external run mutations (e.g. status reset after human approval) are
+		// reflected in the executor's advance() guard checks. The executor is
+		// stateless beyond this.run (all workflow state is in the DB), so
+		// recreation is safe and cheap.
+		const meta = this.executorMeta.get(runId);
+		if (!meta) return;
+
+		const freshExecutor = this.buildExecutor(meta.workflow, run, meta.spaceId, meta.workspacePath);
+		this.executors.set(runId, freshExecutor);
+
+		const currentStep = freshExecutor.getCurrentStep();
+		if (!currentStep) {
+			// Run is in_progress but currentStepId references a step that doesn't exist in
+			// the workflow. This is a data inconsistency — throw so the error surfaces rather
+			// than the run silently hanging forever.
+			throw new Error(
+				`Run "${runId}" has currentStepId "${run.currentStepId}" not found in workflow "${run.workflowId}"`
+			);
+		}
+
+		// Find tasks that belong to the current step
+		const stepTasks = this.config.taskRepo
+			.listByWorkflowRun(runId)
+			.filter((t) => t.workflowStepId === currentStep.id);
+
+		// Only advance when there is at least one task and ALL are completed
+		if (stepTasks.length === 0) return;
+		if (!stepTasks.every((t) => t.status === 'completed')) return;
+
+		try {
+			const { tasks: newTasks } = await freshExecutor.advance();
+
+			// Tasks are created with taskType already set by the TaskTypeResolver
+			// injected into the executor via buildExecutor(). No second update needed.
+
+			if (newTasks.length === 0) {
+				// Terminal step reached — run marked completed by advance(); clean up executor.
+				this.executors.delete(runId);
+				this.executorMeta.delete(runId);
+			}
+		} catch (err) {
+			if (!(err instanceof WorkflowGateError)) {
+				// Unexpected error — propagate to caller (processCompletedTasks collects it)
+				throw err;
+			}
+			// Gate blocked: run status already set to 'needs_attention' by the executor.
+			// Keep executor and meta in map — will be retried after gate is resolved.
 		}
 	}
 
@@ -402,7 +485,22 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Returns the cached SpaceTaskManager for a space, creating it if needed.
+	 * Caching avoids creating a new manager + repository on every executor build.
+	 */
+	private getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
+		let manager = this.taskManagers.get(spaceId);
+		if (!manager) {
+			manager = new SpaceTaskManager(this.config.db, spaceId);
+			this.taskManagers.set(spaceId, manager);
+		}
+		return manager;
+	}
+
+	/**
 	 * Builds a WorkflowExecutor for the given run with fresh state.
+	 * Injects the TaskTypeResolver so tasks are created with correct taskType
+	 * in a single atomic DB write.
 	 */
 	private buildExecutor(
 		workflow: SpaceWorkflow,
@@ -410,13 +508,15 @@ export class SpaceRuntime {
 		spaceId: string,
 		workspacePath: string
 	): WorkflowExecutor {
-		const taskManager = new SpaceTaskManager(this.config.db, spaceId);
+		const taskManager = this.getOrCreateTaskManager(spaceId);
 		return new WorkflowExecutor(
 			workflow,
 			run,
 			taskManager,
 			this.config.workflowRunRepo,
-			workspacePath
+			workspacePath,
+			undefined, // use default commandRunner
+			(step) => this.resolveTaskTypeForStep(step) // inject TaskTypeResolver
 		);
 	}
 }

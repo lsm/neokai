@@ -56,6 +56,7 @@ import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import { SpaceRuntime } from '../space/runtime/space-runtime';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -222,8 +223,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.daemonHub
 	);
 
+	// Space Runtime — workflow orchestration tick loop
+	const spaceRuntime = new SpaceRuntime({
+		db: deps.db.getDatabase(),
+		spaceManager: deps.spaceManager,
+		spaceAgentManager: deps.spaceAgentManager,
+		spaceWorkflowManager,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		taskRepo: spaceTaskRepo,
+	});
+	spaceRuntime.start();
+
 	// Return cleanup function to stop background services
 	return () => {
 		roomRuntimeService.stop();
+		spaceRuntime.stop();
 	};
 }

@@ -79,6 +79,16 @@ export type CommandRunner = (
 	timeoutMs: number
 ) => Promise<{ exitCode: number | null; timedOut?: boolean; stderr?: string }>;
 
+/**
+ * Optional resolver injected by SpaceRuntime to set task metadata (taskType,
+ * customAgentId) at task-creation time. When provided, the task is created
+ * complete in a single DB write — no second update required.
+ */
+export type TaskTypeResolver = (step: WorkflowStep) => {
+	taskType?: string;
+	customAgentId?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Default timeout constants
 // ---------------------------------------------------------------------------
@@ -135,7 +145,8 @@ export class WorkflowExecutor {
 		private taskManager: SpaceTaskManager,
 		private workflowRunRepo: SpaceWorkflowRunRepository,
 		private workspacePath: string,
-		private commandRunner: CommandRunner = defaultCommandRunner
+		private commandRunner: CommandRunner = defaultCommandRunner,
+		private taskTypeResolver?: TaskTypeResolver
 	) {}
 
 	// -------------------------------------------------------------------------
@@ -328,13 +339,20 @@ export class WorkflowExecutor {
 		if (!updatedRun) throw new Error('Failed to persist step ID update');
 		this.run = updatedRun;
 
+		// Resolve task metadata so the task is created complete in a single write.
+		// When a taskTypeResolver is provided it fully controls taskType AND customAgentId —
+		// customAgentId: undefined means "no custom agent" for preset roles (planner/coder/general).
+		// Without a resolver (backward-compat), fall back to nextStep.agentId.
+		const resolved = this.taskTypeResolver?.(nextStep);
+
 		// Create a pending SpaceTask for the new step
 		const task = await this.taskManager.createTask({
 			title: nextStep.name,
 			description: nextStep.instructions ?? '',
 			workflowRunId: this.run.id,
 			workflowStepId: nextStep.id,
-			customAgentId: nextStep.agentId,
+			taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
+			customAgentId: resolved !== undefined ? resolved.customAgentId : nextStep.agentId,
 			status: 'pending',
 		});
 

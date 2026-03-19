@@ -301,11 +301,11 @@ describe('SpaceRuntime', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'My Run');
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'My Run');
 
 			expect(tasks).toHaveLength(1);
 			const task = tasks[0];
-			expect(task.workflowRunId).toBe(tasks[0].workflowRunId);
+			expect(task.workflowRunId).toBe(run.id);
 			expect(task.workflowStepId).toBe(STEP_A);
 			expect(task.status).toBe('pending');
 			expect(task.title).toBe('Plan');
@@ -534,6 +534,75 @@ describe('SpaceRuntime', () => {
 
 			expect(stepBTask.taskType).toBe('coding');
 			expect(stepBTask.customAgentId).toBe(AGENT_CUSTOM);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Non-gate error propagation
+	// -------------------------------------------------------------------------
+
+	describe('non-gate error propagation', () => {
+		test('executeTick() re-throws non-WorkflowGateError from a run tick', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+			// Corrupt the executor meta so buildExecutor() throws a non-gate error on next tick
+			// by pointing the workflow to a non-existent target step.
+			workflowRunRepo.updateRun(run.id, { currentStepId: 'nonexistent-step' });
+
+			await expect(runtime.executeTick()).rejects.toThrow();
+		});
+
+		test('executeTick() processes remaining runs after one run throws a non-gate error', async () => {
+			// Run 1: will be set to an invalid step to cause a non-gate error
+			const wf1 = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+			// Run 2: normal single-step workflow that should complete normally
+			const wf2 = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_C, name: 'Only Step', agentId: AGENT_PLANNER },
+			]);
+
+			const { run: run1, tasks: tasks1 } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wf1.id,
+				'Run 1'
+			);
+			const { run: run2, tasks: tasks2 } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wf2.id,
+				'Run 2'
+			);
+
+			// Complete both initial tasks
+			taskRepo.updateTask(tasks1[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks2[0].id, { status: 'completed' });
+
+			// Force run1 to an invalid step so the tick throws a non-gate error
+			workflowRunRepo.updateRun(run1.id, { currentStepId: 'nonexistent-step' });
+
+			// The tick should throw (from run1) but still process run2 first
+			await expect(runtime.executeTick()).rejects.toThrow();
+
+			// run2 should have completed despite run1's error
+			const run2State = workflowRunRepo.getRun(run2.id)!;
+			expect(run2State.status).toBe('completed');
 		});
 	});
 
@@ -787,6 +856,62 @@ describe('SpaceRuntime', () => {
 
 			await expect(freshRuntime.executeTick()).resolves.toBeUndefined();
 			expect(freshRuntime.executorCount).toBe(0);
+		});
+
+		test('rehydrates needs_attention runs so they can resume after gate resolved', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'human' }]
+			);
+
+			// Simulate a run that was blocked at a human gate before restart
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate Run',
+				currentStepId: STEP_A,
+			});
+			const run = workflowRunRepo.updateStatus(pendingRun.id, 'needs_attention')!;
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Plan',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: STEP_A,
+				status: 'completed',
+			});
+
+			// Fresh runtime rehydrates the needs_attention run
+			const freshRuntime = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+			});
+
+			// First tick: rehydrates executor but run is needs_attention — no advancement
+			await freshRuntime.executeTick();
+			expect(freshRuntime.getExecutor(run.id)).toBeDefined();
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('needs_attention');
+
+			// Resolve the gate externally
+			workflowRunRepo.updateRun(run.id, {
+				status: 'in_progress',
+				config: { humanApproved: true },
+			});
+
+			// Second tick: gate now passes, run advances to step B
+			await freshRuntime.executeTick();
+
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			expect(stepBTask).toBeDefined();
 		});
 	});
 
