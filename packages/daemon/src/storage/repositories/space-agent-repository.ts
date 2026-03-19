@@ -4,9 +4,10 @@
  * CRUD operations for space_agents table.
  *
  * Column mapping:
+ *   SpaceAgent.tools        ↔  tools column (JSON string array; '[]' or null → undefined)
  *   SpaceAgent.toolConfig   ↔  config column (JSON)
  *   SpaceAgent.systemPrompt ↔  system_prompt column
- *   SpaceAgent.role         ↔  role column (BuiltinAgentRole: 'planner'|'coder'|'general')
+ *   SpaceAgent.role         ↔  role column (BuiltinAgentRole: 'planner'|'coder'|'general'|'reviewer')
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -37,7 +38,7 @@ export class SpaceAgentRepository {
 				params.description ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
 				params.model ?? null,
 				params.provider ?? null,
-				'[]', // tools column kept for DB compatibility, unused in type layer
+				params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
 				params.systemPrompt ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
 				params.role,
 				params.toolConfig ? JSON.stringify(params.toolConfig) : null,
@@ -131,6 +132,10 @@ export class SpaceAgentRepository {
 			fields.push('role = ?');
 			values.push(params.role);
 		}
+		if (params.tools !== undefined) {
+			fields.push('tools = ?');
+			values.push(params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]');
+		}
 		if (params.toolConfig !== undefined) {
 			fields.push('config = ?');
 			values.push(params.toolConfig ? JSON.stringify(params.toolConfig) : null);
@@ -173,6 +178,13 @@ export class SpaceAgentRepository {
 	}
 
 	private rowToAgent(row: Record<string, unknown>): SpaceAgent {
+		// Parse tools: '[]' or null → undefined; non-empty JSON array → string[]
+		let tools: string[] | undefined;
+		if (row.tools) {
+			const parsed = JSON.parse(row.tools as string) as string[];
+			tools = parsed.length > 0 ? parsed : undefined;
+		}
+
 		return {
 			id: row.id as string,
 			spaceId: row.space_id as string,
@@ -182,6 +194,7 @@ export class SpaceAgentRepository {
 			provider: (row.provider as string | null) ?? undefined,
 			systemPrompt: (row.system_prompt as string) || undefined, // '' or null → undefined
 			role: (row.role as SpaceAgent['role'] | null) ?? 'coder',
+			tools,
 			toolConfig: row.config
 				? (JSON.parse(row.config as string) as Record<string, unknown>)
 				: undefined,

@@ -440,6 +440,23 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
 	};
 
+	// Space Agent events (channel: 'space:${spaceId}')
+	'spaceAgent.created': {
+		sessionId: string;
+		spaceId: string;
+		agent: import('@neokai/shared').SpaceAgent;
+	};
+	'spaceAgent.updated': {
+		sessionId: string;
+		spaceId: string;
+		agent: import('@neokai/shared').SpaceAgent;
+	};
+	'spaceAgent.deleted': {
+		sessionId: string;
+		spaceId: string;
+		agentId: string;
+	};
+
 	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)
 	'featureFlag.updated': {
 		sessionId: string;

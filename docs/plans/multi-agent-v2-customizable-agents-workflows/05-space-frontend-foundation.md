@@ -2,12 +2,13 @@
 
 ## Goal
 
-Build the frontend foundation for Spaces: navigation entry point, URL routing, state management, Space creation UX with workspace path picker, and the minimalist 3-column layout. This creates the shell that all Space UI features plug into.
+Build the frontend foundation for Spaces: navigation entry point, URL routing, state management, Space creation UX with workspace path picker, and a minimalist chat-centered layout. This creates the shell that all Space UI features plug into.
 
 ## Design Principles
 
-- **Minimalist**: Clean, uncluttered, purposeful. Every element earns its place.
-- **3-column layout**: Follows the existing room pattern (nav | work area | detail) but with fresh, focused design.
+- **Chat-first**: The primary interaction model is chat — users describe what they want in natural language and the Space agent figures out the workflow. Configuration is secondary.
+- **Minimal toggles**: The interface exposes almost no configuration controls on the main screen. Workflow/agent setup lives in dedicated settings views, not inline toggles.
+- **3-column layout**: Follows the existing room pattern (nav | chat area | detail) but with fresh, focused design.
 - **Creative**: Not a copy of the Room UI. Fresh visual language, focused interaction model.
 - **Workspace-first**: Space creation prominently features workspace path selection as a required field.
 
@@ -17,8 +18,7 @@ Build the frontend foundation for Spaces: navigation entry point, URL routing, s
 - URL routing: `/space/:spaceId`, `/space/:spaceId/session/:sessionId`, `/space/:spaceId/task/:taskId`
 - `SpaceStore` for reactive state management
 - Space creation dialog with workspace path picker
-- 3-column layout shell
-- Space dashboard/overview
+- 3-column layout shell with chat as the center-pane default
 - Unit tests
 
 ---
@@ -54,7 +54,7 @@ Add the navigation entry point for Spaces, URL routing, and core signals. All ne
      - `packages/web/src/lib/nav-config.tsx`: Add a `'spaces'` entry to `MAIN_NAV_ITEMS` array
      - `packages/web/src/islands/ContextPanel.tsx`: Add a case for `'spaces'` section that renders the new `SpaceContextPanel` component (the panel itself is a new component under `components/space/`)
    - These are the **only** existing file modifications in the entire plan. They are small, additive changes (extending a union, adding an array entry, adding a switch case).
-   - Create new `packages/web/src/components/space/SpaceContextPanel.tsx` — list of spaces with active/archived filter, "Create Space" button
+   - Create new `packages/web/src/components/space/SpaceContextPanel.tsx` — list of spaces with active/archived filter, "Create Space" button.
 
 4. Update `packages/web/src/islands/MainContent.tsx` routing logic:
    - Add condition: if `currentSpaceIdSignal` → render `SpaceIsland` component
@@ -108,7 +108,7 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
      - `clearSpace()` — unsubscribe, reset signals
      - CRUD wrappers: `createTask()`, `startWorkflowRun()`, `archiveSpace()`, etc.
 
-2. Promise-chain lock for atomic space switching (prevent race conditions when rapidly switching spaces — same pattern as `RoomStore`)
+2. Promise-chain lock for atomic space switching (prevent race conditions when rapidly switching spaces — same pattern as `RoomStore`).
 
 3. Event subscriptions:
    - Subscribe to `space.task.created`, `space.task.updated`, `space.workflowRun.created`, `space.workflowRun.updated`, `spaceAgent.created/updated/deleted`, `spaceWorkflow.created/updated/deleted`
@@ -130,7 +130,7 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
 
 ---
 
-### Task 5.3: Space Creation UX and 3-Column Layout
+### Task 5.3: Space Creation UX and Chat-Centered Layout
 
 **Agent:** coder
 **Priority:** high
@@ -138,12 +138,18 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
 
 **Description:**
 
-Build the Space creation dialog (with required workspace path) and the main 3-column layout shell. The design should feel fresh, minimalist, and focused.
+Build the Space creation dialog (with required workspace path) and the main 3-column layout shell. The center pane is a chat interface where users describe their intent to the Space agent. Configuration (agents, workflows) lives in dedicated views, not inline on the main screen.
+
+**Design Philosophy:**
+- The main screen is a chat — no toggles, no dropdowns, no config panels on the primary view.
+- Users type what they want: "Fix the authentication bug", "Add a new feature for X". The AI agent handles workflow selection.
+- Status/progress is shown inline in the chat thread (workflow run progress, step indicators).
+- Advanced configuration (agents, workflows) is accessible from the left nav, not from the chat area.
 
 **Subtasks:**
 
 1. Create `packages/web/src/components/space/SpaceCreateDialog.tsx`:
-   - **Workspace path is the hero field** — prominently featured, required
+   - **Workspace path is the hero field** — prominently featured, required.
    - Fields:
      - **Workspace Path**: directory picker or text input with validation (path must exist). Consider a "Browse" button that opens a native file dialog or a path autocomplete.
      - **Name**: text input (auto-suggest from directory name)
@@ -155,16 +161,17 @@ Build the Space creation dialog (with required workspace path) and the main 3-co
 2. Create `packages/web/src/islands/Space.tsx` — the main Space component:
    - **3-column layout**:
      - **Left column (narrow)**: Space navigation panel — workflow runs list, standalone tasks, quick-access sections (Agents, Workflows, Settings), space status indicator
-     - **Middle column (wide)**: Primary work area — workflow run detail, task list, dashboard, or editor views depending on what's selected
-     - **Right column (wide)**: Detail pane — active task conversation, session view, or contextual information
-   - The right column shows task conversations (using the `TaskConversationRenderer` pattern but styled fresh) when a task is selected
-   - Responsive: on narrow screens, columns collapse (right → overlay, left → toggleable)
+     - **Middle column (wide)**: **Primary chat interface** — this is the main interaction area. Users send messages, the Space agent responds, workflow progress appears inline.
+     - **Right column (contextual)**: Detail pane — shows task conversation detail, session view, or workflow run progress when selected from the left nav. Hidden by default until an item is selected.
+   - No configuration toggles in the middle column — it is purely a chat area.
+   - Responsive: on narrow screens, right column collapses (overlay), left column toggleable.
 
-3. Create `packages/web/src/components/space/SpaceDashboard.tsx`:
-   - Default middle-column view when no specific item is selected
-   - Shows: space name, workspace path, workflow run progress, recent activity
-   - Quick actions: "Start Workflow Run", "Create Task", "Configure Agents", "Edit Workflows"
-   - Minimalist design: cards with clear hierarchy, subtle color accents
+3. Create `packages/web/src/components/space/SpaceChatPane.tsx` — the chat interface in the middle column:
+   - Chat message thread showing Space agent conversation
+   - Input area: text input + send button (no extra controls inline)
+   - Workflow run progress appears as status cards within the chat thread (e.g., "Started workflow: Coding — Step 1/3: Planning")
+   - Task completion notifications appear inline
+   - Minimalist: the chat is the full experience
 
 4. Create `packages/web/src/components/space/SpaceNavPanel.tsx`:
    - Left column navigation:
@@ -175,18 +182,19 @@ Build the Space creation dialog (with required workspace path) and the main 3-co
      - "Settings" link → opens space settings
    - Active item highlighted
    - Compact, scannable design
+   - No toggles or controls here — navigation only
 
 5. Create `packages/web/src/components/space/SpaceTaskPane.tsx`:
-   - Right column task detail view
+   - Right column task detail view (shown when task selected from nav)
    - Shows task header (title, status, workflow step indicator like "Step 2/3: Review")
    - Task conversation (Worker + Leader messages)
-   - Human input area for sending messages
+   - Human input area for sending messages to the task
    - Minimalist: focus on the conversation, metadata tucked away
 
 6. Write unit tests:
    - SpaceCreateDialog validates workspace path
    - 3-column layout renders correctly
-   - SpaceDashboard shows correct data
+   - SpaceChatPane renders messages correctly
    - Navigation panel highlights active item
    - Task pane shows workflow step indicator
 
@@ -194,14 +202,15 @@ Build the Space creation dialog (with required workspace path) and the main 3-co
    - Create a new Space via the dialog
    - Verify workspace path is required
    - Navigate to Space and verify 3-column layout renders
-   - Navigate between workflow runs and verify task pane updates
+   - Send a message in the chat pane and verify it appears
+   - Select a workflow run from nav and verify task pane appears
 
 **Acceptance criteria:**
 - Space creation requires workspace path and validates it
-- 3-column layout renders correctly with left nav, middle work area, right detail
-- Dashboard provides clear overview of space status (workflow runs, tasks)
+- 3-column layout renders: left nav, middle chat area (no toggles), right detail pane
+- Chat pane is the primary interaction — no inline config toggles
 - Navigation panel shows workflow runs and standalone tasks
 - Task pane shows workflow step progression
-- Design is minimalist and feels fresh (not a copy of Room UI)
+- Design is minimalist and chat-centered (not a copy of Room UI)
 - E2E tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

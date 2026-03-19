@@ -18,19 +18,12 @@ import type {
 	WorkflowStepInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
-	BuiltinAgentRole,
 } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/**
- * Valid builtin agent roles for workflow steps.
- * NOTE: 'leader' is intentionally excluded — it is always implicit in SpaceRuntime.
- */
-const VALID_BUILTIN_ROLES: ReadonlySet<BuiltinAgentRole> = new Set(['planner', 'coder', 'general']);
 
 /**
  * Allowlisted command prefixes for quality_check gates.
@@ -147,26 +140,15 @@ export class SpaceWorkflowManager {
 		}
 		if (params.steps !== undefined) {
 			// UpdateSpaceWorkflowParams uses WorkflowStep[] (with id/order) — treat as inputs
-			const inputs: WorkflowStepInput[] = (params.steps ?? []).map((s): WorkflowStepInput => {
-				if (s.agentRefType === 'custom') {
-					return {
-						name: s.name,
-						agentRefType: 'custom',
-						agentRef: s.agentRef,
-						entryGate: s.entryGate,
-						exitGate: s.exitGate,
-						instructions: s.instructions,
-					};
-				}
-				return {
+			const inputs: WorkflowStepInput[] = (params.steps ?? []).map(
+				(s): WorkflowStepInput => ({
 					name: s.name,
-					agentRefType: 'builtin',
-					agentRef: s.agentRef,
+					agentId: s.agentId,
 					entryGate: s.entryGate,
 					exitGate: s.exitGate,
 					instructions: s.instructions,
-				};
-			});
+				})
+			);
 			this.validateSteps(existing.spaceId, inputs);
 		}
 
@@ -228,28 +210,17 @@ export class SpaceWorkflowManager {
 	}
 
 	private validateStepAgentRef(spaceId: string, step: WorkflowStepInput, index: number): void {
-		if (step.agentRefType === 'builtin') {
-			if (!VALID_BUILTIN_ROLES.has(step.agentRef as BuiltinAgentRole)) {
+		if (!step.agentId || !step.agentId.trim()) {
+			throw new WorkflowValidationError(
+				`step[${index}]: agentId must be a non-empty SpaceAgent UUID`
+			);
+		}
+		if (this.agentLookup) {
+			const agent = this.agentLookup.getAgentById(spaceId, step.agentId);
+			if (!agent) {
 				throw new WorkflowValidationError(
-					`step[${index}]: invalid builtin agentRef "${step.agentRef}". ` +
-						`Must be one of: ${[...VALID_BUILTIN_ROLES].join(', ')}. ` +
-						`Note: 'leader' is not a valid workflow step agent.`
+					`step[${index}]: agentId "${step.agentId}" does not match any SpaceAgent in this space`
 				);
-			}
-		} else {
-			// custom ref — validate that a SpaceAgent with this UUID exists
-			if (!step.agentRef || !step.agentRef.trim()) {
-				throw new WorkflowValidationError(
-					`step[${index}]: custom agentRef must be a non-empty SpaceAgent UUID`
-				);
-			}
-			if (this.agentLookup) {
-				const agent = this.agentLookup.getAgentById(spaceId, step.agentRef);
-				if (!agent) {
-					throw new WorkflowValidationError(
-						`step[${index}]: custom agentRef "${step.agentRef}" does not match any SpaceAgent ID in this space`
-					);
-				}
 			}
 		}
 	}

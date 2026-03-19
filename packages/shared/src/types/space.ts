@@ -326,13 +326,20 @@ export interface SpaceSessionGroup {
 // ============================================================================
 
 /**
- * Builtin agent roles available in the Space system.
+ * Preset agent roles — used as a UI label/tag that describes the agent's purpose
+ * and drives default system prompt behavior in `buildCustomAgentSystemPrompt`.
  *
- * NOTE: 'leader' is intentionally NOT a valid agent role — the Leader agent is
- * always implicit and managed by SpaceRuntime. User-configurable agents are
- * limited to worker roles: 'planner', 'coder', 'general'.
+ * This is metadata only — it does NOT gate code routing. All agents (preset or
+ * user-created) are regular `SpaceAgent` records resolved by ID at runtime.
+ * SpaceRuntime seeds one agent per role when a new Space is created; users may
+ * rename, reconfigure, or delete any of them.
+ *
+ * - 'coder': Standard implementation worker (git workflow, PRs, tests)
+ * - 'general': General-purpose worker (broader scope, same toolset as coder)
+ * - 'planner': Planning/orchestration agent (treated as worker for now)
+ * - 'reviewer': Review-specialist worker (review-specific prompt additions)
  */
-export type BuiltinAgentRole = 'planner' | 'coder' | 'general';
+export type BuiltinAgentRole = 'planner' | 'coder' | 'general' | 'reviewer';
 
 /**
  * A named agent configuration within a Space.
@@ -349,7 +356,7 @@ export interface SpaceAgent {
 	description?: string;
 	/**
 	 * Builtin role preset — determines default tools and behavior.
-	 * One of: 'planner', 'coder', 'general'.
+	 * One of: 'planner', 'coder', 'general', 'reviewer'.
 	 * NOTE: 'leader' is NOT a valid role here — Leader is implicit in SpaceRuntime.
 	 */
 	role: BuiltinAgentRole;
@@ -359,6 +366,12 @@ export interface SpaceAgent {
 	provider?: string;
 	/** Custom system prompt appended to the role preset */
 	systemPrompt?: string;
+	/**
+	 * Tool list override — which tools this agent may use.
+	 * Any entry must be a name from KNOWN_TOOLS.
+	 * When unset, role-based defaults apply.
+	 */
+	tools?: string[];
 	/** Tool configuration overrides */
 	toolConfig?: Record<string, unknown>;
 	/** Creation timestamp (milliseconds since epoch) */
@@ -378,6 +391,8 @@ export interface CreateSpaceAgentParams {
 	model?: string;
 	provider?: string;
 	systemPrompt?: string;
+	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
+	tools?: string[];
 	toolConfig?: Record<string, unknown>;
 }
 
@@ -391,6 +406,8 @@ export interface UpdateSpaceAgentParams {
 	model?: string | null;
 	provider?: string | null;
 	systemPrompt?: string | null;
+	/** Tool list override — null clears (reverts to role defaults) */
+	tools?: string[] | null;
 	toolConfig?: Record<string, unknown> | null;
 }
 
@@ -449,28 +466,20 @@ export interface WorkflowGate {
 }
 
 /**
- * Discriminated union encoding the agent reference within a workflow step.
- *
- * Using a union (rather than two separate fields) lets TypeScript enforce that
- * 'leader' is rejected at compile time when agentRefType is 'builtin'.
- *
- * - `builtin`: agentRef is one of the BuiltinAgentRole values ('planner', 'coder', 'general').
- *   NOTE: 'leader' is NOT a valid builtin agentRef — Leader is always implicit in SpaceRuntime.
- * - `custom`: agentRef is the UUID (`id`) of a SpaceAgent defined in this Space.
- */
-export type WorkflowStepAgent =
-	| { agentRefType: 'builtin'; agentRef: BuiltinAgentRole }
-	| { agentRefType: 'custom'; agentRef: string };
-
-/**
  * A single step within a SpaceWorkflow.
  * Each step runs one agent and optionally has entry/exit gates.
+ *
+ * All agents are referenced by ID — there is no separate builtin/custom distinction.
+ * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
+ * are regular SpaceAgent records that happen to have a well-known role label.
  */
-export type WorkflowStep = WorkflowStepAgent & {
+export interface WorkflowStep {
 	/** Unique identifier for this step (stable across renames) */
 	id: string;
 	/** Human-readable name for display */
 	name: string;
+	/** ID of the SpaceAgent assigned to execute this step */
+	agentId: string;
 	/**
 	 * Gate checked before this step begins execution.
 	 * If absent, the step starts automatically when the previous step's exit gate passes.
@@ -485,7 +494,7 @@ export type WorkflowStep = WorkflowStepAgent & {
 	instructions?: string;
 	/** Zero-based execution order within the workflow */
 	order: number;
-};
+}
 
 /**
  * A rule that applies to workflow execution, similar to room-level rules.
@@ -508,26 +517,11 @@ export interface WorkflowRule {
 }
 
 /**
- * Distributive Omit that preserves discriminated union structure.
- *
- * TypeScript's built-in `Omit<T, K>` does not distribute over union members —
- * when applied to an intersection type that wraps a union (like `WorkflowStep`),
- * it collapses the discriminant and silently drops union enforcement.
- * `DistributiveOmit` maps over each union branch individually so that
- * discriminated-union invariants are preserved in the result.
- */
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
-/**
  * Input shape for a workflow step at creation time.
  * `id` and `order` are backend-assigned and must not be provided by callers.
  * The backend assigns `id` (UUID) and derives `order` from the array position.
- *
- * Uses `DistributiveOmit` (not `Omit`) so that the `WorkflowStepAgent`
- * discriminated union is preserved: TypeScript will still reject
- * `agentRef: 'leader'` when `agentRefType: 'builtin'` at compile time.
  */
-export type WorkflowStepInput = DistributiveOmit<WorkflowStep, 'id' | 'order'>;
+export type WorkflowStepInput = Omit<WorkflowStep, 'id' | 'order'>;
 
 /**
  * Input shape for a workflow rule at creation time.
@@ -553,7 +547,13 @@ export interface SpaceWorkflow {
 	steps: WorkflowStep[];
 	/** Rules that govern agent behavior during this workflow */
 	rules: WorkflowRule[];
-	/** Tags for categorization */
+	/**
+	 * @deprecated isDefault is no longer used for workflow selection.
+	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
+	 * This field is retained for backward compatibility but has no runtime effect.
+	 */
+	isDefault?: boolean;
+	/** Tags for organizational categorization. Not used for automatic workflow selection. */
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
@@ -579,7 +579,11 @@ export interface CreateSpaceWorkflowParams {
 	 * Rules governing agent behavior. `id` is backend-assigned.
 	 */
 	rules?: WorkflowRuleInput[];
-	/** Tags for categorization (default: []). */
+	/**
+	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
+	 */
+	isDefault?: boolean;
+	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
 	config?: Record<string, unknown>;
 }
@@ -606,7 +610,12 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	rules?: WorkflowRule[] | null;
 	/**
+	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
+	 */
+	isDefault?: boolean;
+	/**
 	 * Replaces the tag list. Pass `[]` or `null` to clear all tags.
+	 * Tags are for organizational categorization only — not used for automatic workflow selection.
 	 */
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;

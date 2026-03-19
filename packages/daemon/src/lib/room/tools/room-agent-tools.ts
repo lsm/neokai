@@ -13,7 +13,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
-import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
@@ -176,6 +175,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
+			// Guard against self-dependency (would permanently block the task)
+			if (args.depends_on?.includes(args.task_id)) {
+				return jsonResult({ success: false, error: 'A task cannot depend on itself.' });
+			}
 			const updates: {
 				title?: string;
 				description?: string;
@@ -214,6 +217,28 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
 
+			// Guard: terminal tasks cannot be cancelled
+			if (task.status === 'completed' || task.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} is already in terminal state '${task.status}' and cannot be cancelled.`,
+				});
+			}
+
+			// Guard: cancelling a task with an active session group requires runtime service
+			// to stop the running session. Without it, the DB would be updated but the
+			// worker/leader sessions would continue running against a cancelled task.
+			// Covers both in_progress and review — both have active session groups.
+			if ((task.status === 'in_progress' || task.status === 'review') && !runtimeService) {
+				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
+				if (activeGroup && activeGroup.completedAt === null) {
+					return jsonResult({
+						success: false,
+						error: `Cannot cancel task ${args.task_id} (status '${task.status}') without runtime service — the active worker session would not be stopped.`,
+					});
+				}
+			}
+
 			let cancelledTaskIds: string[] = [];
 			let usedRuntimeCancellation = false;
 			if (runtimeService) {
@@ -249,7 +274,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					}
 				}
 			}
-			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
+			const dependentCount = cancelledTaskIds.length - 1;
+			return jsonResult({
+				success: true,
+				cancelledTaskIds,
+				message:
+					dependentCount > 0
+						? `Task ${args.task_id} and ${dependentCount} dependent task(s) cancelled`
+						: `Task ${args.task_id} cancelled`,
+			});
 		},
 
 		async stop_session(args: { task_id: string }): Promise<ToolResult> {
@@ -285,6 +318,8 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: false, error: 'Runtime service unavailable' });
 		},
 
+		// Note: MCP tool is named `update_task_status` but delegates to this handler (set_task_status).
+		// The internal name matches the existing room-agent pattern; the tool name is what the LLM sees.
 		async set_task_status(args: {
 			task_id: string;
 			status: TaskStatus;
@@ -296,13 +331,23 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
 
-			// Validate status transition
-			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-			if (!allowedTransitions.includes(args.status)) {
-				return jsonResult({
-					success: false,
-					error: `Invalid status transition from '${task.status}' to '${args.status}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
-				});
+			const terminalStatuses: TaskStatus[] = ['completed', 'needs_attention', 'cancelled'];
+
+			// Guard: transitioning a task with an active session group to a terminal state
+			// requires runtime service to cancel the running session first. Without it,
+			// the DB would change but the worker session would continue executing.
+			if (
+				(task.status === 'in_progress' || task.status === 'review') &&
+				terminalStatuses.includes(args.status) &&
+				!runtimeService
+			) {
+				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
+				if (activeGroup && activeGroup.completedAt === null) {
+					return jsonResult({
+						success: false,
+						error: `Cannot transition active task ${args.task_id} (status '${task.status}') to '${args.status}' without runtime service — the active worker session would not be stopped.`,
+					});
+				}
 			}
 
 			// Check for active group when transitioning from in_progress or review
@@ -991,26 +1036,31 @@ export type RoomAgentMcpServer = ReturnType<typeof createRoomAgentMcpServer>;
 
 /**
  * Narrow config type for the leader context MCP server.
- * Excludes daemonHub and runtimeService since read-only tools do not need them.
+ * Includes daemonHub (optional) for emitting task update events to the UI.
  */
 export type LeaderContextMcpConfig = Pick<
 	RoomAgentToolsConfig,
-	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo'
+	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo' | 'daemonHub'
 >;
 
 /**
- * Create a minimal read-only MCP server for the Leader agent.
+ * Create an MCP server for the Leader agent with context and task management tools.
  *
  * Registered as `'leader-context'` (distinct from `'room-agent'` used by the full server).
- * Exposes only 4 read-only tools: list_goals, list_tasks, get_task_detail, get_room_status.
+ * Exposes read-only context tools plus task management tools the leader can use directly.
  *
- * The leader only needs context tools — it should NOT have write or human-only tools.
+ * Included tools:
+ *   - list_goals, list_tasks, get_task_detail, get_room_status: read-only context
+ *   - update_task: edit title, description, priority, or dependencies of any task
+ *   - cancel_task: cancel a task and cascade to pending dependents
+ *   - update_task_status: change task status with transition validation
+ *
  * Excluded tools and reasons:
  *   - approve_task / reject_task: human-only decisions
  *   - create_goal / update_goal: not the leader's role
- *   - create_task / update_task: leader delegates to worker via send_to_worker
- *   - cancel_task / stop_session: not the leader's role
- *   - set_task_status: leader uses complete_task / fail_task from leader-agent-tools instead
+ *   - create_task: leader delegates task creation to worker via send_to_worker
+ *   - stop_session: session management is handled by the runtime
+ *   - complete_task / fail_task: leader uses these from leader-agent-tools for the current task
  *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
  */
 export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
@@ -1049,6 +1099,47 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
+		),
+		tool(
+			'update_task',
+			'Update task fields (title, description, priority, or dependencies). Works for tasks in any status.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				title: z.string().trim().min(1).optional().describe('New title for the task'),
+				description: z.string().trim().min(1).optional().describe('New description for the task'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.describe('New priority level'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('Full replacement list of dependency task IDs'),
+			},
+			(args) => handlers.update_task(args)
+		),
+		tool(
+			'cancel_task',
+			'Cancel a task. Cascades cancellation to any pending tasks that depend on it.',
+			{
+				task_id: z.string().describe('ID of the task to cancel'),
+			},
+			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'update_task_status',
+			'Change a task status with transition validation. Use to retry failed tasks (needs_attention → pending), revive to review, or move between valid states.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				// 'draft' is intentionally excluded: tasks reach draft status only via the planning
+				// phase (planner agent creates them). The leader must not put tasks back to draft.
+				status: z
+					.enum(['pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled'])
+					.describe('New status for the task'),
+				result: z.string().optional().describe('Result summary (for completed status)'),
+				error: z.string().optional().describe('Error message (for needs_attention status)'),
+			},
+			(args) => handlers.set_task_status(args)
 		),
 	];
 

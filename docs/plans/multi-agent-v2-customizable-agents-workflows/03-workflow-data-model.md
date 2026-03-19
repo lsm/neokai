@@ -106,6 +106,12 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description: string;
      steps: WorkflowStep[];
      rules: WorkflowRule[];
+     /**
+      * @deprecated Not used for workflow selection. Workflow selection uses only
+      * explicit workflowId or AI auto-select. Retained for backward compatibility.
+      */
+     isDefault: boolean;
+     /** Organizational tags. Not used for automatic workflow selection. */
      tags: string[];
      config?: Record<string, unknown>;
      createdAt: number;
@@ -117,6 +123,7 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description?: string;
      steps: Omit<WorkflowStep, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
+     /** Organizational tags (not used for automatic selection). */
      tags?: string[];
      config?: Record<string, unknown>;
    }
@@ -126,7 +133,8 @@ Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/
      description?: string;
      steps?: Omit<WorkflowStep, 'id'>[];
      rules?: Omit<WorkflowRule, 'id'>[];
-     tags?: string[];
+     /** Replaces the tag list. Pass `[]` or `null` to clear. Organizational only. */
+     tags?: string[] | null;
      config?: Record<string, unknown>;
    }
    ```
@@ -162,8 +170,9 @@ Build the data access and business logic layers for workflows within Spaces. The
    - `deleteWorkflow(id: string): boolean`
    - `getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[]` — finds workflows referencing a custom agent (used for deletion protection in `SpaceAgentManager`)
    - Handle step CRUD within workflow transactions (replace all steps on update)
-   - JSON serialization for `rules`, `tags`, `entry_gate`, `exit_gate`
+   - JSON serialization for `rules`, `entry_gate`, `exit_gate`
    - `rowToWorkflow()` and `rowToStep()` mapping functions
+   - **No `getDefaultWorkflow`/`setDefaultWorkflow`** — workflow selection uses only explicit workflowId or AI auto-select.
 
 2. Create `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
    - Validation:
@@ -217,7 +226,7 @@ Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Regist
    Import `SpaceWorkflow` from `@neokai/shared`.
 
 2. Create `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`:
-   - `spaceWorkflow.create { spaceId, name, description, steps, rules, tags }` → `{ workflow }`
+   - `spaceWorkflow.create { spaceId, name, description, steps, rules }` → `{ workflow }`
    - `spaceWorkflow.list { spaceId }` → `{ workflows }`
    - `spaceWorkflow.get { id }` → `{ workflow }`
    - `spaceWorkflow.update { id, ... }` → `{ workflow }`

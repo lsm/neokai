@@ -280,6 +280,7 @@ export class RoomRuntime {
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
+			daemonHub: config.daemonHub,
 		});
 
 		// Keep test and direct-runtime usage predictable: when no explicit leader model
@@ -902,11 +903,20 @@ export class RoomRuntime {
 			summary?: string;
 			reason?: string;
 			pr_url?: string;
+			progress_summary?: string;
 		}
 	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
 			return jsonResult({ success: false, error: `Group not found: ${groupId}` });
+		}
+
+		// Persist and emit progress summary whenever the leader provides one
+		if (params.progress_summary) {
+			this.groupRepo.setLeaderProgressSummary(groupId, params.progress_summary);
+			this.appendGroupEvent(groupId, 'leader_summary', {
+				text: `[Turn Summary] ${params.progress_summary}`,
+			});
 		}
 
 		// No state guard - tools always available
@@ -1245,20 +1255,41 @@ export class RoomRuntime {
 	 */
 	createLeaderCallbacks(groupId: string): LeaderToolCallbacks {
 		return {
-			sendToWorker: async (_groupId: string, message: string, mode?: 'steer' | 'queue') => {
-				return this.handleLeaderTool(groupId, 'send_to_worker', { message, mode });
+			sendToWorker: async (
+				_groupId: string,
+				message: string,
+				mode?: 'steer' | 'queue',
+				progressSummary?: string
+			) => {
+				return this.handleLeaderTool(groupId, 'send_to_worker', {
+					message,
+					mode,
+					progress_summary: progressSummary,
+				});
 			},
-			completeTask: async (_groupId: string, summary: string) => {
-				return this.handleLeaderTool(groupId, 'complete_task', { summary });
+			completeTask: async (_groupId: string, summary: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'complete_task', {
+					summary,
+					progress_summary: progressSummary,
+				});
 			},
-			failTask: async (_groupId: string, reason: string) => {
-				return this.handleLeaderTool(groupId, 'fail_task', { reason });
+			failTask: async (_groupId: string, reason: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'fail_task', {
+					reason,
+					progress_summary: progressSummary,
+				});
 			},
-			replanGoal: async (_groupId: string, reason: string) => {
-				return this.handleLeaderTool(groupId, 'replan_goal', { reason });
+			replanGoal: async (_groupId: string, reason: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'replan_goal', {
+					reason,
+					progress_summary: progressSummary,
+				});
 			},
-			submitForReview: async (_groupId: string, prUrl: string) => {
-				return this.handleLeaderTool(groupId, 'submit_for_review', { pr_url: prUrl });
+			submitForReview: async (_groupId: string, prUrl: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'submit_for_review', {
+					pr_url: prUrl,
+					progress_summary: progressSummary,
+				});
 			},
 		};
 	}
@@ -1900,7 +1931,13 @@ export class RoomRuntime {
 			this.messageHub.event(
 				'state.groupMessages.delta',
 				{
-					added: [{ type: 'status', text: payload?.text ?? kind, timestamp: now }],
+					added: [
+						{
+							type: kind === 'leader_summary' ? 'leader_summary' : 'status',
+							text: payload?.text ?? kind,
+							timestamp: now,
+						},
+					],
 					timestamp: now,
 				},
 				{ channel: `group:${groupId}` }

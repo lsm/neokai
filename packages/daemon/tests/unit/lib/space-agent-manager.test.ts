@@ -316,4 +316,93 @@ describe('SpaceAgentManager', () => {
 			expect(result[0].name).toBe('A');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// tools validation (KNOWN_TOOLS)
+	// -------------------------------------------------------------------------
+
+	describe('create — tools validation', () => {
+		it('accepts valid tool names from KNOWN_TOOLS', async () => {
+			const result = await manager.create({
+				spaceId: 'space-1',
+				name: 'ToolAgent',
+				role: 'coder',
+				tools: ['Read', 'Write', 'Bash'],
+			});
+			expect(result.ok).toBe(true);
+			if (result.ok) expect(result.value.tools).toEqual(['Read', 'Write', 'Bash']);
+		});
+
+		it('rejects unknown tool names', async () => {
+			const result = await manager.create({
+				spaceId: 'space-1',
+				name: 'BadTool',
+				role: 'coder',
+				tools: ['Read', 'FakeTool'],
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.error).toContain('"FakeTool"');
+				expect(result.error).toContain('Unknown tool');
+			}
+		});
+
+		it('rejects multiple unknown tool names in a single error', async () => {
+			const result = await manager.create({
+				spaceId: 'space-1',
+				name: 'MultiBad',
+				role: 'coder',
+				tools: ['NotATool', 'AlsoNotATool'],
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.error).toContain('"NotATool"');
+				expect(result.error).toContain('"AlsoNotATool"');
+			}
+		});
+
+		it('accepts undefined tools (no override)', async () => {
+			const result = await manager.create({
+				spaceId: 'space-1',
+				name: 'NoTools',
+				role: 'coder',
+				tools: undefined,
+			});
+			expect(result.ok).toBe(true);
+		});
+	});
+
+	describe('update — tools validation', () => {
+		it('accepts valid tool names on update', async () => {
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
+			if (!created.ok) throw new Error('create failed');
+
+			const result = await manager.update(created.value.id, { tools: ['Bash', 'Glob'] });
+			expect(result.ok).toBe(true);
+			if (result.ok) expect(result.value.tools).toEqual(['Bash', 'Glob']);
+		});
+
+		it('rejects invalid tool names on update', async () => {
+			const created = await manager.create({ spaceId: 'space-1', name: 'Agent2', role: 'coder' });
+			if (!created.ok) throw new Error('create failed');
+
+			const result = await manager.update(created.value.id, { tools: ['InvalidTool'] });
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toContain('"InvalidTool"');
+		});
+
+		it('accepts null tools (clearing the override)', async () => {
+			const created = await manager.create({
+				spaceId: 'space-1',
+				name: 'Agent3',
+				role: 'coder',
+				tools: ['Read'],
+			});
+			if (!created.ok) throw new Error('create failed');
+
+			const result = await manager.update(created.value.id, { tools: null });
+			expect(result.ok).toBe(true);
+			if (result.ok) expect(result.value.tools).toBeUndefined();
+		});
+	});
 });

@@ -666,7 +666,7 @@ export function setupTaskHandlers(
 					groupId: event.groupId,
 					sessionId: null,
 					role: 'system',
-					messageType: 'status',
+					messageType: event.kind === 'leader_summary' ? 'leader_summary' : 'status',
 					content: text,
 				};
 			}),

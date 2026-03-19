@@ -6,12 +6,16 @@
  *   - Name uniqueness within a Space (DB-level check via LOWER())
  *   - Model must be recognized; when a provider is also given, validation is
  *     scoped to that provider via the provider-aware isValidModel() API
+ *   - Tool names must be from KNOWN_TOOLS (validated on create and non-null update)
  *   - Deletion blocked when agent is referenced by workflow steps
  */
 
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
+import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
+
+const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 
 export type SpaceAgentResult<T> =
 	| { ok: true; value: T }
@@ -30,6 +34,12 @@ export class SpaceAgentManager {
 				ok: false,
 				error: `An agent named "${params.name}" already exists in this Space`,
 			};
+		}
+
+		// Validate tool names against KNOWN_TOOLS
+		if (params.tools) {
+			const toolError = validateTools(params.tools);
+			if (toolError) return { ok: false, error: toolError };
 		}
 
 		// Validate model (provider-aware when provider is supplied)
@@ -57,6 +67,13 @@ export class SpaceAgentManager {
 					error: `An agent named "${params.name}" already exists in this Space`,
 				};
 			}
+		}
+
+		// Validate tool names against KNOWN_TOOLS (only when setting to a non-null value;
+		// null means clearing the override which is always valid)
+		if (params.tools) {
+			const toolError = validateTools(params.tools);
+			if (toolError) return { ok: false, error: toolError };
 		}
 
 		// Validate model if being set to a non-null value.
@@ -145,4 +162,18 @@ export class SpaceAgentManager {
 		const info = await getModelInfoUnfiltered(model, 'global');
 		return info ? null : `Unrecognized model: "${model}"`;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate that all tool names in the array are in KNOWN_TOOLS.
+ * Returns a descriptive error string on failure, or null if all names are valid.
+ */
+function validateTools(tools: string[]): string | null {
+	const invalid = tools.filter((t) => !KNOWN_TOOLS_SET.has(t));
+	if (invalid.length === 0) return null;
+	return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid.map((t) => `"${t}"`).join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
 }

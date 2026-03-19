@@ -151,18 +151,14 @@ Add the rules editor to the workflow builder, tags editor, and integrate all age
      - Remove button
    - Rules saved as part of the workflow
 
-2. Tags editor:
-   - Tag input (comma-separated or chip input)
-   - Suggestions: "coding", "review", "research", "design", "deployment"
-
-3. Integration into Space layout:
+2. Integration into Space layout:
    - Agent management: accessible via SpaceNavPanel "Agents" link → renders `SpaceAgentList`/`SpaceAgentEditor` in middle column
    - Workflow management: via "Workflows" link → renders `WorkflowList`/`WorkflowEditor`
    - Back navigation between list and editor views
 
-4. Export all new components from `packages/web/src/components/space/index.ts`
+3. Export all new components from `packages/web/src/components/space/index.ts`
 
-5. Write e2e tests:
+4. Write e2e tests:
    - Create a workflow with 3 steps from template
    - Add a custom rule targeting specific steps
    - Save and verify persistence
