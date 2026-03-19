@@ -973,16 +973,15 @@ describe('RoomRuntime flow', () => {
 			expect(afterResume.waitingSession).toBeNull();
 		});
 
-		it('should ignore terminal event when feedbackIteration == 0 and leader has not received work', async () => {
-			// Spawn only — do NOT route worker to leader, so feedbackIteration stays at 0
+		it('should ignore terminal event when leaderHasWork == false (leader not yet given any work)', async () => {
+			// Spawn only — do NOT route worker to leader; leaderHasWork stays false
 			const { task } = await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
 			const group = ctx.groupRepo.getGroupByTaskId(task.id);
 			expect(group).toBeDefined();
-			expect(group!.feedbackIteration).toBe(0);
-			expect(group!.submittedForReview).toBe(false);
+			expect(group!.leaderHasWork).toBe(false);
 
 			// Fire a spurious idle event on the leader (e.g. from a race or startup artifact)
 			await ctx.runtime.onLeaderTerminalState(group!.id, {
@@ -993,7 +992,7 @@ describe('RoomRuntime flow', () => {
 			// Group must remain unchanged — no completion, no error, no inject
 			const updated = ctx.groupRepo.getGroup(group!.id)!;
 			expect(updated.completedAt).toBeNull();
-			expect(updated.feedbackIteration).toBe(0);
+			expect(updated.leaderHasWork).toBe(false);
 
 			const injectToLeader = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && c.args[0] === group!.leaderSessionId
@@ -1001,34 +1000,37 @@ describe('RoomRuntime flow', () => {
 			expect(injectToLeader).toHaveLength(0);
 		});
 
-		it('should process terminal event when feedbackIteration == 0 but submittedForReview == true (bypass workflow)', async () => {
-			// Spawn only — feedbackIteration stays at 0
+		it('should process terminal event when leaderHasWork == true, regardless of feedbackIteration or submittedForReview', async () => {
+			// Spawn only — feedbackIteration stays 0, submittedForReview stays false
 			const { task } = await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
 			const group = ctx.groupRepo.getGroupByTaskId(task.id);
 			expect(group).toBeDefined();
-			expect(group!.feedbackIteration).toBe(0);
+			expect(group!.leaderHasWork).toBe(false);
 
-			// Bypass workflow: submittedForReview is set before routing (e.g. bypass marker)
-			ctx.groupRepo.setSubmittedForReview(group!.id, true);
-			const groupAfter = ctx.groupRepo.getGroup(group!.id)!;
-			expect(groupAfter.submittedForReview).toBe(true);
+			// Directly mark the leader as having received work (simulates routeWorkerToLeader
+			// or resumeLeaderFromHuman having run). feedbackIteration and submittedForReview
+			// deliberately left at their reset values (0 / false) to prove the guard uses
+			// leaderHasWork, not those fields.
+			ctx.groupRepo.setLeaderHasWork(group!.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.leaderHasWork).toBe(true);
 
-			// Terminal event must NOT be dropped — the guard passes when submittedForReview==true
-			// The event flows through normal handling (leader hasn't called a tool → no-op aside
-			// from clearing activeSession, which is already null here).
+			// Fire a waiting_for_input terminal event — this has an observable side-effect:
+			// onLeaderTerminalState sets waitingForQuestion=true. If the guard erroneously
+			// dropped the event, waitingForQuestion would remain false.
 			await ctx.runtime.onLeaderTerminalState(group!.id, {
 				sessionId: group!.leaderSessionId,
-				kind: 'idle',
+				kind: 'waiting_for_input',
 			});
 
-			// Group is still active (no tool was called, so no completion)
+			// Handler ran: waitingForQuestion flag was set (concrete proof the guard passed)
 			const updated = ctx.groupRepo.getGroup(group!.id)!;
+			expect(updated.waitingForQuestion).toBe(true);
+			expect(updated.waitingSession).toBe('leader');
+			// Group is still active (not completed)
 			expect(updated.completedAt).toBeNull();
-			// submittedForReview flag is preserved (leader didn't call a completion tool)
-			expect(updated.submittedForReview).toBe(true);
 		});
 	});
 

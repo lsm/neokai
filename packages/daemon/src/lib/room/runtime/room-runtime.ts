@@ -770,10 +770,12 @@ export class RoomRuntime {
 
 		// Guard: leader hasn't received any work yet. This can happen if a spurious idle event
 		// fires before the first worker→leader routing (e.g. a race during startup). Ignore it.
-		if (group.feedbackIteration === 0 && !group.submittedForReview) {
+		// leaderHasWork is set to true by routeWorkerToLeader and resumeLeaderFromHuman before
+		// calling injectMessage, so it is never reset and survives feedbackIteration resets.
+		if (!group.leaderHasWork) {
 			log.debug(
 				`[onLeaderTerminalState] Group ${groupId}: ignoring terminal event ` +
-					`(feedbackIteration=0, submittedForReview=false) — leader hasn't received work yet`
+					`(leaderHasWork=false) — leader hasn't received work yet`
 			);
 			return;
 		}

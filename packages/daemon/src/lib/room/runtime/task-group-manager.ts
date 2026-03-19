@@ -18,7 +18,7 @@ import { Logger } from '../../logger';
 import type {
 	SessionGroupRepository,
 	SessionGroup,
-	DeferredLeaderConfig,
+	LeaderBootstrapConfig,
 } from '../state/session-group-repository';
 import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { TaskManager } from '../managers/task-manager';
@@ -263,7 +263,7 @@ export class TaskGroupManager {
 		// eagerlyCreated=true signals that the leader session was created here in spawn(),
 		// not deferred — this lets recoverZombieGroups skip injecting "continue reviewing"
 		// when feedbackIteration==0 (the leader has no work to review yet on first restore).
-		const deferredLeader: DeferredLeaderConfig = {
+		const deferredLeader: LeaderBootstrapConfig = {
 			roomId: room.id,
 			goalId: goal?.id ?? null,
 			reviewContext,
@@ -440,6 +440,9 @@ export class TaskGroupManager {
 		log.debug(
 			`[routeWorkerToLeader] Group ${groupId}: injecting worker output into leader session`
 		);
+		// Mark leader as having work before injecting so onLeaderTerminalState won't drop
+		// the resulting idle event even if the leader completes synchronously.
+		this.groupRepo.setLeaderHasWork(groupId);
 		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
 		log.info(
 			`[routeWorkerToLeader] Group ${groupId}: worker output injected into leader session successfully`
@@ -616,6 +619,8 @@ export class TaskGroupManager {
 
 		// Inject into leader first. If this fails, caller can safely rollback
 		// task status/approval without restoring group metadata.
+		// Mark before inject so the resulting terminal event is not dropped.
+		this.groupRepo.setLeaderHasWork(groupId);
 		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 
 		// Reset group metadata for the new cycle (same as resumeWorkerFromHuman).

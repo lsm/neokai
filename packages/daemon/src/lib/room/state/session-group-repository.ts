@@ -38,7 +38,7 @@ export interface RateLimitBackoff {
  * Also carries leaderTaskContext — the message prefix prepended on the first
  * worker→leader routing call.
  */
-export interface DeferredLeaderConfig {
+export interface LeaderBootstrapConfig {
 	roomId: string;
 	goalId: string | null;
 	reviewContext?: 'plan_review' | 'code_review';
@@ -74,7 +74,7 @@ interface TaskGroupMetadata {
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit?: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
-	deferredLeader?: DeferredLeaderConfig | null;
+	deferredLeader?: LeaderBootstrapConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted?: boolean;
 	/** Gate failure history for dead loop detection */
@@ -100,6 +100,12 @@ interface TaskGroupMetadata {
 	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
 	 */
 	executionId?: string;
+	/**
+	 * True once the leader has had at least one message injected (via routeWorkerToLeader
+	 * or resumeLeaderFromHuman). Never reset, so onLeaderTerminalState can reliably
+	 * distinguish spurious pre-work idle events from real terminal events.
+	 */
+	leaderHasWork?: boolean;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -149,7 +155,7 @@ export interface SessionGroup {
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
-	deferredLeader: DeferredLeaderConfig | null;
+	deferredLeader: LeaderBootstrapConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted: boolean;
 	/** Whether the group is paused waiting for a question to be answered */
@@ -170,6 +176,11 @@ export interface SessionGroup {
 	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
 	 */
 	executionId?: string;
+	/**
+	 * True once the leader has had at least one message injected. Never reset.
+	 * Used by onLeaderTerminalState to drop spurious pre-work idle events.
+	 */
+	leaderHasWork: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -601,10 +612,30 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Mark the leader as having received at least one message.
+	 * Set once by routeWorkerToLeader and resumeLeaderFromHuman; never reset.
+	 * Used by onLeaderTerminalState to drop spurious pre-work idle events.
+	 */
+	setLeaderHasWork(groupId: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		if (currentMeta.leaderHasWork) return; // already set, skip the write
+		const merged = { ...currentMeta, leaderHasWork: true };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Persist deferred Leader bootstrap configuration.
 	 * Stored in metadata so runtime restart can still lazy-create the leader session.
 	 */
-	setDeferredLeader(groupId: string, deferredLeader: DeferredLeaderConfig | null): void {
+	setDeferredLeader(groupId: string, deferredLeader: LeaderBootstrapConfig | null): void {
 		const raw = (
 			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
 				string,
@@ -823,6 +854,7 @@ export class SessionGroupRepository {
 			workerBypassed: meta.workerBypassed === true,
 			approvalSource: meta.approvalSource ?? null,
 			executionId: meta.executionId,
+			leaderHasWork: meta.leaderHasWork === true,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
