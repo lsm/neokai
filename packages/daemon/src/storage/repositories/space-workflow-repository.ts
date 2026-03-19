@@ -156,7 +156,7 @@ export class SpaceWorkflowRepository {
 			.run(
 				id,
 				params.spaceId,
-				params.name,
+				params.name.trim(),
 				params.description ?? '',
 				JSON.stringify(cfg),
 				now,
@@ -222,7 +222,7 @@ export class SpaceWorkflowRepository {
 
 		if (params.name !== undefined) {
 			fields.push('name = ?');
-			values.push(params.name);
+			values.push(params.name.trim());
 		}
 		if (params.description !== undefined) {
 			fields.push('description = ?');
@@ -257,7 +257,9 @@ export class SpaceWorkflowRepository {
 			values.push(JSON.stringify(newCfg));
 		}
 
-		if (fields.length > 0) {
+		// Always bump updated_at if anything changed (scalar fields or steps)
+		const hasStepReplacement = params.steps !== undefined;
+		if (fields.length > 0 || hasStepReplacement) {
 			fields.push('updated_at = ?');
 			values.push(now, id);
 			this.db
@@ -266,7 +268,7 @@ export class SpaceWorkflowRepository {
 		}
 
 		// Replace all steps if steps are provided
-		if (params.steps !== undefined) {
+		if (hasStepReplacement) {
 			this.db.prepare(`DELETE FROM space_workflow_steps WHERE workflow_id = ?`).run(id);
 			const steps = params.steps ?? [];
 			for (let i = 0; i < steps.length; i++) {
@@ -298,10 +300,11 @@ export class SpaceWorkflowRepository {
 	 * on the specified workflow. Runs in a transaction.
 	 */
 	setDefaultWorkflow(spaceId: string, workflowId: string): boolean {
-		const target = this.db
-			.prepare(`SELECT * FROM space_workflows WHERE id = ? AND space_id = ?`)
-			.get(workflowId, spaceId) as WorkflowRow | undefined;
-		if (!target) return false;
+		// Verify the target exists before opening the transaction
+		const exists = this.db
+			.prepare(`SELECT id FROM space_workflows WHERE id = ? AND space_id = ?`)
+			.get(workflowId, spaceId);
+		if (!exists) return false;
 
 		const tx = this.db.transaction(() => {
 			// Clear isDefault on all workflows in this space
@@ -319,7 +322,10 @@ export class SpaceWorkflowRepository {
 				}
 			}
 
-			// Set target as default
+			// Re-read the target row inside the transaction so we always work from current state
+			const target = this.db
+				.prepare(`SELECT * FROM space_workflows WHERE id = ?`)
+				.get(workflowId) as WorkflowRow;
 			const targetCfg = parseJson<WorkflowConfigJson>(target.config, {});
 			targetCfg.isDefault = true;
 			this.db

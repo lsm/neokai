@@ -97,7 +97,8 @@ export class SpaceWorkflowManager {
 	// -------------------------------------------------------------------------
 
 	createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
-		this.validateName(params.spaceId, params.name, null);
+		const trimmedName = params.name.trim();
+		this.validateName(params.spaceId, trimmedName, null);
 		this.validateSteps(params.spaceId, params.steps ?? []);
 
 		// If this new workflow should be the default, unset any current default first
@@ -105,7 +106,7 @@ export class SpaceWorkflowManager {
 			this.repo.clearDefaultWorkflow(params.spaceId);
 		}
 
-		return this.repo.createWorkflow(params);
+		return this.repo.createWorkflow({ ...params, name: trimmedName });
 	}
 
 	// -------------------------------------------------------------------------
@@ -133,7 +134,9 @@ export class SpaceWorkflowManager {
 		if (!existing) return null;
 
 		if (params.name !== undefined) {
-			this.validateName(existing.spaceId, params.name, id);
+			const trimmedName = params.name.trim();
+			this.validateName(existing.spaceId, trimmedName, id);
+			params = { ...params, name: trimmedName };
 		}
 		if (params.steps !== undefined) {
 			// UpdateSpaceWorkflowParams uses WorkflowStep[] (with id/order) — treat as inputs
@@ -300,7 +303,16 @@ export class SpaceWorkflowManager {
 
 	private isAllowlistedCommand(command: string): boolean {
 		const trimmed = command.trim().toLowerCase();
-		return QUALITY_CHECK_ALLOWLIST.some((prefix) => trimmed.startsWith(prefix.toLowerCase()));
+		if (!QUALITY_CHECK_ALLOWLIST.some((prefix) => trimmed.startsWith(prefix.toLowerCase()))) {
+			return false;
+		}
+		// Reject shell metacharacters that could be used to inject arbitrary commands.
+		// The gate executor is expected to run the command directly (not via a shell),
+		// but we validate here so that stored commands are safe regardless of executor.
+		if (/[;&|`$<>\\]/.test(command)) {
+			return false;
+		}
+		return true;
 	}
 
 	private validateCustomGateCommand(command: string, location: string): void {
@@ -331,9 +343,3 @@ export class SpaceWorkflowManager {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Re-export error class and constants for tests
-// ---------------------------------------------------------------------------
-
-export { QUALITY_CHECK_ALLOWLIST, VALID_BUILTIN_ROLES, MAX_GATE_TIMEOUT_MS };

