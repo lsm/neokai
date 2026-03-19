@@ -38,7 +38,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT 'coder'
-				CHECK(role IN ('planner', 'coder', 'general')),
+				CHECK(role IN ('planner', 'coder', 'general', 'reviewer')),
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,

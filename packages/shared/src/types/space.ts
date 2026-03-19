@@ -330,9 +330,14 @@ export interface SpaceSessionGroup {
  *
  * NOTE: 'leader' is intentionally NOT a valid agent role — the Leader agent is
  * always implicit and managed by SpaceRuntime. User-configurable agents are
- * limited to worker roles: 'planner', 'coder', 'general'.
+ * limited to worker roles: 'planner', 'coder', 'general', 'reviewer'.
+ *
+ * - 'coder': Standard implementation worker (git workflow, PRs, tests)
+ * - 'general': General-purpose worker (same as coder, broader scope)
+ * - 'planner': Orchestrator-style agent (reserved for future; treated as worker)
+ * - 'reviewer': Specialized worker for reviewing code/PRs (includes review-specific instructions)
  */
-export type BuiltinAgentRole = 'planner' | 'coder' | 'general';
+export type BuiltinAgentRole = 'planner' | 'coder' | 'general' | 'reviewer';
 
 /**
  * A named agent configuration within a Space.
@@ -359,6 +364,12 @@ export interface SpaceAgent {
 	provider?: string;
 	/** Custom system prompt appended to the role preset */
 	systemPrompt?: string;
+	/**
+	 * Tool list override — which tools this agent may use.
+	 * Any entry must be a name from KNOWN_TOOLS.
+	 * When unset, role-based defaults apply.
+	 */
+	tools?: string[];
 	/** Tool configuration overrides */
 	toolConfig?: Record<string, unknown>;
 	/** Creation timestamp (milliseconds since epoch) */
@@ -378,6 +389,8 @@ export interface CreateSpaceAgentParams {
 	model?: string;
 	provider?: string;
 	systemPrompt?: string;
+	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
+	tools?: string[];
 	toolConfig?: Record<string, unknown>;
 }
 
@@ -391,6 +404,8 @@ export interface UpdateSpaceAgentParams {
 	model?: string | null;
 	provider?: string | null;
 	systemPrompt?: string | null;
+	/** Tool list override — null clears (reverts to role defaults) */
+	tools?: string[] | null;
 	toolConfig?: Record<string, unknown> | null;
 }
 
