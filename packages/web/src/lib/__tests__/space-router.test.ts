@@ -24,6 +24,7 @@ import {
 	navigateToSession,
 	navigateToRoom,
 	navigateToSessions,
+	navigateToChats,
 	initializeRouter,
 	cleanupRouter,
 } from '../router';
@@ -538,5 +539,35 @@ describe('navigateToSpaceTask same-path branch sets navSection', () => {
 
 		expect(navSectionSignal.value).toBe('spaces');
 		expect(mockHistory.pushState).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// navigateToChats clears space signals when on a space route
+// ---------------------------------------------------------------------------
+
+describe('navigateToChats clears space signals', () => {
+	it('navigates home and clears space signals when on a space URL', async () => {
+		navigateToSpace(SPACE_ID);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		mockLocation.pathname = `/space/${SPACE_ID}`;
+
+		navigateToChats();
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(navSectionSignal.value).toBe('chats');
+	});
+
+	it('does not navigate home when on neither a room nor a space route', () => {
+		mockLocation.pathname = '/';
+		currentSpaceIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+
+		navigateToChats();
+
+		expect(mockHistory.pushState).not.toHaveBeenCalled();
+		expect(navSectionSignal.value).toBe('chats');
 	});
 });

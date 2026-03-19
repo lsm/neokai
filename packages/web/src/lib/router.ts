@@ -491,8 +491,8 @@ export function navigateToSessions(replace = false): void {
  */
 export function navigateToChats(): void {
 	navSectionSignal.value = 'chats';
-	// If we're on a room route, navigate home to show session list
-	if (currentRoomIdSignal.value) {
+	// Navigate home if on a room or space route so the session list is visible
+	if (currentRoomIdSignal.value || currentSpaceIdSignal.value) {
 		navigateToHome();
 	}
 }
