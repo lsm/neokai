@@ -114,6 +114,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// space_workflow_steps, space_workflow_runs, space_tasks, space_session_groups,
 	// space_session_group_members) in FK-safe order
 	runMigration29(db);
+
+	// Migration 30: Add role and provider columns to space_agents
+	runMigration30(db);
 }
 
 /**
@@ -1668,4 +1671,37 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
 	);
+}
+
+/**
+ * Migration 30: Add role and provider columns to space_agents.
+ * - role: builtin agent role preset ('planner'|'coder'|'general'), matching BuiltinAgentRole
+ * - provider: optional provider identifier (e.g. 'anthropic', 'glm')
+ *
+ * SQLite CHECK constraint limitation:
+ *   SQLite versions < 3.37.0 (2021-11-27) silently ignore CHECK constraints
+ *   added via ALTER TABLE ADD COLUMN. The `role` column's CHECK constraint
+ *   will only be enforced on databases created fresh from Migration 29+
+ *   (which uses CREATE TABLE with the inline CHECK). On existing databases
+ *   that receive the column via this ALTER TABLE, the constraint is recorded
+ *   in the schema but not enforced at the storage engine level on older SQLite.
+ *   Application-layer validation in SpaceAgentManager ensures the role value
+ *   is always valid regardless of SQLite version.
+ */
+function runMigration30(db: BunDatabase): void {
+	// Add role column (idempotent — only adds if missing)
+	try {
+		db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(
+			`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'coder' CHECK(role IN ('planner', 'coder', 'general'))`
+		);
+	}
+
+	// Add provider column (idempotent — only adds if missing)
+	try {
+		db.prepare(`SELECT provider FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_agents ADD COLUMN provider TEXT`);
+	}
 }
