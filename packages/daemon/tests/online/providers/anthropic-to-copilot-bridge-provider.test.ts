@@ -232,13 +232,11 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 		daemon = await createDaemonServer();
 
 		// Hard-fail if credentials are absent or invalid — per CLAUDE.md policy.
-		const authResult = (await daemon.messageHub.request('auth.providers', {})) as {
-			providers: Array<{ id: string; isAuthenticated: boolean }>;
-		};
-		const provider = authResult.providers.find((x) => x.id === 'anthropic-copilot');
-		if (!provider?.isAuthenticated) {
+		// isAvailable() checks all runtime auth sources (env vars, auth.json, gh CLI, hosts.yml).
+		const copilotProvider = new AnthropicToCopilotBridgeProvider();
+		if (!(await copilotProvider.isAvailable())) {
 			throw new Error(
-				'anthropic-copilot provider is not authenticated. ' +
+				'anthropic-copilot provider is not available. ' +
 					'Set COPILOT_GITHUB_TOKEN to a fine-grained PAT (not a classic ghp_ PAT) with ' +
 					'Copilot access, or use the OAuth login flow. ' +
 					'See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token'

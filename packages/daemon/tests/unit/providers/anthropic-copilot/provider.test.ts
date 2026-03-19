@@ -105,12 +105,18 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 	});
 
 	describe('isAvailable', () => {
-		it('returns false when no stored token in auth.json', async () => {
+		it('returns false when no credentials available from any source', async () => {
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never
 			).mockResolvedValue(undefined as never);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+				undefined as never
+			);
 			expect(await p.isAvailable()).toBe(false);
 		});
 
@@ -123,30 +129,32 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(await p.isAvailable()).toBe(true);
 		});
 
-		it('returns false even when COPILOT_GITHUB_TOKEN env var is set (env vars are not UI credentials)', async () => {
+		it('returns true when COPILOT_GITHUB_TOKEN env var is set (env vars enable runtime availability)', async () => {
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never
 			).mockResolvedValue(undefined as never);
-			expect(await p.isAvailable()).toBe(false);
+			expect(await p.isAvailable()).toBe(true);
 		});
 
-		it('returns false even when GH_TOKEN env var is set (env vars are not UI credentials)', async () => {
+		it('returns true when GH_TOKEN env var is set (env vars enable runtime availability)', async () => {
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never
 			).mockResolvedValue(undefined as never);
-			expect(await p.isAvailable()).toBe(false);
+			expect(await p.isAvailable()).toBe(true);
 		});
 
-		it('returns false for classic PATs (ghp_ prefix) stored in auth.json', async () => {
-			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+		it('returns false for classic PATs (ghp_ prefix) even from env vars', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+				COPILOT_GITHUB_TOKEN: 'ghp_classicpat',
+			});
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never
-			).mockResolvedValue('ghp_classicpat' as never);
+			).mockResolvedValue(undefined as never);
 			expect(await p.isAvailable()).toBe(false);
 		});
 	});
@@ -339,24 +347,33 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(models).toEqual([]);
 		});
 
-		it('returns empty array when no stored token in auth.json', async () => {
+		it('returns empty array when no credentials available from any source', async () => {
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never
 			).mockResolvedValue(undefined as never);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+				undefined as never
+			);
 			const models = await p.getModels();
 			expect(models).toEqual([]);
 		});
 
-		it('returns empty array even when COPILOT_GITHUB_TOKEN env var is set (no auth.json)', async () => {
+		it('calls ensureServerStarted when COPILOT_GITHUB_TOKEN env var is set (env vars enable model listing)', async () => {
 			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'loadStoredGitHubToken' as never
 			).mockResolvedValue(undefined as never);
-			const models = await p.getModels();
-			expect(models).toEqual([]);
+			const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+				'http://127.0.0.1:9999' as never
+			);
+			await p.getModels();
+			expect(ensureSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -508,15 +525,17 @@ describe('loadStoredGitHubToken', () => {
 // ---------------------------------------------------------------------------
 
 describe('tryGhHostsToken', () => {
-	it('token from hosts.yml does NOT make isAvailable()=true (only auth.json does)', async () => {
-		// isAvailable() now only checks auth.json (loadStoredGitHubToken).
-		// hosts.yml tokens are for daemon/API use only, not for UI availability.
+	it('token from hosts.yml DOES make isAvailable()=true (runtime credential discovery uses all sources)', async () => {
+		// isAvailable() uses resolveGitHubToken() which checks all 5 sources including hosts.yml.
+		// This ensures model listing and session creation work regardless of credential source.
 		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		spyOn(
 			p as unknown as Record<string, unknown>,
 			'loadStoredGitHubToken' as never
 		).mockResolvedValue(undefined as never);
-		// Even with a valid hosts.yml token, isAvailable() returns false
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+			undefined as never
+		);
 		spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
 			'hosts-token-xyz' as never
 		);
@@ -524,7 +543,7 @@ describe('tryGhHostsToken', () => {
 			p as unknown as Record<string, unknown>,
 			'validateCopilotToken' as never
 		).mockResolvedValue(true as never);
-		expect(await p.isAvailable()).toBe(false);
+		expect(await p.isAvailable()).toBe(true);
 	});
 
 	it('invalid hosts.yml token (validateCopilotToken=false) does not grant access', async () => {
@@ -556,18 +575,13 @@ describe('tryGhHostsToken', () => {
 describe('logout()', () => {
 	it('invalidates the token cache so the next call re-discovers credentials', async () => {
 		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-		// Prime the cache by calling isAvailable() with a mocked auth.json token
+		// Prime the cache by calling isAvailable() — uses resolveGitHubToken() which populates tokenCache
 		spyOn(
 			p as unknown as Record<string, unknown>,
 			'loadStoredGitHubToken' as never
 		).mockResolvedValue('gho_stored_tok' as never);
 		expect(await p.isAvailable()).toBe(true);
-		// Verify cache does NOT exist (isAvailable now uses loadStoredGitHubToken directly, not tokenCache)
-		// Instead prime tokenCache directly to test the logout clearing behavior
-		(p as unknown as Record<string, unknown>)['tokenCache'] = {
-			token: 'gho_stored_tok',
-			expiresAt: Date.now() + 300_000,
-		};
+		// tokenCache is now set (resolveGitHubToken() caches the result)
 		expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeDefined();
 		// logout() must clear the cache
 		await p.logout();

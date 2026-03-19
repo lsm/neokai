@@ -18,20 +18,20 @@
  *
  * ## Authentication
  *
- * **UI/availability check** (source 1 only):
- * `isAvailable()` and `getAuthStatus()` check only `~/.neokai/auth.json`.
- * This is what drives the Login/Logout buttons and model picker visibility.
- * Env-var and external credentials are intentionally invisible to the UI so
- * that the Logout button only appears when NeoKai can actually remove the token.
- *
- * **Runtime session credential resolution** (sources 1–5, via `resolveGitHubToken()`):
+ * **Runtime availability** (`isAvailable()`, sources 1–5 via `resolveGitHubToken()`):
+ * Controls whether models are listed and sessions can be created.
  *   1. `~/.neokai/auth.json` (explicitly stored NeoKai credentials)
  *   2. `COPILOT_GITHUB_TOKEN` env var (PAT with copilot_requests scope)
  *   3. `GH_TOKEN` env var
  *   4. `gh auth token` CLI output
  *   5. `~/.config/gh/hosts.yml` oauth_token
- * Sources 2–5 allow the daemon and tests to use external credentials for API
+ * Sources 2–5 allow the daemon and CI tests to use external credentials for API
  * calls without going through the NeoKai login flow.
+ *
+ * **UI auth check** (`getAuthStatus()`, source 1 only):
+ * `getAuthStatus()` checks only `~/.neokai/auth.json`. This is what drives the
+ * Login/Logout buttons. Env-var and external credentials return `isAuthenticated: false`
+ * so the Logout button only appears when NeoKai can actually remove the token.
  *
  * IMPORTANT: `GITHUB_TOKEN` (GitHub Actions token) is NOT used — it lacks
  * Copilot access and causes "Not logged in" errors.
@@ -230,17 +230,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	}
 
 	async isAvailable(): Promise<boolean> {
-		// Only NeoKai-managed credentials (auth.json) make the provider available in the UI.
-		// Env vars and external sources (gh CLI, hosts.yml) are for daemon/test use only.
-		const token = await this.loadStoredGitHubToken();
+		// Use full credential discovery (env vars, auth.json, gh CLI, hosts.yml) so models
+		// are listed and sessions work regardless of how credentials were provisioned.
+		// getAuthStatus() is the UI-only check that restricts Login/Logout to auth.json OAuth.
+		const token = await this.resolveGitHubToken();
 		if (!token || token.startsWith('ghp_')) return false;
 		return true;
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
-		// isAvailable() applies the full validity check (token present AND not a classic PAT).
-		// getAuthStatus() mirrors the same logic, so if isAvailable() returns true, the
-		// provider is considered authenticated and models are safe to expose.
+		// isAvailable() uses the full credential discovery chain so model listing works
+		// for env-var users and CI without requiring NeoKai-managed OAuth.
 		if (!(await this.isAvailable())) return [];
 		// Pre-warm the embedded server so buildSdkConfig() has a valid URL by
 		// the time the user picks a model and starts a session.

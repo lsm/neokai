@@ -213,10 +213,11 @@ describe('Codex Bridge (Online)', () => {
 
 		// Hard-fail if credentials are absent or the codex binary is missing —
 		// per CLAUDE.md policy: tests must FAIL, not silently skip.
-		const authStatus = await provider.getAuthStatus();
-		if (!authStatus.isAuthenticated) {
+		// isAvailable() checks all runtime auth sources (env vars OPENAI_API_KEY/CODEX_API_KEY,
+		// auth.json OAuth) rather than isAuthenticated which is UI-only (NeoKai OAuth only).
+		if (!(await provider.isAvailable())) {
 			throw new Error(
-				`anthropic-codex provider is not authenticated: ${authStatus.error ?? 'unknown reason'}. ` +
+				'anthropic-codex provider is not available. ' +
 					'Set OPENAI_API_KEY or CODEX_API_KEY, or run `codex login`.'
 			);
 		}
