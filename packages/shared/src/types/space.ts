@@ -276,7 +276,7 @@ export interface CreateWorkflowRunParams {
 	title: string;
 	description?: string;
 	/** ID of the step to start execution from — should be set to workflow.startStepId */
-	currentStepId: string;
+	currentStepId?: string;
 }
 
 // ============================================================================
