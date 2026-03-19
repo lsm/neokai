@@ -411,8 +411,8 @@ describe('Space Agent RPC Handlers', () => {
 		});
 
 		it('emits spaceAgent.deleted event', async () => {
+			// delete handler awaits the emit, so the mock is called before call() returns
 			await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
-			await new Promise((r) => setTimeout(r, 0));
 
 			expect(daemonData.emitMock).toHaveBeenCalled();
 			const [eventName, payload] = daemonData.emitMock.mock.calls[0] as [

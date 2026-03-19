@@ -16,6 +16,8 @@ import { Logger } from '../logger';
 
 const log = new Logger('space-agent-handlers');
 
+// Keep in sync with BuiltinAgentRole in packages/shared/src/types/space.ts
+// and the DB CHECK constraint on space_agents.role
 const VALID_ROLES = new Set<string>(['planner', 'coder', 'general']);
 
 function assertValidRole(role: string): asserts role is BuiltinAgentRole {
