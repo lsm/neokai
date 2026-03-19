@@ -42,6 +42,9 @@ RPC_FILES=(
   session-handlers.test.ts
 )
 
+# NOTE: All room/* shards are intentionally commented out in .github/workflows/main.yml
+# due to resource usage. ROOM_FILES below tracks files that exist on disk; CI does not
+# automatically run them. Run them locally or enable per-task in the CI matrix.
 ROOM_FILES=(
   mission-lifecycle.test.ts
   room-advanced-scenarios.test.ts

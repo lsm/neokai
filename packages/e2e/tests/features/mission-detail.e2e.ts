@@ -127,15 +127,11 @@ test.describe('Mission Detail Views', () => {
 		await createMeasurableMission(page, 'Coverage Mission');
 
 		// The MetricProgress component renders in the mission header when structuredMetrics exist.
-		// It shows metric name + value/target and a progress bar div with background color class.
-		// Since we just created it with current=0 target=80, we expect the metric name to appear.
+		// It shows metric name + value/target and a progress bar. Verify the metric label is visible.
 		const missionHeader = page.locator('h4:has-text("Coverage Mission")').first();
 		await expect(missionHeader).toBeVisible({ timeout: 5000 });
 
-		// The metric name should appear in the header area (MetricProgress in header)
-		// Check that the header container contains the metric name text
-		const headerContainer = missionHeader.locator('../../..');
-		// Progress bar is inside the header — look for the metric label text
+		// MetricProgress renders the metric name in a span in the header area
 		await expect(page.locator('text=Code Coverage').first()).toBeVisible({ timeout: 5000 });
 	});
 

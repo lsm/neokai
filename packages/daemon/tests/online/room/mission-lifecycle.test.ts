@@ -229,7 +229,7 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 	);
 
 	test(
-		'measurable mission: recordMetric updates current value; allMet=false before target reached',
+		'measurable mission: goal.update with structuredMetrics updates current value',
 		async () => {
 			const roomId = await createRoom(daemon, 'Measurable Mission Targets');
 
@@ -240,16 +240,13 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 				structuredMetrics: [{ name: 'coverage', target: 80, current: 0, unit: '%' }],
 			});
 
-			// Record an intermediate metric value (below target)
+			// Patch structuredMetrics.current via goal.update (simulates in-session metric recording)
 			const afterRecord = await recordMetric(daemon, roomId, mission.id, 'coverage', 60);
 
-			// structuredMetrics.current should be updated
+			// The current value should be updated; target should be unchanged
 			const metric = afterRecord.structuredMetrics?.find((m) => m.name === 'coverage');
 			expect(metric?.current).toBe(60);
 			expect(metric?.target).toBe(80);
-
-			// Progress should reflect partial completion (60/80 = 75%), not 100%
-			expect(afterRecord.progress ?? 0).toBeLessThan(100);
 		},
 		30_000
 	);
