@@ -15,6 +15,8 @@ import { createGitHubService, type GitHubService } from './lib/github/github-ser
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
+import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
+import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -50,6 +52,8 @@ export interface DaemonAppContext {
 	reactiveDb: ReturnType<typeof createReactiveDatabase>;
 	/** Phase 2: Live query engine for reactive SQL queries */
 	liveQueries: LiveQueryEngine;
+	/** Space agent manager for Space multi-agent system */
+	spaceAgentManager: SpaceAgentManager;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -86,6 +90,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	await db.initialize();
 	const reactiveDb = createReactiveDatabase(db);
 	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
+
+	// Initialize Space agent manager
+	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
 
 	// Initialize authentication manager
 	const authManager = new AuthManager(db, config);
@@ -418,6 +425,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		gitHubService,
 		reactiveDb,
 		liveQueries,
+		spaceAgentManager,
 		cleanup,
 	};
 }

@@ -1,114 +1,19 @@
 /**
  * SpaceAgentRepository Unit Tests
  *
- * Tests for CRUD operations, JSON serialization, batch lookup, and deletion protection.
+ * Tests for CRUD operations, JSON serialization, batch lookup, deletion protection,
+ * and the DB-level name uniqueness check.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
-
-// ---------------------------------------------------------------------------
-// Minimal schema for tests — mirrors the real tables plus the migration-30 columns
-// ---------------------------------------------------------------------------
-function createSchema(db: Database): void {
-	db.exec(`PRAGMA foreign_keys = ON`);
-	db.exec(`
-		CREATE TABLE spaces (
-			id TEXT PRIMARY KEY,
-			workspace_path TEXT NOT NULL UNIQUE,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			background_context TEXT NOT NULL DEFAULT '',
-			instructions TEXT NOT NULL DEFAULT '',
-			default_model TEXT,
-			allowed_models TEXT NOT NULL DEFAULT '[]',
-			session_ids TEXT NOT NULL DEFAULT '[]',
-			status TEXT NOT NULL DEFAULT 'active',
-			config TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
-
-	db.exec(`
-		CREATE TABLE space_agents (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			model TEXT,
-			provider TEXT,
-			tools TEXT NOT NULL DEFAULT '[]',
-			system_prompt TEXT NOT NULL DEFAULT '',
-			role TEXT NOT NULL DEFAULT 'worker'
-				CHECK(role IN ('worker', 'reviewer', 'orchestrator')),
-			config TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-	db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
-
-	db.exec(`
-		CREATE TABLE space_workflows (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			config TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-
-	db.exec(`
-		CREATE TABLE space_workflow_steps (
-			id TEXT PRIMARY KEY,
-			workflow_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			agent_id TEXT,
-			order_index INTEGER NOT NULL,
-			config TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
-		)
-	`);
-}
-
-function insertSpace(db: Database, id = 'space-1'): void {
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-	).run(id, `/workspace/${id}`, `Space ${id}`, now, now);
-}
-
-function insertWorkflow(db: Database, id: string, spaceId: string, name: string): void {
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-	).run(id, spaceId, name, now, now);
-}
-
-function insertWorkflowStep(
-	db: Database,
-	id: string,
-	workflowId: string,
-	agentId: string | null
-): void {
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO space_workflow_steps (id, workflow_id, name, agent_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Step ${id}`, agentId, 0, now, now);
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+import {
+	createSpaceAgentSchema,
+	insertSpace,
+	insertWorkflow,
+	insertWorkflowStep,
+} from '../helpers/space-agent-schema';
 
 describe('SpaceAgentRepository', () => {
 	let db: Database;
@@ -116,7 +21,7 @@ describe('SpaceAgentRepository', () => {
 
 	beforeEach(() => {
 		db = new Database(':memory:');
-		createSchema(db);
+		createSpaceAgentSchema(db);
 		insertSpace(db);
 		repo = new SpaceAgentRepository(db as any);
 	});
@@ -208,6 +113,36 @@ describe('SpaceAgentRepository', () => {
 		it('returns empty array for space with no agents', () => {
 			insertSpace(db, 'space-2');
 			expect(repo.getBySpaceId('space-2')).toEqual([]);
+		});
+	});
+
+	describe('isNameTaken', () => {
+		it('returns false when no agent with that name exists', () => {
+			expect(repo.isNameTaken('space-1', 'Coder')).toBe(false);
+		});
+
+		it('returns true when an agent with that name exists', () => {
+			repo.create({ spaceId: 'space-1', name: 'Coder' });
+			expect(repo.isNameTaken('space-1', 'Coder')).toBe(true);
+		});
+
+		it('is case-insensitive', () => {
+			repo.create({ spaceId: 'space-1', name: 'Coder' });
+			expect(repo.isNameTaken('space-1', 'CODER')).toBe(true);
+			expect(repo.isNameTaken('space-1', 'coder')).toBe(true);
+		});
+
+		it('excludes the specified agent id (update scenario)', () => {
+			const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+			// Same name, same id — should not count as taken
+			expect(repo.isNameTaken('space-1', 'Coder', agent.id)).toBe(false);
+		});
+
+		it('is scoped to the space', () => {
+			insertSpace(db, 'space-2');
+			repo.create({ spaceId: 'space-1', name: 'Coder' });
+			// Name exists in space-1 but not space-2
+			expect(repo.isNameTaken('space-2', 'Coder')).toBe(false);
 		});
 	});
 

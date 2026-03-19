@@ -18,5 +18,3 @@ export const KNOWN_TOOLS = [
 	'TaskOutput',
 	'TaskStop',
 ] as const;
-
-export type KnownTool = (typeof KNOWN_TOOLS)[number];

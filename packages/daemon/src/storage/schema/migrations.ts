@@ -1677,6 +1677,16 @@ function runMigration29(db: BunDatabase): void {
  * Migration 30: Add role and provider columns to space_agents.
  * - role: determines the agent's function in workflows ('worker'|'reviewer'|'orchestrator')
  * - provider: optional provider identifier (e.g. 'anthropic', 'glm')
+ *
+ * SQLite CHECK constraint limitation:
+ *   SQLite versions < 3.37.0 (2021-11-27) silently ignore CHECK constraints
+ *   added via ALTER TABLE ADD COLUMN. The `role` column's CHECK constraint
+ *   will only be enforced on databases created fresh from Migration 29+
+ *   (which uses CREATE TABLE with the inline CHECK). On existing databases
+ *   that receive the column via this ALTER TABLE, the constraint is recorded
+ *   in the schema but not enforced at the storage engine level on older SQLite.
+ *   Application-layer validation in SpaceAgentManager ensures the role value
+ *   is always valid regardless of SQLite version.
  */
 function runMigration30(db: BunDatabase): void {
 	// Add role column (idempotent — only adds if missing)

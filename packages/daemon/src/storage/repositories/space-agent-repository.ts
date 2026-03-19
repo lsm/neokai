@@ -135,6 +135,25 @@ export class SpaceAgentRepository {
 	}
 
 	/**
+	 * Check if a name is already taken within a space.
+	 * Case-insensitive. Pass excludeId to ignore the agent being updated.
+	 */
+	isNameTaken(spaceId: string, name: string, excludeId?: string): boolean {
+		if (excludeId) {
+			const row = this.db
+				.prepare(
+					`SELECT 1 FROM space_agents WHERE space_id = ? AND LOWER(name) = LOWER(?) AND id != ? LIMIT 1`
+				)
+				.get(spaceId, name, excludeId);
+			return row !== null && row !== undefined;
+		}
+		const row = this.db
+			.prepare(`SELECT 1 FROM space_agents WHERE space_id = ? AND LOWER(name) = LOWER(?) LIMIT 1`)
+			.get(spaceId, name);
+		return row !== null && row !== undefined;
+	}
+
+	/**
 	 * Check whether an agent is referenced by any workflow steps.
 	 * Returns the names of workflows that reference this agent.
 	 * Empty array means safe to delete.

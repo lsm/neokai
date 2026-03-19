@@ -49,6 +49,7 @@ export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor
 // @public - Library export
 // Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
+export { SpaceAgentRepository } from './repositories/space-agent-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
