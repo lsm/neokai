@@ -352,4 +352,29 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(workflows).toHaveLength(1);
 		expect(workflows[0].name).toBe('My Custom Workflow');
 	});
+
+	test('throws if resolveAgentId returns undefined for a required role', async () => {
+		// Resolver that cannot resolve 'planner'
+		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
+			role === 'planner' ? undefined : roleMap[role];
+
+		await expect(seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).rejects.toThrow(
+			"no SpaceAgent found for role 'planner'"
+		);
+	});
+
+	test('does not persist any workflow when resolveAgentId fails mid-seed', async () => {
+		// Resolver fails on 'planner' — first template's first step
+		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
+			role === 'planner' ? undefined : roleMap[role];
+
+		try {
+			await seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
+		} catch {
+			// expected
+		}
+		// CODING_WORKFLOW creation throws before any workflow is committed,
+		// so the space should still have zero workflows
+		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
+	});
 });

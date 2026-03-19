@@ -158,8 +158,8 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
  *
  * Each template step's `agentId` placeholder (e.g., `'planner'`, `'coder'`,
  * `'general'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.
- * If a role cannot be resolved, that step is skipped and the workflow is
- * still created — the unresolved step will use the placeholder string.
+ * If any role cannot be resolved, this function throws — persisting a
+ * placeholder string as an `agentId` would create broken workflow data.
  *
  * Idempotent: if the space already has at least one workflow, this is a no-op.
  *
@@ -187,14 +187,23 @@ export async function seedBuiltInWorkflows(
 	}
 
 	for (const template of getBuiltInWorkflows()) {
-		const steps: WorkflowStepInput[] = template.steps.map((s) => ({
-			name: s.name,
-			// Resolve role placeholder to real agent ID; fall back to placeholder if unresolvable.
-			agentId: resolveAgentId(s.agentId as BuiltinAgentRole) ?? s.agentId,
-			entryGate: s.entryGate,
-			exitGate: s.exitGate,
-			instructions: s.instructions,
-		}));
+		const steps: WorkflowStepInput[] = template.steps.map((s) => {
+			const role = s.agentId as BuiltinAgentRole;
+			const agentId = resolveAgentId(role);
+			if (!agentId) {
+				throw new Error(
+					`seedBuiltInWorkflows: no SpaceAgent found for role '${role}' in space '${spaceId}'. ` +
+						`Preset agents must be seeded before calling seedBuiltInWorkflows.`
+				);
+			}
+			return {
+				name: s.name,
+				agentId,
+				entryGate: s.entryGate,
+				exitGate: s.exitGate,
+				instructions: s.instructions,
+			};
+		});
 
 		workflowManager.createWorkflow({
 			spaceId,
