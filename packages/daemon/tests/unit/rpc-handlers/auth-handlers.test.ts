@@ -328,4 +328,92 @@ describe('Auth RPC Handlers', () => {
 			expect(result.error).toBe('Logout failed');
 		});
 	});
+
+	describe('auth.refresh', () => {
+		it('returns error when provider not found', async () => {
+			const handler = messageHubData.handlers.get('auth.refresh');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ providerId: 'non-existent' }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Provider not found');
+		});
+
+		it('returns error when provider does not support token refresh', async () => {
+			const mockProvider = createMockProvider({
+				refreshToken: undefined,
+			});
+			registry.register(mockProvider);
+
+			const handler = messageHubData.handlers.get('auth.refresh');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('does not support token refresh');
+		});
+
+		it('returns success when token refresh succeeds', async () => {
+			const mockProvider = createMockProvider({
+				refreshToken: mock(async () => true),
+			});
+			registry.register(mockProvider);
+
+			const handler = messageHubData.handlers.get('auth.refresh');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+				success: boolean;
+			};
+
+			expect(result.success).toBe(true);
+			expect(mockProvider.refreshToken).toHaveBeenCalled();
+		});
+
+		it('returns error when token refresh fails', async () => {
+			const mockProvider = createMockProvider({
+				refreshToken: mock(async () => false),
+			});
+			registry.register(mockProvider);
+
+			const handler = messageHubData.handlers.get('auth.refresh');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Please try logging out');
+		});
+
+		it('handles refresh token errors', async () => {
+			const mockProvider = createMockProvider({
+				refreshToken: mock(async () => {
+					throw new Error('Token refresh failed');
+				}),
+			});
+			registry.register(mockProvider);
+
+			const handler = messageHubData.handlers.get('auth.refresh');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+				success: boolean;
+				error?: string;
+			};
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Token refresh failed');
+		});
+	});
 });

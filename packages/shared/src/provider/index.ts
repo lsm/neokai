@@ -20,6 +20,8 @@ export type {
 	ProviderAuthRequest,
 	ProviderAuthResponse,
 	ProviderLogoutRequest,
+	ProviderRefreshRequest,
+	ProviderRefreshResponse,
 	ListProviderAuthStatusResponse,
 	OAuthFlowData,
 } from './auth-types.js';

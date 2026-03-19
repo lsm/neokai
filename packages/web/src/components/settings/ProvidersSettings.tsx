@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import type { ProviderAuthStatus, ProviderAuthResponse } from '@neokai/shared/provider';
-import { listProviderAuthStatus, loginProvider, logoutProvider } from '../../lib/api-helpers.ts';
+import {
+	listProviderAuthStatus,
+	loginProvider,
+	logoutProvider,
+	refreshProvider,
+} from '../../lib/api-helpers.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { OAuthModal } from './OAuthModal.tsx';
 import { Button } from '../ui/Button.tsx';
@@ -19,6 +24,7 @@ export function ProvidersSettings() {
 	const [loading, setLoading] = useState(true);
 	const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
 	const [pendingProvider, setPendingProvider] = useState<string | null>(null);
+	const [refreshFailed, setRefreshFailed] = useState<Set<string>>(new Set());
 
 	// Load provider auth statuses
 	const loadProviders = async () => {
@@ -92,13 +98,46 @@ export function ProvidersSettings() {
 	};
 
 	const handleLogout = async (providerId: string, providerName: string) => {
+		setPendingProvider(providerId);
 		try {
 			await logoutProvider(providerId);
 			toast.success(`Logged out from ${providerName}`);
+			// Clear refresh failure state for this provider
+			setRefreshFailed((prev) => {
+				const next = new Set(prev);
+				next.delete(providerId);
+				return next;
+			});
 			// Refresh provider list
 			await loadProviders();
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : 'Failed to logout');
+		} finally {
+			setPendingProvider(null);
+		}
+	};
+
+	const handleRefresh = async (providerId: string, providerName: string) => {
+		setPendingProvider(providerId);
+		try {
+			const response = await refreshProvider(providerId);
+			if (response.success) {
+				toast.success(`Token refreshed for ${providerName}`);
+				setRefreshFailed((prev) => {
+					const next = new Set(prev);
+					next.delete(providerId);
+					return next;
+				});
+				await loadProviders();
+			} else {
+				toast.error(response.error || 'Failed to refresh token');
+				setRefreshFailed((prev) => new Set(prev).add(providerId));
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : 'Failed to refresh token');
+			setRefreshFailed((prev) => new Set(prev).add(providerId));
+		} finally {
+			setPendingProvider(null);
 		}
 	};
 
@@ -159,17 +198,33 @@ export function ProvidersSettings() {
 											</p>
 										)}
 									</div>
-									<div class="flex-shrink-0 ml-4">
-										{provider.isAuthenticated ? (
+									<div class="flex-shrink-0 ml-4 flex items-center gap-2">
+										{provider.needsRefresh && (
+											<Button
+												variant="warning"
+												size="sm"
+												onClick={() => handleRefresh(provider.id, provider.displayName)}
+												loading={pendingProvider === provider.id}
+												disabled={!!pendingProvider}
+											>
+												Refresh Login
+											</Button>
+										)}
+										{/* Show Logout for authenticated providers, or after refresh failure */}
+										{(provider.isAuthenticated ||
+											(provider.needsRefresh && refreshFailed.has(provider.id))) && (
 											<Button
 												variant="secondary"
 												size="sm"
 												onClick={() => handleLogout(provider.id, provider.displayName)}
-												disabled={pendingProvider === provider.id}
+												loading={pendingProvider === provider.id}
+												disabled={!!pendingProvider}
 											>
 												Logout
 											</Button>
-										) : (
+										)}
+										{/* Show Login for unauthenticated providers */}
+										{!provider.isAuthenticated && !provider.needsRefresh && (
 											<Button
 												variant="primary"
 												size="sm"
