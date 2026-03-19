@@ -63,7 +63,7 @@ test.describe('Mission Terminology', () => {
 	});
 
 	test('should show "Missions" tab label in room page', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
 		// The "Missions" tab button should be visible
@@ -72,7 +72,7 @@ test.describe('Mission Terminology', () => {
 	});
 
 	test('should not show "Goals" tab label in room page', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
 		// Wait for tabs to render
@@ -86,7 +86,7 @@ test.describe('Mission Terminology', () => {
 	test('should show "No missions yet" in empty state after clicking Missions tab', async ({
 		page,
 	}) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
 		// Click the Missions tab
@@ -99,7 +99,7 @@ test.describe('Mission Terminology', () => {
 	});
 
 	test('should show "Create Mission" button in empty state', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
 		// Click the Missions tab
@@ -113,7 +113,7 @@ test.describe('Mission Terminology', () => {
 	});
 
 	test('should show "Missions" heading inside the tab panel', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
 		// Click the Missions tab
