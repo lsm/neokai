@@ -49,6 +49,8 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import { setupSpaceAgentHandlers } from './space-agent-handlers';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -61,6 +63,7 @@ export interface RPCHandlerDependencies {
 	gitHubService?: GitHubService;
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
+	spaceAgentManager: SpaceAgentManager;
 }
 
 const log = new Logger('rpc-handlers');
@@ -189,6 +192,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		spaceTaskManagerFactory,
 		deps.daemonHub
 	);
+
+	// Space agent handlers
+	setupSpaceAgentHandlers(deps.messageHub, deps.daemonHub, deps.spaceAgentManager);
 
 	// Return cleanup function to stop background services
 	return () => {
