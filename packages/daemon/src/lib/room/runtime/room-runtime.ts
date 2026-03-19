@@ -1931,7 +1931,13 @@ export class RoomRuntime {
 			this.messageHub.event(
 				'state.groupMessages.delta',
 				{
-					added: [{ type: 'status', text: payload?.text ?? kind, timestamp: now }],
+					added: [
+						{
+							type: kind === 'leader_summary' ? 'leader_summary' : 'status',
+							text: payload?.text ?? kind,
+							timestamp: now,
+						},
+					],
 					timestamp: now,
 				},
 				{ channel: `group:${groupId}` }

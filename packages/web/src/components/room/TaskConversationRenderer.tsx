@@ -83,6 +83,20 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 			},
 		} as unknown as SDKMessage;
 	}
+
+	// Leader summary messages are plain text with distinct rendering
+	if (msg.messageType === 'leader_summary') {
+		return {
+			type: 'leader_summary',
+			text: msg.content,
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: `leader-summary-${msg.id}`,
+				iteration: 0,
+			},
+		} as unknown as SDKMessage;
+	}
 	try {
 		return JSON.parse(msg.content) as SDKMessage;
 	} catch {
@@ -382,6 +396,38 @@ export function TaskConversationRenderer({
 							<div class="flex-1 h-px bg-dark-700" />
 							<span class="text-xs text-gray-500 whitespace-nowrap">{statusText}</span>
 							<div class="flex-1 h-px bg-dark-700" />
+						</div>
+					);
+				}
+
+				// Leader summary messages: render as a context card
+				if (raw.type === 'leader_summary') {
+					const rawText = typeof raw.text === 'string' ? raw.text : '';
+					const summaryText = rawText.startsWith('[Turn Summary] ')
+						? rawText.slice('[Turn Summary] '.length)
+						: rawText;
+					return (
+						<div
+							key={key}
+							class="my-1.5 rounded border border-purple-800/40 bg-purple-950/20 px-3 py-2"
+						>
+							<div class="flex items-center gap-1.5 mb-1">
+								<svg
+									class="w-3 h-3 text-purple-400 flex-shrink-0"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+									/>
+								</svg>
+								<span class="text-xs font-medium text-purple-400">Turn Summary</span>
+							</div>
+							<p class="text-xs text-gray-300 leading-relaxed">{summaryText}</p>
 						</div>
 					);
 				}
