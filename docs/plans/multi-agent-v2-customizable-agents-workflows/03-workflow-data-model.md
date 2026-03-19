@@ -192,9 +192,8 @@ Build the data access and business logic layers for workflows within Spaces. The
 
 4. Write unit tests:
    - Full CRUD lifecycle
-   - Step ordering validation
-   - Agent reference validation (builtin + custom via `SpaceAgentManager`)
-   - Rejection of 'leader' as builtin agent ref
+   - Step and transition validation (agentId references valid SpaceAgent, transition from/to reference valid step IDs)
+   - Rejection of unknown `agentId` values (SpaceAgent must exist in same space)
    - Condition validation (expression required, timeoutMs range)
    - JSON round-trip for transitions and rules
    - `getWorkflowsReferencingAgent` returns correct results

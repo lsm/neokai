@@ -120,7 +120,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 2. Create `packages/daemon/src/lib/space/data/export-format.ts`:
    - `exportAgent(agent: SpaceAgent): ExportedSpaceAgent`
-   - `exportWorkflow(workflow: SpaceWorkflow, agents: SpaceAgent[]): ExportedSpaceWorkflow` — **must remap**: (1) `rules[].appliesTo` from step UUIDs to step order indices; (2) step `agentId` UUIDs to agent **names** via `agentName` field (lookup in provided agents array)
+   - `exportWorkflow(workflow: SpaceWorkflow, agents: SpaceAgent[]): ExportedSpaceWorkflow` — **must remap**: (1) `rules[].appliesTo` from step UUIDs to step **names**; (2) step `agentId` UUIDs to agent **names** via `agentName` field (lookup in provided agents array); (3) transition `from`/`to` step UUIDs to step **names**
    - `exportBundle(agents: SpaceAgent[], workflows: SpaceWorkflow[], name: string): SpaceExportBundle`
    - Strip space-specific IDs and timestamps
 
@@ -133,7 +133,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 4. Write unit tests:
    - Round-trip: export → serialize → deserialize → validate
-   - **Rule appliesTo round-trip**: export with step-specific rules → verify order indices in JSON → import → verify correct new step IDs
+   - **Rule appliesTo round-trip**: export with step-specific rules → verify step **names** in JSON → import → verify correct new step IDs
    - Validation rejects malformed data
    - Space-specific fields (id, spaceId, timestamps) stripped on export
    - Version validation
@@ -142,7 +142,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 - Export format well-defined and versioned
 - All types in `space.ts` (NOT `neo.ts`)
 - Type names use Space prefix (`ExportedSpaceAgent`, `SpaceExportBundle`)
-- `appliesTo` correctly remapped between UUIDs and order indices
+- `appliesTo` correctly remapped between step UUIDs and step names
 - Version checking provides clear messages
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -174,7 +174,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
 
 3. Cross-references and ID remapping:
    - **Agent name→UUID remapping**: Exported workflow steps use `agentName` (not UUID). On import, resolve names to `agentId` UUIDs by: (1) checking the bundle's imported agents (if importing both), (2) checking existing agents in target space by name. If agent not found, flag as warning in preview.
-   - **Step ID remapping for rules**: new step UUIDs generated on import; remap `rules[].appliesTo` from order indices back to new step UUIDs using `Map<order, newStepId>`
+   - **Step ID remapping for rules and transitions**: new step UUIDs generated on import; remap `rules[].appliesTo` from step names back to new step UUIDs using `Map<stepName, newStepId>`; remap transition `from`/`to` step names back to new step UUIDs using the same map
 
 4. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration only)
 
