@@ -102,6 +102,12 @@ export function ProvidersSettings() {
 		try {
 			await logoutProvider(providerId);
 			toast.success(`Logged out from ${providerName}`);
+			// Clear refresh failure state for this provider
+			setRefreshFailed((prev) => {
+				const next = new Set(prev);
+				next.delete(providerId);
+				return next;
+			});
 			// Refresh provider list
 			await loadProviders();
 		} catch (error) {

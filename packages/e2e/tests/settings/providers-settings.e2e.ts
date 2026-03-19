@@ -61,18 +61,23 @@ test.describe('Settings Modal - Providers Section', () => {
 		// Wait for providers section to load
 		await expect(page.locator('h3:has-text("Providers")')).toBeVisible();
 
-		// Count action buttons in the providers section
-		const loginButtons = await page.locator('button:has-text("Login")').count();
-		const logoutButtons = await page.locator('button:has-text("Logout")').count();
-		const refreshButtons = await page.locator('button:has-text("Refresh Login")').count();
-		const totalButtons = loginButtons + logoutButtons + refreshButtons;
+		// Either shows provider cards with action buttons, or "No providers available"
+		const providerCards = page.locator('.space-y-3 > div');
+		const hasProviderCards = (await providerCards.count()) > 0;
+		const hasNoProvidersMessage = (await page.locator('text=No providers available').count()) > 0;
 
-		// Get the count of provider cards to verify alignment
-		const providerCards = await page.locator('.space-y-3 > div').count();
+		if (hasProviderCards) {
+			// Count action buttons in the providers section
+			const loginButtons = await page.locator('button:has-text("Login")').count();
+			const logoutButtons = await page.locator('button:has-text("Logout")').count();
+			const refreshButtons = await page.locator('button:has-text("Refresh Login")').count();
+			const totalButtons = loginButtons + logoutButtons + refreshButtons;
 
-		// If there are provider cards, there should be action buttons for them
-		if (providerCards > 0) {
+			// Provider cards should have action buttons
 			expect(totalButtons).toBeGreaterThan(0);
+		} else {
+			// No providers should show the empty message
+			expect(hasNoProvidersMessage).toBe(true);
 		}
 	});
 });
