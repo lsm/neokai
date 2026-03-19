@@ -13,7 +13,6 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
-import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
@@ -176,6 +175,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
+			// Guard against self-dependency (would permanently block the task)
+			if (args.depends_on?.includes(args.task_id)) {
+				return jsonResult({ success: false, error: 'A task cannot depend on itself.' });
+			}
 			const updates: {
 				title?: string;
 				description?: string;
@@ -214,6 +217,27 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
 
+			// Guard: terminal tasks cannot be cancelled
+			if (task.status === 'completed' || task.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} is already in terminal state '${task.status}' and cannot be cancelled.`,
+				});
+			}
+
+			// Guard: cancelling a task with an active session group requires runtime service
+			// to stop the running session. Without it, the DB would be updated but the
+			// worker session would continue running against a cancelled task.
+			if (task.status === 'in_progress' && !runtimeService) {
+				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
+				if (activeGroup && activeGroup.completedAt === null) {
+					return jsonResult({
+						success: false,
+						error: `Cannot cancel in_progress task ${args.task_id} without runtime service — the active worker session would not be stopped.`,
+					});
+				}
+			}
+
 			let cancelledTaskIds: string[] = [];
 			let usedRuntimeCancellation = false;
 			if (runtimeService) {
@@ -249,7 +273,11 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					}
 				}
 			}
-			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
+			return jsonResult({
+				success: true,
+				cancelledTaskIds,
+				message: `Task ${args.task_id} and ${cancelledTaskIds.length - 1} dependent task(s) cancelled`,
+			});
 		},
 
 		async stop_session(args: { task_id: string }): Promise<ToolResult> {
@@ -285,6 +313,8 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: false, error: 'Runtime service unavailable' });
 		},
 
+		// Note: MCP tool is named `update_task_status` but delegates to this handler (set_task_status).
+		// The internal name matches the existing room-agent pattern; the tool name is what the LLM sees.
 		async set_task_status(args: {
 			task_id: string;
 			status: TaskStatus;
@@ -296,13 +326,23 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
 
-			// Validate status transition
-			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-			if (!allowedTransitions.includes(args.status)) {
-				return jsonResult({
-					success: false,
-					error: `Invalid status transition from '${task.status}' to '${args.status}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
-				});
+			const terminalStatuses: TaskStatus[] = ['completed', 'needs_attention', 'cancelled'];
+
+			// Guard: transitioning a task with an active session group to a terminal state
+			// requires runtime service to cancel the running session first. Without it,
+			// the DB would change but the worker session would continue executing.
+			if (
+				(task.status === 'in_progress' || task.status === 'review') &&
+				terminalStatuses.includes(args.status) &&
+				!runtimeService
+			) {
+				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
+				if (activeGroup && activeGroup.completedAt === null) {
+					return jsonResult({
+						success: false,
+						error: `Cannot transition active task ${args.task_id} (status '${task.status}') to '${args.status}' without runtime service — the active worker session would not be stopped.`,
+					});
+				}
 			}
 
 			// Check for active group when transitioning from in_progress or review

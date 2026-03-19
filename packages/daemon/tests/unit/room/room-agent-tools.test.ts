@@ -1570,7 +1570,7 @@ describe('Room Agent Tools', () => {
 			expect(result.task.status).toBe('completed');
 		});
 
-		it('should allow status change without runtime even if group exists', async () => {
+		it('should reject status change to terminal state without runtime when active group exists', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1580,13 +1580,13 @@ describe('Room Agent Tools', () => {
 			// Create an active group
 			insertGroup(taskId, 'awaiting_human');
 
-			// Handler without runtime service - should still allow transition
-			// (for backwards compatibility or when runtime is not available)
+			// Handler without runtime service - should FAIL since active group exists
+			// (would leave a zombie worker session if allowed)
 			const result = parseResult(
 				await handlers.set_task_status({ task_id: taskId, status: 'completed' })
 			);
-			expect(result.success).toBe(true);
-			expect(result.task.status).toBe('completed');
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('runtime service');
 		});
 	});
 
@@ -1731,24 +1731,6 @@ describe('Room Agent Tools', () => {
 			]);
 		});
 
-		it('should expose update_task for editing task fields', () => {
-			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
-			const names = getRegisteredToolNames(server as never);
-			expect(names).toContain('update_task');
-		});
-
-		it('should expose cancel_task for cancelling tasks', () => {
-			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
-			const names = getRegisteredToolNames(server as never);
-			expect(names).toContain('cancel_task');
-		});
-
-		it('should expose update_task_status for status transitions', () => {
-			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
-			const names = getRegisteredToolNames(server as never);
-			expect(names).toContain('update_task_status');
-		});
-
 		it('should NOT expose approve_task', () => {
 			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			const names = getRegisteredToolNames(server as never);
@@ -1836,6 +1818,21 @@ describe('Room Agent Tools', () => {
 				expect(updated.dependsOn).toContain(dep.id);
 			});
 
+			it('should reject self-dependency', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.update_task({ task_id: task.id, depends_on: [task.id] })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('cannot depend on itself');
+			});
+
 			it('should fail gracefully when task not found', async () => {
 				const leaderHandlers = createRoomAgentToolHandlers({
 					roomId,
@@ -1852,7 +1849,7 @@ describe('Room Agent Tools', () => {
 		});
 
 		describe('cancel_task tool', () => {
-			it('should cancel a pending task', async () => {
+			it('should cancel a pending task and return cancelledTaskIds', async () => {
 				const task = await taskManager.createTask({ title: 'T', description: 'D' });
 				const leaderHandlers = createRoomAgentToolHandlers({
 					roomId,
@@ -1862,11 +1859,12 @@ describe('Room Agent Tools', () => {
 				});
 				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
 				expect(result.success).toBe(true);
+				expect(result.cancelledTaskIds).toContain(task.id);
 				const updated = await taskManager.getTask(task.id);
 				expect(updated?.status).toBe('cancelled');
 			});
 
-			it('should cascade cancellation to dependent pending tasks', async () => {
+			it('should cascade cancellation and include all cancelled IDs in response', async () => {
 				const parent = await taskManager.createTask({ title: 'Parent', description: 'D' });
 				const child = await taskManager.createTask({
 					title: 'Child',
@@ -1881,10 +1879,45 @@ describe('Room Agent Tools', () => {
 				});
 				const result = parseResult(await leaderHandlers.cancel_task({ task_id: parent.id }));
 				expect(result.success).toBe(true);
+				const cancelledIds = result.cancelledTaskIds as string[];
+				expect(cancelledIds).toContain(parent.id);
+				expect(cancelledIds).toContain(child.id);
 				const updatedParent = await taskManager.getTask(parent.id);
 				const updatedChild = await taskManager.getTask(child.id);
 				expect(updatedParent?.status).toBe('cancelled');
 				expect(updatedChild?.status).toBe('cancelled');
+			});
+
+			it('should reject cancellation of already-terminal tasks', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				await taskManager.completeTask(task.id, 'done');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('terminal state');
+			});
+
+			it('should reject cancellation of in_progress task with active group without runtimeService', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				// Create an active group — triggers the guard
+				insertGroup(task.id, 'awaiting_worker');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+					// no runtimeService — simulates leader context
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('runtime service');
 			});
 
 			it('should fail gracefully when task not found', async () => {
@@ -1917,6 +1950,25 @@ describe('Room Agent Tools', () => {
 				expect(result.success).toBe(true);
 				const updated = await taskManager.getTask(task.id);
 				expect(updated?.status).toBe('pending');
+			});
+
+			it('should reject transitioning in_progress task with active group to terminal status without runtimeService', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				// Create an active group — triggers the guard
+				insertGroup(task.id, 'awaiting_worker');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+					// no runtimeService — simulates leader context
+				});
+				const result = parseResult(
+					await leaderHandlers.set_task_status({ task_id: task.id, status: 'cancelled' })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('runtime service');
 			});
 
 			it('should reject invalid status transitions', async () => {
