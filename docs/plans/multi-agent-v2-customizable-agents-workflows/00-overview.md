@@ -9,7 +9,7 @@ Build a new **Spaces** system — a fully parallel, isolated multi-agent workflo
 **No existing code is modified.** Spaces are an entirely new parallel system that coexists with the existing Rooms implementation:
 
 - **New DB tables**: `spaces`, `space_agents`, `space_workflows`, `space_workflow_steps`, `space_workflow_runs`, `space_tasks`, `space_session_groups`, `space_session_group_members` — no modifications to any existing table (no ALTER TABLE on `tasks`, `goals`, `rooms`, etc.)
-- **New API routes**: `space.*`, `spaceAgent.*`, `spaceWorkflow.*`, `spaceWorkflowRun.*`, `spaceExport.*`, `spaceImport.*` — no touching existing RPC handlers
+- **New API routes**: `space.*`, `spaceTask.*`, `spaceAgent.*`, `spaceWorkflow.*`, `spaceWorkflowRun.*`, `spaceExport.*`, `spaceImport.*` — no touching existing RPC handlers
 - **New frontend pages/components**: `/space/:spaceId` routes, new islands, new stores — no modifying existing UI components. All Space UI lives under `packages/web/src/components/space/`
 - **New navigation entry point**: "Spaces" section in sidebar alongside existing "Rooms"
 - **New runtime**: `SpaceRuntime` in `packages/daemon/src/lib/space/runtime/` — workflow-first orchestration engine, no modifications to `RoomRuntime`
