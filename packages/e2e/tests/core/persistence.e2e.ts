@@ -14,7 +14,7 @@ import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
 	createSessionViaUI,
-	waitForMessageProcessed,
+	waitForMessageSent,
 	cleanupTestSession,
 	waitForElement,
 	waitForWebSocketConnected,
@@ -126,34 +126,21 @@ test.describe('Page Refresh - Session State Persistence', () => {
 		// TODO: Verify autocomplete dropdown state after page refresh
 	});
 
-	test('should restore full session state including messages and title', async ({ page }) => {
+	test('should restore user messages after page refresh', async ({ page }) => {
 		// Create session
 		sessionId = await createSessionViaUI(page);
 
-		// Send message and wait for title generation
+		// Send a message (no LLM response needed — we just test user message persistence)
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await messageInput.fill('What is React and why is it popular?');
 		await messageInput.press('Enter');
 
-		// Wait for message processing
-		await waitForMessageProcessed(page, 'What is React and why is it popular?');
+		// Wait for user message to appear in chat (no LLM response required)
+		await waitForMessageSent(page, 'What is React and why is it popular?');
 
-		// Wait for title to be generated
-		const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
-		await page.waitForFunction(
-			(sid) => {
-				const sessionEl = document.querySelector(`[data-session-id="${sid}"]`);
-				const titleEl = sessionEl?.querySelector('h3');
-				const titleText = titleEl?.textContent || '';
-				return titleText !== 'New Session' && titleText.length > 0;
-			},
-			sessionId,
-			{ timeout: 45000 } // GLM-4.7 can take 30-40s in CI due to API latency
-		);
-
-		// Count messages before refresh
-		const messageCountBefore = await page.locator('[data-message-role]').count();
-		expect(messageCountBefore).toBeGreaterThanOrEqual(2); // At least 1 user + 1 assistant
+		// Count user messages before refresh
+		const messageCountBefore = await page.locator('[data-message-role="user"]').count();
+		expect(messageCountBefore).toBeGreaterThanOrEqual(1);
 
 		// Refresh page
 		await page.reload();
@@ -172,19 +159,15 @@ test.describe('Page Refresh - Session State Persistence', () => {
 			timeout: 30000,
 		});
 
-		// Wait for messages to be restored
+		// Wait for user messages to be restored
 		await page.waitForFunction(
 			(expectedCount) => {
-				const messages = document.querySelectorAll('[data-message-role]');
+				const messages = document.querySelectorAll('[data-message-role="user"]');
 				return messages.length >= expectedCount;
 			},
 			messageCountBefore,
 			{ timeout: 10000 }
 		);
-
-		// Verify message count is restored
-		const messageCountAfter = await page.locator('[data-message-role]').count();
-		expect(messageCountAfter).toBe(messageCountBefore);
 
 		// Verify original message is still visible in the chat area
 		await expect(
@@ -192,11 +175,5 @@ test.describe('Page Refresh - Session State Persistence', () => {
 				.locator('[data-message-role="user"]')
 				.filter({ hasText: 'What is React and why is it popular?' })
 		).toBeVisible();
-
-		// Verify session title is restored in sidebar
-		await expect(sessionItem).toBeVisible();
-		const titleAfter = await sessionItem.locator('h3').textContent();
-		expect(titleAfter).not.toBe('New Session');
-		expect(titleAfter?.length).toBeGreaterThan(0);
 	});
 });

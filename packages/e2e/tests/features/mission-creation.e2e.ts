@@ -81,7 +81,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show mission type selector in create form', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -95,7 +95,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show autonomy level selector in create form', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -107,7 +107,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show metrics section when measurable type is selected', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -121,7 +121,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should create a measurable mission with metrics', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -161,7 +161,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show schedule section when recurring type is selected', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -176,7 +176,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should create a recurring mission with daily schedule', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -206,7 +206,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show custom cron field when custom preset is selected', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -222,7 +222,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show semi-autonomous badge when autonomy is set', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
@@ -244,7 +244,7 @@ test.describe('Mission Creation', () => {
 	});
 
 	test('should show type filter buttons when missions exist', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 

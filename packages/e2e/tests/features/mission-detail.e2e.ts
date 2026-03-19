@@ -121,7 +121,7 @@ test.describe('Mission Detail Views', () => {
 	});
 
 	test('should show metric progress bars in measurable mission header', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createMeasurableMission(page, 'Coverage Mission');
@@ -138,7 +138,7 @@ test.describe('Mission Detail Views', () => {
 	test('should show Metric Progress section when measurable mission is expanded', async ({
 		page,
 	}) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createMeasurableMission(page, 'Expanded Coverage Mission');
@@ -154,7 +154,7 @@ test.describe('Mission Detail Views', () => {
 	});
 
 	test('should show metric value and target in expanded measurable mission', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createMeasurableMission(page, 'Metric Values Mission');
@@ -172,7 +172,7 @@ test.describe('Mission Detail Views', () => {
 	test('should show execution history section when recurring mission is expanded', async ({
 		page,
 	}) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createRecurringMission(page, 'Daily Cleanup');
@@ -187,7 +187,7 @@ test.describe('Mission Detail Views', () => {
 	});
 
 	test('should show "No executions yet" for a fresh recurring mission', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createRecurringMission(page, 'Fresh Recurring Mission');
@@ -205,7 +205,7 @@ test.describe('Mission Detail Views', () => {
 	});
 
 	test('should show Schedule section when recurring mission is expanded', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createRecurringMission(page, 'Scheduled Mission');
@@ -218,7 +218,7 @@ test.describe('Mission Detail Views', () => {
 	});
 
 	test('should show Measurable badge for measurable mission', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createMeasurableMission(page, 'Badge Test Measurable');
@@ -229,7 +229,7 @@ test.describe('Mission Detail Views', () => {
 	});
 
 	test('should show Recurring badge for recurring mission', async ({ page }) => {
-		await page.goto(`/rooms/${roomId}`);
+		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 		await createRecurringMission(page, 'Badge Test Recurring');
