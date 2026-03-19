@@ -38,26 +38,14 @@ const workflowGateSchema = z.object({
 	timeoutMs: z.number().int().nonnegative().optional(),
 });
 
-const exportedWorkflowStepSchema = z.discriminatedUnion('agentRefType', [
-	z.object({
-		agentRefType: z.literal('builtin'),
-		agentRef: z.enum(['planner', 'coder', 'general']),
-		name: z.string().min(1),
-		entryGate: workflowGateSchema.optional(),
-		exitGate: workflowGateSchema.optional(),
-		instructions: z.string().optional(),
-		order: z.number().int().nonnegative(),
-	}),
-	z.object({
-		agentRefType: z.literal('custom'),
-		agentRef: z.string().min(1),
-		name: z.string().min(1),
-		entryGate: workflowGateSchema.optional(),
-		exitGate: workflowGateSchema.optional(),
-		instructions: z.string().optional(),
-		order: z.number().int().nonnegative(),
-	}),
-]);
+const exportedWorkflowStepSchema = z.object({
+	agentRef: z.string().min(1),
+	name: z.string().min(1),
+	entryGate: workflowGateSchema.optional(),
+	exitGate: workflowGateSchema.optional(),
+	instructions: z.string().optional(),
+	order: z.number().int().nonnegative(),
+});
 
 const exportedWorkflowRuleSchema = z.object({
 	name: z.string().min(1),
@@ -82,9 +70,9 @@ const exportedAgentBaseSchema = z.object({
 	description: z.string().optional(),
 	model: z.string().optional(),
 	provider: z.string().optional(),
-	role: z.enum(['planner', 'coder', 'general']),
+	role: z.enum(['planner', 'coder', 'general', 'reviewer']),
 	systemPrompt: z.string().optional(),
-	tools: z.record(z.string(), z.unknown()).optional(),
+	tools: z.array(z.string()).optional(),
 	config: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -133,7 +121,7 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	if (agent.model !== undefined) exported.model = agent.model;
 	if (agent.provider !== undefined) exported.provider = agent.provider;
 	if (agent.systemPrompt !== undefined) exported.systemPrompt = agent.systemPrompt;
-	if (agent.toolConfig !== undefined) exported.tools = agent.toolConfig;
+	if (agent.tools !== undefined) exported.tools = agent.tools;
 	return exported;
 }
 
@@ -142,10 +130,11 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
  *
  * Remappings:
  * 1. Step `id` fields are stripped.
- * 2. `rules[].appliesTo` is converted from step UUIDs to step order indices.
- * 3. For steps with `agentRefType: 'custom'`, `agentRef` UUID is replaced with
- *    the matching agent's name. If no matching agent is found, `agentRef` is
- *    preserved as-is (graceful degradation).
+ * 2. Step `agentId` UUID is replaced by the agent's **name** (`agentRef`),
+ *    making the reference portable across Space instances.
+ *    If no matching agent is found in `agents`, the UUID is preserved as-is
+ *    (graceful degradation).
+ * 3. `rules[].appliesTo` is converted from step UUIDs to step order indices.
  */
 export function exportWorkflow(
 	workflow: SpaceWorkflow,
@@ -157,29 +146,21 @@ export function exportWorkflow(
 		stepIdToOrder.set(step.id, step.order);
 	}
 
-	// Build a map from agent UUID → agent name for custom agentRef remapping
+	// Build a map from agent UUID → agent name
 	const agentIdToName = new Map<string, string>();
 	for (const agent of agents) {
 		agentIdToName.set(agent.id, agent.name);
 	}
 
-	// Export steps — strip `id`, remap custom agentRef UUID → name
+	// Export steps — strip `id`, remap agentId UUID → agent name
 	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		const base = {
-			name: step.name,
-			order: step.order,
-			...(step.entryGate !== undefined ? { entryGate: step.entryGate } : {}),
-			...(step.exitGate !== undefined ? { exitGate: step.exitGate } : {}),
-			...(step.instructions !== undefined ? { instructions: step.instructions } : {}),
-		};
-
-		if (step.agentRefType === 'builtin') {
-			return { agentRefType: 'builtin', agentRef: step.agentRef, ...base };
-		} else {
-			// custom: remap UUID → name (fallback to UUID if agent not found)
-			const agentName = agentIdToName.get(step.agentRef) ?? step.agentRef;
-			return { agentRefType: 'custom', agentRef: agentName, ...base };
-		}
+		// Remap agentId UUID → agent name (fallback to UUID when agent not found)
+		const agentRef = agentIdToName.get(step.agentId) ?? step.agentId;
+		const exported: ExportedWorkflowStep = { agentRef, name: step.name, order: step.order };
+		if (step.entryGate !== undefined) exported.entryGate = step.entryGate;
+		if (step.exitGate !== undefined) exported.exitGate = step.exitGate;
+		if (step.instructions !== undefined) exported.instructions = step.instructions;
+		return exported;
 	});
 
 	// Export rules — strip `id`, remap appliesTo UUID[] → order index[]

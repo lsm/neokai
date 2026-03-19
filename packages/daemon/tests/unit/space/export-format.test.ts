@@ -2,11 +2,11 @@
  * Export Format Unit Tests
  *
  * Covers:
- * - exportAgent: strips space-specific fields, maps toolConfig → tools
- * - exportWorkflow: strips step IDs, remaps custom agentRef UUID → name,
+ * - exportAgent: strips space-specific fields, maps agent.tools (string[]) → exported.tools
+ * - exportWorkflow: strips step IDs, remaps step agentId UUID → agent name (agentRef),
  *   remaps rule appliesTo step UUIDs → order indices
  * - exportBundle: wraps agents + workflows, adds exportedAt
- * - validateExportedAgent: accepts v1, rejects malformed, version checks
+ * - validateExportedAgent: accepts v1, rejects malformed, version checks, reviewer role
  * - validateExportedWorkflow: accepts v1, rejects malformed, version checks
  * - validateExportBundle: accepts v1, nested agent/workflow validation
  * - Round-trip: export → JSON serialize → deserialize → validate
@@ -38,7 +38,7 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		model: 'claude-sonnet-4-6',
 		provider: 'anthropic',
 		systemPrompt: 'You are an expert coder.',
-		toolConfig: { bash: true, read_file: true },
+		tools: ['bash', 'read_file'],
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -57,6 +57,18 @@ function makeMinimalAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 	};
 }
 
+function makeReviewerAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+	return {
+		id: 'agent-uuid-3',
+		spaceId: 'space-uuid-1',
+		name: 'Reviewer',
+		role: 'reviewer',
+		createdAt: 1000,
+		updatedAt: 2000,
+		...overrides,
+	};
+}
+
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 	return {
 		id: 'workflow-uuid-1',
@@ -66,23 +78,20 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		steps: [
 			{
 				id: 'step-uuid-1',
-				agentRefType: 'builtin',
-				agentRef: 'coder',
+				agentId: 'agent-uuid-1',
 				name: 'Code step',
 				order: 0,
 			},
 			{
 				id: 'step-uuid-2',
-				agentRefType: 'custom',
-				agentRef: 'agent-uuid-1',
+				agentId: 'agent-uuid-3',
 				name: 'Review step',
 				order: 1,
 				instructions: 'Review carefully',
 			},
 			{
 				id: 'step-uuid-3',
-				agentRefType: 'builtin',
-				agentRef: 'planner',
+				agentId: 'agent-uuid-2',
 				name: 'Plan step',
 				order: 2,
 			},
@@ -126,7 +135,7 @@ describe('exportAgent', () => {
 		expect(exported.model).toBe('claude-sonnet-4-6');
 		expect(exported.provider).toBe('anthropic');
 		expect(exported.systemPrompt).toBe('You are an expert coder.');
-		expect(exported.tools).toEqual({ bash: true, read_file: true });
+		expect(exported.tools).toEqual(['bash', 'read_file']);
 	});
 
 	test('strips space-specific fields (id, spaceId, createdAt, updatedAt)', () => {
@@ -150,10 +159,22 @@ describe('exportAgent', () => {
 		expect('tools' in exported).toBe(false);
 	});
 
-	test('maps toolConfig → tools', () => {
-		const agent = makeAgent({ toolConfig: { edit_file: true } });
+	test('exports tools as string array', () => {
+		const agent = makeAgent({ tools: ['edit_file', 'bash'] });
 		const exported = exportAgent(agent);
-		expect(exported.tools).toEqual({ edit_file: true });
+		expect(exported.tools).toEqual(['edit_file', 'bash']);
+	});
+
+	test('exports reviewer role', () => {
+		const agent = makeReviewerAgent();
+		const exported = exportAgent(agent);
+		expect(exported.role).toBe('reviewer');
+	});
+
+	test('does not export toolConfig (legacy field)', () => {
+		const agent = makeAgent({ toolConfig: { foo: true } });
+		const exported = exportAgent(agent) as Record<string, unknown>;
+		expect('toolConfig' in exported).toBe(false);
 	});
 });
 
@@ -164,7 +185,7 @@ describe('exportAgent', () => {
 describe('exportWorkflow', () => {
 	test('strips workflow-level space fields', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents) as Record<string, unknown>;
 
 		expect('id' in exported).toBe(false);
@@ -175,7 +196,7 @@ describe('exportWorkflow', () => {
 
 	test('strips step IDs', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
 		for (const step of exported.steps) {
@@ -183,9 +204,19 @@ describe('exportWorkflow', () => {
 		}
 	});
 
+	test('strips agentId from steps', () => {
+		const workflow = makeWorkflow();
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		for (const step of exported.steps) {
+			expect('agentId' in step).toBe(false);
+		}
+	});
+
 	test('retains step order, name, and other fields', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
 		expect(exported.steps[0].order).toBe(0);
@@ -196,37 +227,40 @@ describe('exportWorkflow', () => {
 		expect(exported.steps[2].order).toBe(2);
 	});
 
-	test('remaps custom agentRef UUID → agent name', () => {
+	test('remaps agentId UUID → agent name as agentRef', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()]; // id: 'agent-uuid-1', name: 'My Coder'
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		const reviewStep = exported.steps[1];
-		expect(reviewStep.agentRefType).toBe('custom');
-		expect(reviewStep.agentRef).toBe('My Coder');
-	});
-
-	test('preserves builtin agentRef as-is', () => {
-		const workflow = makeWorkflow();
-		const exported = exportWorkflow(workflow, []);
-
-		expect(exported.steps[0].agentRefType).toBe('builtin');
-		expect(exported.steps[0].agentRef).toBe('coder');
-		expect(exported.steps[2].agentRefType).toBe('builtin');
-		expect(exported.steps[2].agentRef).toBe('planner');
+		// step 0: agent-uuid-1 → 'My Coder'
+		expect(exported.steps[0].agentRef).toBe('My Coder');
+		// step 1: agent-uuid-3 → 'Reviewer'
+		expect(exported.steps[1].agentRef).toBe('Reviewer');
+		// step 2: agent-uuid-2 → 'Simple Agent'
+		expect(exported.steps[2].agentRef).toBe('Simple Agent');
 	});
 
 	test('falls back to UUID when agent not found', () => {
 		const workflow = makeWorkflow();
-		// Pass no agents — custom ref should fall back to UUID
+		// Pass no agents — all agentId refs should fall back to UUID
 		const exported = exportWorkflow(workflow, []);
-		const reviewStep = exported.steps[1];
-		expect(reviewStep.agentRef).toBe('agent-uuid-1');
+
+		expect(exported.steps[0].agentRef).toBe('agent-uuid-1');
+		expect(exported.steps[1].agentRef).toBe('agent-uuid-3');
+		expect(exported.steps[2].agentRef).toBe('agent-uuid-2');
+	});
+
+	test('no agentRefType field on exported steps', () => {
+		const workflow = makeWorkflow();
+		const exported = exportWorkflow(workflow, []);
+		for (const step of exported.steps) {
+			expect('agentRefType' in step).toBe(false);
+		}
 	});
 
 	test('remaps rule appliesTo step UUIDs → order indices', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
 		// rule 0: appliesTo step-uuid-1 (order 0) and step-uuid-2 (order 1)
@@ -325,6 +359,27 @@ describe('validateExportedAgent', () => {
 		expect(result.ok).toBe(true);
 	});
 
+	test('accepts reviewer role', () => {
+		const data = { version: 1, type: 'agent', name: 'R', role: 'reviewer' };
+		const result = validateExportedAgent(data);
+		expect(result.ok).toBe(true);
+	});
+
+	test('accepts agent with string[] tools', () => {
+		const data = { version: 1, type: 'agent', name: 'Bot', role: 'coder', tools: ['bash'] };
+		const result = validateExportedAgent(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.tools).toEqual(['bash']);
+		}
+	});
+
+	test('rejects agent with object tools (old format)', () => {
+		const data = { version: 1, type: 'agent', name: 'Bot', role: 'coder', tools: { bash: true } };
+		const result = validateExportedAgent(data);
+		expect(result.ok).toBe(false);
+	});
+
 	test('rejects version > 1 with "requires newer version" message', () => {
 		const data = { version: 2, type: 'agent', name: 'Bot', role: 'general' };
 		const result = validateExportedAgent(data);
@@ -359,7 +414,7 @@ describe('validateExportedAgent', () => {
 		expect(result.ok).toBe(false);
 	});
 
-	test('rejects invalid role', () => {
+	test('rejects invalid role (leader)', () => {
 		const data = { version: 1, type: 'agent', name: 'Bot', role: 'leader' };
 		const result = validateExportedAgent(data);
 		expect(result.ok).toBe(false);
@@ -388,7 +443,7 @@ describe('validateExportedAgent', () => {
 describe('validateExportedWorkflow', () => {
 	test('accepts a valid v1 workflow', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 		const result = validateExportedWorkflow(exported);
 		expect(result.ok).toBe(true);
@@ -409,6 +464,48 @@ describe('validateExportedWorkflow', () => {
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(true);
+	});
+
+	test('accepts workflow step with flat agentRef', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			steps: [{ agentRef: 'My Coder', name: 'Step', order: 0 }],
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.steps[0].agentRef).toBe('My Coder');
+		}
+	});
+
+	test('rejects step with empty agentRef', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [{ agentRef: '', name: 'Step', order: 0 }],
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+	});
+
+	test('rejects step missing agentRef', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [{ name: 'Step', order: 0 }],
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
 	});
 
 	test('rejects version > 1 with "requires newer version"', () => {
@@ -439,32 +536,6 @@ describe('validateExportedWorkflow', () => {
 		expect(result.ok).toBe(false);
 	});
 
-	test('rejects step with invalid agentRefType', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'Bad',
-			steps: [{ agentRefType: 'unknown', agentRef: 'foo', name: 'Step', order: 0 }],
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-	});
-
-	test('rejects builtin step with leader agentRef', () => {
-		const data = {
-			version: 1,
-			type: 'workflow',
-			name: 'Bad',
-			steps: [{ agentRefType: 'builtin', agentRef: 'leader', name: 'Step', order: 0 }],
-			rules: [],
-			tags: [],
-		};
-		const result = validateExportedWorkflow(data);
-		expect(result.ok).toBe(false);
-	});
-
 	test('rejects rule with negative appliesTo index', () => {
 		const data = {
 			version: 1,
@@ -485,7 +556,7 @@ describe('validateExportedWorkflow', () => {
 
 describe('validateExportBundle', () => {
 	test('accepts a valid v1 bundle', () => {
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const workflows = [makeWorkflow()];
 		const bundle = exportBundle(agents, workflows, 'Bundle');
 		const result = validateExportBundle(bundle);
@@ -493,7 +564,7 @@ describe('validateExportBundle', () => {
 		if (result.ok) {
 			expect(result.value.name).toBe('Bundle');
 			expect(result.value.version).toBe(1);
-			expect(result.value.agents).toHaveLength(1);
+			expect(result.value.agents).toHaveLength(3);
 			expect(result.value.workflows).toHaveLength(1);
 		}
 	});
@@ -574,12 +645,25 @@ describe('round-trip: export → JSON → validate', () => {
 			expect(result.value.name).toBe(agent.name);
 			expect(result.value.role).toBe(agent.role);
 			expect(result.value.model).toBe(agent.model);
+			expect(result.value.tools).toEqual(['bash', 'read_file']);
+		}
+	});
+
+	test('reviewer agent round-trip', () => {
+		const agent = makeReviewerAgent();
+		const exported = exportAgent(agent);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedAgent(parsed);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.role).toBe('reviewer');
 		}
 	});
 
 	test('workflow round-trip', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 		const json = JSON.stringify(exported);
 		const parsed = JSON.parse(json) as unknown;
@@ -588,11 +672,15 @@ describe('round-trip: export → JSON → validate', () => {
 		if (result.ok) {
 			expect(result.value.name).toBe(workflow.name);
 			expect(result.value.steps).toHaveLength(3);
+			// agentRef is agent name, not UUID
+			expect(result.value.steps[0].agentRef).toBe('My Coder');
+			expect(result.value.steps[1].agentRef).toBe('Reviewer');
+			expect(result.value.steps[2].agentRef).toBe('Simple Agent');
 		}
 	});
 
 	test('bundle round-trip', () => {
-		const agents = [makeAgent(), makeMinimalAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const workflows = [makeWorkflow()];
 		const bundle = exportBundle(agents, workflows, 'My Bundle', {
 			description: 'Test',
@@ -603,7 +691,7 @@ describe('round-trip: export → JSON → validate', () => {
 		const result = validateExportBundle(parsed);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.value.agents).toHaveLength(2);
+			expect(result.value.agents).toHaveLength(3);
 			expect(result.value.workflows).toHaveLength(1);
 			expect(result.value.exportedFrom).toBe('/workspace');
 		}
@@ -632,7 +720,7 @@ describe('rule appliesTo round-trip', () => {
 
 	test('workflow round-trip preserves rule appliesTo order indices', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()];
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 		const json = JSON.stringify(exported);
 		const parsed = JSON.parse(json) as unknown;
@@ -644,15 +732,19 @@ describe('rule appliesTo round-trip', () => {
 		}
 	});
 
-	test('custom agentRef UUID does not appear in JSON after export', () => {
+	test('agent UUIDs do not appear in JSON after export', () => {
 		const workflow = makeWorkflow();
-		const agents = [makeAgent()]; // agent-uuid-1 → 'My Coder'
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 		const json = JSON.stringify(exported);
 
-		// UUID must not appear in exported JSON
+		// UUIDs must not appear in exported JSON
 		expect(json).not.toContain('agent-uuid-1');
-		// Name must appear instead
+		expect(json).not.toContain('agent-uuid-2');
+		expect(json).not.toContain('agent-uuid-3');
+		// Names must appear instead
 		expect(json).toContain('My Coder');
+		expect(json).toContain('Reviewer');
+		expect(json).toContain('Simple Agent');
 	});
 });

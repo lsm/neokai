@@ -644,29 +644,27 @@ export interface UpdateSpaceWorkflowParams {
  *
  * Differences from `WorkflowStep`:
  * - `id` is stripped (space-specific, regenerated on import)
- * - For `agentRefType: 'custom'`, `agentRef` holds the agent **name** (not UUID)
- *   so the export is portable across different Space instances.
+ * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
+ *   reference portable across Space instances that may have different UUIDs.
  * - `order` is retained for readability, though array position is authoritative.
+ *
+ * There is no `agentRefType` field — all agents (preset and user-created) are
+ * `SpaceAgent` records referenced uniformly by name in the export format.
  */
-export type ExportedWorkflowStep =
-	| {
-			agentRefType: 'builtin';
-			agentRef: BuiltinAgentRole;
-			name: string;
-			entryGate?: WorkflowGate;
-			exitGate?: WorkflowGate;
-			instructions?: string;
-			order: number;
-	  }
-	| {
-			agentRefType: 'custom';
-			agentRef: string;
-			name: string;
-			entryGate?: WorkflowGate;
-			exitGate?: WorkflowGate;
-			instructions?: string;
-			order: number;
-	  };
+export interface ExportedWorkflowStep {
+	/** Name of the SpaceAgent assigned to this step (portable, not a UUID) */
+	agentRef: string;
+	/** Human-readable step name */
+	name: string;
+	/** Gate checked before this step begins */
+	entryGate?: WorkflowGate;
+	/** Gate checked after this step's agent finishes */
+	exitGate?: WorkflowGate;
+	/** Step-specific instructions appended to the agent's system prompt */
+	instructions?: string;
+	/** Zero-based execution order — array position is authoritative on import */
+	order: number;
+}
 
 /**
  * A workflow rule in the exported format.
@@ -706,14 +704,18 @@ export interface ExportedSpaceAgent {
 	/** Provider name override */
 	provider?: string;
 	/**
-	 * Builtin role preset ('planner' | 'coder' | 'general').
+	 * Builtin role preset ('planner' | 'coder' | 'general' | 'reviewer').
 	 * NOTE: 'leader' is intentionally absent — it is never user-configurable.
 	 */
 	role: BuiltinAgentRole;
 	/** Custom system prompt */
 	systemPrompt?: string;
-	/** Tool configuration */
-	tools?: Record<string, unknown>;
+	/**
+	 * Tool name overrides — list of tool names from KNOWN_TOOLS this agent may use.
+	 * When absent, role-based defaults apply on import.
+	 * Mirrors `SpaceAgent.tools`.
+	 */
+	tools?: string[];
 	/**
 	 * Additional agent configuration.
 	 *
