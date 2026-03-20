@@ -634,3 +634,161 @@ export interface UpdateSpaceWorkflowParams {
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;
 }
+
+// ============================================================================
+// Export / Import Format Types (M8)
+// ============================================================================
+
+/**
+ * A single workflow step (graph node) in the exported format.
+ *
+ * Differences from `WorkflowStep`:
+ * - `id` is stripped (space-specific, regenerated on import)
+ * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
+ *   reference portable across Space instances that may have different UUIDs.
+ *
+ * Step names are used as cross-references throughout the exported format
+ * (in `ExportedWorkflowTransition.fromStep`/`toStep`,
+ * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
+ * Step names must therefore be unique within an exported workflow.
+ */
+export interface ExportedWorkflowStep {
+	/** Name of the SpaceAgent assigned to this step (portable, not a UUID) */
+	agentRef: string;
+	/** Human-readable step name — used as the stable cross-reference key in the export */
+	name: string;
+	/** Step-specific instructions appended to the agent's system prompt */
+	instructions?: string;
+}
+
+/**
+ * A directed edge in the exported workflow graph.
+ *
+ * Differences from `WorkflowTransition`:
+ * - `id` is stripped (space-specific, regenerated on import)
+ * - `from`/`to` step UUIDs are replaced by step **names** for portability
+ */
+export interface ExportedWorkflowTransition {
+	/** Name of the source step */
+	fromStep: string;
+	/** Name of the target step */
+	toStep: string;
+	/** Optional condition guarding this transition. Absent = unconditional. */
+	condition?: WorkflowCondition;
+	/** Sort order among transitions with the same source step. Lower = evaluated first. */
+	order?: number;
+}
+
+/**
+ * A workflow rule in the exported format.
+ *
+ * Differences from `WorkflowRule`:
+ * - `id` is stripped (space-specific, regenerated on import)
+ * - `appliesTo` contains step **names** instead of step UUIDs (strings),
+ *   so the reference survives re-import with freshly generated step IDs.
+ */
+export interface ExportedWorkflowRule {
+	/** Human-readable name for display */
+	name: string;
+	/** Rule content — markdown prose describing the constraint or guideline */
+	content: string;
+	/**
+	 * Names of the steps this rule applies to.
+	 * Empty array or omitted means the rule applies to ALL steps.
+	 */
+	appliesTo?: string[];
+}
+
+/**
+ * A Space agent in the portable export format.
+ * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
+ */
+export interface ExportedSpaceAgent {
+	/** Format version — always 1 for this revision */
+	version: 1;
+	/** Discriminator for the exported entity type */
+	type: 'agent';
+	/** Human-readable name */
+	name: string;
+	/** Optional description of this agent's specialization */
+	description?: string;
+	/** Model ID override */
+	model?: string;
+	/** Provider name override */
+	provider?: string;
+	/**
+	 * Role label — free-form string describing the agent's purpose (e.g. 'coder', 'reviewer').
+	 * Used for display and default system prompt labeling; has no runtime routing effect.
+	 * Mirrors `SpaceAgent.role`.
+	 */
+	role: string;
+	/** Custom system prompt */
+	systemPrompt?: string;
+	/**
+	 * Tool name overrides — list of tool names from KNOWN_TOOLS this agent may use.
+	 * When absent, role-based defaults apply on import.
+	 * Mirrors `SpaceAgent.tools`.
+	 */
+	tools?: string[];
+	/**
+	 * Additional agent configuration.
+	 *
+	 * Forward-compatibility stub: `SpaceAgent` does not currently expose a `config`
+	 * field, so `exportAgent()` never populates this. It is reserved here for future
+	 * agent-level configuration that cannot be expressed through the named fields above,
+	 * and for hand-crafted export payloads that need to carry extra metadata.
+	 */
+	config?: Record<string, unknown>;
+}
+
+/**
+ * A Space workflow in the portable export format.
+ * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
+ * Step IDs are stripped; cross-references use step names.
+ * Transition IDs are stripped; `from`/`to` use step names.
+ */
+export interface ExportedSpaceWorkflow {
+	/** Format version — always 1 for this revision */
+	version: 1;
+	/** Discriminator for the exported entity type */
+	type: 'workflow';
+	/** Human-readable name */
+	name: string;
+	/** Optional description */
+	description?: string;
+	/** Graph nodes — step order in this array is not significant */
+	steps: ExportedWorkflowStep[];
+	/** Graph edges — directed transitions between steps */
+	transitions: ExportedWorkflowTransition[];
+	/** Name of the step where execution begins */
+	startStep: string;
+	/** Rules governing agent behavior; `appliesTo` uses step names */
+	rules: ExportedWorkflowRule[];
+	/** Tags for categorization */
+	tags: string[];
+	/** Additional runtime configuration */
+	config?: Record<string, unknown>;
+}
+
+/**
+ * A bundle containing one or more exported agents and/or workflows.
+ * The bundle is the top-level unit of the export/import file format.
+ */
+export interface SpaceExportBundle {
+	/** Format version — always 1 for this revision */
+	version: 1;
+	/** Discriminator for the top-level type */
+	type: 'bundle';
+	/** Human-readable bundle name */
+	name: string;
+	/** Optional description of the bundle's purpose */
+	description?: string;
+	/** Exported agents (may be empty) */
+	agents: ExportedSpaceAgent[];
+	/** Exported workflows (may be empty) */
+	workflows: ExportedSpaceWorkflow[];
+	/** Export timestamp (milliseconds since epoch) */
+	exportedAt: number;
+	/** Source Space identifier (name or workspace path) for informational purposes */
+	exportedFrom?: string;
+}

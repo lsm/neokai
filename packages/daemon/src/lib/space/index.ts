@@ -24,6 +24,16 @@ export {
 } from './runtime/workflow-executor';
 export type { ConditionContext, ConditionResult, CommandRunner } from './runtime/workflow-executor';
 
+export {
+	exportAgent,
+	exportWorkflow,
+	exportBundle,
+	validateExportedAgent,
+	validateExportedWorkflow,
+	validateExportBundle,
+} from './export-format';
+export type { ValidationResult } from './export-format';
+
 // Types — re-exported from @neokai/shared for convenience
 export type {
 	SpaceWorkflow,
