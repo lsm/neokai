@@ -110,23 +110,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// and mission_executions tables for Goal V2 / Mission System
 	runMigration28(db);
 
-	// Migration 29: Create all Space system tables (spaces, space_agents, space_workflows,
-	// space_workflow_steps, space_workflow_runs, space_tasks, space_session_groups,
-	// space_session_group_members) in FK-safe order
+	// Migration 29: Create all Space system tables with the final consolidated schema.
+	// Migrations 30–32 are collapsed here: space_agents already includes role/provider,
+	// space_workflows includes start_step_id, space_workflow_runs includes current_step_id,
+	// and space_workflow_transitions is created from the start.
 	runMigration29(db);
-
-	// Migration 30: Add role and provider columns to space_agents
-	runMigration30(db);
-
-	// Migration 31: Remove hardcoded CHECK constraint on space_agents.role
-	// so that free-form role strings are accepted (role is now a display label, not an enum)
-	runMigration31(db);
-
-	// Migration 32: Add directed-graph fields to Space workflow tables:
-	// - start_step_id on space_workflows (entry point of the graph)
-	// - current_step_id on space_workflow_runs (replaces current_step_index)
-	// - new space_workflow_transitions table (edges between steps)
-	runMigration32(db);
 }
 
 /**
@@ -1454,14 +1442,15 @@ function runMigration28(db: BunDatabase): void {
 }
 
 /**
- * Migration 29: Create all Space system tables
+ * Migration 29: Create all Space system tables (consolidated — formerly migrations 29–32)
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
- * - space_agents: custom agents per space
- * - space_workflows: workflow definitions per space
+ * - space_agents: custom agents per space (role/provider included, no CHECK on role)
+ * - space_workflows: workflow definitions per space (includes start_step_id)
  * - space_workflow_steps: ordered steps within a workflow
- * - space_workflow_runs: active/historical workflow executions (before space_tasks — FK dep)
+ * - space_workflow_transitions: directed edges between steps (graph navigation)
+ * - space_workflow_runs: active/historical workflow executions (includes current_step_id)
  * - space_tasks: tasks with built-in custom_agent_id, workflow_run_id, workflow_step_id
  * - space_session_groups: named groups of related sessions
  * - space_session_group_members: membership records for session groups
@@ -1510,6 +1499,8 @@ function runMigration29(db: BunDatabase): void {
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -1524,6 +1515,7 @@ function runMigration29(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
+			start_step_id TEXT,
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
@@ -1557,6 +1549,31 @@ function runMigration29(db: BunDatabase): void {
 	);
 
 	// -------------------------------------------------------------------------
+	// space_workflow_transitions (directed edges between steps)
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			from_step_id TEXT NOT NULL,
+			to_step_id TEXT NOT NULL,
+			condition TEXT,
+			order_index INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
+			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_workflow_id ON space_workflow_transitions(workflow_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_step ON space_workflow_transitions(workflow_id, from_step_id)`
+	);
+
+	// -------------------------------------------------------------------------
 	// space_workflow_runs  (must be before space_tasks — FK dependency)
 	// -------------------------------------------------------------------------
 	db.exec(`
@@ -1567,6 +1584,7 @@ function runMigration29(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			current_step_index INTEGER NOT NULL DEFAULT 0,
+			current_step_id TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
 				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
 			config TEXT,
@@ -1680,144 +1698,5 @@ function runMigration29(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
-	);
-}
-
-/**
- * Migration 30: Add role and provider columns to space_agents.
- * - role: agent role label (free-form string, e.g. 'coder', 'planner') — added with a
- *   CHECK constraint that was later removed by migration 31
- * - provider: optional provider identifier (e.g. 'anthropic', 'glm')
- */
-function runMigration30(db: BunDatabase): void {
-	// Add role column (idempotent — only adds if missing)
-	try {
-		db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
-	} catch {
-		db.exec(
-			`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'coder' CHECK(role IN ('planner', 'coder', 'general', 'reviewer'))`
-		);
-	}
-
-	// Add provider column (idempotent — only adds if missing)
-	try {
-		db.prepare(`SELECT provider FROM space_agents LIMIT 1`).all();
-	} catch {
-		db.exec(`ALTER TABLE space_agents ADD COLUMN provider TEXT`);
-	}
-}
-
-/**
- * Migration 31: Remove the hardcoded CHECK constraint on space_agents.role.
- *
- * In migration 30 the role column was added with CHECK(role IN ('planner','coder','general','reviewer')).
- * Role is now a free-form display label — no fixed enum. We rebuild the table without the constraint.
- *
- * SQLite does not support DROP CONSTRAINT, so we use the standard table-rebuild pattern:
- *   1. Create new table without CHECK
- *   2. Copy all data
- *   3. Drop old table
- *   4. Rename new table
- */
-function runMigration31(db: BunDatabase): void {
-	// Detect whether the constraint is still present by checking the schema text.
-	// On databases where migration 30 ran (column added via ALTER TABLE), the CHECK
-	// appears in the column definition stored in sqlite_master.
-	const schema = db
-		.prepare<{ sql: string }, []>(
-			`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_agents'`
-		)
-		.get();
-
-	// If the table doesn't exist yet (fresh DB where migration 29 hasn't run), skip.
-	if (!schema) return;
-
-	// If the CHECK constraint is not present, migration is already applied — skip.
-	if (!schema.sql.includes('CHECK(role IN')) return;
-
-	// Wrap the table-rebuild in a transaction so a mid-rebuild crash cannot
-	// leave the database in a state where space_agents is permanently gone.
-	db.transaction(() => {
-		db.exec(`
-			CREATE TABLE space_agents_new (
-				id TEXT PRIMARY KEY,
-				space_id TEXT NOT NULL,
-				name TEXT NOT NULL,
-				description TEXT NOT NULL DEFAULT '',
-				model TEXT,
-				tools TEXT NOT NULL DEFAULT '[]',
-				system_prompt TEXT NOT NULL DEFAULT '',
-				config TEXT,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				role TEXT NOT NULL,
-				provider TEXT,
-				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-			)
-		`);
-
-		db.exec(`
-			INSERT INTO space_agents_new
-				(id, space_id, name, description, model, tools, system_prompt, config,
-				 created_at, updated_at, role, provider)
-			SELECT
-				id, space_id, name, description, model, tools, system_prompt, config,
-				created_at, updated_at, role, provider
-			FROM space_agents
-		`);
-
-		db.exec(`DROP TABLE space_agents`);
-		db.exec(`ALTER TABLE space_agents_new RENAME TO space_agents`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
-	})();
-}
-
-/**
- * Migration 32: Add directed-graph fields for workflow redesign.
- *
- * Changes:
- * - space_workflows gains start_step_id TEXT (entry point of the graph)
- * - space_workflow_runs gains current_step_id TEXT (step UUID, replaces index-based navigation)
- * - New table space_workflow_transitions stores directed edges between steps
- *
- * The old current_step_index column is preserved for backward compatibility but is
- * no longer used by application code.
- */
-function runMigration32(db: BunDatabase): void {
-	// Add start_step_id to space_workflows (idempotent)
-	try {
-		db.prepare(`SELECT start_step_id FROM space_workflows LIMIT 1`).all();
-	} catch {
-		db.exec(`ALTER TABLE space_workflows ADD COLUMN start_step_id TEXT`);
-	}
-
-	// Add current_step_id to space_workflow_runs (idempotent)
-	try {
-		db.prepare(`SELECT current_step_id FROM space_workflow_runs LIMIT 1`).all();
-	} catch {
-		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN current_step_id TEXT`);
-	}
-
-	// Create space_workflow_transitions table (directed edges)
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
-			id TEXT PRIMARY KEY,
-			workflow_id TEXT NOT NULL,
-			from_step_id TEXT NOT NULL,
-			to_step_id TEXT NOT NULL,
-			condition TEXT,
-			order_index INTEGER NOT NULL DEFAULT 0,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
-		)
-	`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_workflow_id ON space_workflow_transitions(workflow_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_step ON space_workflow_transitions(workflow_id, from_step_id)`
 	);
 }
