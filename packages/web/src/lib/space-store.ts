@@ -126,6 +126,13 @@ class SpaceStore {
 	/** Whether global list subscriptions have been set up */
 	private globalListInitialized = false;
 
+	/**
+	 * Cleanup functions for global list event subscriptions.
+	 * Stored so re-initialization (on reconnect) can remove old handlers
+	 * before registering new ones on the same hub instance.
+	 */
+	private globalListCleanupFns: Array<() => void> = [];
+
 	// ========================================
 	// Global Space List
 	// ========================================
@@ -134,10 +141,25 @@ class SpaceStore {
 	 * Initialize the global space list.
 	 * Fetches all spaces from the server and subscribes to global create/archive/delete events.
 	 * Safe to call multiple times — idempotent after first call.
+	 *
+	 * On reconnect, refresh() resets `globalListInitialized` so this runs again.
+	 * Before re-registering, any stale handlers from the previous run are removed
+	 * via `globalListCleanupFns` to prevent duplicate subscriptions on the same hub.
 	 */
 	async initGlobalList(): Promise<void> {
 		if (this.globalListInitialized) return;
 		this.globalListInitialized = true;
+
+		// Remove stale handlers from the previous registration (e.g. after a refresh reset).
+		// This prevents duplicate event firings when the same hub instance is reused.
+		for (const cleanup of this.globalListCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+		this.globalListCleanupFns = [];
 
 		try {
 			const hub = await connectionManager.getHub();
@@ -145,30 +167,38 @@ class SpaceStore {
 			this.spaces.value = spaces ?? [];
 
 			// Subscribe to global space events to keep list up-to-date
-			hub.onEvent<{ spaceId: string; space: Space }>('space.created', (event) => {
-				if (event.space) {
-					const exists = this.spaces.value.some((s) => s.id === event.spaceId);
-					if (!exists) {
-						this.spaces.value = [...this.spaces.value, event.space];
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string; space: Space }>('space.created', (event) => {
+					if (event.space) {
+						const exists = this.spaces.value.some((s) => s.id === event.spaceId);
+						if (!exists) {
+							this.spaces.value = [...this.spaces.value, event.space];
+						}
 					}
-				}
-			});
+				})
+			);
 
-			hub.onEvent<{ spaceId: string; space?: Partial<Space> }>('space.updated', (event) => {
-				this.spaces.value = this.spaces.value.map((s) =>
-					s.id === event.spaceId ? ({ ...s, ...event.space } as Space) : s
-				);
-			});
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string; space?: Partial<Space> }>('space.updated', (event) => {
+					this.spaces.value = this.spaces.value.map((s) =>
+						s.id === event.spaceId ? ({ ...s, ...event.space } as Space) : s
+					);
+				})
+			);
 
-			hub.onEvent<{ spaceId: string; space: Space }>('space.archived', (event) => {
-				this.spaces.value = this.spaces.value.map((s) =>
-					s.id === event.spaceId ? event.space : s
-				);
-			});
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string; space: Space }>('space.archived', (event) => {
+					this.spaces.value = this.spaces.value.map((s) =>
+						s.id === event.spaceId ? event.space : s
+					);
+				})
+			);
 
-			hub.onEvent<{ spaceId: string }>('space.deleted', (event) => {
-				this.spaces.value = this.spaces.value.filter((s) => s.id !== event.spaceId);
-			});
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string }>('space.deleted', (event) => {
+					this.spaces.value = this.spaces.value.filter((s) => s.id !== event.spaceId);
+				})
+			);
 		} catch (err) {
 			logger.error('Failed to initialize global space list:', err);
 			// Reset flag so retries work on reconnect

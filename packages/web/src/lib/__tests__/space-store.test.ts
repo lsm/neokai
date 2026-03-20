@@ -19,7 +19,14 @@ import type { Space, SpaceTask, SpaceWorkflowRun, SpaceAgent, SpaceWorkflow } fr
 // -------------------------------------------------------
 
 let mockEventHandlers: Map<string, (event: unknown) => void>;
+/** Multi-handler map: supports multiple subscribers per event (used in P0 duplicate-subscription tests) */
+let mockEventHandlerSets: Map<string, Set<(event: unknown) => void>>;
 let mockHub: ReturnType<typeof makeMockHub>;
+
+/** Fire all registered handlers for an event (both single and multi-handler maps) */
+function fireMockEvent(eventName: string, data: unknown): void {
+	mockEventHandlerSets.get(eventName)?.forEach((h) => h(data));
+}
 
 function makeSpace(id = 'space-1'): Space {
 	return {
@@ -94,8 +101,17 @@ function makeMockHub() {
 		joinChannel: vi.fn(),
 		leaveChannel: vi.fn(),
 		onEvent: vi.fn((eventName: string, handler: (e: unknown) => void) => {
+			// Single-handler map — last registration wins (used by most existing tests)
 			mockEventHandlers.set(eventName, handler);
-			return () => mockEventHandlers.delete(eventName);
+			// Multi-handler set — tracks all active handlers for P0 duplicate-subscription tests
+			if (!mockEventHandlerSets.has(eventName)) {
+				mockEventHandlerSets.set(eventName, new Set());
+			}
+			mockEventHandlerSets.get(eventName)!.add(handler);
+			return () => {
+				mockEventHandlers.delete(eventName);
+				mockEventHandlerSets.get(eventName)?.delete(handler);
+			};
 		}),
 		request: vi.fn(async (method: string, _params?: unknown) => {
 			if (method === 'space.overview') {
@@ -148,6 +164,7 @@ async function getStore() {
 
 async function resetStore() {
 	mockEventHandlers = new Map();
+	mockEventHandlerSets = new Map();
 	mockHub = makeMockHub();
 	spaceStore = await getStore();
 	// Deselect if a space is selected
@@ -870,10 +887,13 @@ describe('SpaceStore — CRUD methods', () => {
 
 type SpaceStorePrivate = {
 	globalListInitialized: boolean;
+	globalListCleanupFns: Array<() => void>;
 };
 
 function resetGlobalListState() {
-	(spaceStore as unknown as SpaceStorePrivate).globalListInitialized = false;
+	const priv = spaceStore as unknown as SpaceStorePrivate;
+	priv.globalListInitialized = false;
+	priv.globalListCleanupFns = [];
 	spaceStore.spaces.value = [];
 }
 
@@ -952,6 +972,23 @@ describe('SpaceStore — initGlobalList', () => {
 		expect(spaceStore.spaces.value).toHaveLength(1);
 	});
 
+	it('removes stale handlers before re-registering on reconnect re-init', async () => {
+		// Initial registration
+		await spaceStore.initGlobalList();
+		expect(spaceStore.spaces.value).toHaveLength(2);
+
+		// Simulate refresh(): reset flag (stale handlers still on hub)
+		const priv = spaceStore as unknown as SpaceStorePrivate;
+		priv.globalListInitialized = false;
+
+		// Re-init: must call cleanup fns before re-registering
+		await spaceStore.initGlobalList();
+
+		// Fire space.created once — should produce exactly one new entry (not two)
+		fireMockEvent('space.created', { spaceId: 'new-s', space: makeSpace('new-s') });
+		expect(spaceStore.spaces.value.filter((s) => s.id === 'new-s')).toHaveLength(1);
+	});
+
 	it('resets globalListInitialized flag on failure so retry works', async () => {
 		mockHub.request.mockRejectedValueOnce(new Error('Network error'));
 		await spaceStore.initGlobalList();
@@ -979,7 +1016,9 @@ describe('SpaceStore — refresh', () => {
 
 		await spaceStore.refresh();
 
-		// space.list should be re-fetched (init ran again)
+		// refresh() fire-and-forgets initGlobalList() via .catch(). The assertion passes
+		// because all mocks resolve synchronously (vi.fn async), so the microtask queue
+		// drains within the same await tick as refresh() itself.
 		expect(mockHub.request).toHaveBeenCalledWith('space.list', {});
 	});
 

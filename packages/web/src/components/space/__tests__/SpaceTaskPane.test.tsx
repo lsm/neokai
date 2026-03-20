@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceTask } from '@neokai/shared';
 
@@ -190,5 +190,75 @@ describe('SpaceTaskPane', () => {
 		mockTasks.value = [makeTask()];
 		const { container } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(container.querySelector('[aria-label="Close task pane"]')).toBeNull();
+	});
+});
+
+describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockUpdateTask.mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('calls updateTask with inputDraft first, then status second', async () => {
+		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.input(getByPlaceholderText('Type your response or approval...'), {
+			target: { value: 'Looks good to me' },
+		});
+		fireEvent.click(getByText('Submit Response'));
+
+		await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledTimes(2));
+
+		const [firstCall, secondCall] = mockUpdateTask.mock.calls;
+		expect(firstCall).toEqual(['task-1', { inputDraft: 'Looks good to me' }]);
+		expect(secondCall).toEqual(['task-1', { status: 'in_progress' }]);
+	});
+
+	it('does not attempt status transition if inputDraft persistence fails', async () => {
+		mockUpdateTask.mockRejectedValueOnce(new Error('Server error'));
+		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.input(getByPlaceholderText('Type your response or approval...'), {
+			target: { value: 'My response' },
+		});
+		fireEvent.click(getByText('Submit Response'));
+
+		await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledTimes(1));
+		// Only the draft call was attempted — status transition was skipped
+		expect(mockUpdateTask.mock.calls[0]).toEqual(['task-1', { inputDraft: 'My response' }]);
+	});
+
+	it('shows error message when status transition fails', async () => {
+		mockUpdateTask
+			.mockResolvedValueOnce(undefined) // inputDraft succeeds
+			.mockRejectedValueOnce(new Error('Invalid transition')); // status fails
+		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.input(getByPlaceholderText('Type your response or approval...'), {
+			target: { value: 'Approved' },
+		});
+		fireEvent.click(getByText('Submit Response'));
+
+		await waitFor(() => expect(getByText('Invalid transition')).toBeTruthy());
+		// Both calls were made (draft + failed status)
+		expect(mockUpdateTask).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not submit when input text is empty', () => {
+		mockTasks.value = [makeTask({ status: 'needs_attention' })];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		// Submit button is disabled when input is empty — click is a no-op
+		fireEvent.click(getByText('Submit Response'));
+
+		expect(mockUpdateTask).not.toHaveBeenCalled();
 	});
 });
