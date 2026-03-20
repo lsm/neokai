@@ -226,7 +226,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	function applyTemplate(template: WorkflowTemplate) {
 		const newSteps: StepDraft[] = template.stepRoles.map((role) => {
 			const found = agents.find(
-				(a) => a.name.toLowerCase() === role || a.role?.toLowerCase() === role
+				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
 			);
 			return {
 				localId: makeLocalId(),

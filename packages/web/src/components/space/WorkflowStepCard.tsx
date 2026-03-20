@@ -77,6 +77,7 @@ function GateConfig({ condition, onChange, label, terminalMessage }: GateConfigP
 						<div class="space-y-1">
 							<input
 								type="text"
+								required
 								placeholder="e.g. bun test && git diff --quiet"
 								value={condition.expression ?? ''}
 								onInput={(e) =>
