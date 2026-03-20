@@ -54,7 +54,7 @@ async function createTestSpace(page: Page): Promise<{
 				description: 'Test space for export/import E2E tests',
 				workspacePath,
 			});
-			const spaceId = (spaceRes as { space: { id: string } }).space.id;
+			const spaceId = (spaceRes as { id: string }).id;
 
 			// Create an agent in the space
 			const agentRes = await hub.request('spaceAgent.create', {

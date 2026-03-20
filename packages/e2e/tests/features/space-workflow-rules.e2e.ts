@@ -50,7 +50,7 @@ async function createTestSpace(page: Page): Promise<string> {
 				name,
 				workspacePath: wsPath,
 			});
-			return (res as { space: { id: string } }).space.id;
+			return (res as { id: string }).id;
 		},
 		{ wsPath: workspaceRoot, name: spaceName }
 	);
