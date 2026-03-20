@@ -71,7 +71,7 @@ export class WorkflowTransitionError extends Error {
  * The SpaceRuntime catches this and keeps the executor in the map for retry
  * once the gate is resolved.
  */
-export class WorkflowGateError extends Error {
+export class WorkflowGateError extends WorkflowTransitionError {
 	constructor(message: string) {
 		super(message);
 		this.name = 'WorkflowGateError';
