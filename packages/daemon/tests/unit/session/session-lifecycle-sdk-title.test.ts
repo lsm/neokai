@@ -7,16 +7,22 @@
  *   session/sdk-title-generation-empty-response-error)
  * - Title is correctly extracted from text blocks
  * - Fallback path is used when SDK call fails
+ *
+ * Design note: only the external @anthropic-ai/claude-agent-sdk package is
+ * mocked here. Internal modules (provider-service, sdk-cli-resolver, etc.) use
+ * their real implementations to avoid global mock pollution that would break
+ * other test files sharing the same bun test process.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 
-// Track query call arguments to verify options
-let lastQueryOptions: Record<string, unknown> | undefined;
+// Track query call options to verify what is passed to the SDK.
+// Only updated on calls that carry a `thinking` option (title generation),
+// not on model-loading calls (maxTurns: 0).
+let lastTitleQueryOptions: Record<string, unknown> | undefined;
 
-// Mutable state controlling what messages the SDK query mock returns.
-// Tests set this in beforeEach to avoid calling mock.module() inside test bodies,
-// which would permanently override the module registry for subsequent tests.
+// Mutable state controlling which messages the SDK query mock yields for
+// title generation. Set in beforeEach so each test starts from a known state.
 let mockSdkMessages: unknown[] = [];
 
 async function* makeAsyncGen(messages: unknown[]) {
@@ -25,41 +31,40 @@ async function* makeAsyncGen(messages: unknown[]) {
 	}
 }
 
-// All mock.module calls must be at the top level — Bun hoists them before imports.
+/**
+ * Build a Query-compatible mock from a message list.
+ *
+ * The returned object is an async iterable (for the title-generation loop) and
+ * also exposes the `supportedModels()` / `interrupt()` methods that
+ * loadModelsFromSdk() calls when loading the available model list.
+ */
+function makeQueryMock(messages: unknown[]) {
+	const gen = makeAsyncGen(messages);
+	return Object.assign(gen, {
+		supportedModels: () => Promise.resolve([]),
+		interrupt: () => Promise.resolve(),
+	});
+}
+
+// Only mock.module calls for EXTERNAL packages are placed at the top level.
+// Mocking internal relative-import modules here would permanently replace
+// them for ALL test files in the same bun test run, breaking tests that
+// import those modules directly (e.g. provider-service.test.ts).
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 	query: (params: { prompt: string; options?: Record<string, unknown> }) => {
-		lastQueryOptions = params.options;
-		return makeAsyncGen(mockSdkMessages);
+		const opts = params.options ?? {};
+		// Capture options only from the title-generation call, which is the one
+		// that carries thinking: { type: 'disabled' }. Model-loading calls use
+		// maxTurns: 0 with no thinking option and are not interesting here.
+		if ('thinking' in opts) {
+			lastTitleQueryOptions = opts;
+		}
+		return makeQueryMock(mockSdkMessages);
 	},
 }));
 
 mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
-}));
-
-mock.module('../../../src/lib/provider-service', () => {
-	const mockProviderService = {
-		getDefaultProvider: mock(async () => 'anthropic'),
-		getProviderApiKey: mock(() => 'test-api-key'),
-		isProviderAvailable: mock(async () => true),
-		applyEnvVarsToProcessForProvider: mock(() => ({})),
-		getEnvVarsForModel: mock(() => ({})),
-		restoreEnvVars: mock(() => {}),
-		getTitleGenerationConfig: mock(async () => ({ modelId: 'claude-haiku-4-5-20251001' })),
-	};
-	return {
-		getProviderService: () => mockProviderService,
-		mergeProviderEnvVars: (vars: Record<string, string>) => ({ ...process.env, ...vars }),
-	};
-});
-
-mock.module('../../../src/lib/agent/sdk-cli-resolver.js', () => ({
-	resolveSDKCliPath: () => '/fake/cli/path',
-	isRunningUnderBun: () => false,
-}));
-
-mock.module('../../../src/lib/sdk-session-file-manager', () => ({
-	deleteSDKSessionFiles: mock(async () => {}),
 }));
 
 import {
@@ -113,7 +118,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 	};
 
 	beforeEach(() => {
-		lastQueryOptions = undefined;
+		lastTitleQueryOptions = undefined;
 		// Default: assistant message with a plain text block
 		mockSdkMessages = [
 			{
@@ -123,6 +128,10 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 				},
 			},
 		];
+
+		// Set a fake API key so the real provider service proceeds past the key
+		// check and calls generateTitleWithSdk. Cleared in afterEach.
+		process.env.ANTHROPIC_API_KEY = 'test-api-key';
 
 		mockDb = {
 			createSession: mock(() => {}),
@@ -189,12 +198,17 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 		);
 	});
 
+	afterEach(() => {
+		// Restore the empty API key set by unit-test setup.ts
+		process.env.ANTHROPIC_API_KEY = '';
+	});
+
 	it('should disable thinking when calling SDK query for title generation', async () => {
 		const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
 		expect(result.isFallback).toBe(false);
-		expect(lastQueryOptions).toBeDefined();
-		expect(lastQueryOptions?.thinking).toEqual({ type: 'disabled' });
+		expect(lastTitleQueryOptions).toBeDefined();
+		expect(lastTitleQueryOptions?.thinking).toEqual({ type: 'disabled' });
 	});
 
 	it('should extract title from text blocks', async () => {
