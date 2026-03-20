@@ -502,6 +502,15 @@ export function validateAndRepairSDKSession(
 	kaiSessionId: string,
 	db: Database
 ): boolean {
+	// If the SDK session file doesn't exist, the session can't be resumed.
+	// This happens when the file was deleted externally (cleanup, manual deletion,
+	// workspace path change). Return false so the caller clears sdkSessionId
+	// and starts a fresh query without resume.
+	const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+	if (!existsSync(sessionFile)) {
+		return false;
+	}
+
 	// First validate
 	const validation = validateSDKSessionFile(workspacePath, sdkSessionId);
 

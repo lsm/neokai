@@ -164,8 +164,21 @@ export class QueryLifecycleManager {
 			// Validate and repair SDK session file before restarting.
 			// The interrupted query may have left the session file in an inconsistent state
 			// (e.g., orphaned tool_results from interrupted SDK context compaction).
+			// Also detects stale sdkSessionId when the session file no longer exists.
 			if (session.sdkSessionId) {
-				validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+				const isValid = validateAndRepairSDKSession(
+					session.workspacePath,
+					session.sdkSessionId,
+					session.id,
+					db
+				);
+				if (!isValid) {
+					this.logger.warn(
+						`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+					);
+					session.sdkSessionId = undefined;
+					db.updateSession(session.id, { sdkSessionId: undefined });
+				}
 			}
 
 			await this.ctx.startStreamingQuery();
@@ -237,8 +250,21 @@ export class QueryLifecycleManager {
 				// Validate and repair SDK session file before restarting.
 				// The interrupted query may have left the session file in an inconsistent state
 				// (e.g., orphaned tool_results from interrupted SDK context compaction).
+				// Also detects stale sdkSessionId when the session file no longer exists.
 				if (session.sdkSessionId) {
-					validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+					const isValid = validateAndRepairSDKSession(
+						session.workspacePath,
+						session.sdkSessionId,
+						session.id,
+						db
+					);
+					if (!isValid) {
+						this.logger.warn(
+							`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+						);
+						session.sdkSessionId = undefined;
+						db.updateSession(session.id, { sdkSessionId: undefined });
+					}
 				}
 
 				await this.ctx.startStreamingQuery();
@@ -284,7 +310,19 @@ export class QueryLifecycleManager {
 
 		// Validate SDK session file
 		if (session.sdkSessionId) {
-			validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+			const isValid = validateAndRepairSDKSession(
+				session.workspacePath,
+				session.sdkSessionId,
+				session.id,
+				db
+			);
+			if (!isValid) {
+				this.logger.warn(
+					`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+				);
+				session.sdkSessionId = undefined;
+				db.updateSession(session.id, { sdkSessionId: undefined });
+			}
 		}
 
 		await this.ctx.startStreamingQuery();
