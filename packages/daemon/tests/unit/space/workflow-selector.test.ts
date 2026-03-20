@@ -1,11 +1,11 @@
 /**
  * Unit tests for selectWorkflow()
  *
- * Covers all priority chain levels:
- *   1. Explicit workflowId → use it
- *   2. Tag-based matching
- *   3. Keyword/description matching
- *   4. Null fallback (no match)
+ * Per M7 spec: selection has two modes only:
+ *   1. Explicit workflowId provided → return that workflow (or null if not found)
+ *   2. No workflowId → return null (LLM agent must call list_workflows and pick explicitly)
+ *
+ * There are no heuristics (no tag matching, no keyword matching, no fallback selection).
  *
  * selectWorkflow() is a pure function: no DB, no managers.
  */
@@ -53,7 +53,7 @@ function makeContext(overrides: Partial<WorkflowSelectionContext> = {}): Workflo
 }
 
 // ---------------------------------------------------------------------------
-// Priority 1: Explicit workflowId
+// Explicit workflowId provided
 // ---------------------------------------------------------------------------
 
 describe('selectWorkflow — explicit workflowId', () => {
@@ -67,26 +67,15 @@ describe('selectWorkflow — explicit workflowId', () => {
 		expect(selectWorkflow(ctx)).toBe(wf1);
 	});
 
-	test('explicit wins over tag match', () => {
-		const wfTagMatch = makeWorkflow({ id: 'wf-tag', tags: ['coding'] });
-		const wfExplicit = makeWorkflow({ id: 'wf-explicit-3' });
+	test('returns the correct workflow when multiple are available', () => {
+		const wf1 = makeWorkflow({ id: 'wf-multi-1' });
+		const wf2 = makeWorkflow({ id: 'wf-multi-2' });
+		const wf3 = makeWorkflow({ id: 'wf-multi-3' });
 		const ctx = makeContext({
-			title: 'build a coding feature',
-			workflowId: 'wf-explicit-3',
-			availableWorkflows: [wfTagMatch, wfExplicit],
+			workflowId: 'wf-multi-3',
+			availableWorkflows: [wf1, wf2, wf3],
 		});
-		expect(selectWorkflow(ctx)).toBe(wfExplicit);
-	});
-
-	test('explicit wins over description keyword match', () => {
-		const wfDesc = makeWorkflow({ id: 'wf-desc', description: 'research and analyze data' });
-		const wfExplicit = makeWorkflow({ id: 'wf-explicit-4' });
-		const ctx = makeContext({
-			title: 'research and analyze data',
-			workflowId: 'wf-explicit-4',
-			availableWorkflows: [wfDesc, wfExplicit],
-		});
-		expect(selectWorkflow(ctx)).toBe(wfExplicit);
+		expect(selectWorkflow(ctx)).toBe(wf3);
 	});
 
 	test('returns null when explicit id not found in availableWorkflows', () => {
@@ -98,224 +87,64 @@ describe('selectWorkflow — explicit workflowId', () => {
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
 
-	test('does NOT fall through to heuristics when explicit id is not found', () => {
-		// Even if a tag would have matched, explicit missing → null (not fallthrough)
-		const wfTag = makeWorkflow({ id: 'wf-tag2', tags: ['coding'] });
+	test('returns null when explicit id not found and list is empty', () => {
 		const ctx = makeContext({
-			title: 'coding task',
-			workflowId: 'wf-does-not-exist',
-			availableWorkflows: [wfTag],
+			workflowId: 'wf-missing',
+			availableWorkflows: [],
 		});
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
-});
 
-// ---------------------------------------------------------------------------
-// Priority 2: Tag-based matching
-// ---------------------------------------------------------------------------
-
-describe('selectWorkflow — tag matching', () => {
-	test('matches a workflow whose tags include a keyword from title', () => {
-		const wfCoding = makeWorkflow({ id: 'wf-coding', tags: ['coding', 'default'] });
-		const wfResearch = makeWorkflow({ id: 'wf-research', tags: ['research'] });
-		const ctx = makeContext({
-			title: 'implement a coding feature',
-			availableWorkflows: [wfCoding, wfResearch],
-		});
-		expect(selectWorkflow(ctx)).toBe(wfCoding);
-	});
-
-	test('matches a workflow whose tags include a keyword from description', () => {
-		const wfResearch = makeWorkflow({ id: 'wf-research2', tags: ['research'] });
-		const wfCoding = makeWorkflow({ id: 'wf-coding2', tags: ['coding'] });
-		const ctx = makeContext({
-			title: 'new initiative',
-			description: 'we need to research the market',
-			availableWorkflows: [wfCoding, wfResearch],
-		});
-		expect(selectWorkflow(ctx)).toBe(wfResearch);
-	});
-
-	test('picks the workflow with most tag matches', () => {
-		const wfA = makeWorkflow({ id: 'wf-a', tags: ['coding'] });
-		const wfB = makeWorkflow({ id: 'wf-b', tags: ['coding', 'review'] });
-		const ctx = makeContext({
-			title: 'code review needed',
-			description: 'coding and review',
-			availableWorkflows: [wfA, wfB],
-		});
-		// wfB matches both 'coding' and 'review' keywords
-		expect(selectWorkflow(ctx)).toBe(wfB);
-	});
-
-	test('tag matching is case-insensitive', () => {
-		const wf = makeWorkflow({ id: 'wf-ci', tags: ['CODING'] });
-		const ctx = makeContext({
-			title: 'coding task',
-			availableWorkflows: [wf],
-		});
-		expect(selectWorkflow(ctx)).toBe(wf);
-	});
-
-	test('skips workflows with empty tags for tag matching', () => {
-		const wfNoTags = makeWorkflow({ id: 'wf-notags', tags: [] });
-		const wfWithTags = makeWorkflow({ id: 'wf-withtags', tags: ['coding'] });
-		const ctx = makeContext({
-			title: 'coding task',
-			availableWorkflows: [wfNoTags, wfWithTags],
-		});
-		expect(selectWorkflow(ctx)).toBe(wfWithTags);
+	test('is deterministic — same input always returns same output', () => {
+		const wf1 = makeWorkflow({ id: 'wf-det-1' });
+		const wf2 = makeWorkflow({ id: 'wf-det-2' });
+		const ctx = makeContext({ workflowId: 'wf-det-1', availableWorkflows: [wf1, wf2] });
+		expect(selectWorkflow(ctx)).toBe(selectWorkflow(ctx));
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Priority 3: Description keyword matching
+// No workflowId — always returns null (LLM must pick)
 // ---------------------------------------------------------------------------
 
-describe('selectWorkflow — description keyword matching', () => {
-	test('matches workflow whose description contains words from the input title', () => {
-		const wfResearch = makeWorkflow({
-			id: 'wf-res',
-			tags: [],
-			description: 'perform research and gather information',
-		});
-		const wfCoding = makeWorkflow({
-			id: 'wf-cod',
-			tags: [],
-			description: 'write and review code changes',
-		});
-		const ctx = makeContext({
-			title: 'need to gather research information',
-			availableWorkflows: [wfCoding, wfResearch],
-		});
-		// 'research', 'gather', 'information' appear in wfResearch description
-		expect(selectWorkflow(ctx)).toBe(wfResearch);
-	});
-
-	test('picks the workflow with more description words matching the input', () => {
-		const wfA = makeWorkflow({
-			id: 'wf-kwa',
-			tags: [],
-			description: 'design user interface components',
-		});
-		const wfB = makeWorkflow({
-			id: 'wf-kwb',
-			tags: [],
-			description: 'design and prototype user interface layouts and components',
-		});
-		const ctx = makeContext({
-			title: 'design user interface and components',
-			availableWorkflows: [wfA, wfB],
-		});
-		// wfB has more overlapping words
-		expect(selectWorkflow(ctx)).toBe(wfB);
-	});
-
-	test('skips workflows with empty description', () => {
-		const wfEmpty = makeWorkflow({ id: 'wf-empty-desc', description: '', tags: [] });
-		const wfDesc = makeWorkflow({
-			id: 'wf-has-desc',
-			description: 'build and test features',
-			tags: [],
-		});
-		const ctx = makeContext({
-			title: 'build new features',
-			availableWorkflows: [wfEmpty, wfDesc],
-		});
-		expect(selectWorkflow(ctx)).toBe(wfDesc);
-	});
-
-	test('tag matching takes priority over description matching', () => {
-		const wfTagOnly = makeWorkflow({ id: 'wf-tag-only', tags: ['coding'], description: '' });
-		const wfDescOnly = makeWorkflow({
-			id: 'wf-desc-only',
-			tags: [],
-			description: 'implement code features for this project',
-		});
-		const ctx = makeContext({
-			title: 'implement coding features',
-			availableWorkflows: [wfDescOnly, wfTagOnly],
-		});
-		// Tag match should win over description match
-		expect(selectWorkflow(ctx)).toBe(wfTagOnly);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Priority 4: Null fallback
-// ---------------------------------------------------------------------------
-
-describe('selectWorkflow — null fallback', () => {
-	test('returns null when no workflows are available', () => {
+describe('selectWorkflow — no workflowId (LLM must pick)', () => {
+	test('returns null when no workflowId and no workflows', () => {
 		const ctx = makeContext({ title: 'do something', availableWorkflows: [] });
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
 
-	test('returns null when no workflow tags or descriptions match', () => {
-		const wf = makeWorkflow({
-			id: 'wf-nomatch',
-			tags: ['xyz'],
-			description: 'completely unrelated',
-		});
+	test('returns null when no workflowId even if workflows are available', () => {
+		const wf = makeWorkflow({ id: 'wf-noworkflowid', tags: ['coding'] });
 		const ctx = makeContext({
-			title: 'aardvark quantum physics',
-			description: 'something with no overlap',
+			title: 'implement coding feature',
+			description: 'write some code',
 			availableWorkflows: [wf],
 		});
-		// 'aardvark' and 'quantum' don't appear in tags or description words
-		// 'something' may match 'something' but let's use truly unrelated words
-		// Actually 'unrelated', 'completely' might match from description — let's use safer input
-		const ctx2 = makeContext({
-			title: 'zymurgy nomenclature',
-			description: 'foobarbaz quux',
-			availableWorkflows: [wf],
-		});
-		expect(selectWorkflow(ctx2)).toBeNull();
+		// No workflowId → always null regardless of tags/description
+		expect(selectWorkflow(ctx)).toBeNull();
 	});
 
-	test('returns null when all workflows have no tags and no descriptions', () => {
-		const wf1 = makeWorkflow({ id: 'wf-bare1', tags: [], description: '' });
-		const wf2 = makeWorkflow({ id: 'wf-bare2', tags: [], description: '' });
+	test('returns null when no workflowId and multiple workflows with matching names', () => {
+		const wf1 = makeWorkflow({ id: 'wf-nm1', name: 'Coding Workflow', tags: ['coding'] });
+		const wf2 = makeWorkflow({ id: 'wf-nm2', name: 'Research Workflow', tags: ['research'] });
 		const ctx = makeContext({
-			title: 'any title',
-			description: 'any description',
+			title: 'coding research task',
 			availableWorkflows: [wf1, wf2],
 		});
-		expect(selectWorkflow(ctx)).toBeNull();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Edge cases
-// ---------------------------------------------------------------------------
-
-describe('selectWorkflow — edge cases', () => {
-	test('handles empty title and description with tag match', () => {
-		const wf = makeWorkflow({ id: 'wf-emptyinput', tags: ['default'] });
-		const ctx = makeContext({ title: '', description: '', availableWorkflows: [wf] });
-		// No keywords → no tag match
+		// Still null — no server-side heuristics
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
 
-	test('handles single character words (filtered out)', () => {
-		const wf = makeWorkflow({ id: 'wf-shortwords', tags: ['a', 'b', 'coding'] });
+	test('returns null when no workflowId and workflow descriptions match input', () => {
+		const wf = makeWorkflow({
+			id: 'wf-desc-match',
+			description: 'implement a coding feature',
+		});
 		const ctx = makeContext({
-			title: 'a b coding',
+			title: 'implement a coding feature',
 			availableWorkflows: [wf],
 		});
-		// 'a' and 'b' are 1 char (filtered), 'coding' is 6 chars → matches
-		expect(selectWorkflow(ctx)).toBe(wf);
-	});
-
-	test('is deterministic — same input always returns same output', () => {
-		const workflows = [
-			makeWorkflow({ id: 'wf-det1', tags: ['alpha'] }),
-			makeWorkflow({ id: 'wf-det2', tags: ['beta', 'coding'] }),
-			makeWorkflow({ id: 'wf-det3', tags: ['coding'] }),
-		];
-		const ctx = makeContext({ title: 'alpha beta coding', availableWorkflows: workflows });
-		const first = selectWorkflow(ctx);
-		const second = selectWorkflow(ctx);
-		expect(first).toBe(second);
+		// No keyword matching — return null
+		expect(selectWorkflow(ctx)).toBeNull();
 	});
 });

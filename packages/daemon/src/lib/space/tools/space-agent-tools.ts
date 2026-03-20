@@ -1,26 +1,30 @@
 /**
  * Space Agent Tools — MCP tools for the Space leader agent session.
  *
- * These tools allow the Space agent to start workflow runs, create standalone
- * tasks, and query Space state. They are in the Space namespace (not Room).
+ * These tools allow the Space agent to start workflow runs, check status,
+ * change plans, and query Space tasks. They are in the Space namespace (not Room).
  *
- * Tools:
- *   start_workflow_run — starts a run with optional workflowId (auto-selects if omitted)
- *   create_task        — creates a standalone SpaceTask (no workflow)
- *   list_workflows     — returns available SpaceWorkflow records for the space
- *   list_tasks         — filterable by status and workflowRunId
- *   list_workflow_runs — returns active/completed runs for the space
+ * Tools (per M7 spec):
+ *   list_workflows     — show all workflows with their descriptions and steps
+ *   start_workflow_run — begin a workflow run (requires explicit workflowId)
+ *   get_workflow_run   — check the status of a running workflow
+ *   change_plan        — update task description or switch to a different workflow mid-run
+ *   list_tasks         — see current and past tasks
+ *
+ * Design note: workflow selection is LLM-driven. The agent calls list_workflows,
+ * reasons about which workflow fits the request, then calls start_workflow_run
+ * with an explicit workflowId. There are no server-side heuristics.
+ *
+ * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus, SpaceTaskType, SpaceTaskPriority } from '@neokai/shared';
+import type { SpaceTaskStatus } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { SpaceTaskManager } from '../managers/space-task-manager';
-import { selectWorkflow } from '../runtime/workflow-selector';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -29,16 +33,14 @@ import { selectWorkflow } from '../runtime/workflow-selector';
 export interface SpaceAgentToolsConfig {
 	/** The Space this agent is operating within. */
 	spaceId: string;
-	/** SpaceRuntime for starting workflow runs. */
+	/** SpaceRuntime for starting and managing workflow runs. */
 	runtime: SpaceRuntime;
 	/** Workflow manager for listing available workflows. */
 	workflowManager: SpaceWorkflowManager;
 	/** Task repository for read queries (list/filter). */
 	taskRepo: SpaceTaskRepository;
-	/** Workflow run repository for listing runs. */
+	/** Workflow run repository for listing and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Task manager for creating standalone tasks. */
-	taskManager: SpaceTaskManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,82 +64,12 @@ function jsonResult(data: Record<string, unknown>): ToolResult {
  * Returns a map of tool name → handler function.
  */
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
-	const { spaceId, runtime, workflowManager, taskRepo, workflowRunRepo, taskManager } = config;
+	const { spaceId, runtime, workflowManager, taskRepo, workflowRunRepo } = config;
 
 	return {
 		/**
-		 * Start a new workflow run.
-		 * If workflowId is not provided, auto-selects a workflow via selectWorkflow().
-		 * Falls back to null (standalone task) if no workflow matches.
-		 */
-		async start_workflow_run(args: {
-			title: string;
-			description?: string;
-			workflow_id?: string;
-		}): Promise<ToolResult> {
-			const availableWorkflows = workflowManager.listWorkflows(spaceId);
-
-			const selected = selectWorkflow({
-				spaceId,
-				title: args.title,
-				description: args.description ?? '',
-				availableWorkflows,
-				workflowId: args.workflow_id,
-			});
-
-			if (!selected) {
-				return jsonResult({
-					success: false,
-					error:
-						'No matching workflow found. Use create_task to create a standalone task instead, or provide an explicit workflow_id.',
-					availableWorkflows: availableWorkflows.map((w) => ({ id: w.id, name: w.name })),
-				});
-			}
-
-			try {
-				const { run, tasks } = await runtime.startWorkflowRun(
-					spaceId,
-					selected.id,
-					args.title,
-					args.description
-				);
-				return jsonResult({ success: true, run, tasks, selectedWorkflowId: selected.id });
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
-		},
-
-		/**
-		 * Create a standalone SpaceTask (not associated with a workflow run).
-		 */
-		async create_task(args: {
-			title: string;
-			description: string;
-			task_type?: SpaceTaskType;
-			custom_agent_id?: string;
-			priority?: SpaceTaskPriority;
-			depends_on?: string[];
-		}): Promise<ToolResult> {
-			try {
-				const task = await taskManager.createTask({
-					title: args.title,
-					description: args.description,
-					taskType: args.task_type,
-					customAgentId: args.custom_agent_id,
-					priority: args.priority,
-					dependsOn: args.depends_on,
-					status: 'pending',
-				});
-				return jsonResult({ success: true, taskId: task.id, task });
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
-		},
-
-		/**
 		 * List all available SpaceWorkflow records for this space.
+		 * The LLM agent calls this first to understand available options.
 		 */
 		async list_workflows(): Promise<ToolResult> {
 			const workflows = workflowManager.listWorkflows(spaceId);
@@ -145,9 +77,116 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * List SpaceTasks, optionally filtered by status and/or workflowRunId.
-		 * When workflowRunId is provided, returns only tasks belonging to that run.
-		 * When status is provided, filters by task status.
+		 * Start a new workflow run with an explicit workflowId.
+		 * The agent must call list_workflows first and pick the right workflow.
+		 */
+		async start_workflow_run(args: {
+			workflow_id: string;
+			title: string;
+			description?: string;
+		}): Promise<ToolResult> {
+			try {
+				const { run, tasks } = await runtime.startWorkflowRun(
+					spaceId,
+					args.workflow_id,
+					args.title,
+					args.description
+				);
+				return jsonResult({ success: true, run, tasks });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Get the current status of a workflow run, including its current step.
+		 */
+		async get_workflow_run(args: { run_id: string }): Promise<ToolResult> {
+			const run = workflowRunRepo.getRun(args.run_id);
+			if (!run) {
+				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
+			}
+
+			// Include current step info if available
+			let currentStep = null;
+			if (run.currentStepId) {
+				const workflow = workflowManager.getWorkflow(run.workflowId);
+				if (workflow) {
+					currentStep = workflow.steps.find((s) => s.id === run.currentStepId) ?? null;
+				}
+			}
+
+			// Include tasks for this run
+			const tasks = taskRepo.listByWorkflowRun(run.id);
+
+			return jsonResult({ success: true, run, currentStep, tasks });
+		},
+
+		/**
+		 * Update the current workflow run's task description, or switch to a
+		 * different workflow mid-run (cancels the current run and starts a new one).
+		 *
+		 * - Provide `description` to update the run description in place.
+		 * - Provide `workflow_id` to switch workflows: the current run is cancelled
+		 *   and a new run is started with the same title and updated description.
+		 */
+		async change_plan(args: {
+			run_id: string;
+			description?: string;
+			workflow_id?: string;
+		}): Promise<ToolResult> {
+			const run = workflowRunRepo.getRun(args.run_id);
+			if (!run) {
+				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
+			}
+
+			if (run.status === 'completed' || run.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error: `Cannot change plan for a ${run.status} run.`,
+				});
+			}
+
+			// Switching workflow: cancel current run, start a new one.
+			if (args.workflow_id) {
+				workflowRunRepo.updateStatus(run.id, 'cancelled');
+
+				try {
+					const newDescription = args.description ?? run.description;
+					const { run: newRun, tasks } = await runtime.startWorkflowRun(
+						spaceId,
+						args.workflow_id,
+						run.title,
+						newDescription
+					);
+					return jsonResult({
+						success: true,
+						previousRunId: run.id,
+						run: newRun,
+						tasks,
+						message: `Switched from workflow "${run.workflowId}" to "${args.workflow_id}". Previous run cancelled.`,
+					});
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					return jsonResult({ success: false, error: message });
+				}
+			}
+
+			// Description-only update.
+			if (args.description !== undefined) {
+				const updated = workflowRunRepo.updateRun(run.id, { description: args.description });
+				return jsonResult({ success: true, run: updated });
+			}
+
+			return jsonResult({
+				success: false,
+				error: 'Provide at least one of: description, workflow_id.',
+			});
+		},
+
+		/**
+		 * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
 		 */
 		async list_tasks(args: {
 			status?: SpaceTaskStatus;
@@ -166,18 +205,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 			return jsonResult({ success: true, tasks });
 		},
-
-		/**
-		 * List workflow runs for this space.
-		 * By default returns all runs; optionally filter by status.
-		 */
-		async list_workflow_runs(args: { status?: string }): Promise<ToolResult> {
-			let runs = workflowRunRepo.listBySpace(spaceId);
-			if (args.status) {
-				runs = runs.filter((r) => r.status === args.status);
-			}
-			return jsonResult({ success: true, runs });
-		},
 	};
 }
 
@@ -194,60 +221,49 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 
 	const tools = [
 		tool(
-			'start_workflow_run',
-			'Start a new workflow run for the space. Auto-selects the best workflow if workflow_id is not provided.',
-			{
-				title: z.string().describe('Short title for this workflow run'),
-				description: z
-					.string()
-					.optional()
-					.describe(
-						'Detailed description of the work. Used for workflow auto-selection when workflow_id is omitted.'
-					),
-				workflow_id: z
-					.string()
-					.optional()
-					.describe(
-						'Explicit workflow ID to use. When omitted, a workflow is auto-selected based on title/description.'
-					),
-			},
-			(args) => handlers.start_workflow_run(args)
-		),
-		tool(
-			'create_task',
-			'Create a standalone SpaceTask not associated with any workflow run.',
-			{
-				title: z.string().describe('Short title for the task'),
-				description: z.string().describe('Detailed task description and acceptance criteria'),
-				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'review'])
-					.optional()
-					.describe('Task type — determines which agent preset runs this task'),
-				custom_agent_id: z
-					.string()
-					.optional()
-					.describe('ID of a custom SpaceAgent to run this task'),
-				priority: z
-					.enum(['low', 'normal', 'high', 'urgent'])
-					.optional()
-					.default('normal')
-					.describe('Task priority'),
-				depends_on: z
-					.array(z.string())
-					.optional()
-					.describe('IDs of tasks that must complete before this task starts'),
-			},
-			(args) => handlers.create_task(args)
-		),
-		tool(
 			'list_workflows',
-			'List all available workflows for this space, including their names, descriptions, and tags.',
+			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before starting a run.',
 			{},
 			() => handlers.list_workflows()
 		),
 		tool(
+			'start_workflow_run',
+			'Begin a workflow run. You must call list_workflows first and choose the workflow whose description and steps best match the request.',
+			{
+				workflow_id: z
+					.string()
+					.describe('ID of the workflow to run (required — choose from list_workflows)'),
+				title: z.string().describe('Short title for this workflow run'),
+				description: z.string().optional().describe('Detailed description of the work to be done'),
+			},
+			(args) => handlers.start_workflow_run(args)
+		),
+		tool(
+			'get_workflow_run',
+			'Check the current status of a workflow run, including the current step and associated tasks.',
+			{
+				run_id: z.string().describe('ID of the workflow run to inspect'),
+			},
+			(args) => handlers.get_workflow_run(args)
+		),
+		tool(
+			'change_plan',
+			'Update the task description for an ongoing run, or switch to a different workflow mid-run (cancels the current run and starts a new one).',
+			{
+				run_id: z.string().describe('ID of the current workflow run'),
+				description: z.string().optional().describe('Updated task description'),
+				workflow_id: z
+					.string()
+					.optional()
+					.describe(
+						'New workflow ID to switch to. The current run will be cancelled and a new run started with the same title.'
+					),
+			},
+			(args) => handlers.change_plan(args)
+		),
+		tool(
 			'list_tasks',
-			'List SpaceTasks for this space. Optionally filter by status or workflow run.',
+			'List SpaceTasks for this space. Optionally filter by status or by a specific workflow run.',
 			{
 				status: z
 					.enum([
@@ -267,17 +283,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Filter to only tasks belonging to a specific workflow run'),
 			},
 			(args) => handlers.list_tasks(args)
-		),
-		tool(
-			'list_workflow_runs',
-			'List workflow runs for this space. Optionally filter by status.',
-			{
-				status: z
-					.enum(['pending', 'in_progress', 'completed', 'cancelled', 'needs_attention'])
-					.optional()
-					.describe('Filter by run status'),
-			},
-			(args) => handlers.list_workflow_runs(args)
 		),
 	];
 

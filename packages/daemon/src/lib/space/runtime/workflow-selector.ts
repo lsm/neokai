@@ -1,19 +1,19 @@
 /**
  * Workflow Selector
  *
- * Pure, deterministic function for selecting a SpaceWorkflow given a context.
+ * Pure function for resolving a SpaceWorkflow from an explicit workflowId.
  * Has no runtime dependencies — takes only data inputs so it can be tested
  * in isolation without any DB or manager instances.
  *
- * Priority chain (first match wins):
- *   1. Explicit workflowId provided → use it
- *   2. Tag-based: match keywords from title/description against workflow tags
- *   3. MVP keyword matching: substring match title/description against workflow descriptions
- *   4. Fall back to null (create standalone task)
+ * Design (per M7 spec):
+ *   - Workflow selection has two modes: explicit workflowId OR AI auto-select.
+ *   - When workflowId is provided, this function finds it in availableWorkflows.
+ *   - When no workflowId is provided, this function returns null — the Space
+ *     agent LLM is expected to call list_workflows first and pick explicitly.
+ *   - There is no tag-based matching, no keyword-based matching, and no
+ *     heuristic fallback. LLM reasoning replaces static heuristics.
  *
- * Note: The "space has default workflow" step was removed in Task 3.2 —
- * the Space system has no isDefault concept. Workflow selection is explicit
- * workflowId OR AI auto-select via this function.
+ * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
 
 import type { SpaceWorkflow } from '@neokai/shared';
@@ -35,33 +35,13 @@ export interface WorkflowSelectionContext {
 	 */
 	availableWorkflows: SpaceWorkflow[];
 	/**
-	 * Optional explicit workflow ID. When provided, the function uses this workflow
-	 * if it exists in availableWorkflows, bypassing all other heuristics.
+	 * Optional explicit workflow ID. When provided, the function returns that
+	 * workflow if found in availableWorkflows, otherwise null.
+	 *
+	 * When omitted, returns null — the caller (LLM agent) must call list_workflows
+	 * and then provide an explicit workflowId.
 	 */
 	workflowId?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Normalise text for comparison: lowercase, collapse whitespace.
- */
-function normalise(text: string): string {
-	return text.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Extract candidate keywords from a title + description string.
- * Returns individual words longer than 2 chars (stops words like 'a', 'an', 'to').
- */
-function extractKeywords(title: string, description: string): string[] {
-	const combined = normalise(`${title} ${description}`);
-	return combined
-		.split(/\W+/)
-		.filter((w) => w.length > 2)
-		.filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -69,90 +49,23 @@ function extractKeywords(title: string, description: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Select a workflow from the available set given the context.
+ * Resolve a workflow from the available set given an explicit workflowId.
  *
- * Returns null when no workflow matches — callers should create a standalone
- * SpaceTask in that case.
+ * Returns null in two cases:
+ *   1. No workflowId provided — the LLM agent must pick one via list_workflows.
+ *   2. workflowId provided but not found in availableWorkflows.
  *
  * The function is pure and deterministic: given the same inputs it always
  * returns the same output.
  */
 export function selectWorkflow(context: WorkflowSelectionContext): SpaceWorkflow | null {
-	const { availableWorkflows, workflowId, title, description } = context;
+	const { availableWorkflows, workflowId } = context;
 
-	if (availableWorkflows.length === 0) return null;
-
-	// -------------------------------------------------------------------------
-	// Step 1: Explicit workflowId provided
-	// -------------------------------------------------------------------------
-	if (workflowId) {
-		const explicit = availableWorkflows.find((w) => w.id === workflowId);
-		if (explicit) return explicit;
-		// Explicit ID was given but not found in the available set — return null
-		// rather than silently falling through to heuristics.
+	if (!workflowId) {
+		// No explicit ID: return null — LLM agent must call list_workflows and pick.
 		return null;
 	}
 
-	// -------------------------------------------------------------------------
-	// Step 2: Tag-based matching
-	// Rank workflows by how many of the input keywords appear in their tag list.
-	// -------------------------------------------------------------------------
-	const keywords = extractKeywords(title, description);
-
-	if (keywords.length > 0) {
-		let bestTagMatch: SpaceWorkflow | null = null;
-		let bestTagScore = 0;
-
-		for (const workflow of availableWorkflows) {
-			if (!workflow.tags || workflow.tags.length === 0) continue;
-
-			const normalisedTags = workflow.tags.map(normalise);
-			let score = 0;
-			for (const kw of keywords) {
-				if (normalisedTags.some((tag) => tag.includes(kw) || kw.includes(tag))) {
-					score++;
-				}
-			}
-
-			if (score > bestTagScore) {
-				bestTagScore = score;
-				bestTagMatch = workflow;
-			}
-		}
-
-		if (bestTagMatch) return bestTagMatch;
-	}
-
-	// -------------------------------------------------------------------------
-	// Step 3: MVP keyword matching — substring match title/description against
-	// workflow descriptions.
-	// -------------------------------------------------------------------------
-	const normalisedInput = normalise(`${title} ${description}`);
-
-	let bestDescMatch: SpaceWorkflow | null = null;
-	let bestDescScore = 0;
-
-	for (const workflow of availableWorkflows) {
-		const workflowDesc = normalise(workflow.description ?? '');
-		if (!workflowDesc) continue;
-
-		// Score: count how many words from the workflow description appear in the input
-		const descWords = workflowDesc.split(/\W+/).filter((w) => w.length > 2);
-		let score = 0;
-		for (const word of descWords) {
-			if (normalisedInput.includes(word)) score++;
-		}
-
-		if (score > bestDescScore) {
-			bestDescScore = score;
-			bestDescMatch = workflow;
-		}
-	}
-
-	if (bestDescMatch) return bestDescMatch;
-
-	// -------------------------------------------------------------------------
-	// Step 4: Fall back to null — caller creates a standalone task
-	// -------------------------------------------------------------------------
-	return null;
+	// Explicit ID provided: find it in the available set (or null if not found).
+	return availableWorkflows.find((w) => w.id === workflowId) ?? null;
 }
