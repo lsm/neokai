@@ -468,15 +468,24 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		// Suppress API retry messages: log at daemon level but do not save to DB or broadcast.
+		// Handle API retry messages: emit event for UI to display retry progress, but do not save to DB.
 		// These carry operational metadata (attempt count, delay, error) that is useful for
-		// debugging but should not appear in the transcript or accumulate in the database.
+		// debugging and user feedback but should not appear in the transcript.
 		if (isSDKAPIRetryMessage(message)) {
 			this.logger.warn(
 				`API retry: attempt ${message.attempt}/${message.max_retries}, ` +
 					`delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +
 					`error ${message.error}`
 			);
+			// Emit event for UI to show retry progress
+			await this.ctx.daemonHub.emit('session.retryAttempt', {
+				sessionId: session.id,
+				attempt: message.attempt,
+				max_retries: message.max_retries,
+				delay_ms: message.retry_delay_ms,
+				error_status: message.error_status,
+				error: message.error,
+			});
 			return;
 		}
 
