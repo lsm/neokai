@@ -192,11 +192,20 @@ export function useConnectionDrag({
 			setDragState(IDLE);
 		};
 
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape' && dragRef.current.active) {
+				dragRef.current = IDLE;
+				setDragState(IDLE);
+			}
+		};
+
 		window.addEventListener('mousemove', onMouseMove);
 		window.addEventListener('mouseup', onMouseUp);
+		window.addEventListener('keydown', onKeyDown);
 		return () => {
 			window.removeEventListener('mousemove', onMouseMove);
 			window.removeEventListener('mouseup', onMouseUp);
+			window.removeEventListener('keydown', onKeyDown);
 		};
 	}, [containerRef]);
 

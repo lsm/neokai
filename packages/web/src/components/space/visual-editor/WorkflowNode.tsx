@@ -188,6 +188,11 @@ export function WorkflowNode({
 		[onPortMouseDown, stepId]
 	);
 
+	// Prevent clicks on ports from bubbling to the card and triggering node selection
+	const stopClickPropagation = useCallback((e: MouseEvent) => {
+		e.stopPropagation();
+	}, []);
+
 	const handleInputPortMouseEnter = useCallback(() => {
 		onPortMouseEnter?.(stepId, 'input');
 	}, [onPortMouseEnter, stepId]);
@@ -247,6 +252,7 @@ export function WorkflowNode({
 					onMouseDown={handleInputPortMouseDown}
 					onMouseEnter={handleInputPortMouseEnter}
 					onMouseLeave={handleInputPortMouseLeave}
+					onClick={stopClickPropagation}
 				/>
 			)}
 
@@ -301,6 +307,7 @@ export function WorkflowNode({
 					cursor: 'crosshair',
 				}}
 				onMouseDown={handleOutputPortMouseDown}
+				onClick={stopClickPropagation}
 			/>
 		</div>
 	);

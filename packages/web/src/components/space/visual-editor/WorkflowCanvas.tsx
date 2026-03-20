@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
-import type { ComponentChildren, RefObject } from 'preact';
+import type { ComponentChildren, JSX, RefObject } from 'preact';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
 import type { WorkflowNodeProps, PortType } from './WorkflowNode';
@@ -57,11 +57,22 @@ export interface WorkflowCanvasProps {
 // ---- Ghost edge rendering ----
 
 /** Render a dashed bezier ghost edge from `from` to `to` in canvas-space SVG coordinates. */
-function GhostEdge({ from, to }: { from: Point; to: Point }): ComponentChildren {
-	// Control points: vertical bezier (source goes down, target comes from above)
-	const dy = Math.abs(to.y - from.y);
-	const cpOffset = Math.max(50, dy * 0.5);
-	const d = `M ${from.x} ${from.y} C ${from.x} ${from.y + cpOffset}, ${to.x} ${to.y - cpOffset}, ${to.x} ${to.y}`;
+function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null {
+	// Directional bezier: for forward (downward) drags use a vertical S-curve.
+	// For backward (upward) drags, route horizontally to avoid the path looping.
+	const dx = to.x - from.x;
+	const dy = to.y - from.y;
+	let d: string;
+	if (dy >= -40) {
+		// Forward or slightly backward: standard vertical bezier
+		const cpOffset = Math.max(50, dy * 0.5);
+		d = `M ${from.x} ${from.y} C ${from.x} ${from.y + cpOffset}, ${to.x} ${to.y - cpOffset}, ${to.x} ${to.y}`;
+	} else {
+		// Backward drag: route around horizontally to avoid S-curve loops
+		const sideOffset = Math.max(60, Math.abs(dx) * 0.4 + 40);
+		const midY = (from.y + to.y) / 2;
+		d = `M ${from.x} ${from.y} C ${from.x} ${from.y + 40}, ${from.x + sideOffset} ${from.y + 40}, ${from.x + sideOffset} ${midY} S ${from.x + sideOffset} ${to.y - 40}, ${to.x} ${to.y}`;
+	}
 
 	return (
 		<>
@@ -161,11 +172,13 @@ export function WorkflowCanvas({
 
 	const handlePortMouseEnter = useCallback(
 		(stepId: string, portType: PortType) => {
-			if (portType === 'input' && dragState.active) {
+			// setHoverTarget guards on dragRef.current.active internally —
+			// no need to read dragState here, which would cause re-renders on every toggle
+			if (portType === 'input') {
 				setHoverTarget(stepId);
 			}
 		},
-		[dragState.active, setHoverTarget]
+		[setHoverTarget]
 	);
 
 	const handlePortMouseLeave = useCallback(

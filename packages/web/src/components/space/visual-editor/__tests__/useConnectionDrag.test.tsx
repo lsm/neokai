@@ -485,3 +485,68 @@ describe('WorkflowCanvas — start node not a drop target', () => {
 		expect(startNode.querySelector('[data-testid="port-input"]')).toBeNull();
 	});
 });
+
+describe('WorkflowCanvas — end-to-end connection creation', () => {
+	it('calls onCreateTransition when dropping on a valid input port', () => {
+		const { getByTestId, onCreateTransition } = renderCanvas();
+
+		// 1. Start drag from step-1 output port
+		const outputPort = getByTestId('workflow-node-step-1').querySelector(
+			'[data-testid="port-output"]'
+		)!;
+		fireEvent.mouseDown(outputPort, { button: 0, clientX: 50, clientY: 50 });
+
+		// 2. Simulate hovering over step-2 input port
+		const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+		fireEvent.mouseEnter(inputPort2);
+
+		// 3. Release mouse — should create transition
+		act(() => {
+			window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+		});
+
+		expect(onCreateTransition).toHaveBeenCalledWith('step-1', 'step-2');
+	});
+
+	it('does not call onCreateTransition when releasing over empty space', () => {
+		const { getByTestId, onCreateTransition } = renderCanvas();
+
+		const outputPort = getByTestId('workflow-node-step-1').querySelector(
+			'[data-testid="port-output"]'
+		)!;
+		fireEvent.mouseDown(outputPort, { button: 0, clientX: 50, clientY: 50 });
+
+		// No mouseEnter on any input port
+		act(() => {
+			window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+		});
+
+		expect(onCreateTransition).not.toHaveBeenCalled();
+	});
+
+	it('cancels drag when Escape is pressed', () => {
+		const { getByTestId, queryByTestId, onCreateTransition } = renderCanvas();
+
+		const outputPort = getByTestId('workflow-node-step-1').querySelector(
+			'[data-testid="port-output"]'
+		)!;
+		fireEvent.mouseDown(outputPort, { button: 0, clientX: 50, clientY: 50 });
+		act(() => {
+			window.dispatchEvent(
+				new MouseEvent('mousemove', { bubbles: true, clientX: 150, clientY: 200 })
+			);
+		});
+		// Ghost edge should be visible
+		expect(queryByTestId('ghost-edge')).toBeTruthy();
+
+		// Press Escape — should cancel the drag
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		});
+
+		expect(queryByTestId('ghost-edge')).toBeNull();
+		expect(onCreateTransition).not.toHaveBeenCalled();
+	});
+});
