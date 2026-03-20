@@ -16,6 +16,7 @@ import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { SpaceAgentList } from '../components/space/SpaceAgentList';
 import { WorkflowList } from '../components/space/WorkflowList';
+import { WorkflowEditor } from '../components/space/WorkflowEditor';
 import { SpaceSettings } from '../components/space/SpaceSettings';
 import { cn } from '../lib/utils';
 
@@ -35,6 +36,8 @@ const TABS: { id: SpaceTab; label: string }[] = [
 export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
 	const [activeRunId, setActiveRunId] = useState<string | null>(null);
+	/** null = list view; 'new' = create editor; <id> = edit editor */
+	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
 
@@ -52,6 +55,13 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 			// navigating back is instant (store shows stale-then-fresh data).
 		};
 	}, [spaceId]);
+
+	// Reset workflow edit state when switching away from workflows tab
+	useEffect(() => {
+		if (activeTab !== 'workflows') {
+			setWorkflowEditId(null);
+		}
+	}, [activeTab]);
 
 	const handleRunSelect = (runId: string) => {
 		setActiveRunId(runId);
@@ -95,6 +105,13 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	const space = spaceStore.space.value;
 	const workflows = spaceStore.workflows.value;
 
+	const editingWorkflow =
+		workflowEditId && workflowEditId !== 'new'
+			? workflows.find((w) => w.id === workflowEditId)
+			: undefined;
+
+	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
+
 	return (
 		<div class="flex-1 flex overflow-hidden bg-dark-900">
 			{/* Left column — navigation panel */}
@@ -112,33 +129,51 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 			{/* Middle column — tabbed content */}
 			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-				{/* Tab bar */}
-				<div class="flex border-b border-dark-700 px-4 flex-shrink-0">
-					{TABS.map((tab) => (
-						<button
-							key={tab.id}
-							type="button"
-							onClick={() => setActiveTab(tab.id)}
-							class={cn(
-								'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
-								activeTab === tab.id
-									? 'text-gray-100 border-blue-400'
-									: 'text-gray-400 border-transparent hover:text-gray-200'
-							)}
-						>
-							{tab.label}
-						</button>
-					))}
-				</div>
+				{/* Tab bar — hidden when workflow editor is open (editor has its own back button) */}
+				{!showWorkflowEditor && (
+					<div class="flex border-b border-dark-700 px-4 flex-shrink-0">
+						{TABS.map((tab) => (
+							<button
+								key={tab.id}
+								type="button"
+								onClick={() => setActiveTab(tab.id)}
+								class={cn(
+									'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
+									activeTab === tab.id
+										? 'text-gray-100 border-blue-400'
+										: 'text-gray-400 border-transparent hover:text-gray-200'
+								)}
+							>
+								{tab.label}
+							</button>
+						))}
+					</div>
+				)}
 
 				{/* Tab content */}
 				<div class="flex-1 overflow-hidden">
-					{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
-					{activeTab === 'agents' && <SpaceAgentList />}
-					{activeTab === 'workflows' && space && (
-						<WorkflowList spaceId={spaceId} spaceName={space.name} workflows={workflows} />
+					{showWorkflowEditor ? (
+						<WorkflowEditor
+							workflow={editingWorkflow}
+							onSave={() => setWorkflowEditId(null)}
+							onCancel={() => setWorkflowEditId(null)}
+						/>
+					) : (
+						<>
+							{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
+							{activeTab === 'agents' && <SpaceAgentList />}
+							{activeTab === 'workflows' && space && (
+								<WorkflowList
+									spaceId={spaceId}
+									spaceName={space.name}
+									workflows={workflows}
+									onCreateWorkflow={() => setWorkflowEditId('new')}
+									onEditWorkflow={(id) => setWorkflowEditId(id)}
+								/>
+							)}
+							{activeTab === 'settings' && space && <SpaceSettings space={space} />}
+						</>
 					)}
-					{activeTab === 'settings' && space && <SpaceSettings space={space} />}
 				</div>
 			</div>
 
