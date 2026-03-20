@@ -309,14 +309,16 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(cfg.envVars['ANTHROPIC_API_KEY']).toBe('');
 		});
 
-		it('ANTHROPIC_DEFAULT_HAIKU_MODEL is gpt-5-mini (not a claude-* fallback)', () => {
-			// Regression guard: the haiku tier for Copilot must map to gpt-5-mini (a model
-			// served by the Copilot bridge). Without this env var the Claude Agent SDK
-			// subprocess defaults to claude-haiku-4-5-20251001 for background calls
-			// (summarisation, compaction), which the bridge may not serve correctly.
-			// The .toBe assertion is stricter than .not.toMatch(/^claude-/) and subsumes it.
+		it('ANTHROPIC_DEFAULT_HAIKU_MODEL matches the resolved model ID (all tiers use the same Copilot model)', () => {
+			// All three SDK model tiers (opus/sonnet/haiku) are set to the resolved Copilot
+			// model ID so that every SDK-internal call (summarisation, compaction, etc.)
+			// routes through the same real Copilot model rather than a hardcoded fallback
+			// that might not be available on the user's Copilot account.
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
-			expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5-mini');
+			expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4.6');
+			expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
+				cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
+			);
 		});
 	});
 
@@ -374,6 +376,124 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			);
 			await p.getModels();
 			expect(ensureSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('returns dynamic models from client.listModels() when clientCache is available', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
+			spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+
+			// Inject a mock clientCache with listModels()
+			const fakeSdkModels = [
+				{
+					id: 'gpt-4o',
+					name: 'GPT-4o',
+					capabilities: {
+						supports: { vision: true, reasoningEffort: false },
+						limits: { max_context_window_tokens: 128000 },
+					},
+					policy: { state: 'enabled', terms: '' },
+				},
+				{
+					id: 'claude-sonnet-4-5',
+					name: 'Claude Sonnet',
+					capabilities: {
+						supports: { vision: false, reasoningEffort: false },
+						limits: { max_context_window_tokens: 200000 },
+					},
+					policy: { state: 'enabled', terms: '' },
+				},
+				// Disabled model should be filtered out
+				{
+					id: 'gpt-4-turbo',
+					name: 'GPT-4 Turbo',
+					capabilities: {
+						supports: { vision: false, reasoningEffort: false },
+						limits: { max_context_window_tokens: 128000 },
+					},
+					policy: { state: 'disabled', terms: '' },
+				},
+			];
+			(p as unknown as Record<string, unknown>)['clientCache'] = {
+				listModels: async () => fakeSdkModels,
+			};
+
+			const models = await p.getModels();
+
+			// Should return dynamic models (filtering out disabled ones)
+			expect(models.length).toBe(2);
+			expect(models.map((m) => m.id)).toContain('gpt-4o');
+			expect(models.map((m) => m.id)).toContain('claude-sonnet-4-5');
+			expect(models.map((m) => m.id)).not.toContain('gpt-4-turbo');
+			// All should have the correct provider
+			for (const m of models) {
+				expect(m.provider).toBe('anthropic-copilot');
+			}
+		});
+
+		it('falls back to static model list when client.listModels() throws', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
+			spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+
+			(p as unknown as Record<string, unknown>)['clientCache'] = {
+				listModels: async () => {
+					throw new Error('API error');
+				},
+			};
+
+			const models = await p.getModels();
+			// Should fall back to static list
+			expect(models.length).toBeGreaterThan(0);
+			expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
+		});
+
+		it('falls back to static model list when client.listModels() returns empty', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
+			spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+
+			(p as unknown as Record<string, unknown>)['clientCache'] = {
+				listModels: async () => [],
+			};
+
+			const models = await p.getModels();
+			// Should fall back to static list
+			expect(models.length).toBeGreaterThan(0);
+			expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
+		});
+	});
+
+	describe('ownsModel() with dynamic models', () => {
+		it('returns true for a model ID in the dynamic cache', () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+			// Inject a dynamic models cache with a model not in the static list
+			(p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+				{
+					id: 'gpt-4o',
+					name: 'GPT-4o (Copilot)',
+					alias: 'copilot-gpt-4o',
+					family: 'gpt',
+					provider: 'anthropic-copilot',
+					contextWindow: 128000,
+					description: 'GPT-4o via GitHub Copilot',
+					releaseDate: '2025-01-01',
+					available: true,
+				},
+			];
+			expect(p.ownsModel('gpt-4o')).toBe(true);
+			expect(p.ownsModel('copilot-gpt-4o')).toBe(true);
+			// Unknown model should still return false
+			expect(p.ownsModel('unknown-model-xyz')).toBe(false);
 		});
 	});
 
