@@ -45,7 +45,6 @@ if (typeof window !== 'undefined') {
 interface RoomTasksProps {
 	tasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
-	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 }
 
@@ -74,7 +73,7 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 	}
 }
 
-export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksProps) {
+export function RoomTasks({ tasks, onTaskClick, onView }: RoomTasksProps) {
 	const selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
@@ -134,7 +133,6 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					allTasks={tasks}
 					tab={selectedTab}
 					onTaskClick={onTaskClick}
-					onApprove={onApprove}
 					onView={onView}
 				/>
 			)}
@@ -233,14 +231,12 @@ function TaskList({
 	allTasks,
 	tab,
 	onTaskClick,
-	onApprove,
 	onView,
 }: {
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
 	tab: TaskFilterTab;
 	onTaskClick?: (taskId: string) => void;
-	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 }) {
 	// For Active tab, group by in_progress and pending
@@ -288,7 +284,6 @@ function TaskList({
 					tasks={tasks}
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
-					onApprove={onApprove}
 					onView={onView}
 				/>
 			</div>
@@ -349,7 +344,6 @@ function TaskGroup({
 	tasks,
 	allTasks,
 	onTaskClick,
-	onApprove,
 	onView,
 	showAlert = false,
 }: {
@@ -359,7 +353,6 @@ function TaskGroup({
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
-	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 	showAlert?: boolean;
 }) {
@@ -421,7 +414,6 @@ function TaskGroup({
 						task={task}
 						allTasks={allTasks}
 						onClick={onTaskClick}
-						onApprove={onApprove}
 						onView={onView}
 					/>
 				))}
@@ -442,17 +434,14 @@ function TaskItem({
 	task,
 	allTasks,
 	onClick,
-	onApprove,
 	onView,
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
 	onClick?: (taskId: string) => void;
-	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
-	const showApprove = task.status === 'review' && !!onApprove;
 	const showView = task.status === 'review' && !!onView;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
@@ -500,26 +489,15 @@ function TaskItem({
 							<span>PR #{task.prNumber ?? '?'}</span>
 						</a>
 					)}
-					{showApprove && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onApprove(task.id);
-							}}
-							class="px-2 py-1 text-xs font-medium text-green-400 bg-green-900/20 hover:bg-green-900/40 border border-green-700/50 rounded transition-colors"
-						>
-							Approve
-						</button>
-					)}
 					{showView && (
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
 								onView(task.id);
 							}}
-							class="px-2 py-1 text-xs font-medium text-blue-400 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-700/50 rounded transition-colors"
+							class="px-2 py-1 text-xs font-medium text-amber-400 bg-amber-900/20 hover:bg-amber-900/40 border border-amber-700/50 rounded transition-colors"
 						>
-							View
+							审阅
 						</button>
 					)}
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
