@@ -14,12 +14,14 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { WorkflowRunStatus } from '@neokai/shared';
-import { SpaceTaskManager } from '../space/managers/space-task-manager';
-import type { Database as BunDatabase } from 'bun:sqlite';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-run-handlers');
+
+/** Factory that creates a SpaceTaskManager bound to a specific spaceId. */
+export type SpaceWorkflowRunTaskManagerFactory = (spaceId: string) => SpaceTaskManager;
 
 export function setupSpaceWorkflowRunHandlers(
 	messageHub: MessageHub,
@@ -27,7 +29,7 @@ export function setupSpaceWorkflowRunHandlers(
 	spaceWorkflowManager: SpaceWorkflowManager,
 	workflowRunRepo: SpaceWorkflowRunRepository,
 	spaceRuntimeService: SpaceRuntimeService,
-	db: BunDatabase,
+	taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
 	daemonHub: DaemonHub
 ): void {
 	// ─── spaceWorkflowRun.start ──────────────────────────────────────────────
@@ -42,7 +44,9 @@ export function setupSpaceWorkflowRunHandlers(
 		if (!params.spaceId) throw new Error('spaceId is required');
 		if (!params.title || params.title.trim() === '') throw new Error('title is required');
 
-		// Verify space exists
+		// Early space validation — ensures "Space not found" surfaces before workflow
+		// resolution. Without this check, listWorkflows() would return [] for a
+		// nonexistent spaceId, yielding a misleading "No workflows found" error.
 		const space = await spaceManager.getSpace(params.spaceId);
 		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
@@ -105,12 +109,17 @@ export function setupSpaceWorkflowRunHandlers(
 
 	// ─── spaceWorkflowRun.get ────────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflowRun.get', async (data) => {
-		const params = data as { id: string };
+		const params = data as { id: string; spaceId?: string };
 
 		if (!params.id) throw new Error('id is required');
 
 		const run = workflowRunRepo.getRun(params.id);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
+
+		// Optional ownership check — if spaceId is provided, reject cross-space access
+		if (params.spaceId && run.spaceId !== params.spaceId) {
+			throw new Error(`WorkflowRun not found: ${params.id}`);
+		}
 
 		return { run };
 	});
@@ -132,7 +141,7 @@ export function setupSpaceWorkflowRunHandlers(
 		}
 
 		// Cancel all pending tasks belonging to this run
-		const taskManager = new SpaceTaskManager(db, run.spaceId);
+		const taskManager = taskManagerFactory(run.spaceId);
 		const tasks = await taskManager.listTasksByWorkflowRun(run.id);
 		for (const task of tasks) {
 			if (task.status === 'pending' || task.status === 'in_progress') {

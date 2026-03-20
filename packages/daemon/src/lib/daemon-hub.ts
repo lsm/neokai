@@ -418,14 +418,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		spaceId: string;
 		taskId: string;
 		task: import('@neokai/shared').SpaceTask;
-		workflowStepName?: string;
 	};
 	'space.task.updated': {
 		sessionId: string;
 		spaceId: string;
 		taskId: string;
 		task: import('@neokai/shared').SpaceTask;
-		workflowStepName?: string;
 	};
 
 	// Space workflow run events (global events - use 'global' as sessionId)

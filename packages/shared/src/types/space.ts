@@ -319,8 +319,8 @@ export interface SpaceSessionGroup {
 	name: string;
 	/** Optional description of the group's purpose */
 	description?: string;
-	/** ID of the workflow run this group is associated with (for UI display) */
-	workflowId?: string;
+	/** ID of the workflow run (SpaceWorkflowRun) this group is associated with (for UI display) */
+	workflowRunId?: string;
 	/** ID of the current workflow step being executed by this group */
 	currentStepId?: string;
 	/** Members of this group */

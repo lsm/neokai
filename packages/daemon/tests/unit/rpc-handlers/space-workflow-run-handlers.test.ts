@@ -5,22 +5,25 @@
  * - spaceWorkflowRun.start: throws if spaceId missing, title missing, space not found,
  *   workflowId not found, no workflows exist; creates run and emits event
  * - spaceWorkflowRun.list: throws if spaceId missing, space not found; returns runs filtered by status
- * - spaceWorkflowRun.get: throws if id missing, not found; returns run
+ * - spaceWorkflowRun.get: throws if id missing, not found; returns run; ownership check
  * - spaceWorkflowRun.cancel: throws if id missing, not found; no-op if already cancelled;
- *   throws if completed; cancels pending tasks and emits event
+ *   throws if completed; cancels pending/in_progress tasks; emits event
  */
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
-import { setupSpaceWorkflowRunHandlers } from '../../../src/lib/rpc-handlers/space-workflow-run-handlers.ts';
+import {
+	setupSpaceWorkflowRunHandlers,
+	type SpaceWorkflowRunTaskManagerFactory,
+} from '../../../src/lib/rpc-handlers/space-workflow-run-handlers.ts';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import type { DaemonHub } from '../../../src/lib/daemon-hub.ts';
-import type { Database as BunDatabase } from 'bun:sqlite';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -171,70 +174,15 @@ function createMockRuntimeService(
 	} as unknown as SpaceRuntimeService;
 }
 
-// ─── DB stub (only used by cancel for SpaceTaskManager) ──────────────────────
-
-function createStubDb(tasks: SpaceTask[] = []): BunDatabase {
-	// The cancel handler creates a SpaceTaskManager with the db and calls listTasksByWorkflowRun
-	// and cancelTask. We need the db.prepare().all() chain to work for the task repo.
-	// Return a stub that produces results compatible with SpaceTaskRepository's SQL queries.
-	const taskRows = tasks.map((t) => ({
-		id: t.id,
-		space_id: t.spaceId,
-		title: t.title,
-		description: t.description,
-		status: t.status,
-		priority: t.priority,
-		task_type: t.taskType ?? null,
-		assigned_agent: t.assignedAgent ?? null,
-		custom_agent_id: t.customAgentId ?? null,
-		workflow_run_id: t.workflowRunId ?? null,
-		workflow_step_id: t.workflowStepId ?? null,
-		created_by_task_id: t.createdByTaskId ?? null,
-		progress: t.progress ?? null,
-		current_step: t.currentStep ?? null,
-		result: t.result ?? null,
-		error: t.error ?? null,
-		depends_on: JSON.stringify(t.dependsOn),
-		input_draft: t.inputDraft ?? null,
-		active_session: t.activeSession ?? null,
-		pr_url: t.prUrl ?? null,
-		pr_number: t.prNumber ?? null,
-		pr_created_at: t.prCreatedAt ?? null,
-		archived_at: t.archivedAt ?? null,
-		created_at: t.createdAt,
-		started_at: t.startedAt ?? null,
-		completed_at: t.completedAt ?? null,
-		updated_at: t.updatedAt,
-	}));
-
-	const makePrepare = (rows: unknown[]) => ({
-		all: mock(() => rows),
-		get: mock(() => rows[0] ?? undefined),
-		run: mock(() => ({ changes: rows.length })),
-	});
-
-	// cancelTask calls setTaskStatus which calls db.prepare(UPDATE).run()
-	// We must track calls to simulate the status update
-	const cancelledRow = taskRows.map((r) => ({ ...r, status: 'cancelled' }));
-
+function createMockTaskManager(tasks: SpaceTask[] = []): SpaceTaskManager {
 	return {
-		prepare: mock((sql: string) => {
-			if (sql.includes('WHERE workflow_run_id')) {
-				return makePrepare(taskRows);
-			}
-			if (sql.includes('UPDATE space_tasks')) {
-				// Return the updated (cancelled) row for getTask after update
-				return { run: mock(() => ({ changes: 1 })) };
-			}
-			if (sql.includes('WHERE id = ?') && sql.includes('space_tasks')) {
-				// getTask after setTaskStatus — return cancelled version
-				return { get: mock(() => cancelledRow[0] ?? undefined) };
-			}
-			// Default
-			return makePrepare([]);
-		}),
-		exec: mock(() => {}),
-	} as unknown as BunDatabase;
+		listTasksByWorkflowRun: mock(async () => tasks),
+		cancelTask: mock(async (taskId: string) => ({
+			...mockTask,
+			id: taskId,
+			status: 'cancelled' as const,
+		})),
+	} as unknown as SpaceTaskManager;
 }
 
 // ─── Test Suite ───────────────────────────────────────────────────────────────
@@ -248,7 +196,8 @@ describe('space-workflow-run-handlers', () => {
 	let runRepo: SpaceWorkflowRunRepository;
 	let runtimeService: SpaceRuntimeService;
 	let runtime: SpaceRuntime;
-	let db: BunDatabase;
+	let taskManagerFactory: SpaceWorkflowRunTaskManagerFactory;
+	let taskManager: SpaceTaskManager;
 
 	function setup(
 		opts: {
@@ -275,7 +224,8 @@ describe('space-workflow-run-handlers', () => {
 		runRepo = createMockRunRepo(resolvedRun ?? null, opts.runs ?? [mockRun]);
 		runtime = createMockRuntime(resolvedRun ?? mockRun);
 		runtimeService = createMockRuntimeService(resolvedSpace ?? null, runtime);
-		db = createStubDb(opts.tasks ?? []);
+		taskManager = createMockTaskManager(opts.tasks ?? []);
+		taskManagerFactory = mock(() => taskManager);
 
 		setupSpaceWorkflowRunHandlers(
 			hub,
@@ -283,7 +233,7 @@ describe('space-workflow-run-handlers', () => {
 			workflowManager,
 			runRepo,
 			runtimeService,
-			db,
+			taskManagerFactory,
 			daemonHub
 		);
 	}
@@ -465,6 +415,22 @@ describe('space-workflow-run-handlers', () => {
 			const result = await call('spaceWorkflowRun.get', { id: 'run-1' });
 			expect(result).toEqual({ run: mockRun });
 		});
+
+		it('returns the run without spaceId filter', async () => {
+			const result = await call('spaceWorkflowRun.get', { id: 'run-1' });
+			expect(result).toEqual({ run: mockRun });
+		});
+
+		it('throws if spaceId does not match run.spaceId (ownership check)', async () => {
+			await expect(
+				call('spaceWorkflowRun.get', { id: 'run-1', spaceId: 'space-other' })
+			).rejects.toThrow('WorkflowRun not found: run-1');
+		});
+
+		it('succeeds when spaceId matches run.spaceId', async () => {
+			const result = await call('spaceWorkflowRun.get', { id: 'run-1', spaceId: 'space-1' });
+			expect(result).toEqual({ run: mockRun });
+		});
 	});
 
 	// ─── spaceWorkflowRun.cancel ─────────────────────────────────────────────
@@ -500,8 +466,7 @@ describe('space-workflow-run-handlers', () => {
 			);
 		});
 
-		it('cancels the run and emits space.workflowRun.updated', async () => {
-			// Use empty tasks list to avoid DB complexity
+		it('cancels the run and emits space.workflowRun.updated (no tasks)', async () => {
 			setup({ tasks: [] });
 
 			const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
@@ -514,6 +479,83 @@ describe('space-workflow-run-handlers', () => {
 				runId: 'run-1',
 				run: expect.objectContaining({ status: 'cancelled' }),
 			});
+		});
+
+		it('cancels pending and in_progress tasks before cancelling the run', async () => {
+			const inProgressTask: SpaceTask = {
+				...mockTask,
+				id: 'task-2',
+				status: 'in_progress',
+			};
+			const completedTask: SpaceTask = {
+				...mockTask,
+				id: 'task-3',
+				status: 'completed',
+			};
+			setup({ tasks: [mockTask, inProgressTask, completedTask] });
+
+			await call('spaceWorkflowRun.cancel', { id: 'run-1' });
+
+			// Factory should have been called with the run's spaceId
+			expect(taskManagerFactory).toHaveBeenCalledWith('space-1');
+
+			// cancelTask should be called for pending and in_progress but not completed
+			expect(taskManager.cancelTask).toHaveBeenCalledTimes(2);
+			expect(taskManager.cancelTask).toHaveBeenCalledWith('task-1');
+			expect(taskManager.cancelTask).toHaveBeenCalledWith('task-2');
+			// completed task should not be cancelled
+			const callArgs = (taskManager.cancelTask as ReturnType<typeof mock>).mock.calls.map(
+				(c) => c[0]
+			);
+			expect(callArgs).not.toContain('task-3');
+
+			// Run should also be cancelled
+			expect(runRepo.updateStatus).toHaveBeenCalledWith('run-1', 'cancelled');
+		});
+
+		it('continues cancelling remaining tasks even if one cancelTask fails', async () => {
+			const task2: SpaceTask = { ...mockTask, id: 'task-2', status: 'pending' };
+			setup({ tasks: [mockTask, task2] });
+
+			// Make the first cancelTask fail
+			let callCount = 0;
+			taskManager = {
+				listTasksByWorkflowRun: mock(async () => [mockTask, task2]),
+				cancelTask: mock(async (taskId: string) => {
+					callCount++;
+					if (callCount === 1) throw new Error('cancel failed');
+					return { ...mockTask, id: taskId, status: 'cancelled' as const };
+				}),
+			} as unknown as SpaceTaskManager;
+			taskManagerFactory = mock(() => taskManager);
+
+			// Re-setup with new mocks
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			daemonHub = createMockDaemonHub();
+			spaceManager = createMockSpaceManager();
+			workflowManager = createMockWorkflowManager();
+			runRepo = createMockRunRepo();
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				spaceManager,
+				workflowManager,
+				runRepo,
+				createMockRuntimeService(),
+				taskManagerFactory,
+				daemonHub
+			);
+
+			// Should not throw even though one cancelTask failed
+			const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
+			expect(result).toEqual({ success: true });
+
+			// Both tasks were attempted
+			expect(taskManager.cancelTask).toHaveBeenCalledTimes(2);
+			// Run still gets cancelled
+			expect(runRepo.updateStatus).toHaveBeenCalledWith('run-1', 'cancelled');
 		});
 	});
 });
