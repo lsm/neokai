@@ -134,25 +134,25 @@ describe('WorkflowNode rendering', () => {
 
 	it('applies ring class when selected', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ isSelected: true })} />);
-		const node = getByTestId('workflow-node');
+		const node = getByTestId('workflow-node-step-local-1');
 		expect(node.className).toContain('ring-2');
 		expect(node.className).toContain('ring-blue-500');
 	});
 
 	it('does not apply ring class when not selected', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ isSelected: false })} />);
-		const node = getByTestId('workflow-node');
+		const node = getByTestId('workflow-node-step-local-1');
 		expect(node.className).not.toContain('ring-2');
 	});
 
 	it('applies green border class for start node', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ isStartNode: true })} />);
-		expect(getByTestId('workflow-node').className).toContain('border-green-500');
+		expect(getByTestId('workflow-node-step-local-1').className).toContain('border-green-500');
 	});
 
 	it('positions node using absolute style from position prop', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ position: { x: 42, y: 88 } })} />);
-		const node = getByTestId('workflow-node');
+		const node = getByTestId('workflow-node-step-local-1');
 		expect(node.style.left).toBe('42px');
 		expect(node.style.top).toBe('88px');
 	});
@@ -208,14 +208,14 @@ describe('WorkflowNode click', () => {
 	it('calls onClick with stepId when card is clicked', () => {
 		const onClick = vi.fn();
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
-		fireEvent.click(getByTestId('workflow-node'));
+		fireEvent.click(getByTestId('workflow-node-step-local-1'));
 		expect(onClick).toHaveBeenCalledWith('step-local-1');
 	});
 
 	it('does NOT call onClick after a drag completes', () => {
 		const onClick = vi.fn();
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
-		const node = getByTestId('workflow-node');
+		const node = getByTestId('workflow-node-step-local-1');
 
 		// Simulate drag: mousedown → move past threshold → mouseup → click
 		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
@@ -229,7 +229,7 @@ describe('WorkflowNode click', () => {
 	it('calls onClick normally after a sub-threshold mousedown (no real drag)', () => {
 		const onClick = vi.fn();
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
-		const node = getByTestId('workflow-node');
+		const node = getByTestId('workflow-node-step-local-1');
 
 		// Mousedown then release without crossing threshold
 		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
@@ -252,7 +252,7 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 100, y: 200 }, scale: 1 })} />
 		);
 
-		const node = getByTestId('workflow-node');
+		const node = getByTestId('workflow-node-step-local-1');
 		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
 		windowMouseMove(30, 40);
 
@@ -267,7 +267,11 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 2 })} />
 		);
 
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(100, 60);
 
 		// canvas delta = screen delta / scale = 100/2=50, 60/2=30
@@ -282,7 +286,11 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 0.5 })} />
 		);
 
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(20, 10);
 
 		// canvas delta = screen delta / scale = 20/0.5=40, 10/0.5=20
@@ -297,7 +305,11 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 1 })} />
 		);
 
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(10, 10);
 		expect(onPositionChange).toHaveBeenCalledTimes(1);
 
@@ -312,7 +324,11 @@ describe('WorkflowNode drag-and-drop', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ onPositionChange, scale: 1 })} />);
 
 		// Right-click (button=2)
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 2, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 2,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(50, 50);
 
 		expect(onPositionChange).not.toHaveBeenCalled();
@@ -327,7 +343,11 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 1 })} />
 		);
 
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(10, 5);
 		windowMouseMove(20, 15);
 		windowMouseMove(30, 25);
@@ -347,7 +367,11 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 1 })} />
 		);
 
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(2, 1); // 2px — below the 3px threshold
 		expect(onPositionChange).not.toHaveBeenCalled();
 
@@ -360,7 +384,11 @@ describe('WorkflowNode drag-and-drop', () => {
 			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 0 })} />
 		);
 
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		windowMouseMove(10, 10);
 
 		expect(onPositionChange).toHaveBeenCalledOnce();
@@ -395,7 +423,11 @@ describe('WorkflowNode drag-and-drop', () => {
 		const { getByTestId } = render(<Wrapper />);
 
 		// Start drag at (50,50) with mouse at screen (0,0)
-		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
+			button: 0,
+			clientX: 0,
+			clientY: 0,
+		});
 		// Move 20px in screen space — canvas delta = 20
 		windowMouseMove(20, 10);
 		expect(onPositionChange).toHaveBeenLastCalledWith('step-local-1', { x: 70, y: 60 });
