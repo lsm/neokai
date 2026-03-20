@@ -176,6 +176,49 @@ describe('WorkflowCanvas — keyboard delete', () => {
 	});
 });
 
+describe('WorkflowCanvas — stale selection cleanup', () => {
+	it('clears selection when the selected node is removed from the nodes array', () => {
+		const onNodeSelect = vi.fn();
+		const onDeleteNode = vi.fn();
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			const [nodes, setNodes] = useState<WorkflowNodeData[]>(NODES);
+			return (
+				<div>
+					<button
+						data-testid="remove-step-1"
+						onClick={() => setNodes((prev) => prev.filter((n) => n.stepId !== 'step-1'))}
+					>
+						Remove
+					</button>
+					<WorkflowCanvas
+						nodes={nodes}
+						viewportState={vp}
+						onViewportChange={setVp}
+						onNodeSelect={onNodeSelect}
+						onDeleteNode={onDeleteNode}
+					/>
+				</div>
+			);
+		}
+
+		const { getByTestId, queryByTestId } = render(<Wrapper />);
+
+		// Select step-1
+		fireEvent.click(getByTestId('workflow-node-step-1'));
+		expect(onNodeSelect).toHaveBeenLastCalledWith('step-1');
+		onNodeSelect.mockClear();
+
+		// Remove step-1 from the nodes array externally
+		fireEvent.click(getByTestId('remove-step-1'));
+
+		// Node element is gone and onNodeSelect(null) was called to clear selection
+		expect(queryByTestId('workflow-node-step-1')).toBeNull();
+		expect(onNodeSelect).toHaveBeenCalledWith(null);
+	});
+});
+
 describe('WorkflowNode — isSelected prop', () => {
 	it('node without selection does not have selected class', () => {
 		const { getByTestId } = renderCanvas();

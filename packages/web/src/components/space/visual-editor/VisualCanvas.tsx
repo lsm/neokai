@@ -69,6 +69,7 @@ export function VisualCanvas({
 	onBackgroundClick,
 }: VisualCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const transformRef = useRef<HTMLDivElement>(null);
 
 	// Track spacebar state for pan-drag mode
 	const spacebarDown = useRef(false);
@@ -190,11 +191,10 @@ export function VisualCanvas({
 				didDrag.current = false;
 				return;
 			}
-			// Only fire for direct clicks on the container or transform layer, not nodes
+			// Use refs instead of data-testid so this works correctly in production
+			// (where data-testid attributes may be stripped by build tooling).
 			const target = e.target as HTMLElement;
-			const isBackground =
-				target === containerRef.current ||
-				target.getAttribute('data-testid') === 'visual-canvas-transform';
+			const isBackground = target === containerRef.current || target === transformRef.current;
 			if (isBackground) {
 				onBackgroundClick?.();
 			}
@@ -215,6 +215,7 @@ export function VisualCanvas({
 			data-testid="visual-canvas"
 		>
 			<div
+				ref={transformRef}
 				class="visual-canvas-transform"
 				style={{
 					transform,

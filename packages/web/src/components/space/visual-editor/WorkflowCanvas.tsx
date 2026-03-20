@@ -53,6 +53,16 @@ export function WorkflowCanvas({
 	const onDeleteNodeRef = useRef(onDeleteNode);
 	onDeleteNodeRef.current = onDeleteNode;
 
+	// Clear selection if the selected node is removed externally (e.g. parent deletes it
+	// from the nodes array). Without this, a node re-added with the same stepId would
+	// appear pre-selected, which is unexpected.
+	useEffect(() => {
+		if (selectedNodeId !== null && !nodes.some((n) => n.stepId === selectedNodeId)) {
+			setSelectedNodeId(null);
+			onNodeSelectRef.current?.(null);
+		}
+	}, [nodes, selectedNodeId]);
+
 	const handleNodeSelect = useCallback(
 		(stepId: string) => {
 			setSelectedNodeId(stepId);
