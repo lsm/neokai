@@ -32,6 +32,7 @@ describe('QueryOptionsBuilder', () => {
 				model: 'default',
 				maxTokens: 8192,
 				temperature: 1.0,
+				provider: 'anthropic',
 			},
 			metadata: {
 				messageCount: 0,
