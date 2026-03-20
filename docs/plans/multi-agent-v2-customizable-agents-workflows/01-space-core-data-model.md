@@ -101,8 +101,8 @@ Create a new shared types file for all Space-related types. These are distinct f
      /** Title/description of what this run is doing */
      title: string;
      description: string;
-     /** Current step index in the workflow */
-     currentStepIndex: number;
+     /** ID of the current step being executed */
+     currentStepId: string;
      status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'needs_attention';
      config?: Record<string, unknown>;
      createdAt: number;
@@ -201,10 +201,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      id TEXT PRIMARY KEY,
      workflow_id TEXT NOT NULL,
      name TEXT NOT NULL,
-     agent_ref TEXT NOT NULL,
-     agent_ref_type TEXT NOT NULL DEFAULT 'builtin' CHECK(agent_ref_type IN ('builtin', 'custom')),
-     entry_gate TEXT,
-     exit_gate TEXT,
+     agent_id TEXT NOT NULL,
      instructions TEXT,
      step_order INTEGER NOT NULL,
      FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
@@ -218,7 +215,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      workflow_id TEXT NOT NULL,
      title TEXT NOT NULL,
      description TEXT NOT NULL DEFAULT '',
-     current_step_index INTEGER NOT NULL DEFAULT 0,
+     current_step_id TEXT NOT NULL DEFAULT '',
      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
      config TEXT,
      created_at INTEGER NOT NULL,

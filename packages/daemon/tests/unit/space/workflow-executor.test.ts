@@ -11,7 +11,7 @@
  * - Completion detection (isComplete after last step)
  * - needs_attention guard (advance() blocked after condition failure)
  * - Cycle support (A → B → A loops)
- * - WorkflowGateError properties
+ * - WorkflowTransitionError properties
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -24,7 +24,7 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
 	WorkflowExecutor,
-	WorkflowGateError,
+	WorkflowTransitionError,
 } from '../../../src/lib/space/runtime/workflow-executor.ts';
 import type {
 	CommandRunner,
@@ -502,7 +502,7 @@ describe('WorkflowExecutor', () => {
 			// run.config has no humanApproved
 			const executor = makeExecutor(workflow, run);
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
@@ -596,7 +596,7 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run, makeFailRunner(1));
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
@@ -649,7 +649,7 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run, makeTimeoutRunner());
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
@@ -698,7 +698,7 @@ describe('WorkflowExecutor', () => {
 			// Fails 3 times — more than allowed
 			const executor = makeExecutor(workflow, run, makeRetryRunner(3));
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
@@ -748,7 +748,7 @@ describe('WorkflowExecutor', () => {
 			// Fails on first attempt only
 			const executor = makeExecutor(workflow, run, makeRetryRunner(1));
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 		});
 	});
 
@@ -770,7 +770,7 @@ describe('WorkflowExecutor', () => {
 			const executor = makeExecutor(workflow, run);
 
 			// First call: condition fails → needs_attention
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 
 			// Second call: must throw immediately (not re-evaluate)
 			await expect(executor.advance()).rejects.toThrow('needs_attention');
@@ -788,7 +788,7 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run);
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 
 			const statusBefore = runRepo.getRun(run.id)?.status;
 			await expect(executor.advance()).rejects.toThrow('needs_attention');
@@ -800,11 +800,11 @@ describe('WorkflowExecutor', () => {
 	});
 
 	// =========================================================================
-	// WorkflowGateError properties
+	// WorkflowTransitionError properties
 	// =========================================================================
 
-	describe('WorkflowGateError', () => {
-		test('condition failure throws WorkflowGateError with descriptive message', async () => {
+	describe('WorkflowTransitionError', () => {
+		test('condition failure throws WorkflowTransitionError with descriptive message', async () => {
 			const { workflow, run } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
 				{
@@ -816,11 +816,11 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run);
 
-			let caught: WorkflowGateError | undefined;
+			let caught: WorkflowTransitionError | undefined;
 			try {
 				await executor.advance();
 			} catch (err) {
-				if (err instanceof WorkflowGateError) caught = err;
+				if (err instanceof WorkflowTransitionError) caught = err;
 			}
 
 			expect(caught).toBeDefined();
@@ -879,7 +879,7 @@ describe('WorkflowExecutor', () => {
 	describe('multiple transitions — first matching wins', () => {
 		test('skips failing human condition and follows always fallback', async () => {
 			// Step A has two transitions: order 0 is human (blocked), order 1 is always (fallback).
-			// The executor should skip the failing human gate and follow the always fallback.
+			// The executor should skip the unapproved human transition and follow the always fallback.
 			const workflow = workflowRepo.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Trans-${Date.now()}`,
@@ -939,7 +939,7 @@ describe('WorkflowExecutor', () => {
 			const executor = makeExecutor(workflow, run);
 
 			// Both human conditions fail → needs_attention
-			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
 
@@ -1003,7 +1003,7 @@ describe('WorkflowExecutor', () => {
 
 			await executor.advance();
 
-			// humanApproved should be cleared so a future human gate in a cycle is not auto-passed
+			// humanApproved should be cleared so a future human transition in a cycle is not auto-passed
 			const updated = runRepo.getRun(run.id)!;
 			expect(
 				(updated.config as Record<string, unknown> | undefined)?.humanApproved

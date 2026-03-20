@@ -69,30 +69,37 @@ Define a standardized JSON format for exporting and importing custom agents and 
      steps: Array<{
        name: string;
        /**
-        * For builtin agents: the agent type string ('planner', 'coder', 'general').
-        * For custom agents: the agent **name** (NOT the UUID).
-        * Custom agent UUIDs are space-specific and stripped on export.
-        * exportWorkflow() resolves custom agent UUIDs to names via SpaceAgentManager.
-        * importWorkflow() resolves names back to UUIDs by looking up agents in the
+        * The agent name used for import resolution (NOT the UUID).
+        * SpaceAgent UUIDs are space-specific and stripped on export.
+        * exportWorkflow() resolves agentId UUIDs to SpaceAgent names via SpaceAgentManager.
+        * importWorkflow() resolves names back to agentId UUIDs by looking up agents in the
         * target space (or in the bundle if importing both agents and workflows together).
         */
-       agentRef: string;
-       agentRefType: 'builtin' | 'custom';
-       entryGate?: WorkflowGate | null;
-       exitGate?: WorkflowGate | null;
+       agentName: string;
        instructions?: string;
-       order: number;
+     }>;
+     transitions: Array<{
+       /** Source step name (step names must be unique within a workflow — used instead of UUID) */
+       from: string;
+       to: string;
+       condition?: {
+         type: 'always' | 'human' | 'condition';
+         expression?: string;
+         description?: string;
+         maxRetries?: number;
+         timeoutMs?: number;
+       };
+       order?: number;
      }>;
      rules: Array<{
        name: string;
        content: string;
        /**
-        * Step references use step **order indices** (0, 1, 2, ...), NOT UUIDs.
-        * UUIDs are space-specific and stripped on export.
-        * exportWorkflow() remaps appliesTo from step IDs to order indices.
-        * importWorkflow() remaps order indices back to newly generated step IDs.
+        * Step references use step **names** (NOT UUIDs — step names must be unique within a workflow).
+        * exportWorkflow() remaps appliesTo from step IDs to step names.
+        * importWorkflow() remaps step names back to newly generated step IDs.
         */
-       appliesTo?: number[];
+       appliesTo?: string[];
      }>;
      tags: string[];
      config?: Record<string, unknown>;
@@ -113,7 +120,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 2. Create `packages/daemon/src/lib/space/data/export-format.ts`:
    - `exportAgent(agent: SpaceAgent): ExportedSpaceAgent`
-   - `exportWorkflow(workflow: SpaceWorkflow, agents: SpaceAgent[]): ExportedSpaceWorkflow` — **must remap**: (1) `rules[].appliesTo` from step UUIDs to step order indices; (2) custom agent `agentRef` from UUIDs to agent **names** (lookup in provided agents array)
+   - `exportWorkflow(workflow: SpaceWorkflow, agents: SpaceAgent[]): ExportedSpaceWorkflow` — **must remap**: (1) `rules[].appliesTo` from step UUIDs to step **names**; (2) step `agentId` UUIDs to agent **names** via `agentName` field (lookup in provided agents array); (3) transition `from`/`to` step UUIDs to step **names**
    - `exportBundle(agents: SpaceAgent[], workflows: SpaceWorkflow[], name: string): SpaceExportBundle`
    - Strip space-specific IDs and timestamps
 
@@ -126,7 +133,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 4. Write unit tests:
    - Round-trip: export → serialize → deserialize → validate
-   - **Rule appliesTo round-trip**: export with step-specific rules → verify order indices in JSON → import → verify correct new step IDs
+   - **Rule appliesTo round-trip**: export with step-specific rules → verify step **names** in JSON → import → verify correct new step IDs
    - Validation rejects malformed data
    - Space-specific fields (id, spaceId, timestamps) stripped on export
    - Version validation
@@ -135,7 +142,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 - Export format well-defined and versioned
 - All types in `space.ts` (NOT `neo.ts`)
 - Type names use Space prefix (`ExportedSpaceAgent`, `SpaceExportBundle`)
-- `appliesTo` correctly remapped between UUIDs and order indices
+- `appliesTo` correctly remapped between step UUIDs and step names
 - Version checking provides clear messages
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -158,7 +165,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
    - `spaceExport.agents { spaceId, agentIds? }` → `{ bundle: SpaceExportBundle }`
    - `spaceExport.workflows { spaceId, workflowIds? }` → `{ bundle: SpaceExportBundle }`
    - `spaceExport.bundle { spaceId, agentIds?, workflowIds? }` → full bundle
-   - `spaceImport.preview { bundle, spaceId }` → `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors }` — dry run with conflict detection AND full `SpaceWorkflowManager` validation (gate security checks)
+   - `spaceImport.preview { bundle, spaceId }` → `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors }` — dry run with conflict detection AND full `SpaceWorkflowManager` validation (transition/condition validation)
    - `spaceImport.execute { spaceId, bundle, conflictResolution }` → creates entities (re-validates)
 
 2. Conflict resolution:
@@ -166,14 +173,14 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
    - `conflictResolution`: `'skip' | 'rename' | 'replace'` per item
 
 3. Cross-references and ID remapping:
-   - **Custom agent name→UUID remapping**: Exported workflow steps with `agentRefType: 'custom'` have agent **names** (not UUIDs). On import, resolve names to UUIDs by: (1) checking the bundle's imported agents (if importing both), (2) checking existing agents in target space by name. If agent not found, flag as warning in preview.
-   - **Step ID remapping for rules**: new step UUIDs generated on import; remap `rules[].appliesTo` from order indices back to new step UUIDs using `Map<order, newStepId>`
+   - **Agent name→UUID remapping**: Exported workflow steps use `agentName` (not UUID). On import, resolve names to `agentId` UUIDs by: (1) checking the bundle's imported agents (if importing both), (2) checking existing agents in target space by name. If agent not found, flag as warning in preview.
+   - **Step ID remapping for rules and transitions**: new step UUIDs generated on import; remap `rules[].appliesTo` from step names back to new step UUIDs using `Map<stepName, newStepId>`; remap transition `from`/`to` step names back to new step UUIDs using the same map
 
 4. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration only)
 
 5. Write unit tests:
    - Export includes correct data from `space_agents`/`space_workflows` tables
-   - Preview detects conflicts and gate validation errors
+   - Preview detects conflicts and validation errors
    - All conflict resolutions work
    - Cross-reference mapping (agent name→UUID remapping for custom steps + step ID remapping for rules.appliesTo)
    - All handlers use `spaceId` (NOT `roomId`)
@@ -183,7 +190,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
 - All handlers use `spaceId` context (NOT `roomId`)
 - Export reads from `space_agents`/`space_workflows` tables
 - Import writes to `space_agents`/`space_workflows` tables
-- Preview detects conflicts, missing references, AND gate validation errors
+- Preview detects conflicts, missing references, AND validation errors
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 

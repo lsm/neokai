@@ -20,7 +20,7 @@ export {
 } from './workflows/built-in-workflows';
 export {
 	WorkflowExecutor,
-	WorkflowGateError,
+	WorkflowTransitionError,
 } from './runtime/workflow-executor';
 export type { ConditionContext, ConditionResult, CommandRunner } from './runtime/workflow-executor';
 

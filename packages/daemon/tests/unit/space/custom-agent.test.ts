@@ -70,7 +70,7 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		spaceId: 'space-1',
 		workflowId: 'wf-1',
 		title: 'Deploy v1.0',
-		currentStepIndex: 0,
+		currentStepId: '',
 		status: 'in_progress',
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
