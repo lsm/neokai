@@ -57,7 +57,6 @@ const mockRun: SpaceWorkflowRun = {
 	spaceId: 'space-1',
 	workflowId: 'wf-1',
 	title: 'Run 1',
-	currentStepId: '',
 	status: 'pending',
 	createdAt: NOW,
 	updatedAt: NOW,
