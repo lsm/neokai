@@ -222,9 +222,8 @@ function hasToolUseBlock(sdkMessages: Array<Record<string, unknown>>, toolName?:
 describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	let daemon: DaemonServerContext;
 	/**
-	 * The first available anthropic-copilot model ID, fetched dynamically in beforeAll.
-	 * Using a dynamic ID avoids hardcoding model names that may not exist in all
-	 * Copilot plans or that Copilot may deprecate.
+	 * Always 'gpt-5-mini' — the free-tier Copilot model used for all CI tests.
+	 * beforeAll hard-fails if this model is not present in the account's model list.
 	 */
 	let testModelId: string;
 
@@ -255,7 +254,21 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 					'authentication succeeded but the embedded server failed to start.'
 			);
 		}
-		testModelId = copilotModels[0].id;
+
+		// Hard-fail if gpt-5-mini is not available.
+		// gpt-5-mini is the designated CI model: it is free (0x cost) for all Copilot
+		// subscribers, so it must always be present.  A missing gpt-5-mini means the
+		// account's Copilot plan has changed and the CI secret / plan needs attention.
+		const miniModel = copilotModels.find((m) => m.id === 'gpt-5-mini');
+		if (!miniModel) {
+			throw new Error(
+				`gpt-5-mini is not in the anthropic-copilot model list. ` +
+					`Available models: ${copilotModels.map((m) => m.id).join(', ')}. ` +
+					`gpt-5-mini must be present — it is the designated free-tier CI model. ` +
+					`Check that the Copilot account/plan still includes gpt-5-mini.`
+			);
+		}
+		testModelId = 'gpt-5-mini';
 	}, SETUP_TIMEOUT);
 
 	afterAll(async () => {
