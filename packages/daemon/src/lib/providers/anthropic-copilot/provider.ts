@@ -81,8 +81,12 @@ function pickModelForTier(models: ModelInfo[], tier: ModelTier): string | undefi
 
 	const keywordsByTier: Record<ModelTier, string[]> = {
 		opus: ['opus', 'pro', 'ultra'],
-		sonnet: ['sonnet', '4o', 'turbo', 'flash'],
+		// 'flash' is intentionally absent from sonnet — Gemini Flash models are fast/cheap
+		// and should be haiku-tier. Including 'flash' here would shadow the haiku path
+		// whenever a Flash model appears in the account's model list.
+		sonnet: ['sonnet', '4o', 'turbo'],
 		haiku: ['mini', 'haiku', 'flash', 'fast', 'lite'],
+		// 'default' mirrors 'sonnet': a mid-tier capable model is the right default.
 		default: ['sonnet', '4o', 'turbo'],
 	};
 	const keywords = keywordsByTier[tier] ?? [];
