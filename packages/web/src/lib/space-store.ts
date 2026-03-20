@@ -46,6 +46,12 @@ class SpaceStore {
 	// Core Signals
 	// ========================================
 
+	/**
+	 * Global list of all spaces (across all spaces, for the sidebar list).
+	 * Populated by initGlobalList(); not tied to any selected space.
+	 */
+	readonly spaces = signal<Space[]>([]);
+
 	/** Current active space ID */
 	readonly spaceId = signal<string | null>(null);
 
@@ -116,6 +122,89 @@ class SpaceStore {
 
 	/** The space-specific channel that was joined, for cleanup on switch */
 	private activeSpaceChannel: string | null = null;
+
+	/** Whether global list subscriptions have been set up */
+	private globalListInitialized = false;
+
+	/**
+	 * Cleanup functions for global list event subscriptions.
+	 * Stored so re-initialization (on reconnect) can remove old handlers
+	 * before registering new ones on the same hub instance.
+	 */
+	private globalListCleanupFns: Array<() => void> = [];
+
+	// ========================================
+	// Global Space List
+	// ========================================
+
+	/**
+	 * Initialize the global space list.
+	 * Fetches all spaces from the server and subscribes to global create/archive/delete events.
+	 * Safe to call multiple times — idempotent after first call.
+	 *
+	 * On reconnect, refresh() resets `globalListInitialized` so this runs again.
+	 * Before re-registering, any stale handlers from the previous run are removed
+	 * via `globalListCleanupFns` to prevent duplicate subscriptions on the same hub.
+	 */
+	async initGlobalList(): Promise<void> {
+		if (this.globalListInitialized) return;
+		this.globalListInitialized = true;
+
+		// Remove stale handlers from the previous registration (e.g. after a refresh reset).
+		// This prevents duplicate event firings when the same hub instance is reused.
+		for (const cleanup of this.globalListCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+		this.globalListCleanupFns = [];
+
+		try {
+			const hub = await connectionManager.getHub();
+			const spaces = await hub.request<Space[]>('space.list', {});
+			this.spaces.value = spaces ?? [];
+
+			// Subscribe to global space events to keep list up-to-date
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string; space: Space }>('space.created', (event) => {
+					if (event.space) {
+						const exists = this.spaces.value.some((s) => s.id === event.spaceId);
+						if (!exists) {
+							this.spaces.value = [...this.spaces.value, event.space];
+						}
+					}
+				})
+			);
+
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string; space?: Partial<Space> }>('space.updated', (event) => {
+					this.spaces.value = this.spaces.value.map((s) =>
+						s.id === event.spaceId ? ({ ...s, ...event.space } as Space) : s
+					);
+				})
+			);
+
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string; space: Space }>('space.archived', (event) => {
+					this.spaces.value = this.spaces.value.map((s) =>
+						s.id === event.spaceId ? event.space : s
+					);
+				})
+			);
+
+			this.globalListCleanupFns.push(
+				hub.onEvent<{ spaceId: string }>('space.deleted', (event) => {
+					this.spaces.value = this.spaces.value.filter((s) => s.id !== event.spaceId);
+				})
+			);
+		} catch (err) {
+			logger.error('Failed to initialize global space list:', err);
+			// Reset flag so retries work on reconnect
+			this.globalListInitialized = false;
+		}
+	}
 
 	// ========================================
 	// Space Selection (with Promise-Chain Lock)
@@ -508,8 +597,23 @@ class SpaceStore {
 	/**
 	 * Refresh current space state from server.
 	 * Called by the connection manager on WebSocket reconnect.
+	 *
+	 * Also re-initializes the global space list when it was previously set up.
+	 * The old hub connection is closed on disconnect, tearing down any event
+	 * subscriptions registered in initGlobalList(). Resetting the flag here
+	 * ensures initGlobalList() runs again with the new hub connection — either
+	 * immediately (if the global list was active) or lazily (on next Spaces
+	 * section navigation).
 	 */
 	async refresh(): Promise<void> {
+		// Re-initialize global list subscriptions on the new hub if they existed
+		if (this.globalListInitialized) {
+			this.globalListInitialized = false;
+			this.initGlobalList().catch((err) => {
+				logger.error('Failed to re-initialize global space list on reconnect:', err);
+			});
+		}
+
 		const spaceId = this.spaceId.value;
 		if (!spaceId) return;
 

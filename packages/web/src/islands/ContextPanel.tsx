@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import {
 	navSectionSignal,
 	contextPanelOpenSignal,
@@ -30,6 +30,8 @@ import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
 import { SpaceContextPanel } from '../components/space/SpaceContextPanel.tsx';
+import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
+import { spaceStore } from '../lib/space-store.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 
 // Settings section configuration
@@ -116,9 +118,19 @@ function SectionIcon({ type }: { type: string }) {
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
+	const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
+
+	// Initialize the global space list when entering the spaces section
+	useEffect(() => {
+		if (navSection === 'spaces') {
+			spaceStore.initGlobalList().catch(() => {
+				// Error tracked inside initGlobalList
+			});
+		}
+	}, [navSection]);
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentRoomId = currentRoomIdSignal.value;
 
@@ -215,6 +227,9 @@ export function ContextPanel() {
 			case 'chats':
 				handleCreateSession();
 				break;
+			case 'spaces':
+				setCreateSpaceOpen(true);
+				break;
 			default:
 				break;
 		}
@@ -253,12 +268,17 @@ export function ContextPanel() {
 
 	const isActionLoading = creatingSession;
 
+	const allSpaces = spaceStore.spaces.value;
+
 	return (
 		<>
 			{/* Mobile backdrop */}
 			{isPanelOpen && (
 				<div class="fixed inset-0 bg-black/50 z-35 md:hidden" onClick={handlePanelClose} />
 			)}
+
+			{/* Space Create Dialog */}
+			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
 
 			<div
 				class={`
@@ -321,6 +341,7 @@ export function ContextPanel() {
 
 					{(navSection === 'home' ||
 						navSection === 'chats' ||
+						navSection === 'spaces' ||
 						(navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
@@ -360,13 +381,10 @@ export function ContextPanel() {
 					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}
 				{navSection === 'spaces' && (
-					// TODO: replace empty array with real space list from state once
-					// the Spaces data layer is wired up (Task 5.x).
-					// onCreateSpace is intentionally omitted here — "Create Space" will be
-					// triggered from the header CTA button once space creation is implemented.
 					<SpaceContextPanel
-						spaces={[]}
+						spaces={allSpaces}
 						onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
+						onCreateSpace={() => setCreateSpaceOpen(true)}
 					/>
 				)}
 				{navSection === 'projects' && (
