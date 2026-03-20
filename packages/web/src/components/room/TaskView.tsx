@@ -22,8 +22,8 @@ import { useMessageHub } from '../../hooks/useMessageHub';
 import { useModal } from '../../hooks/useModal';
 import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { toast } from '../../lib/toast.ts';
 import { copyToClipboard } from '../../lib/utils';
-import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { Modal } from '../ui/Modal';
 import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
@@ -656,6 +656,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// UI state for info panel and autoscroll toggle
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+	const [interrupting, setInterrupting] = useState(false);
 
 	// Task action modals
 	const completeModal = useModal();
@@ -825,6 +826,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			result: summary || 'Marked complete by user',
 		});
 		completeModal.close();
+		toast.success('Task completed');
 		navigateToRoom(roomId);
 	};
 
@@ -832,51 +834,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const cancelTask = async () => {
 		await request('task.cancel', { roomId, taskId });
 		cancelModal.close();
+		toast.info('Task cancelled');
 		navigateToRoom(roomId);
 	};
 
-	// Build dropdown menu items for task actions
-	const dropdownItems: DropdownMenuItem[] = [];
-	if (canComplete) {
-		dropdownItems.push({
-			label: 'Mark as Complete',
-			icon: (
-				<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M5 13l4 4L19 7"
-					/>
-				</svg>
-			),
-			onClick: () => completeModal.open(),
-		});
-	}
-	if (canCancel) {
-		if (canComplete) {
-			dropdownItems.push({ type: 'divider' });
-		}
-		dropdownItems.push({
-			label: 'Cancel Task',
-			icon: (
-				<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M6 18L18 6M6 6l12 12"
-					/>
-				</svg>
-			),
-			danger: true,
-			onClick: () => cancelModal.open(),
-		});
-	}
-
 	// Interrupt button shown only when task has active agent sessions
 	const canInterrupt = task.status === 'in_progress' || task.status === 'review';
-	const [interrupting, setInterrupting] = useState(false);
 
 	// Interrupt handler - stops LLM generation without changing task status
 	const interruptSession = async () => {
@@ -972,25 +935,36 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						</svg>
 					</button>
 				)}
-				{/* Task options dropdown — shown when at least one action is available */}
-				{dropdownItems.length > 0 && (
-					<Dropdown
-						position="right"
-						trigger={
-							<button
-								class="p-1.5 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors"
-								title="Task options"
-								data-testid="task-options-menu"
-							>
-								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-									<circle cx="12" cy="5" r="2" />
-									<circle cx="12" cy="12" r="2" />
-									<circle cx="12" cy="19" r="2" />
-								</svg>
-							</button>
-						}
-						items={dropdownItems}
-					/>
+				{/* Inline action buttons — always visible based on task status */}
+				{canCancel && (
+					<button
+						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						onClick={cancelModal.open}
+						disabled={interrupting}
+						data-testid="task-cancel-button"
+						title="Cancel task"
+					>
+						Cancel
+					</button>
+				)}
+				{canComplete && task.status !== 'review' && (
+					<button
+						class="py-1 px-2.5 rounded-lg text-xs bg-green-700 hover:bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+						onClick={completeModal.open}
+						disabled={interrupting}
+						data-testid="task-complete-button"
+						title="Mark task as complete"
+					>
+						<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M5 13l4 4L19 7"
+							/>
+						</svg>
+						Complete
+					</button>
 				)}
 				{/* Info toggle button */}
 				<button
