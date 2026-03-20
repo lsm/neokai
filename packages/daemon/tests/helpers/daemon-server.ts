@@ -530,6 +530,7 @@ async function createInProcessDaemonServer(
 
 	// Online tests do real provider calls and often need longer startup windows in CI.
 	// Keep production default unchanged; override only in test daemon helper.
+	process.env.NODE_ENV = 'test';
 	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
 		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
 	}

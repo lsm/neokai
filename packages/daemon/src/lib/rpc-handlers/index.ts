@@ -277,21 +277,24 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Provision the Global Spaces Agent session (spaces:global)
 	// Create shared state synchronously so the RPC handler is available immediately.
 	// The actual session creation and MCP wiring happens asynchronously.
+	// Skip provisioning in tests to avoid side-effects on session counts.
 	const globalSpacesState: GlobalSpacesState = { activeSpaceId: null };
 	setupGlobalSpacesHandlers(deps.messageHub, globalSpacesState);
 
-	provisionGlobalSpacesAgent({
-		sessionManager: deps.sessionManager,
-		spaceManager: deps.spaceManager,
-		spaceAgentManager: deps.spaceAgentManager,
-		spaceWorkflowManager,
-		spaceRuntimeService,
-		taskRepo: spaceTaskRepo,
-		workflowRunRepo: spaceWorkflowRunRepo,
-		state: globalSpacesState,
-	}).catch((error) => {
-		log.error('Failed to provision global spaces agent:', error);
-	});
+	if (process.env.NODE_ENV !== 'test') {
+		provisionGlobalSpacesAgent({
+			sessionManager: deps.sessionManager,
+			spaceManager: deps.spaceManager,
+			spaceAgentManager: deps.spaceAgentManager,
+			spaceWorkflowManager,
+			spaceRuntimeService,
+			taskRepo: spaceTaskRepo,
+			workflowRunRepo: spaceWorkflowRunRepo,
+			state: globalSpacesState,
+		}).catch((error) => {
+			log.error('Failed to provision global spaces agent:', error);
+		});
+	}
 
 	// Return result with cleanup function and exposed services
 	return {
