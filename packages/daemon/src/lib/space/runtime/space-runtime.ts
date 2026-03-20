@@ -34,6 +34,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
+import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 
 const log = new Logger('space-runtime');
@@ -309,6 +310,21 @@ export class SpaceRuntime {
 		return workflow.rules.filter(
 			(r) => !r.appliesTo || r.appliesTo.length === 0 || r.appliesTo.includes(stepId)
 		);
+	}
+
+	/**
+	 * Resolve a workflow for a new run from an explicit workflowId.
+	 *
+	 * Returns the workflow if found in this space's workflows, or null when:
+	 *   - No workflowId is provided (LLM agent must call list_workflows first)
+	 *   - The provided workflowId is not found in this space
+	 *
+	 * This is a thin integration point: it loads the space's workflows from the
+	 * DB and delegates to the pure `selectWorkflow()` function.
+	 */
+	resolveWorkflowForRun(spaceId: string, workflowId?: string): SpaceWorkflow | null {
+		const availableWorkflows = this.config.spaceWorkflowManager.listWorkflows(spaceId);
+		return selectWorkflow({ spaceId, availableWorkflows, workflowId });
 	}
 
 	/**

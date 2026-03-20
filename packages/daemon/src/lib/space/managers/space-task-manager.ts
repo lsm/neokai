@@ -90,6 +90,13 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * List tasks belonging to a specific workflow run
+	 */
+	async listTasksByWorkflowRun(workflowRunId: string): Promise<SpaceTask[]> {
+		return this.taskRepo.listByWorkflowRun(workflowRunId);
+	}
+
+	/**
 	 * Update task status with validation
 	 */
 	async setTaskStatus(

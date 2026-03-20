@@ -21,6 +21,7 @@ export {
 export {
 	WorkflowExecutor,
 	WorkflowTransitionError,
+	WorkflowGateError,
 } from './runtime/workflow-executor';
 export type {
 	ConditionContext,
@@ -30,6 +31,17 @@ export type {
 } from './runtime/workflow-executor';
 export { SpaceRuntime } from './runtime/space-runtime';
 export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
+export { SpaceRuntimeService } from './runtime/space-runtime-service';
+export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service';
+
+export { selectWorkflow } from './runtime/workflow-selector';
+export type { WorkflowSelectionContext } from './runtime/workflow-selector';
+
+export {
+	createSpaceAgentToolHandlers,
+	createSpaceAgentMcpServer,
+} from './tools/space-agent-tools';
+export type { SpaceAgentToolsConfig, SpaceAgentMcpServer } from './tools/space-agent-tools';
 
 export {
 	exportAgent,
