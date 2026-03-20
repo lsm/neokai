@@ -4,7 +4,9 @@
  * Migrations 1–13 handle incremental schema changes to core tables.
  * runMigrationRoomCleanup consolidates former migrations 25–36 (room feature
  * experiments that never shipped to production) into a single drop-and-recreate
- * cleanup. CRITICAL: Preserve the order of migrations.
+ * cleanup. Migration 29 is the single consolidated migration for all Space system
+ * tables — do not add separate Space migrations after it. CRITICAL: Preserve the
+ * order of migrations.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -110,8 +112,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// and mission_executions tables for Goal V2 / Mission System
 	runMigration28(db);
 
-	// Migration 29: Create all Space system tables with the final consolidated schema.
-	// Includes space_session_groups.workflow_run_id and current_step_id columns.
+	// Migration 29: Create all Space system tables (fully consolidated schema).
+	// All space tables and columns — including role, provider, inject_workflow_context,
+	// start_step_id, current_step_id, and space_workflow_transitions — are created here
+	// in a single idempotent migration.
 	runMigration29(db);
 }
 
@@ -1444,7 +1448,7 @@ function runMigration28(db: BunDatabase): void {
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
- * - space_agents: custom agents per space (role/provider included, no CHECK on role)
+ * - space_agents: custom agents per space (role/provider/inject_workflow_context included, no CHECK on role)
  * - space_workflows: workflow definitions per space (includes start_step_id)
  * - space_workflow_steps: ordered steps within a workflow
  * - space_workflow_transitions: directed edges between steps (graph navigation)
@@ -1499,6 +1503,7 @@ function runMigration29(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			provider TEXT,
+			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -1699,4 +1704,101 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
 	);
+
+	// -------------------------------------------------------------------------
+	// Idempotent column upgrades for existing databases
+	//
+	// The CREATE TABLE statements above include the final column set, so fresh
+	// databases need nothing more. For databases that were created by an earlier
+	// version of this migration (before all columns were consolidated), we add
+	// any missing columns here.
+	// -------------------------------------------------------------------------
+
+	// space_agents: role (added in former migration 30)
+	try {
+		db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'coder'`);
+	}
+
+	// space_agents: provider (added in former migration 30)
+	try {
+		db.prepare(`SELECT provider FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_agents ADD COLUMN provider TEXT`);
+	}
+
+	// space_agents: inject_workflow_context (added in former migration 33)
+	try {
+		db.prepare(`SELECT inject_workflow_context FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(
+			`ALTER TABLE space_agents ADD COLUMN inject_workflow_context INTEGER NOT NULL DEFAULT 0`
+		);
+	}
+
+	// space_workflows: start_step_id (added in former migration 32)
+	try {
+		db.prepare(`SELECT start_step_id FROM space_workflows LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN start_step_id TEXT`);
+	}
+
+	// space_workflow_runs: current_step_id (added in former migration 32)
+	try {
+		db.prepare(`SELECT current_step_id FROM space_workflow_runs LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN current_step_id TEXT`);
+	}
+
+	// space_workflow_transitions table (added in former migration 32) — CREATE TABLE
+	// is already above with IF NOT EXISTS, so this is handled automatically.
+
+	// Former migration 31 removed a CHECK constraint on space_agents.role that was
+	// introduced by the old migration 30. On databases where that ALTER TABLE ran,
+	// the constraint may still be present. Rebuild the table to remove it.
+	const agentSchema = db
+		.prepare<{ sql: string }, []>(
+			`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_agents'`
+		)
+		.get();
+	if (agentSchema?.sql.includes('CHECK(role IN')) {
+		db.transaction(() => {
+			db.exec(`
+				CREATE TABLE space_agents_new (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					name TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					model TEXT,
+					tools TEXT NOT NULL DEFAULT '[]',
+					system_prompt TEXT NOT NULL DEFAULT '',
+					config TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					role TEXT NOT NULL DEFAULT 'coder',
+					provider TEXT,
+					inject_workflow_context INTEGER NOT NULL DEFAULT 0,
+					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+				)
+			`);
+
+			// Copy all columns that existed before, filling inject_workflow_context with
+			// the default for rows that pre-date that column.
+			db.exec(`
+				INSERT INTO space_agents_new
+					(id, space_id, name, description, model, tools, system_prompt, config,
+					 created_at, updated_at, role, provider, inject_workflow_context)
+				SELECT
+					id, space_id, name, description, model, tools, system_prompt, config,
+					created_at, updated_at, role, provider,
+					COALESCE(inject_workflow_context, 0)
+				FROM space_agents
+			`);
+
+			db.exec(`DROP TABLE space_agents`);
+			db.exec(`ALTER TABLE space_agents_new RENAME TO space_agents`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
+		})();
+	}
 }

@@ -45,6 +45,7 @@ interface PresetDefinition {
 	role: SpaceAgent['role'];
 	description: string;
 	tools: string[];
+	injectWorkflowContext?: boolean;
 }
 
 const PRESET_AGENTS: PresetDefinition[] = [
@@ -67,6 +68,10 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		description:
 			'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
 		tools: PLANNER_TOOLS,
+		// Planners need full workflow structure in their task message so they can
+		// create tasks aligned with the current workflow step. Driven by data, not
+		// by a hardcoded role check in prompt builders.
+		injectWorkflowContext: true,
 	},
 	{
 		name: 'Reviewer',
@@ -113,6 +118,7 @@ export async function seedPresetAgents(
 			role: preset.role,
 			description: preset.description,
 			tools: preset.tools,
+			injectWorkflowContext: preset.injectWorkflowContext,
 		});
 
 		if (result.ok) {

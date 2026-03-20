@@ -14,7 +14,7 @@ import {
 	type CustomAgentConfig,
 	type ResolveAgentInitConfig,
 } from '../../../src/lib/space/agents/custom-agent';
-import type { SpaceAgent, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
+import type { SpaceAgent, SpaceTask, SpaceWorkflow, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
 
 // ============================================================================
@@ -508,6 +508,64 @@ describe('resolveAgentInit', () => {
 		const init = resolveAgentInit(config);
 		expect(init.sessionId).toBe('session-resolve');
 	});
+
+	it('accepts workflow field in ResolveAgentInitConfig and does not throw', () => {
+		const agent = makeAgent({ id: 'agent-1', injectWorkflowContext: true });
+		const manager = makeMockAgentManager(agent);
+		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
+		const wf = makeWorkflow();
+
+		const config = makeResolveConfig({
+			task: makeTask({ customAgentId: 'agent-1' }),
+			agentManager: manager,
+			workflowRun: run,
+			workflow: wf,
+		});
+
+		// Should not throw — workflow is now a valid field on ResolveAgentInitConfig
+		expect(() => resolveAgentInit(config)).not.toThrow();
+	});
+
+	it('workflow field from ResolveAgentInitConfig flows into task message via injectWorkflowContext', () => {
+		// Model the SpaceRuntime M4 contract:
+		//   1. Caller builds a ResolveAgentInitConfig with workflow + workflowRun
+		//   2. resolveAgentInit() produces the session AgentSessionInit
+		//   3. SpaceRuntime then calls buildCustomAgentTaskMessage using the same
+		//      fields from the resolve config (task, customAgent, workflowRun, workflow, space)
+		//
+		// The agent has injectWorkflowContext: true — the data-driven gate that
+		// controls whether the Workflow Structure section is emitted. This is no
+		// longer driven by a hardcoded role check.
+		const workflowAgent = makeAgent({ id: 'agent-1', injectWorkflowContext: true });
+		const manager = makeMockAgentManager(workflowAgent);
+		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
+		const wf = makeWorkflow();
+
+		// Step 1+2: resolve session init — workflow is now a field on ResolveAgentInitConfig
+		const resolveConfig = makeResolveConfig({
+			task: makeTask({ customAgentId: 'agent-1' }),
+			agentManager: manager,
+			workflowRun: run,
+			workflow: wf,
+			space: makeSpace(),
+		});
+		const sessionInit = resolveAgentInit(resolveConfig);
+
+		// Step 3: build the task message from the SAME config fields, as SpaceRuntime M4 would.
+		// The resolved agent is the one the agentManager returned (injectWorkflowContext: true).
+		const msg = buildCustomAgentTaskMessage({
+			customAgent: workflowAgent, // agent resolved by resolveAgentInit internally
+			task: resolveConfig.task,
+			workflowRun: resolveConfig.workflowRun ?? null,
+			workflow: resolveConfig.workflow ?? null, // ← same workflow from resolve config
+			space: resolveConfig.space,
+			sessionId: sessionInit.sessionId,
+			workspacePath: resolveConfig.workspacePath,
+		});
+
+		expect(msg).toContain('Workflow Structure');
+		expect(msg).toContain('Coding Workflow');
+	});
 });
 
 // ============================================================================
@@ -578,5 +636,204 @@ describe('sanitizeAgentKey (via init.agent)', () => {
 
 	it('handles Unicode/emoji gracefully (strips to fallback)', () => {
 		expect(initWithName('🤖🔥').agent).toBe('custom-agent');
+	});
+});
+
+// ============================================================================
+// buildCustomAgentTaskMessage — planner workflow context
+// ============================================================================
+
+function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
+	return {
+		id: 'wf-1',
+		spaceId: 'space-1',
+		name: 'Coding Workflow',
+		description: 'Plan, implement, and review code',
+		steps: [
+			{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner', instructions: 'Create a plan' },
+			{ id: 'step-code', name: 'Code', agentId: 'agent-coder', instructions: 'Write code' },
+		],
+		transitions: [],
+		startStepId: 'step-plan',
+		rules: [{ id: 'rule-1', name: 'No direct commits', content: 'Always use a PR' }],
+		tags: ['coding'],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+describe('buildCustomAgentTaskMessage — workflow context injection', () => {
+	it('includes workflow structure when injectWorkflowContext is true and workflow is provided', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('Workflow Structure');
+		expect(msg).toContain('Coding Workflow');
+		expect(msg).toContain('Plan, implement, and review code');
+	});
+
+	it('includes step names in workflow structure', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('Plan');
+		expect(msg).toContain('Code');
+	});
+
+	it('marks the current step', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('current step');
+		expect(msg).toContain('step-plan');
+	});
+
+	it('includes workflow rules', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('No direct commits');
+		expect(msg).toContain('Always use a PR');
+	});
+
+	it('does NOT include workflow structure when injectWorkflowContext is false (data-driven gate)', () => {
+		// Any agent without injectWorkflowContext — regardless of role — receives no workflow structure.
+		// Role is not checked; only the injectWorkflowContext flag matters.
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'coder', injectWorkflowContext: false }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-code' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('does NOT include workflow structure when injectWorkflowContext is undefined', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: undefined }),
+			workflowRun: makeWorkflowRun(),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('does NOT include workflow structure when workflow is null', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun(),
+			workflow: null,
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('does NOT include workflow structure when workflowRun is null', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: null,
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('includes workflow guidance to focus on current step first', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('current step first');
+	});
+
+	it('includes currentStepId from workflowRun when available', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-code' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('step-code');
+	});
+
+	it('handles workflow with no description gracefully', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow({ description: undefined }),
+		});
+
+		expect(() => buildCustomAgentTaskMessage(config)).not.toThrow();
+	});
+
+	it('handles workflow with no rules gracefully', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow({ rules: [] }),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+		expect(msg).toContain('Workflow Structure');
+		expect(msg).not.toContain('Workflow rules:');
+	});
+
+	it('handles workflow with no steps gracefully', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: undefined }),
+			workflow: makeWorkflow({ steps: [] }),
+		});
+
+		expect(() => buildCustomAgentTaskMessage(config)).not.toThrow();
+	});
+
+	it('any role can receive workflow context when injectWorkflowContext is true', () => {
+		// Proves the check is data-driven — a 'reviewer' agent with the flag set
+		// receives the same workflow structure as a 'planner' would.
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'reviewer', injectWorkflowContext: true }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('Workflow Structure');
 	});
 });

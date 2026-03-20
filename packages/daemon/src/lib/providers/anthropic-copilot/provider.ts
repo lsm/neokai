@@ -54,7 +54,7 @@ import type {
 	ProviderOAuthFlowData,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
-import { CopilotClient } from '@github/copilot-sdk';
+import { CopilotClient, type ModelInfo as CopilotSdkModelInfo } from '@github/copilot-sdk';
 import { startEmbeddedServer, type EmbeddedServer } from './server.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -68,23 +68,66 @@ const execFileAsync = promisify(execFile);
 const logger = new Logger('anthropic-copilot-provider');
 
 /**
- * GitHub Copilot model definitions.
- * Aliases use the `copilot-anthropic-` prefix for backwards compatibility
- * with existing configurations.
+ * Pick the most appropriate model from `models` for a given tier.
  *
- * These model IDs are the identifiers the GitHub Copilot backend recognises
- * and must be passed verbatim to `CopilotClient.createSession({ model })`.
+ * Used by getModelForTier() when the static fallback ID is not in the dynamic
+ * model list.  Prefers models whose ID or name contains keywords associated
+ * with the tier; falls back to the first available model.
+ */
+function pickModelForTier(models: ModelInfo[], tier: ModelTier): string | undefined {
+	if (models.length === 0) return undefined;
+	const available = models.filter((m) => m.available !== false);
+	if (available.length === 0) return undefined;
+
+	const keywordsByTier: Record<ModelTier, string[]> = {
+		opus: ['opus', 'pro', 'ultra'],
+		// 'flash' is intentionally absent from sonnet — Gemini Flash models are fast/cheap
+		// and should be haiku-tier. Including 'flash' here would shadow the haiku path
+		// whenever a Flash model appears in the account's model list.
+		sonnet: ['sonnet', '4o', 'turbo'],
+		haiku: ['mini', 'haiku', 'flash', 'fast', 'lite'],
+		// 'default' mirrors 'sonnet': a mid-tier capable model is the right default.
+		default: ['sonnet', '4o', 'turbo'],
+	};
+	const keywords = keywordsByTier[tier] ?? [];
+	for (const kw of keywords) {
+		const match = available.find((m) => m.id.toLowerCase().includes(kw));
+		if (match) return match.id;
+	}
+	// Fall back to first available model.
+	return available[0].id;
+}
+
+/**
+ * Infer the model family from a Copilot SDK model ID.
+ * Returns 'sonnet', 'opus', 'haiku', 'gpt', or 'gemini'.
+ */
+function inferModelFamily(modelId: string): string {
+	const id = modelId.toLowerCase();
+	if (id.includes('claude')) {
+		if (id.includes('opus')) return 'opus';
+		if (id.includes('haiku')) return 'haiku';
+		return 'sonnet';
+	}
+	if (id.includes('gemini')) return 'gemini';
+	return 'gpt';
+}
+
+/**
+ * Static fallback model definitions for the Copilot provider.
+ *
+ * These are used as display-name / alias enrichment when building the model list
+ * from `client.listModels()`. They also serve as a last-resort fallback if the
+ * Copilot API is unreachable at the time `getModels()` is called.
+ *
+ * IMPORTANT — Do NOT rely on these IDs being valid for the user's Copilot account.
+ * The actual available models are fetched dynamically via `client.listModels()` so
+ * that the test model ID matches what the Copilot API actually accepts.
  *
  * NOTE — intentional model ID collision with the Anthropic provider:
- * The `id` fields below (e.g. `claude-opus-4.6`) are also claimed by the
- * Anthropic provider. `registry.detectProvider(modelId)` will therefore
- * return Anthropic (registered first in factory.ts) for these IDs. This is
- * by design: every `anthropic-copilot` session stores its provider ID
- * explicitly in `session.config.provider`, and `applyEnvVarsToProcess` /
- * `getEnvVarsForModel` accept an optional `providerId` argument that
- * bypasses auto-detection. All callers that need Copilot routing MUST pass
- * the explicit provider ID; callers that rely on `detectProvider` alone will
- * silently route to Anthropic.
+ * The `id` fields below (e.g. `claude-opus-4.6`) may also be claimed by the
+ * Anthropic provider. Every `anthropic-copilot` session stores its provider ID
+ * explicitly in `session.config.provider` to avoid ambiguity.
  */
 const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 	{
@@ -121,18 +164,13 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 		available: true,
 	},
 	{
-		// Intentionally "gemini-3-pro-preview" (not "gemini-3.1-pro-preview").
-		// The legacy CLI path used "gemini-3.1-pro-preview" because it passed IDs
-		// directly to Copilot CLI. This provider passes IDs as hints to the embedded
-		// HTTP server, which maps them to Copilot SDK sessions; the version suffix
-		// matters for routing.
-		id: 'gemini-3-pro-preview',
-		name: 'Gemini 3 Pro (Copilot)',
+		id: 'gemini-3.1-pro-preview',
+		name: 'Gemini 3.1 Pro (Copilot)',
 		alias: 'copilot-anthropic-gemini',
 		family: 'gemini',
 		provider: 'anthropic-copilot',
 		contextWindow: 128000,
-		description: 'Gemini 3 Pro Preview via GitHub Copilot',
+		description: 'Gemini 3.1 Pro Preview via GitHub Copilot',
 		releaseDate: '2025-11-15',
 		available: true,
 	},
@@ -206,6 +244,26 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
 	/** Resolved token cache with TTL */
 	private tokenCache: TokenCacheEntry | null = null;
+	/**
+	 * Dynamically fetched models from the Copilot API (via client.listModels()).
+	 * Populated in getModels() and used by ownsModel()/getModelForTier() so that
+	 * real Copilot model IDs (which may differ from our static list) are recognised
+	 * by this provider.
+	 *
+	 * NOTE — ownsModel() call-order dependency:
+	 * ownsModel() checks this cache but cannot populate it (the method is synchronous
+	 * while listModels() is async). In the normal lifecycle getModels() is always
+	 * called before a session is created (the UI fetches models before offering them
+	 * to the user), so the cache is populated before ownsModel() is needed for routing.
+	 * Sessions resumed from a restart are looked up via the stored explicit providerId
+	 * (registry.detectProviderForModel), so ownsModel() is not on the critical path
+	 * for those.  If ownsModel() is called before getModels() for a real Copilot SDK
+	 * model ID that is not in the static list, it will return false — a known
+	 * limitation documented here.
+	 */
+	private dynamicModelsCache: ModelInfo[] | null = null;
+	/** Expiry timestamp for dynamicModelsCache (epoch ms). 0 means "not set". */
+	private dynamicModelsCacheExpiresAt = 0;
 
 	/** Path to stored authentication tokens */
 	private readonly authPath: string;
@@ -250,11 +308,46 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 			logger.error('Failed to start embedded Anthropic server:', err);
 			return [];
 		}
+
+		// Fetch real model IDs from the Copilot API so we only expose models that
+		// the user's account can actually use.  Hardcoded model IDs are used as
+		// display-name / context-window enrichment when a match is found, and as a
+		// last-resort fallback when the API call fails.
+		// The result is cached with a TTL matching the token cache (5 minutes) to
+		// avoid making a listModels() API call on every model-list request.
+		const now = Date.now();
+		if (this.dynamicModelsCache && now < this.dynamicModelsCacheExpiresAt) {
+			return this.dynamicModelsCache;
+		}
+
+		if (this.clientCache) {
+			try {
+				const sdkModels = await this.clientCache.listModels();
+				const mapped = sdkModels
+					.filter((m) => m.policy?.state !== 'disabled')
+					.map((m) => this.mapCopilotSdkModel(m));
+				if (mapped.length > 0) {
+					this.dynamicModelsCache = mapped;
+					this.dynamicModelsCacheExpiresAt = now + TOKEN_CACHE_TTL_MS;
+					return mapped;
+				}
+			} catch (err) {
+				logger.warn('client.listModels() failed, falling back to static model list:', err);
+			}
+		}
+
 		return COPILOT_ANTHROPIC_MODELS;
 	}
 
 	ownsModel(modelId: string): boolean {
-		return COPILOT_ANTHROPIC_MODELS.some((m) => m.alias === modelId || m.id === modelId);
+		if (COPILOT_ANTHROPIC_MODELS.some((m) => m.alias === modelId || m.id === modelId)) {
+			return true;
+		}
+		// Also check dynamically fetched models (real Copilot SDK model IDs).
+		if (this.dynamicModelsCache) {
+			return this.dynamicModelsCache.some((m) => m.alias === modelId || m.id === modelId);
+		}
+		return false;
 	}
 
 	getModelForTier(tier: ModelTier): string | undefined {
@@ -264,7 +357,22 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 			haiku: 'gpt-5-mini',
 			default: 'claude-sonnet-4.6',
 		};
-		return tierMap[tier];
+		const staticId = tierMap[tier];
+
+		// If the dynamic cache is populated, prefer a model from it to avoid
+		// returning an ID that does not exist on the user's Copilot account.
+		const cache = this.dynamicModelsCache;
+		if (cache && cache.length > 0) {
+			// 1. Static ID is in the cache → it is a real Copilot model, use it.
+			if (cache.some((m) => m.id === staticId || m.alias === staticId)) {
+				return staticId;
+			}
+			// 2. Find the best matching model in the cache for this tier.
+			const preferred = pickModelForTier(cache, tier);
+			if (preferred) return preferred;
+		}
+
+		return staticId;
 	}
 
 	/**
@@ -286,7 +394,8 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 			);
 		}
 
-		const entry = COPILOT_ANTHROPIC_MODELS.find((m) => m.alias === modelId || m.id === modelId);
+		const allKnownModels = this.dynamicModelsCache ?? COPILOT_ANTHROPIC_MODELS;
+		const entry = allKnownModels.find((m) => m.alias === modelId || m.id === modelId);
 		const resolvedId = entry?.id ?? modelId;
 		// Per-session workspace path is encoded in the auth token so the embedded
 		// server (shared singleton) can apply the correct cwd per HTTP request.
@@ -302,10 +411,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 				ANTHROPIC_API_KEY: '',
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 				API_TIMEOUT_MS: '300000',
-				ANTHROPIC_DEFAULT_OPUS_MODEL:
-					resolvedId === 'claude-opus-4.6' ? 'claude-opus-4.6' : 'claude-sonnet-4.6',
+				// All three tiers route to the same resolved model so the bridge handles
+				// every SDK-internal model request with the one real Copilot model ID.
+				ANTHROPIC_DEFAULT_OPUS_MODEL: resolvedId,
 				ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
-				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5-mini',
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: resolvedId,
 			},
 			isAnthropicCompatible: true,
 			apiVersion: 'v1',
@@ -569,9 +679,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	 * for 5 minutes by `resolveGitHubToken`. Expected latency: 3–15 s (subprocess spawn
 	 * + OAuth exchange). A 20 s hard timeout prevents indefinite hangs on slow networks.
 	 *
-	 * Note: uses `gpt-4o-mini` as the validation model. If Copilot ever removes that
-	 * model, validation will spuriously return false (prompting the user to re-authenticate
-	 * via OAuth rather than silently succeeding).
+	 * Uses `client.listModels()` for validation — a non-empty model list proves the
+	 * token has Copilot API access without depending on any specific model being
+	 * available on the user's plan.  This is intentionally model-agnostic: a user
+	 * on an enterprise plan with a different model catalogue should still be
+	 * authenticated correctly.
 	 */
 	private async validateCopilotToken(token: string): Promise<boolean> {
 		const TIMEOUT_MS = 20_000;
@@ -582,11 +694,8 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 		});
 		try {
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-			const session = await Promise.race([
-				client.createSession({
-					model: 'gpt-4o-mini',
-					onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
-				}),
+			const models = await Promise.race([
+				client.listModels(),
 				new Promise<never>((_, reject) => {
 					timeoutHandle = setTimeout(
 						() => reject(new Error('validateCopilotToken timed out')),
@@ -595,8 +704,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 				}),
 			]);
 			clearTimeout(timeoutHandle);
-			await session.disconnect();
-			return true;
+			return models.length > 0;
 		} catch {
 			return false;
 		} finally {
@@ -766,6 +874,30 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
+
+	/**
+	 * Map a Copilot SDK ModelInfo to NeoKai's ModelInfo format.
+	 *
+	 * Uses the static list for display-name and context-window enrichment when a
+	 * matching ID is found, so existing users with static aliases are not affected.
+	 */
+	private mapCopilotSdkModel(m: CopilotSdkModelInfo): ModelInfo {
+		// Look up static entry for enriched display metadata.
+		const staticEntry = COPILOT_ANTHROPIC_MODELS.find((s) => s.id === m.id);
+		const family = inferModelFamily(m.id);
+		return {
+			id: m.id,
+			name: staticEntry?.name ?? `${m.name ?? m.id} (Copilot)`,
+			alias: staticEntry?.alias ?? `copilot-${m.id.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`,
+			family,
+			provider: 'anthropic-copilot',
+			contextWindow:
+				staticEntry?.contextWindow ?? m.capabilities?.limits?.max_context_window_tokens ?? 128000,
+			description: staticEntry?.description ?? `${m.name ?? m.id} via GitHub Copilot`,
+			releaseDate: staticEntry?.releaseDate ?? '2025-01-01',
+			available: m.policy?.state !== 'disabled',
+		};
+	}
 
 	private async createServer(): Promise<EmbeddedServer> {
 		const token = await this.resolveGitHubToken();

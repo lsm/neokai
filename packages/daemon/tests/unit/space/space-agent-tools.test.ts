@@ -479,3 +479,201 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 		expect(parsed.tasks).toHaveLength(0);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// get_workflow_detail
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns full workflow definition including steps and rules', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Detail WF',
+			['tag1'],
+			'Detailed description'
+		);
+
+		const result = await makeHandlers(ctx).get_workflow_detail({ workflow_id: wf.id });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.id).toBe(wf.id);
+		expect(parsed.workflow.name).toBe('Detail WF');
+		expect(parsed.workflow.description).toBe('Detailed description');
+		expect(parsed.workflow.steps).toHaveLength(1);
+		expect(parsed.workflow.steps[0].agentId).toBe(ctx.agentId);
+		expect(parsed.workflow.transitions).toEqual([]);
+		expect(parsed.workflow.rules).toEqual([]);
+	});
+
+	test('returns error when workflow_id not found', async () => {
+		const result = await makeHandlers(ctx).get_workflow_detail({
+			workflow_id: 'wf-does-not-exist',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('wf-does-not-exist');
+	});
+
+	test('returns workflow with tags', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Tagged WF', [
+			'alpha',
+			'beta',
+		]);
+
+		const result = await makeHandlers(ctx).get_workflow_detail({ workflow_id: wf.id });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflow.tags).toContain('alpha');
+		expect(parsed.workflow.tags).toContain('beta');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// suggest_workflow
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns empty list with message when no workflows exist', async () => {
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'implement a new feature',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows).toEqual([]);
+	});
+
+	test('returns matching workflow ranked first when keywords match name', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Coding Workflow',
+			[],
+			'For writing code'
+		);
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Research Workflow',
+			[],
+			'For research tasks'
+		);
+
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'write coding implementation',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows).toHaveLength(2);
+		// Coding Workflow should rank first (matches 'coding' in name and description)
+		expect(parsed.workflows[0].name).toBe('Coding Workflow');
+	});
+
+	test('returns matching workflow when keywords match description', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Alpha WF',
+			[],
+			'deploys to production environment'
+		);
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Beta WF',
+			[],
+			'runs unit tests'
+		);
+
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'deploy to production',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows[0].name).toBe('Alpha WF');
+	});
+
+	test('returns matching workflow when keywords match tags', async () => {
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Review Flow',
+			['pullrequest', 'review'],
+			''
+		);
+		buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Deploy Flow',
+			['deployment', 'release'],
+			''
+		);
+
+		const result = await makeHandlers(ctx).suggest_workflow({ description: 'review pullrequest' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows[0].name).toBe('Review Flow');
+	});
+
+	test('returns all workflows when no keywords match', async () => {
+		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Alpha WF');
+		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Beta WF');
+
+		const result = await makeHandlers(ctx).suggest_workflow({ description: 'xyz-unique-term' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		// All workflows returned as fallback
+		expect(parsed.workflows).toHaveLength(2);
+	});
+
+	test('returns all workflows when description contains only stop words', async () => {
+		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'My WF');
+
+		const result = await makeHandlers(ctx).suggest_workflow({ description: 'the and for' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows).toHaveLength(1);
+	});
+
+	test('returns all workflows for empty description', async () => {
+		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'My WF');
+
+		const result = await makeHandlers(ctx).suggest_workflow({ description: '' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflows).toHaveLength(1);
+	});
+});

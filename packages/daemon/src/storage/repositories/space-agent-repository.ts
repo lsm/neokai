@@ -4,10 +4,11 @@
  * CRUD operations for space_agents table.
  *
  * Column mapping:
- *   SpaceAgent.tools        ↔  tools column (JSON string array; '[]' or null → undefined)
- *   SpaceAgent.toolConfig   ↔  config column (JSON)
- *   SpaceAgent.systemPrompt ↔  system_prompt column
- *   SpaceAgent.role         ↔  role column (free-form string display label, e.g. 'coder', 'planner')
+ *   SpaceAgent.tools                 ↔  tools column (JSON string array; '[]' or null → undefined)
+ *   SpaceAgent.toolConfig            ↔  config column (JSON)
+ *   SpaceAgent.systemPrompt          ↔  system_prompt column
+ *   SpaceAgent.role                  ↔  role column (free-form string display label, e.g. 'coder', 'planner')
+ *   SpaceAgent.injectWorkflowContext ↔  inject_workflow_context column (INTEGER 0/1; 0/null → undefined)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -28,8 +29,8 @@ export class SpaceAgentRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_agents
-					(id, space_id, name, description, model, provider, tools, system_prompt, role, config, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					(id, space_id, name, description, model, provider, tools, system_prompt, role, config, inject_workflow_context, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -42,6 +43,7 @@ export class SpaceAgentRepository {
 				params.systemPrompt ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
 				params.role,
 				params.toolConfig ? JSON.stringify(params.toolConfig) : null,
+				params.injectWorkflowContext ? 1 : 0,
 				now,
 				now
 			);
@@ -140,6 +142,11 @@ export class SpaceAgentRepository {
 			fields.push('config = ?');
 			values.push(params.toolConfig ? JSON.stringify(params.toolConfig) : null);
 		}
+		if (params.injectWorkflowContext !== undefined) {
+			fields.push('inject_workflow_context = ?');
+			// null means clear → 0 (false)
+			values.push(params.injectWorkflowContext ? 1 : 0);
+		}
 
 		if (fields.length === 0) return this.getById(id);
 
@@ -198,6 +205,8 @@ export class SpaceAgentRepository {
 			toolConfig: row.config
 				? (JSON.parse(row.config as string) as Record<string, unknown>)
 				: undefined,
+			// 0 or null → undefined (falsy); 1 → true
+			injectWorkflowContext: row.inject_workflow_context ? true : undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

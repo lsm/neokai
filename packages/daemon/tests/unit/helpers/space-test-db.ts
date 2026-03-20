@@ -46,6 +46,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			provider TEXT,
+			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);

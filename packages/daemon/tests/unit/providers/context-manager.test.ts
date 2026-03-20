@@ -1062,10 +1062,10 @@ describe('ProviderContextManager', () => {
 // The invariant differs per provider:
 //   Codex bridge:   all three tier slots must be gpt-* model IDs — the bridge
 //                   rejects any claude-* name with "model does not exist".
-//   Copilot bridge: only the haiku slot is at risk. Copilot intentionally routes
-//                   claude-sonnet-4.6 / claude-opus-4.6 for those tiers, but
-//                   gpt-5-mini is required for haiku — a claude-haiku fallback
-//                   would not be served correctly by the Copilot bridge.
+//   Copilot bridge: all three tier slots must be set to the same resolved model ID
+//                   so the SDK's internal haiku/opus calls also go through a real
+//                   Copilot model.  The SDK's default claude-haiku-4-5-20251001
+//                   is an Anthropic API ID that the Copilot bridge cannot serve.
 // ---------------------------------------------------------------------------
 
 describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()', () => {
@@ -1095,7 +1095,7 @@ describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()',
 		expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).not.toMatch(/^claude-/);
 	});
 
-	it('Copilot provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+	it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
 		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 		// Inject a fake server URL — buildSdkConfig() requires the embedded server to be
 		// started, but for this assertion we only care about the env var values it returns.
@@ -1104,9 +1104,20 @@ describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()',
 			stop: async () => {},
 		};
 		const cfg = p.buildSdkConfig('copilot-anthropic-sonnet');
-		// Only the haiku slot must be non-claude-*. Sonnet/opus intentionally use
-		// claude-sonnet-4.6 / claude-opus-4.6 (the Copilot bridge serves those).
-		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+		// All three tiers must use the same resolved model ID so that every SDK-internal
+		// call (summarisation, compaction, etc.) routes through the real Copilot model
+		// the user selected, rather than a hardcoded fallback that might be unavailable.
+		// This prevents the original bug where the haiku slot defaulted to
+		// claude-haiku-4-5-20251001, which is an Anthropic API ID that the Copilot bridge
+		// cannot serve.
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
+			cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
+		);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe(
+			cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
+		);
+		// The resolved model must NOT be the SDK's default haiku fallback.
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toBe('claude-haiku-4-5-20251001');
 		// p.shutdown() intentionally omitted: serverCache.stop is a no-op and no
 		// real embedded server was started, so there is nothing to clean up.
 	});

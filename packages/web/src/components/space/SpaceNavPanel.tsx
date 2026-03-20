@@ -14,8 +14,12 @@ interface SpaceNavPanelProps {
 	spaceId: string;
 	activeTaskId?: string | null;
 	activeRunId?: string | null;
+	activeView?: string | null;
 	onRunSelect: (runId: string) => void;
 	onTaskSelect: (taskId: string) => void;
+	onAgentsClick?: () => void;
+	onWorkflowsClick?: () => void;
+	onSettingsClick?: () => void;
 }
 
 type RunStatus = SpaceWorkflowRun['status'];
@@ -98,8 +102,12 @@ export function SpaceNavPanel({
 	spaceId: _spaceId,
 	activeTaskId,
 	activeRunId,
+	activeView,
 	onRunSelect,
 	onTaskSelect,
+	onAgentsClick,
+	onWorkflowsClick,
+	onSettingsClick,
 }: SpaceNavPanelProps) {
 	const workflowRuns = spaceStore.workflowRuns.value;
 	const standaloneTasks = spaceStore.standaloneTasks.value;
@@ -163,21 +171,52 @@ export function SpaceNavPanel({
 				</div>
 			)}
 
-			{/* Navigation Links — TODO: wire onClick once Agent/Workflow/Settings routes are implemented */}
+			{/* Navigation Links */}
 			<div class="mt-auto pt-4 border-t border-dark-700 px-1">
 				<div class="space-y-0.5">
-					<NavLink label="Agents" icon={AgentIcon} />
-					<NavLink label="Workflows" icon={WorkflowIcon} />
-					<NavLink label="Settings" icon={SettingsIcon} />
+					<NavLink
+						label="Agents"
+						icon={AgentIcon}
+						active={activeView === 'agents'}
+						onClick={onAgentsClick}
+					/>
+					<NavLink
+						label="Workflows"
+						icon={WorkflowIcon}
+						active={activeView === 'workflows'}
+						onClick={onWorkflowsClick}
+					/>
+					<NavLink
+						label="Settings"
+						icon={SettingsIcon}
+						active={activeView === 'settings'}
+						onClick={onSettingsClick}
+					/>
 				</div>
 			</div>
 		</div>
 	);
 }
 
-function NavLink({ label, icon: Icon }: { label: string; icon: ComponentType }) {
+function NavLink({
+	label,
+	icon: Icon,
+	active,
+	onClick,
+}: {
+	label: string;
+	icon: ComponentType;
+	active?: boolean;
+	onClick?: () => void;
+}) {
 	return (
-		<div class="flex items-center gap-2 px-3 py-2 rounded-md text-gray-500 hover:bg-dark-800 hover:text-gray-300 cursor-pointer transition-colors">
+		<div
+			onClick={onClick}
+			class={cn(
+				'flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
+				active ? 'bg-dark-700 text-gray-200' : 'text-gray-500 hover:bg-dark-800 hover:text-gray-300'
+			)}
+		>
 			<Icon />
 			<span class="text-xs font-medium">{label}</span>
 		</div>

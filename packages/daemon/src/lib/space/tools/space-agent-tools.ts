@@ -5,11 +5,13 @@
  * change plans, and query Space tasks. They are in the Space namespace (not Room).
  *
  * Tools (per M7 spec):
- *   list_workflows     — show all workflows with their descriptions and steps
- *   start_workflow_run — begin a workflow run (requires explicit workflowId)
- *   get_workflow_run   — check the status of a running workflow
- *   change_plan        — update task description or switch to a different workflow mid-run
- *   list_tasks         — see current and past tasks
+ *   list_workflows      — show all workflows with their descriptions and steps
+ *   start_workflow_run  — begin a workflow run (requires explicit workflowId)
+ *   get_workflow_run    — check the status of a running workflow
+ *   change_plan         — update task description or switch to a different workflow mid-run
+ *   list_tasks          — see current and past tasks
+ *   get_workflow_detail — get a specific workflow's full definition (steps, transitions, rules)
+ *   suggest_workflow    — get workflow recommendations for a described piece of work
  *
  * Design note: workflow selection is LLM-driven. The agent calls list_workflows,
  * reasons about which workflow fits the request, then calls start_workflow_run
@@ -54,6 +56,52 @@ interface ToolResult {
 function jsonResult(data: unknown): ToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
+
+/**
+ * Common English stop words filtered out by suggest_workflow before keyword matching.
+ * Hoisted to module scope so the Set is constructed once, not on every tool call.
+ */
+const SUGGEST_WORKFLOW_STOP_WORDS = new Set([
+	'the',
+	'and',
+	'for',
+	'are',
+	'but',
+	'not',
+	'you',
+	'all',
+	'can',
+	'her',
+	'was',
+	'one',
+	'our',
+	'out',
+	'day',
+	'get',
+	'has',
+	'him',
+	'his',
+	'how',
+	'its',
+	'may',
+	'new',
+	'now',
+	'old',
+	'see',
+	'two',
+	'use',
+	'way',
+	'who',
+	'did',
+	'let',
+	'put',
+	'say',
+	'she',
+	'too',
+	'had',
+	'any',
+	'via',
+]);
 
 // ---------------------------------------------------------------------------
 // Tool handlers (separated for testability)
@@ -195,6 +243,75 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
+		 * Get the full definition of a specific workflow — steps, transitions, and rules.
+		 * Use this when list_workflows gives enough name/description to narrow down to one
+		 * candidate and you want to inspect its complete structure before starting a run.
+		 */
+		async get_workflow_detail(args: { workflow_id: string }): Promise<ToolResult> {
+			const workflow = workflowManager.getWorkflow(args.workflow_id);
+			if (!workflow) {
+				return jsonResult({ success: false, error: `Workflow not found: ${args.workflow_id}` });
+			}
+			return jsonResult({ success: true, workflow });
+		},
+
+		/**
+		 * Suggest workflows that best match a description of the intended work.
+		 *
+		 * Performs a case-insensitive keyword search over workflow names, descriptions,
+		 * and tags. Always returns ALL available workflows, sorted by relevance
+		 * (number of keyword hits descending). When no keywords match, all workflows
+		 * are returned in creation order.
+		 *
+		 * Selection is still LLM-driven: the agent should use this to rank candidates
+		 * and then call start_workflow_run with an explicit workflow_id.
+		 */
+		async suggest_workflow(args: { description: string }): Promise<ToolResult> {
+			const allWorkflows = workflowManager.listWorkflows(spaceId);
+			if (allWorkflows.length === 0) {
+				return jsonResult({
+					success: true,
+					workflows: [],
+					message: 'No workflows available in this space.',
+				});
+			}
+
+			// Extract meaningful keywords (3+ chars, skip stop words)
+			const keywords = args.description
+				.toLowerCase()
+				.split(/\W+/)
+				.filter((w) => w.length >= 3 && !SUGGEST_WORKFLOW_STOP_WORDS.has(w));
+
+			if (keywords.length === 0) {
+				// No meaningful keywords — return all in creation order
+				return jsonResult({ success: true, workflows: allWorkflows });
+			}
+
+			// Score each workflow by number of keyword hits; return all sorted by score
+			const scored = allWorkflows.map((wf) => {
+				const haystack = [wf.name, wf.description ?? '', ...(wf.tags ?? [])]
+					.join(' ')
+					.toLowerCase();
+				const hits = keywords.filter((kw) => haystack.includes(kw)).length;
+				return { workflow: wf, hits };
+			});
+
+			const anyHits = scored.some((s) => s.hits > 0);
+			if (!anyHits) {
+				// No keyword matches — return all so LLM can still reason
+				return jsonResult({
+					success: true,
+					workflows: allWorkflows,
+					message: 'No direct keyword matches found; returning all workflows for LLM selection.',
+				});
+			}
+
+			// Stable sort descending by hits; 0-hit workflows appear at the end
+			scored.sort((a, b) => b.hits - a.hits);
+			return jsonResult({ success: true, workflows: scored.map((s) => s.workflow) });
+		},
+
+		/**
 		 * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
 		 */
 		async list_tasks(args: {
@@ -269,6 +386,24 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					),
 			},
 			(args) => handlers.change_plan(args)
+		),
+		tool(
+			'get_workflow_detail',
+			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before starting a run.',
+			{
+				workflow_id: z.string().describe('ID of the workflow to retrieve'),
+			},
+			(args) => handlers.get_workflow_detail(args)
+		),
+		tool(
+			'suggest_workflow',
+			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before calling start_workflow_run.',
+			{
+				description: z
+					.string()
+					.describe('Description of the work you want to do — used for keyword matching'),
+			},
+			(args) => handlers.suggest_workflow(args)
 		),
 		tool(
 			'list_tasks',
