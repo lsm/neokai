@@ -25,10 +25,6 @@ import type { SpaceWorkflow } from '@neokai/shared';
 export interface WorkflowSelectionContext {
 	/** The space this selection is scoped to. */
 	spaceId: string;
-	/** Human-readable title of the work being requested. */
-	title: string;
-	/** Longer description of the work being requested. May be empty. */
-	description: string;
 	/**
 	 * Available workflows to select from.
 	 * Must all belong to the given spaceId — callers are responsible for pre-filtering.

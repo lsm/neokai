@@ -385,6 +385,33 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 	});
+
+	test('does not cancel the original run when target workflow_id is invalid', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Original WF'
+		);
+		const startResult = await makeHandlers(ctx).start_workflow_run({
+			workflow_id: wf.id,
+			title: 'run to keep',
+		});
+		const runId = JSON.parse(startResult.content[0].text).run.id;
+
+		// Attempt to switch to a non-existent workflow
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: runId,
+			workflow_id: 'wf-does-not-exist',
+		});
+
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+
+		// Original run must still be in_progress — not cancelled
+		const originalRun = ctx.workflowRunRepo.getRun(runId);
+		expect(originalRun?.status).toBe('in_progress');
+	});
 });
 
 // ---------------------------------------------------------------------------

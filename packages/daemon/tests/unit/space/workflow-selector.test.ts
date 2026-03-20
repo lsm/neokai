@@ -45,8 +45,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 function makeContext(overrides: Partial<WorkflowSelectionContext> = {}): WorkflowSelectionContext {
 	return {
 		spaceId: 'space-1',
-		title: '',
-		description: '',
 		availableWorkflows: [],
 		...overrides,
 	};
@@ -109,42 +107,22 @@ describe('selectWorkflow — explicit workflowId', () => {
 
 describe('selectWorkflow — no workflowId (LLM must pick)', () => {
 	test('returns null when no workflowId and no workflows', () => {
-		const ctx = makeContext({ title: 'do something', availableWorkflows: [] });
+		const ctx = makeContext({ availableWorkflows: [] });
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
 
 	test('returns null when no workflowId even if workflows are available', () => {
 		const wf = makeWorkflow({ id: 'wf-noworkflowid', tags: ['coding'] });
-		const ctx = makeContext({
-			title: 'implement coding feature',
-			description: 'write some code',
-			availableWorkflows: [wf],
-		});
-		// No workflowId → always null regardless of tags/description
+		const ctx = makeContext({ availableWorkflows: [wf] });
+		// No workflowId → always null (no server-side heuristics)
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
 
-	test('returns null when no workflowId and multiple workflows with matching names', () => {
-		const wf1 = makeWorkflow({ id: 'wf-nm1', name: 'Coding Workflow', tags: ['coding'] });
-		const wf2 = makeWorkflow({ id: 'wf-nm2', name: 'Research Workflow', tags: ['research'] });
-		const ctx = makeContext({
-			title: 'coding research task',
-			availableWorkflows: [wf1, wf2],
-		});
-		// Still null — no server-side heuristics
-		expect(selectWorkflow(ctx)).toBeNull();
-	});
-
-	test('returns null when no workflowId and workflow descriptions match input', () => {
-		const wf = makeWorkflow({
-			id: 'wf-desc-match',
-			description: 'implement a coding feature',
-		});
-		const ctx = makeContext({
-			title: 'implement a coding feature',
-			availableWorkflows: [wf],
-		});
-		// No keyword matching — return null
+	test('returns null when no workflowId and multiple workflows exist', () => {
+		const wf1 = makeWorkflow({ id: 'wf-nm1', name: 'Coding Workflow' });
+		const wf2 = makeWorkflow({ id: 'wf-nm2', name: 'Research Workflow' });
+		const ctx = makeContext({ availableWorkflows: [wf1, wf2] });
+		// Still null — LLM must choose
 		expect(selectWorkflow(ctx)).toBeNull();
 	});
 });

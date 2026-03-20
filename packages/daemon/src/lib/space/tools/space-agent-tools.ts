@@ -51,7 +51,7 @@ interface ToolResult {
 	content: Array<{ type: 'text'; text: string }>;
 }
 
-function jsonResult(data: Record<string, unknown>): ToolResult {
+function jsonResult(data: unknown): ToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
@@ -148,8 +148,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			// Switching workflow: cancel current run, start a new one.
+			// Switching workflow: validate the target workflow exists BEFORE cancelling
+			// the old run, so a bad workflow_id never leaves the user with no active run.
 			if (args.workflow_id) {
+				const targetWorkflow = workflowManager.getWorkflow(args.workflow_id);
+				if (!targetWorkflow) {
+					return jsonResult({
+						success: false,
+						error: `Workflow not found: ${args.workflow_id}`,
+					});
+				}
+
 				workflowRunRepo.updateStatus(run.id, 'cancelled');
 
 				try {
