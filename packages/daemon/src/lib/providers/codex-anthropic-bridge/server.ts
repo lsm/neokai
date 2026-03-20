@@ -319,6 +319,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 
 	const server = Bun.serve({
 		port: 0, // random available port
+		idleTimeout: 0, // disable idle timeout — bridge server handles long-running SSE streams
 		async fetch(req: Request): Promise<Response> {
 			const url = new URL(req.url);
 
