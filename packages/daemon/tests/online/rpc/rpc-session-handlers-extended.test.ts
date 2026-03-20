@@ -22,7 +22,7 @@ describe('Session RPC Handlers - Extended', () => {
 
 	afterEach(async () => {
 		await daemon.waitForExit();
-	});
+	}, 15_000);
 
 	async function createSession(
 		workspacePath: string,

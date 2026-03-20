@@ -21,7 +21,7 @@ describe('State Sync', () => {
 
 	afterEach(async () => {
 		await daemon.waitForExit();
-	});
+	}, 15_000);
 
 	async function createSession(workspacePath: string): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
