@@ -28,6 +28,9 @@ export interface GeneralAgentConfig {
 	sessionId: string;
 	workspacePath: string;
 	model?: string;
+	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
+	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
+	provider?: string;
 	/** Summaries of previously completed tasks in the same goal */
 	previousTaskSummaries?: string[];
 }
@@ -199,6 +202,7 @@ export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'general',
 		model: config.model ?? DEFAULT_GENERAL_MODEL,
+		provider: config.provider,
 		contextAutoQueue: false,
 	};
 }

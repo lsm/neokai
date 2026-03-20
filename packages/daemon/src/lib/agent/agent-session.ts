@@ -123,6 +123,15 @@ export interface AgentSessionInit {
 	/** Model ID - defaults to default model */
 	model?: string;
 
+	/**
+	 * Provider ID for this session (e.g. 'anthropic', 'anthropic-copilot', 'glm').
+	 * When set, provider routing is deterministic (no deprecated detectProvider fallback).
+	 * Room-spawned sessions (leader, worker) must set this so models shared between
+	 * multiple providers (e.g. claude-opus-4.6 owned by both Anthropic and Copilot)
+	 * are routed to the correct provider.
+	 */
+	provider?: string;
+
 	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
 	coordinatorMode?: boolean;
 
@@ -484,6 +493,11 @@ export class AgentSession
 			coordinatorMode: init.coordinatorMode,
 			agent: init.agent,
 			agents: init.agents,
+			// Explicit provider — prevents deprecated detectProvider() fallback in query-runner.
+			// Room-spawned sessions (leader, coder, general) pass this from the model cache
+			// so providers that share canonical model IDs (e.g. anthropic vs anthropic-copilot
+			// for 'claude-opus-4.6') are routed deterministically.
+			provider: init.provider as import('@neokai/shared').Provider | undefined,
 		};
 
 		const metadata: SessionMetadata = {

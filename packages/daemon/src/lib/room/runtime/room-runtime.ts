@@ -73,6 +73,7 @@ import {
 } from './lifecycle-hooks';
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 import { getNextRunAt } from './cron-utils';
+import { getAvailableModels } from '../../model-service';
 
 const log = new Logger('room-runtime');
 
@@ -286,7 +287,11 @@ export class RoomRuntime {
 		// Keep test and direct-runtime usage predictable: when no explicit leader model
 		// is provided, derive it from the initial room config.
 		if (!config.model || config.model.trim() === '') {
-			this.taskGroupManager.updateModel(this.resolveAgentModel(config.room, 'leader'));
+			const { model: leaderModel, provider: leaderProvider } = this.resolveAgentModelWithProvider(
+				config.room,
+				'leader'
+			);
+			this.taskGroupManager.updateModel(leaderModel, leaderProvider);
 		}
 	}
 
@@ -332,16 +337,39 @@ export class RoomRuntime {
 	 * Priority: room.config.agentModels[role] > room.defaultModel > global default.
 	 */
 	private resolveAgentModel(room: Room, role: 'leader' | 'planner' | 'coder' | 'general'): string {
+		return this.resolveAgentModelWithProvider(room, role).model;
+	}
+
+	/**
+	 * Resolve both the model ID and its provider for a given agent role.
+	 *
+	 * Looks up the model in the global model cache so that providers sharing the
+	 * same canonical model ID (e.g. anthropic and anthropic-copilot both expose
+	 * 'claude-opus-4.6') are distinguished correctly. Without an explicit provider,
+	 * query-runner.ts falls back to the deprecated detectProvider() heuristic which
+	 * always returns Anthropic first — causing Copilot-targeted sessions to be
+	 * misrouted to Anthropic.
+	 */
+	private resolveAgentModelWithProvider(
+		room: Room,
+		role: 'leader' | 'planner' | 'coder' | 'general'
+	): { model: string; provider: string | undefined } {
 		const config = (room.config ?? {}) as Record<string, unknown>;
 		const agentModels = config.agentModels as Record<string, string> | undefined;
 		const roleModel = agentModels?.[role];
+		let modelId: string;
 		if (typeof roleModel === 'string' && roleModel.trim() !== '') {
-			return roleModel;
+			modelId = roleModel;
+		} else if (typeof room.defaultModel === 'string' && room.defaultModel.trim() !== '') {
+			modelId = room.defaultModel;
+		} else {
+			modelId = this.defaultModel;
 		}
-		if (typeof room.defaultModel === 'string' && room.defaultModel.trim() !== '') {
-			return room.defaultModel;
-		}
-		return this.defaultModel;
+		// Look up provider from the global model cache. getAvailableModels() is sync
+		// and safe to call here (cache is pre-warmed at startup via initializeModels).
+		const availableModels = getAvailableModels('global');
+		const modelInfo = availableModels.find((m) => m.id === modelId || m.alias === modelId);
+		return { model: modelId, provider: modelInfo?.provider };
 	}
 
 	/**
@@ -375,8 +403,10 @@ export class RoomRuntime {
 		this.room = currentRoom;
 		const config = (currentRoom.config ?? {}) as Record<string, unknown>;
 
-		// Keep TaskGroupManager model aligned to the current Leader model.
-		this.taskGroupManager.updateModel(this.resolveAgentModel(currentRoom, 'leader'));
+		// Keep TaskGroupManager model+provider aligned to the current Leader model.
+		const { model: updatedLeaderModel, provider: updatedLeaderProvider } =
+			this.resolveAgentModelWithProvider(currentRoom, 'leader');
+		this.taskGroupManager.updateModel(updatedLeaderModel, updatedLeaderProvider);
 
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
@@ -2778,8 +2808,14 @@ export class RoomRuntime {
 			await this.emitTaskUpdateById(planningTask.id);
 			return;
 		}
-		const plannerModel = this.resolveAgentModel(currentRoom, 'planner');
-		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		const { model: plannerModel, provider: plannerProvider } = this.resolveAgentModelWithProvider(
+			currentRoom,
+			'planner'
+		);
+		const { model: leaderModel, provider: leaderProvider } = this.resolveAgentModelWithProvider(
+			currentRoom,
+			'leader'
+		);
 
 		// Build WorkerConfig for the Planner agent
 		// isPlanApproved uses a mutable ref — groupId is set after spawn() returns
@@ -2795,6 +2831,7 @@ export class RoomRuntime {
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
 			model: plannerModel,
+			provider: plannerProvider,
 			createDraftTask,
 			updateDraftTask,
 			removeDraftTask,
@@ -2814,6 +2851,7 @@ export class RoomRuntime {
 				workspacePath: this.taskGroupManager.workspacePath,
 				groupId: '', // not used by buildLeaderTaskContext
 				model: leaderModel,
+				provider: leaderProvider,
 				reviewContext: 'plan_review',
 			}),
 		};
@@ -2904,8 +2942,14 @@ export class RoomRuntime {
 		// Determine worker config based on assigned agent type
 		const agentType = task.assignedAgent ?? 'coder';
 		const workerRole = agentType === 'general' ? 'general' : 'coder';
-		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
-		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		const { model: workerModel, provider: workerProvider } = this.resolveAgentModelWithProvider(
+			currentRoom,
+			workerRole
+		);
+		const { model: leaderModel, provider: leaderProvider } = this.resolveAgentModelWithProvider(
+			currentRoom,
+			'leader'
+		);
 		let workerConfig: WorkerConfig;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
@@ -2917,6 +2961,7 @@ export class RoomRuntime {
 			workspacePath: this.taskGroupManager.workspacePath,
 			groupId: '',
 			model: leaderModel,
+			provider: leaderProvider,
 			reviewContext: 'code_review' as const,
 		};
 
@@ -2928,6 +2973,7 @@ export class RoomRuntime {
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: workerModel,
+				provider: workerProvider,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -2946,6 +2992,7 @@ export class RoomRuntime {
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: workerModel,
+				provider: workerProvider,
 				previousTaskSummaries,
 			};
 			workerConfig = {

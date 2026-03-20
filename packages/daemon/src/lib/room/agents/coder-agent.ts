@@ -37,6 +37,9 @@ export interface CoderAgentConfig {
 	sessionId: string;
 	workspacePath: string;
 	model?: string;
+	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
+	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
+	provider?: string;
 	/** Summaries of previously completed tasks in the same goal */
 	previousTaskSummaries?: string[];
 }
@@ -455,6 +458,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 			context: { roomId: config.room.id },
 			type: 'coder',
 			model: config.model ?? DEFAULT_CODER_MODEL,
+			provider: config.provider,
 			agent: 'Coder',
 			agents: {
 				Coder: coderAgentDef,
@@ -478,6 +482,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 		context: { roomId: config.room.id },
 		type: 'coder',
 		model: config.model ?? DEFAULT_CODER_MODEL,
+		provider: config.provider,
 		contextAutoQueue: false,
 	};
 }

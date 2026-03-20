@@ -154,6 +154,9 @@ export interface TaskGroupManagerConfig {
 	workspacePath: string;
 	/** Leader model */
 	model?: string;
+	/** Provider ID for the leader model (e.g. 'anthropic', 'anthropic-copilot').
+	 *  Resolved from the model cache so routing is deterministic. */
+	provider?: string;
 	/** Worker model (defaults to model if not set) */
 	workerModel?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
@@ -178,6 +181,7 @@ export class TaskGroupManager {
 	private readonly daemonHub?: DaemonHub;
 	readonly workspacePath: string;
 	private _model?: string;
+	private _provider?: string;
 	readonly workerModel?: string;
 
 	constructor(config: TaskGroupManagerConfig) {
@@ -191,6 +195,7 @@ export class TaskGroupManager {
 		this.getGoalById = config.getGoal;
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
+		this._provider = config.provider;
 		this.workerModel = config.workerModel;
 		this.daemonHub = config.daemonHub;
 	}
@@ -200,9 +205,15 @@ export class TaskGroupManager {
 		return this._model;
 	}
 
-	/** Update the model for new leader sessions (e.g., when room settings change) */
-	updateModel(model: string | undefined): void {
+	/** Get the current provider for leader sessions */
+	get provider(): string | undefined {
+		return this._provider;
+	}
+
+	/** Update the model and provider for new leader sessions (e.g., when room settings change) */
+	updateModel(model: string | undefined, provider?: string): void {
 		this._model = model;
+		this._provider = provider;
 	}
 
 	/**
@@ -308,6 +319,7 @@ export class TaskGroupManager {
 			workspacePath: groupWorkspacePath,
 			groupId: group.id,
 			model: this._model,
+			provider: this._provider,
 			reviewContext,
 			goalManager: this.goalManager,
 			taskManager: this.taskManager,
@@ -429,6 +441,7 @@ export class TaskGroupManager {
 				workspacePath: group.workspacePath ?? this.workspacePath,
 				groupId: group.id,
 				model: this.model,
+				provider: this.provider,
 				reviewContext: deferredLeader.reviewContext,
 				goalManager: this.goalManager,
 				taskManager: this.taskManager,

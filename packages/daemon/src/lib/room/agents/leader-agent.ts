@@ -80,6 +80,9 @@ export interface LeaderAgentConfig {
 	workspacePath: string;
 	groupId: string;
 	model?: string;
+	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
+	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
+	provider?: string;
 	/** What type of work is being reviewed */
 	reviewContext?: ReviewContext;
 	/** Dependencies for the leader context MCP server (optional - only needed when creating MCP server) */
@@ -1150,6 +1153,7 @@ export function createLeaderAgentInit(
 			context: { roomId: config.room.id },
 			type: 'leader' as const,
 			model: config.model ?? DEFAULT_LEADER_MODEL,
+			provider: config.provider,
 			agent: 'Leader',
 			agents: allAgents,
 			contextAutoQueue: false,
@@ -1173,6 +1177,7 @@ export function createLeaderAgentInit(
 		context: { roomId: config.room.id },
 		type: 'leader',
 		model: config.model ?? DEFAULT_LEADER_MODEL,
+		provider: config.provider,
 		contextAutoQueue: false,
 	};
 }

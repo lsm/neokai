@@ -82,6 +82,9 @@ export interface PlannerAgentConfig {
 	sessionId: string;
 	workspacePath: string;
 	model?: string;
+	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
+	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
+	provider?: string;
 	/** Callback to create a draft task linked to this planning task */
 	createDraftTask: (params: PlannerCreateTaskParams) => Promise<{ id: string; title: string }>;
 	/** Callback to update an existing draft task */
@@ -607,6 +610,7 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'planner',
 		model: config.model ?? DEFAULT_PLANNER_MODEL,
+		provider: config.provider,
 		agent: 'Planner',
 		agents: {
 			Planner: plannerAgentDef,
