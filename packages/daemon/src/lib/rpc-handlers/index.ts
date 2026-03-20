@@ -242,7 +242,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		spaceAgentRepo,
 		spaceWorkflowRepo,
 		spaceWorkflowManager,
-		deps.db.getDatabase()
+		deps.db.getDatabase(),
+		deps.daemonHub
 	);
 
 	// Return cleanup function to stop background services

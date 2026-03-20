@@ -18,6 +18,7 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
+import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import {
 	setupSpaceExportImportHandlers,
 	type ImportPreviewResult,
@@ -147,6 +148,19 @@ function createMockHub(): { hub: MessageHub; handlers: Map<string, RequestHandle
 	return { hub, handlers };
 }
 
+function createMockDaemonHub(): {
+	hub: DaemonHub;
+	emittedEvents: Array<{ name: string; data: unknown }>;
+} {
+	const emittedEvents: Array<{ name: string; data: unknown }> = [];
+	const hub = {
+		emit: mock(async (name: string, data: unknown) => {
+			emittedEvents.push({ name, data });
+		}),
+	} as unknown as DaemonHub;
+	return { hub, emittedEvents };
+}
+
 function createMockSpaceManager(spaceId: string, spaceName = 'Test Space'): SpaceManager {
 	return {
 		getSpace: mock(async (id: string) => {
@@ -180,6 +194,8 @@ describe('Space Export/Import RPC Handlers', () => {
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
 	let handlers: Map<string, RequestHandler>;
+	let daemonHub: DaemonHub;
+	let emittedEvents: Array<{ name: string; data: unknown }>;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
@@ -203,13 +219,18 @@ describe('Space Export/Import RPC Handlers', () => {
 		const mockHub = createMockHub();
 		handlers = mockHub.handlers;
 
+		const mockDaemonHub = createMockDaemonHub();
+		daemonHub = mockDaemonHub.hub;
+		emittedEvents = mockDaemonHub.emittedEvents;
+
 		setupSpaceExportImportHandlers(
 			mockHub.hub,
 			spaceManager,
 			agentRepo,
 			workflowRepo,
 			workflowManager,
-			db as any
+			db as any,
+			daemonHub
 		);
 	});
 
@@ -1062,6 +1083,95 @@ describe('Space Export/Import RPC Handlers', () => {
 				const agent = agentRepo.getById(existing.id)!;
 				expect(agent.systemPrompt).toBeUndefined();
 			});
+		});
+	});
+
+	// ─── Event emission ──────────────────────────────────────────────────────
+
+	describe('event emission after spaceImport.execute', () => {
+		it('emits spaceAgent.created for each newly created agent', async () => {
+			const bundle = makeBundle([{ name: 'NewAgent', role: 'coder' }], []);
+
+			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			// Allow micro-task queue to flush (emit is async)
+			await Promise.resolve();
+
+			const agentCreated = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
+			expect(agentCreated).toHaveLength(1);
+			expect((agentCreated[0].data as { spaceId: string }).spaceId).toBe(SPACE_ID);
+			expect((agentCreated[0].data as { agent: { name: string } }).agent.name).toBe('NewAgent');
+		});
+
+		it('emits spaceAgent.updated for replaced agent', async () => {
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+			const bundle = makeBundle([{ name: 'Coder', role: 'coder', model: 'claude-haiku-4-5' }], []);
+
+			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+				conflictResolution: { agents: { Coder: 'replace' } },
+			});
+
+			await Promise.resolve();
+
+			const agentUpdated = emittedEvents.filter((e) => e.name === 'spaceAgent.updated');
+			expect(agentUpdated).toHaveLength(1);
+			expect((agentUpdated[0].data as { agent: { name: string } }).agent.name).toBe('Coder');
+		});
+
+		it('does not emit event for skipped agent', async () => {
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+			const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
+
+			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+				conflictResolution: { agents: { Coder: 'skip' } },
+			});
+
+			await Promise.resolve();
+
+			const agentEvents = emittedEvents.filter((e) => e.name.startsWith('spaceAgent'));
+			expect(agentEvents).toHaveLength(0);
+		});
+
+		it('emits spaceWorkflow.created for each newly created workflow', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[{ name: 'Pipe', steps: [{ agentRef: 'Coder', name: 's1' }] }]
+			);
+
+			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			await Promise.resolve();
+
+			const wfCreated = emittedEvents.filter((e) => e.name === 'spaceWorkflow.created');
+			expect(wfCreated).toHaveLength(1);
+			expect((wfCreated[0].data as { workflow: { name: string } }).workflow.name).toBe('Pipe');
+		});
+
+		it('emits spaceAgent.created and spaceWorkflow.created for bundle with both', async () => {
+			const bundle = makeBundle(
+				[{ name: 'AgentA', role: 'coder' }],
+				[{ name: 'WfA', steps: [{ agentRef: 'AgentA', name: 'step' }] }]
+			);
+
+			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			await Promise.resolve();
+
+			expect(emittedEvents.some((e) => e.name === 'spaceAgent.created')).toBe(true);
+			expect(emittedEvents.some((e) => e.name === 'spaceWorkflow.created')).toBe(true);
 		});
 	});
 });

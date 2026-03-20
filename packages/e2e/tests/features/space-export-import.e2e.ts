@@ -3,9 +3,10 @@
  *
  * Tests the export and import UI actions in the Space view:
  * - Export a single agent from Space (verify download)
- * - Import with conflict (same name agent) — conflict dialog shown
+ * - Export All agents (verify download content)
  * - Import with no conflicts — success toast shown
- * - Import bundle with both agents and workflows
+ * - Import with conflict (same name) — conflict dialog with resolution dropdown
+ * - Import bundle with both agents and workflows — both sections shown, both toasted
  *
  * Setup: creates a Space (and agents/workflows) via RPC in beforeEach.
  * This is accepted infrastructure for test isolation per CLAUDE.md rules.
@@ -13,12 +14,13 @@
  */
 
 import * as fs from 'fs';
+import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
-async function createTestSpace(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<{
+async function createTestSpace(page: Page): Promise<{
 	spaceId: string;
 	agentId: string;
 	agentName: string;
@@ -49,10 +51,7 @@ async function createTestSpace(page: Parameters<typeof waitForWebSocketConnected
 	});
 }
 
-async function deleteTestSpace(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
+async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 	if (!spaceId) return;
 	try {
 		await page.evaluate(async (id) => {
@@ -65,13 +64,49 @@ async function deleteTestSpace(
 	}
 }
 
+// ─── File injection helper ────────────────────────────────────────────────────
+
+/**
+ * Temporarily patches `document.createElement` so that the next `<input type=file>`
+ * element created by the component immediately fires a change event with the
+ * supplied bundle JSON — simulating a file picker selection without needing a
+ * real file on disk.
+ *
+ * The patch is scoped to a single input creation and is immediately cleaned up
+ * after the input fires its change event, so subsequent createElement calls are
+ * unaffected.
+ */
+async function injectImportFile(page: Page, bundle: unknown): Promise<void> {
+	await page.evaluate((b) => {
+		const originalCreate = document.createElement.bind(document);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		(document as any).createElement = (tag: string, ...args: unknown[]) => {
+			const el = originalCreate(tag as 'input', ...(args as []));
+			if (tag === 'input') {
+				const input = el as HTMLInputElement;
+				const origClick = input.click.bind(input);
+				input.click = () => {
+					// Restore immediately so only one input is patched
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					(document as any).createElement = originalCreate;
+
+					const json = JSON.stringify(b);
+					const file = new File([json], 'test.neokai.json', { type: 'application/json' });
+					const dt = new DataTransfer();
+					dt.items.add(file);
+					Object.defineProperty(input, 'files', { value: dt.files, writable: false });
+					input.dispatchEvent(new Event('change', { bubbles: true }));
+					origClick();
+				};
+			}
+			return el;
+		};
+	}, bundle);
+}
+
 // ─── Navigation helper ────────────────────────────────────────────────────────
 
-async function navigateToSpaceAgents(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	// Navigate to the space URL directly
+async function navigateToSpaceAgents(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	// Wait for the Agents tab to be visible (SpaceIsland renders it by default)
 	await expect(page.locator('h2:has-text("Agents")')).toBeVisible({ timeout: 10000 });
@@ -160,35 +195,7 @@ test.describe('Space Export/Import', () => {
 		};
 
 		await navigateToSpaceAgents(page, spaceId);
-
-		// Intercept the file input
-		await page.evaluate((bundle) => {
-			// Override the file input behavior to immediately resolve with our bundle
-			const originalCreate = document.createElement.bind(document);
-			(document as unknown as { createElement: typeof document.createElement }).createElement = (
-				tag: string,
-				...args: unknown[]
-			) => {
-				const el = originalCreate(tag, ...(args as []));
-				if (tag === 'input') {
-					const input = el as HTMLInputElement;
-					// Intercept click to inject a synthetic file
-					const origClick = input.click.bind(input);
-					input.click = () => {
-						// Create a mock file from the bundle JSON
-						const json = JSON.stringify(bundle);
-						const file = new File([json], 'test.neokai.json', { type: 'application/json' });
-						const dt = new DataTransfer();
-						dt.items.add(file);
-						Object.defineProperty(input, 'files', { value: dt.files, writable: false });
-						// Fire the change event
-						input.dispatchEvent(new Event('change', { bubbles: true }));
-						origClick();
-					};
-				}
-				return el;
-			};
-		}, newAgentBundle);
+		await injectImportFile(page, newAgentBundle);
 
 		await page.locator('button:has-text("Import")').click();
 
@@ -200,8 +207,8 @@ test.describe('Space Export/Import', () => {
 		await expect(page.locator('text=Imported Reviewer')).toBeVisible();
 		await expect(page.locator('text=new').first()).toBeVisible();
 
-		// Summary should say "Will create 1 agent"
-		await expect(page.locator('text=/Will create.*1.*agent/')).toBeVisible();
+		// Summary should say "Will import 1 agent"
+		await expect(page.locator('text=/Will import.*1.*agent/')).toBeVisible();
 
 		// Confirm import
 		await page.locator('[role="dialog"] button:has-text("Import")').click();
@@ -231,33 +238,7 @@ test.describe('Space Export/Import', () => {
 		};
 
 		await navigateToSpaceAgents(page, spaceId);
-
-		// Inject the file
-		await page.evaluate((bundle) => {
-			const originalCreate = document.createElement.bind(document);
-			(document as unknown as { createElement: typeof document.createElement }).createElement = (
-				tag: string,
-				...args: unknown[]
-			) => {
-				const el = originalCreate(tag, ...(args as []));
-				if (tag === 'input') {
-					const input = el as HTMLInputElement;
-					const origClick = input.click.bind(input);
-					input.click = () => {
-						const json = JSON.stringify(bundle);
-						const file = new File([json], 'conflict.neokai.json', {
-							type: 'application/json',
-						});
-						const dt = new DataTransfer();
-						dt.items.add(file);
-						Object.defineProperty(input, 'files', { value: dt.files, writable: false });
-						input.dispatchEvent(new Event('change', { bubbles: true }));
-						origClick();
-					};
-				}
-				return el;
-			};
-		}, conflictBundle);
+		await injectImportFile(page, conflictBundle);
 
 		await page.locator('button:has-text("Import")').click();
 
@@ -269,14 +250,14 @@ test.describe('Space Export/Import', () => {
 		const conflictSelect = page.locator(`select[aria-label*="${agentName}"]`);
 		await expect(conflictSelect).toBeVisible();
 
-		// Default is "skip" — verify Import button is disabled (0 will be created)
+		// Default is "skip" — Import button should be disabled (0 will be imported)
 		await expect(page.locator('[role="dialog"] button:has-text("Import")')).toBeDisabled();
 
 		// Change to "rename"
 		await conflictSelect.selectOption('rename');
 
-		// Now 1 agent will be created
-		await expect(page.locator('text=/Will create.*1.*agent/')).toBeVisible();
+		// Now 1 agent will be imported
+		await expect(page.locator('text=/Will import.*1.*agent/')).toBeVisible();
 		await expect(page.locator('[role="dialog"] button:has-text("Import")')).not.toBeDisabled();
 
 		// Confirm import
@@ -321,33 +302,7 @@ test.describe('Space Export/Import', () => {
 		};
 
 		await navigateToSpaceAgents(page, spaceId);
-
-		// Inject the file
-		await page.evaluate((bundle) => {
-			const originalCreate = document.createElement.bind(document);
-			(document as unknown as { createElement: typeof document.createElement }).createElement = (
-				tag: string,
-				...args: unknown[]
-			) => {
-				const el = originalCreate(tag, ...(args as []));
-				if (tag === 'input') {
-					const input = el as HTMLInputElement;
-					const origClick = input.click.bind(input);
-					input.click = () => {
-						const json = JSON.stringify(bundle);
-						const file = new File([json], 'full-bundle.neokai.json', {
-							type: 'application/json',
-						});
-						const dt = new DataTransfer();
-						dt.items.add(file);
-						Object.defineProperty(input, 'files', { value: dt.files, writable: false });
-						input.dispatchEvent(new Event('change', { bubbles: true }));
-						origClick();
-					};
-				}
-				return el;
-			};
-		}, bundleWithBoth);
+		await injectImportFile(page, bundleWithBoth);
 
 		await page.locator('button:has-text("Import")').click();
 
@@ -360,13 +315,13 @@ test.describe('Space Export/Import', () => {
 		await expect(page.locator('text=Bundle Agent')).toBeVisible();
 		await expect(page.locator('text=Bundle Workflow')).toBeVisible();
 
-		// Summary should reflect both
-		await expect(page.locator('text=/Will create.*1.*agent.*1.*workflow/')).toBeVisible();
+		// Summary should reflect both — updated wording is "Will import"
+		await expect(page.locator('text=/Will import.*1.*agent.*1.*workflow/')).toBeVisible();
 
 		// Import
 		await page.locator('[role="dialog"] button:has-text("Import")').click();
 
-		// Success toast
-		await expect(page.locator('text=/Imported.*agent/')).toBeVisible({ timeout: 8000 });
+		// Success toast should mention both agents and workflows
+		await expect(page.locator('text=/Imported.*agent.*workflow/')).toBeVisible({ timeout: 8000 });
 	});
 });

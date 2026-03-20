@@ -213,9 +213,9 @@ describe('ImportPreviewDialog', () => {
 				isExecuting={false}
 			/>
 		);
-		expect(screen.getByText(/Will create/)).toBeTruthy();
+		expect(screen.getByText(/Will import/)).toBeTruthy();
 		// "2" agents and "1" workflow
-		const summaryText = screen.getByText(/Will create/).textContent;
+		const summaryText = screen.getByText(/Will import/).textContent;
 		expect(summaryText).toContain('2');
 		expect(summaryText).toContain('1');
 	});

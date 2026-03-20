@@ -97,8 +97,13 @@ export function SpaceAgentList({ spaceId, spaceName, agents }: SpaceAgentListPro
 				warnings: string[];
 			}>('spaceImport.execute', { spaceId, bundle: importBundle, conflictResolution: resolution });
 
-			const created = result.agents.filter((a) => a.action !== 'skipped').length;
-			toast.success(`Imported ${created} agent${created === 1 ? '' : 's'}`);
+			const createdAgents = result.agents.filter((a) => a.action !== 'skipped').length;
+			const createdWorkflows = result.workflows.filter((w) => w.action !== 'skipped').length;
+			const parts: string[] = [];
+			if (createdAgents > 0) parts.push(`${createdAgents} agent${createdAgents === 1 ? '' : 's'}`);
+			if (createdWorkflows > 0)
+				parts.push(`${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`);
+			toast.success(parts.length > 0 ? `Imported ${parts.join(' and ')}` : 'Nothing imported');
 			if (result.warnings.length) {
 				toast.warning(result.warnings[0]);
 			}
@@ -202,9 +207,10 @@ export function SpaceAgentList({ spaceId, spaceName, agents }: SpaceAgentListPro
 				)}
 			</div>
 
-			{/* Import Preview Dialog */}
+			{/* Import Preview Dialog — key on exportedAt so state resets for each new bundle */}
 			{importPreview && importBundle && (
 				<ImportPreviewDialog
+					key={importBundle.exportedAt}
 					isOpen={true}
 					onClose={() => {
 						setImportBundle(null);

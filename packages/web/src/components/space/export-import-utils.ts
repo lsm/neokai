@@ -36,6 +36,13 @@ export function downloadBundle(
  */
 export function pickImportFile(): Promise<SpaceExportBundle | null> {
 	return new Promise((resolve) => {
+		let resolved = false;
+		const done = (value: SpaceExportBundle | null) => {
+			if (resolved) return;
+			resolved = true;
+			resolve(value);
+		};
+
 		const input = document.createElement('input');
 		input.type = 'file';
 		input.accept = '.json,.neokai.json';
@@ -43,7 +50,7 @@ export function pickImportFile(): Promise<SpaceExportBundle | null> {
 		input.onchange = () => {
 			const file = input.files?.[0];
 			if (!file) {
-				resolve(null);
+				done(null);
 				return;
 			}
 
@@ -51,24 +58,23 @@ export function pickImportFile(): Promise<SpaceExportBundle | null> {
 			reader.onload = (e) => {
 				try {
 					const parsed = JSON.parse(e.target?.result as string) as SpaceExportBundle;
-					resolve(parsed);
+					done(parsed);
 				} catch {
-					resolve(null);
+					done(null);
 				}
 			};
-			reader.onerror = () => resolve(null);
+			reader.onerror = () => done(null);
 			reader.readAsText(file);
 		};
 
 		// Cancelled without picking
-		input.oncancel = () => resolve(null);
+		input.oncancel = () => done(null);
 
 		// Some browsers don't fire oncancel; detect via focus returning to window
 		const handleFocus = () => {
-			window.removeEventListener('focus', handleFocus);
 			// Small delay so the onchange fires first if a file was selected
 			setTimeout(() => {
-				if (!input.files?.length) resolve(null);
+				if (!input.files?.length) done(null);
 			}, 300);
 		};
 		window.addEventListener('focus', handleFocus, { once: true });

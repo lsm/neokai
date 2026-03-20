@@ -91,9 +91,9 @@ function ItemRow({
 					<span class="flex-shrink-0 w-4 h-4 text-yellow-400" aria-label="conflict">
 						<svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4">
 							<path
-								fill-rule="evenodd"
+								fillRule="evenodd"
 								d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z"
-								clip-rule="evenodd"
+								clipRule="evenodd"
 							/>
 						</svg>
 					</span>
@@ -101,9 +101,9 @@ function ItemRow({
 					<span class="flex-shrink-0 w-4 h-4 text-green-400" aria-label="new">
 						<svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4">
 							<path
-								fill-rule="evenodd"
+								fillRule="evenodd"
 								d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm4.28 10.28a.75.75 0 000-1.06l-3-3a.75.75 0 10-1.06 1.06l1.72 1.72H8.25a.75.75 0 000 1.5h5.69l-1.72 1.72a.75.75 0 101.06 1.06l3-3z"
-								clip-rule="evenodd"
+								clipRule="evenodd"
 							/>
 						</svg>
 					</span>
@@ -248,7 +248,7 @@ export function ImportPreviewDialog({
 				{/* Summary */}
 				<div class="flex items-center justify-between pt-2 border-t border-dark-700">
 					<p class="text-sm text-gray-400">
-						Will create <span class="text-gray-100 font-medium">{willCreateAgents}</span>
+						Will import <span class="text-gray-100 font-medium">{willCreateAgents}</span>
 						{willCreateAgents === 1 ? ' agent' : ' agents'} and{' '}
 						<span class="text-gray-100 font-medium">{willCreateWorkflows}</span>
 						{willCreateWorkflows === 1 ? ' workflow' : ' workflows'}
