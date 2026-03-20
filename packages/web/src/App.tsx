@@ -12,7 +12,6 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
-	navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
@@ -117,8 +116,8 @@ export function App() {
 				{/* Navigation Rail (desktop only) */}
 				<NavRail />
 
-				{/* Context Panel - hidden on /spaces route */}
-				{navSectionSignal.value !== 'spaces' && <ContextPanel />}
+				{/* Context Panel - always visible */}
+				<ContextPanel />
 
 				{/* Main Content */}
 				<MainContent />

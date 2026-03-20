@@ -1,17 +1,17 @@
 /**
  * SpaceIsland — main content area for the Space view.
  *
- * 3-column layout:
- * - Left (~240px): SpaceNavPanel — workflow runs, tasks, nav links
- * - Middle (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
+ * 2-column layout:
+ * - Main (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
  * - Right (~320px, conditional): SpaceTaskPane when a task is selected
+ *
+ * Space navigation is handled by the Context Panel sidebar.
  */
 
 import { useState, useEffect } from 'preact/hooks';
 import { spaceStore } from '../lib/space-store';
 import { currentSpaceTaskIdSignal } from '../lib/signals';
-import { navigateToSpaceTask, navigateToSpace } from '../lib/router';
-import { SpaceNavPanel } from '../components/space/SpaceNavPanel';
+import { navigateToSpace } from '../lib/router';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { SpaceAgentList } from '../components/space/SpaceAgentList';
@@ -35,7 +35,6 @@ const TABS: { id: SpaceTab; label: string }[] = [
 
 export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
-	const [activeRunId, setActiveRunId] = useState<string | null>(null);
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
 	const loading = spaceStore.loading.value;
@@ -62,19 +61,6 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 			setWorkflowEditId(null);
 		}
 	}, [activeTab]);
-
-	const handleRunSelect = (runId: string) => {
-		setActiveRunId(runId);
-		setActiveTab('dashboard');
-		// Clear task selection when switching to a run
-		currentSpaceTaskIdSignal.value = null;
-	};
-
-	const handleTaskSelect = (taskId: string) => {
-		setActiveRunId(null);
-		setActiveTab('dashboard');
-		navigateToSpaceTask(spaceId, taskId);
-	};
 
 	const handleTaskPaneClose = () => {
 		navigateToSpace(spaceId);
@@ -114,22 +100,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 	return (
 		<div class="flex-1 flex overflow-hidden bg-dark-900">
-			{/* Left column — navigation panel */}
-			<div class="w-60 flex-shrink-0 border-r border-dark-700 overflow-hidden flex flex-col">
-				<SpaceNavPanel
-					spaceId={spaceId}
-					activeTaskId={activeTaskId}
-					activeRunId={activeRunId}
-					activeView={activeTab}
-					onRunSelect={handleRunSelect}
-					onTaskSelect={handleTaskSelect}
-					onAgentsClick={() => setActiveTab('agents')}
-					onWorkflowsClick={() => setActiveTab('workflows')}
-					onSettingsClick={() => setActiveTab('settings')}
-				/>
-			</div>
-
-			{/* Middle column — tabbed content */}
+			{/* Main content — tabbed view */}
 			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
 				{/* Tab bar — hidden when workflow editor is open (editor has its own back button) */}
 				{!showWorkflowEditor && (
