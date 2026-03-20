@@ -39,7 +39,7 @@ export class SpaceWorkflowRunRepository {
 			params.title,
 			params.description ?? '',
 			0, // keep current_step_index for backward compat
-			params.currentStepId,
+			params.currentStepId ?? null,
 			'pending',
 			null,
 			now,
@@ -188,7 +188,7 @@ export class SpaceWorkflowRunRepository {
 			workflowId: row.workflow_id as string,
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
-			currentStepId: (row.current_step_id as string | null) ?? '',
+			currentStepId: (row.current_step_id as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
 			config,
 			createdAt: row.created_at as number,

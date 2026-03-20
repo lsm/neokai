@@ -33,7 +33,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import { WorkflowExecutor, WorkflowGateError } from './workflow-executor';
+import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
 import { Logger } from '../../logger';
 
 const log = new Logger('space-runtime');
@@ -471,7 +471,7 @@ export class SpaceRuntime {
 				this.executorMeta.delete(runId);
 			}
 		} catch (err) {
-			if (!(err instanceof WorkflowGateError)) {
+			if (!(err instanceof WorkflowTransitionError)) {
 				// Unexpected error — propagate to caller (processCompletedTasks collects it)
 				throw err;
 			}
