@@ -73,6 +73,83 @@ describe('VisualCanvas', () => {
 		expect(last.offsetY).toBe(-10);
 		expect(last.scale).toBe(1);
 	});
+
+	it('renders SVG overlay layer inside the transform layer', () => {
+		const { getByTestId } = renderCanvas();
+		const transformEl = getByTestId('visual-canvas-transform');
+		const svgEl = getByTestId('visual-canvas-svg');
+		expect(svgEl).toBeTruthy();
+		expect(svgEl.tagName.toLowerCase()).toBe('svg');
+		expect(transformEl.contains(svgEl)).toBe(true);
+	});
+
+	it('SVG layer has position:absolute and pointer-events:none', () => {
+		const { getByTestId } = renderCanvas();
+		const svgEl = getByTestId('visual-canvas-svg') as HTMLElement;
+		expect(svgEl.style.position).toBe('absolute');
+		expect(svgEl.style.pointerEvents).toBe('none');
+	});
+
+	it('SVG layer is the first child of the transform layer', () => {
+		const { getByTestId } = renderCanvas();
+		const transformEl = getByTestId('visual-canvas-transform');
+		expect(transformEl.firstElementChild?.tagName.toLowerCase()).toBe('svg');
+	});
+
+	it('renders edge content via edgeLayer render prop', () => {
+		const vp: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
+		const changes: ViewportState[] = [];
+
+		function Wrapper() {
+			const [viewport, setViewport] = useState<ViewportState>(vp);
+			return (
+				<VisualCanvas
+					viewportState={viewport}
+					onViewportChange={(next) => {
+						changes.push(next);
+						setViewport(next);
+					}}
+					edgeLayer={() => <circle data-testid="edge-circle" cx="10" cy="10" r="5" />}
+				>
+					<div>child</div>
+				</VisualCanvas>
+			);
+		}
+
+		const { getByTestId } = render(<Wrapper />);
+		const circle = getByTestId('edge-circle');
+		expect(circle).toBeTruthy();
+		expect(circle.tagName.toLowerCase()).toBe('circle');
+		// circle should be inside the SVG layer
+		const svgEl = getByTestId('visual-canvas-svg');
+		expect(svgEl.contains(circle)).toBe(true);
+	});
+
+	it('passes current viewport state to edgeLayer render prop', () => {
+		const capturedViewports: ViewportState[] = [];
+		const initialVp: ViewportState = { offsetX: 42, offsetY: -10, scale: 1.5 };
+
+		function Wrapper() {
+			const [viewport, setViewport] = useState<ViewportState>(initialVp);
+			return (
+				<VisualCanvas
+					viewportState={viewport}
+					onViewportChange={setViewport}
+					edgeLayer={(receivedVp) => {
+						capturedViewports.push(receivedVp);
+						return null;
+					}}
+				/>
+			);
+		}
+
+		render(<Wrapper />);
+		expect(capturedViewports.length).toBeGreaterThan(0);
+		const last = capturedViewports[capturedViewports.length - 1];
+		expect(last.offsetX).toBe(42);
+		expect(last.offsetY).toBe(-10);
+		expect(last.scale).toBe(1.5);
+	});
 });
 
 // ---- applyWheelEvent pure logic tests ----

@@ -1,89 +1,109 @@
 /**
- * WorkflowNode
+ * WorkflowNode Component
  *
- * Renders a single workflow step as a positioned node on the canvas.
- * The node is positioned absolutely within the canvas transform layer
- * using canvas-space coordinates.
- *
- * Visual indicator: a ring/border highlight shows when `isSelected` is true.
+ * Renders a single workflow step as an absolutely-positioned card on the canvas.
+ * Shows step name, agent name, and step number badge.
+ * Has input (top-center) and output (bottom-center) connection ports.
+ * Start node gets a green border and hides its input port.
  */
 
-import type { JSX } from 'preact';
+import type { SpaceAgent } from '@neokai/shared';
+import { cn } from '../../../lib/utils';
+import type { StepDraft } from '../WorkflowStepCard';
+import type { Point } from './types';
+
+export type PortType = 'input' | 'output';
 
 export interface WorkflowNodeProps {
-	/** Stable identifier for this workflow step. */
-	stepId: string;
-	/** Human-readable label rendered inside the node. */
-	name: string;
-	/** Canvas-space X position (pixels, left edge). */
-	x: number;
-	/** Canvas-space Y position (pixels, top edge). */
-	y: number;
-	/** Node width in canvas-space pixels. Defaults to 160. */
-	width?: number;
-	/** Node height in canvas-space pixels. Defaults to 60. */
-	height?: number;
-	/** Whether this node is currently selected. */
+	step: StepDraft;
+	stepNumber: number;
+	position: Point;
+	agents: SpaceAgent[];
 	isSelected: boolean;
-	/** Called when the node is clicked. */
-	onSelect: (stepId: string) => void;
+	isStartNode: boolean;
+	onPortMouseDown: (stepId: string, port: PortType) => void;
+	onClick?: (stepId: string) => void;
+	onMouseDown?: (stepId: string, e: MouseEvent) => void;
 }
 
+const NODE_WIDTH = 160;
+
 export function WorkflowNode({
-	stepId,
-	name,
-	x,
-	y,
-	width = 160,
-	height = 60,
+	step,
+	stepNumber,
+	position,
+	agents,
 	isSelected,
-	onSelect,
-}: WorkflowNodeProps): JSX.Element {
-	function handleClick(e: MouseEvent) {
-		e.stopPropagation();
-		onSelect(stepId);
-	}
+	isStartNode,
+	onPortMouseDown,
+	onClick,
+	onMouseDown,
+}: WorkflowNodeProps) {
+	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
 
 	return (
 		<div
-			data-testid={`workflow-node-${stepId}`}
-			data-node-id={stepId}
+			class={cn(
+				'absolute rounded-lg border bg-dark-850 shadow-lg select-none',
+				isSelected
+					? 'border-blue-500 ring-2 ring-blue-500'
+					: isStartNode
+						? 'border-green-500'
+						: 'border-dark-600',
+				'cursor-grab'
+			)}
 			style={{
-				position: 'absolute',
-				left: `${x}px`,
-				top: `${y}px`,
-				width: `${width}px`,
-				height: `${height}px`,
-				display: 'flex',
-				alignItems: 'center',
-				justifyContent: 'center',
-				background: 'var(--color-surface, #fff)',
-				borderRadius: '8px',
-				border: isSelected
-					? '2px solid var(--color-primary, #6366f1)'
-					: '2px solid var(--color-border, #e2e8f0)',
-				boxShadow: isSelected
-					? '0 0 0 3px var(--color-primary-faint, rgba(99,102,241,0.2))'
-					: '0 1px 3px rgba(0,0,0,0.1)',
-				cursor: 'pointer',
-				userSelect: 'none',
-				boxSizing: 'border-box',
+				left: `${position.x}px`,
+				top: `${position.y}px`,
+				width: `${NODE_WIDTH}px`,
 			}}
-			class={`workflow-node${isSelected ? ' workflow-node--selected' : ''}`}
-			onClick={handleClick}
+			data-testid={`workflow-node-${step.localId}`}
+			onClick={(e) => {
+				e.stopPropagation();
+				onClick?.(step.localId);
+			}}
+			onMouseDown={(e) => onMouseDown?.(step.localId, e as unknown as MouseEvent)}
 		>
-			<span
-				style={{
-					fontSize: '13px',
-					fontWeight: 500,
-					overflow: 'hidden',
-					textOverflow: 'ellipsis',
-					whiteSpace: 'nowrap',
-					padding: '0 12px',
+			{/* Input port — top-center, hidden for start node */}
+			{!isStartNode && (
+				<div
+					class="absolute -top-2 left-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-dark-700 border-2 border-dark-400 hover:border-blue-400 hover:bg-blue-900 cursor-crosshair z-10"
+					title="Input port"
+					onMouseDown={(e) => {
+						e.stopPropagation();
+						onPortMouseDown(step.localId, 'input');
+					}}
+				/>
+			)}
+
+			{/* Card body */}
+			<div class="px-3 py-2.5">
+				{/* Header row: step badge + START badge */}
+				<div class="flex items-center justify-between mb-1.5">
+					<span class="w-5 h-5 flex items-center justify-center rounded-full bg-dark-700 text-xs font-semibold text-gray-400 flex-shrink-0">
+						{stepNumber}
+					</span>
+					{isStartNode && <span class="text-xs font-bold text-green-400 tracking-wide">START</span>}
+				</div>
+
+				{/* Step name */}
+				<p class="text-xs font-medium text-gray-200 truncate leading-tight">
+					{step.name || 'Unnamed Step'}
+				</p>
+
+				{/* Agent name */}
+				<p class="text-xs text-gray-500 truncate mt-0.5">{agentName || '—'}</p>
+			</div>
+
+			{/* Output port — bottom-center */}
+			<div
+				class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-dark-700 border-2 border-dark-400 hover:border-blue-400 hover:bg-blue-900 cursor-crosshair z-10"
+				title="Output port"
+				onMouseDown={(e) => {
+					e.stopPropagation();
+					onPortMouseDown(step.localId, 'output');
 				}}
-			>
-				{name}
-			</span>
+			/>
 		</div>
 	);
 }

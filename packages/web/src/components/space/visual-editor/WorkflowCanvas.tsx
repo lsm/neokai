@@ -11,18 +11,14 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
+import type { WorkflowNodeProps } from './WorkflowNode';
 import type { ViewportState } from './types';
 
-export interface WorkflowNodeData {
-	stepId: string;
-	name: string;
-	/** Canvas-space X position. */
-	x: number;
-	/** Canvas-space Y position. */
-	y: number;
-	width?: number;
-	height?: number;
-}
+/**
+ * Per-node data passed to WorkflowCanvas.
+ * All WorkflowNodeProps except `isSelected` and `onClick`, which WorkflowCanvas injects.
+ */
+export type WorkflowNodeData = Omit<WorkflowNodeProps, 'isSelected' | 'onClick'>;
 
 export interface WorkflowCanvasProps {
 	nodes: WorkflowNodeData[];
@@ -43,7 +39,7 @@ export function WorkflowCanvas({
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-	// Keep ref so keyboard handler always sees the latest value without re-registering
+	// Keep refs so keyboard handler always sees the latest value without re-registering
 	const selectedNodeIdRef = useRef<string | null>(null);
 	selectedNodeIdRef.current = selectedNodeId;
 
@@ -57,7 +53,7 @@ export function WorkflowCanvas({
 	// from the nodes array). Without this, a node re-added with the same stepId would
 	// appear pre-selected, which is unexpected.
 	useEffect(() => {
-		if (selectedNodeId !== null && !nodes.some((n) => n.stepId === selectedNodeId)) {
+		if (selectedNodeId !== null && !nodes.some((n) => n.step.localId === selectedNodeId)) {
 			setSelectedNodeId(null);
 			onNodeSelectRef.current?.(null);
 		}
@@ -104,15 +100,10 @@ export function WorkflowCanvas({
 		>
 			{nodes.map((node) => (
 				<WorkflowNode
-					key={node.stepId}
-					stepId={node.stepId}
-					name={node.name}
-					x={node.x}
-					y={node.y}
-					width={node.width}
-					height={node.height}
-					isSelected={selectedNodeId === node.stepId}
-					onSelect={handleNodeSelect}
+					key={node.step.localId}
+					{...node}
+					isSelected={selectedNodeId === node.step.localId}
+					onClick={handleNodeSelect}
 				/>
 			))}
 		</VisualCanvas>

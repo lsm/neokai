@@ -60,6 +60,8 @@ interface VisualCanvasProps {
 	onViewportChange: (state: ViewportState) => void;
 	/** Called when the canvas background is clicked (not on a child node). */
 	onBackgroundClick?: () => void;
+	/** Render prop for injecting SVG edge content. Receives current viewport state. */
+	edgeLayer?: (viewport: ViewportState) => ComponentChildren;
 }
 
 export function VisualCanvas({
@@ -67,6 +69,7 @@ export function VisualCanvas({
 	viewportState,
 	onViewportChange,
 	onBackgroundClick,
+	edgeLayer,
 }: VisualCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const transformRef = useRef<HTMLDivElement>(null);
@@ -226,6 +229,21 @@ export function VisualCanvas({
 				}}
 				data-testid="visual-canvas-transform"
 			>
+				<svg
+					class="visual-canvas-edge-layer"
+					style={{
+						position: 'absolute',
+						top: 0,
+						left: 0,
+						width: '100%',
+						height: '100%',
+						pointerEvents: 'none',
+						overflow: 'visible',
+					}}
+					data-testid="visual-canvas-svg"
+				>
+					{edgeLayer?.(viewportState)}
+				</svg>
 				{children}
 			</div>
 		</div>

@@ -42,9 +42,7 @@ export function RoomDashboard() {
 	const [actionLoading, setActionLoading] = useState(false);
 	const [showPauseConfirm, setShowPauseConfirm] = useState(false);
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
-	const [showApproveConfirm, setShowApproveConfirm] = useState<string | null>(null);
 	const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
-	const [approvalLoading, setApprovalLoading] = useState(false);
 
 	// Get the resolved models (leader and worker)
 	const { leaderModel, workerModel } = runtimeModels;
@@ -81,20 +79,6 @@ export function RoomDashboard() {
 		} finally {
 			setActionLoading(false);
 			setShowStopConfirm(false);
-		}
-	};
-
-	const handleApprove = async () => {
-		const taskId = showApproveConfirm;
-		if (!taskId) return;
-		setApprovalLoading(true);
-		try {
-			await roomStore.approveTask(taskId);
-		} catch {
-			// Error handled by store
-		} finally {
-			setApprovalLoading(false);
-			setShowApproveConfirm(null);
 		}
 	};
 
@@ -219,7 +203,6 @@ export function RoomDashboard() {
 				<RoomTasks
 					tasks={tasks}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
-					onApprove={roomId ? (taskId) => setShowApproveConfirm(taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 				/>
 			</div>
@@ -251,18 +234,6 @@ export function RoomDashboard() {
 				message="Stopping will completely shut down the room runtime. All active sessions will be terminated and no new tasks will be processed. You can start the room again later."
 				confirmText="Stop Room"
 				isLoading={actionLoading}
-			/>
-
-			{/* Approve Task Confirmation */}
-			<ConfirmModal
-				isOpen={showApproveConfirm !== null}
-				onClose={() => setShowApproveConfirm(null)}
-				onConfirm={handleApprove}
-				title="Approve Task"
-				message="Are you sure you want to approve this task? It will proceed to the next phase."
-				confirmText="Approve"
-				confirmButtonVariant="primary"
-				isLoading={approvalLoading}
 			/>
 
 			{/* Archive Confirmation */}

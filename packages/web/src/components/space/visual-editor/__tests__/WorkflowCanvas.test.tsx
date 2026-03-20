@@ -13,22 +13,55 @@
  * - Delete/Backspace without selection does not call onDeleteNode
  * - Delete key clears selection after onDeleteNode
  * - Delete key inside input does not trigger onDeleteNode
+ * - Stale selectedNodeId is cleared when node removed from array
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
+import type { SpaceAgent } from '@neokai/shared';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
+import type { StepDraft } from '../../WorkflowStepCard';
 import type { ViewportState } from '../types';
+
+vi.mock('../../../../lib/utils', () => ({
+	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
+}));
 
 afterEach(() => cleanup());
 
+// ---- Test fixtures ----
+
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
+function makeAgent(id: string, name: string): SpaceAgent {
+	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
+}
+
+function makeStep(localId: string, name: string): StepDraft {
+	return { localId, name, agentId: 'agent-1', instructions: '' };
+}
+
+const AGENTS: SpaceAgent[] = [makeAgent('agent-1', 'Coder')];
+
 const NODES: WorkflowNodeData[] = [
-	{ stepId: 'step-1', name: 'Step One', x: 10, y: 10 },
-	{ stepId: 'step-2', name: 'Step Two', x: 200, y: 10 },
+	{
+		step: makeStep('step-1', 'Step One'),
+		stepNumber: 1,
+		position: { x: 10, y: 10 },
+		agents: AGENTS,
+		isStartNode: false,
+		onPortMouseDown: vi.fn(),
+	},
+	{
+		step: makeStep('step-2', 'Step Two'),
+		stepNumber: 2,
+		position: { x: 200, y: 10 },
+		agents: AGENTS,
+		isStartNode: false,
+		onPortMouseDown: vi.fn(),
+	},
 ];
 
 function renderCanvas(extra: Partial<WorkflowCanvasProps> = {}) {
@@ -53,6 +86,8 @@ function renderCanvas(extra: Partial<WorkflowCanvasProps> = {}) {
 	return { ...result, onNodeSelect, onDeleteNode };
 }
 
+// ---- Rendering ----
+
 describe('WorkflowCanvas — rendering', () => {
 	it('renders all provided nodes', () => {
 		const { getByTestId } = renderCanvas();
@@ -62,16 +97,19 @@ describe('WorkflowCanvas — rendering', () => {
 
 	it('starts with no node selected', () => {
 		const { getByTestId } = renderCanvas();
-		expect(getByTestId('workflow-node-step-1').className).not.toContain('workflow-node--selected');
-		expect(getByTestId('workflow-node-step-2').className).not.toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
+		expect(getByTestId('workflow-node-step-2').className).not.toContain('ring-2');
 	});
 });
 
+// ---- Selection ----
+
 describe('WorkflowCanvas — selection', () => {
-	it('clicking a node adds selected class', () => {
+	it('clicking a node adds selected classes', () => {
 		const { getByTestId } = renderCanvas();
 		fireEvent.click(getByTestId('workflow-node-step-1'));
-		expect(getByTestId('workflow-node-step-1').className).toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-blue-500');
 	});
 
 	it('clicking a node calls onNodeSelect with the stepId', () => {
@@ -84,18 +122,17 @@ describe('WorkflowCanvas — selection', () => {
 		const { getByTestId } = renderCanvas();
 		fireEvent.click(getByTestId('workflow-node-step-1'));
 		fireEvent.click(getByTestId('workflow-node-step-2'));
-		expect(getByTestId('workflow-node-step-1').className).not.toContain('workflow-node--selected');
-		expect(getByTestId('workflow-node-step-2').className).toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
+		expect(getByTestId('workflow-node-step-2').className).toContain('ring-2');
 	});
 
 	it('clicking background deselects the node', () => {
 		const { getByTestId } = renderCanvas();
 		fireEvent.click(getByTestId('workflow-node-step-1'));
-		expect(getByTestId('workflow-node-step-1').className).toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
 
-		// Click the transform layer (canvas background)
 		fireEvent.click(getByTestId('visual-canvas-transform'));
-		expect(getByTestId('workflow-node-step-1').className).not.toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
 	});
 
 	it('clicking background calls onNodeSelect(null)', () => {
@@ -116,6 +153,8 @@ describe('WorkflowCanvas — selection', () => {
 		expect(onNodeSelect).toHaveBeenCalledWith(null);
 	});
 });
+
+// ---- Keyboard delete ----
 
 describe('WorkflowCanvas — keyboard delete', () => {
 	it('Delete key calls onDeleteNode with selected stepId', () => {
@@ -141,10 +180,10 @@ describe('WorkflowCanvas — keyboard delete', () => {
 	it('Delete key clears selection after calling onDeleteNode', () => {
 		const { getByTestId } = renderCanvas();
 		fireEvent.click(getByTestId('workflow-node-step-1'));
-		expect(getByTestId('workflow-node-step-1').className).toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
 
 		fireEvent.keyDown(document.body, { key: 'Delete' });
-		expect(getByTestId('workflow-node-step-1').className).not.toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
 	});
 
 	it('Delete calls onNodeSelect(null) after deletion', () => {
@@ -158,7 +197,6 @@ describe('WorkflowCanvas — keyboard delete', () => {
 
 	it('Delete inside an input does not trigger onDeleteNode', () => {
 		const { onDeleteNode, container } = renderCanvas();
-		// Simulate focused input by dispatching from an INPUT element
 		const input = document.createElement('input');
 		container.appendChild(input);
 		input.focus();
@@ -176,6 +214,8 @@ describe('WorkflowCanvas — keyboard delete', () => {
 	});
 });
 
+// ---- Stale selection cleanup ----
+
 describe('WorkflowCanvas — stale selection cleanup', () => {
 	it('clears selection when the selected node is removed from the nodes array', () => {
 		const onNodeSelect = vi.fn();
@@ -188,7 +228,7 @@ describe('WorkflowCanvas — stale selection cleanup', () => {
 				<div>
 					<button
 						data-testid="remove-step-1"
-						onClick={() => setNodes((prev) => prev.filter((n) => n.stepId !== 'step-1'))}
+						onClick={() => setNodes((prev) => prev.filter((n) => n.step.localId !== 'step-1'))}
 					>
 						Remove
 					</button>
@@ -205,30 +245,30 @@ describe('WorkflowCanvas — stale selection cleanup', () => {
 
 		const { getByTestId, queryByTestId } = render(<Wrapper />);
 
-		// Select step-1
 		fireEvent.click(getByTestId('workflow-node-step-1'));
 		expect(onNodeSelect).toHaveBeenLastCalledWith('step-1');
 		onNodeSelect.mockClear();
 
-		// Remove step-1 from the nodes array externally
 		fireEvent.click(getByTestId('remove-step-1'));
 
-		// Node element is gone and onNodeSelect(null) was called to clear selection
 		expect(queryByTestId('workflow-node-step-1')).toBeNull();
 		expect(onNodeSelect).toHaveBeenCalledWith(null);
 	});
 });
 
-describe('WorkflowNode — isSelected prop', () => {
-	it('node without selection does not have selected class', () => {
+// ---- isSelected prop propagation ----
+
+describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
+	it('node without selection does not have ring classes', () => {
 		const { getByTestId } = renderCanvas();
-		expect(getByTestId('workflow-node-step-1').className).not.toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
 	});
 
-	it('selected node has workflow-node--selected class', () => {
+	it('selected node has ring-2 and ring-blue-500 classes', () => {
 		const { getByTestId } = renderCanvas();
 		fireEvent.click(getByTestId('workflow-node-step-1'));
-		expect(getByTestId('workflow-node-step-1').className).toContain('workflow-node--selected');
-		expect(getByTestId('workflow-node-step-2').className).not.toContain('workflow-node--selected');
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-blue-500');
+		expect(getByTestId('workflow-node-step-2').className).not.toContain('ring-2');
 	});
 });
