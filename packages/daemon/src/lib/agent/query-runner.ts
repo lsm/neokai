@@ -72,6 +72,10 @@ export interface QueryRunnerContext {
 	queryAbortController: AbortController | null;
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
+	// Tracks consecutive auto-recovery attempts for the current query.
+	// Reset to 0 when a query receives its first message (successful startup).
+	// Prevents infinite retry loops when the SDK is permanently broken.
+	startupTimeoutAutoRecoverAttempts: number;
 	originalEnvVars: OriginalEnvVars;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
@@ -277,6 +281,8 @@ export class QueryRunner {
 				if (timer && messageCount === 1) {
 					clearTimeout(timer);
 					this.ctx.startupTimeoutTimer = null;
+					// Reset auto-recovery counter: query started successfully.
+					this.ctx.startupTimeoutAutoRecoverAttempts = 0;
 				}
 
 				this.ctx.firstMessageReceived = true;
@@ -333,25 +339,36 @@ export class QueryRunner {
 			}
 
 			if (!isAbortError) {
-				// On startup timeout, attempt transparent auto-recovery: restart the query
-				// without the old resume handle (sdkSessionId already cleared above).
-				// Queued messages are preserved so the user's pending send is retried
-				// automatically without any visible error.
+				// On startup timeout, attempt transparent auto-recovery (up to 1 retry):
+				// restart the query without the old resume handle (sdkSessionId already
+				// cleared above).  Queued messages are preserved so the user's pending
+				// send is retried automatically without any visible error.
+				// The retry limit (attempts <= 1) prevents infinite loops when the SDK is
+				// permanently broken: after 1 failed recovery, the error surfaces normally.
+				const startupRecoverAttempts = this.ctx.startupTimeoutAutoRecoverAttempts + 1;
 				const canAutoRecover =
-					isStartupTimeout && !this.ctx.isCleaningUp() && !!this.ctx.onStartupTimeoutAutoRecover;
+					isStartupTimeout &&
+					!this.ctx.isCleaningUp() &&
+					!!this.ctx.onStartupTimeoutAutoRecover &&
+					startupRecoverAttempts <= 1;
 
 				if (canAutoRecover) {
+					this.ctx.startupTimeoutAutoRecoverAttempts = startupRecoverAttempts;
 					logger.warn(
-						'SDK startup timeout — scheduling auto-recovery (fresh query without resume)'
+						`SDK startup timeout — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
 					);
-					const recover = this.ctx.onStartupTimeoutAutoRecover!;
 					// Defer until after finally{} completes so shared state is reset first.
 					setTimeout(() => {
-						recover.call(this.ctx).catch((err: unknown) => {
+						this.ctx.onStartupTimeoutAutoRecover!().catch((err: unknown) => {
 							logger.error('Auto-recovery after SDK startup timeout failed:', err);
 						});
 					}, 300);
+					// setIdle is handled by the finally block; skipping here avoids a double call.
 				} else {
+					// Reset counter so a future successfully-started session can recover again.
+					if (isStartupTimeout) {
+						this.ctx.startupTimeoutAutoRecoverAttempts = 0;
+					}
 					const apiErrorHandled = await this.handleApiValidationError(error);
 
 					if (!apiErrorHandled) {
@@ -425,8 +442,8 @@ export class QueryRunner {
 							}
 						);
 					}
+					await stateManager.setIdle();
 				}
-				await stateManager.setIdle();
 			}
 		} finally {
 			// Check for stale query FIRST to avoid race conditions.

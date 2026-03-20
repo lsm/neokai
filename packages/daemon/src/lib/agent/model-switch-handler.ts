@@ -184,7 +184,6 @@ export class ModelSwitchHandler {
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
-
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
@@ -214,7 +213,6 @@ export class ModelSwitchHandler {
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
-
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.

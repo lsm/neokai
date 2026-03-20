@@ -217,6 +217,7 @@ export class AgentSession
 	queryAbortController: AbortController | null = null;
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+	startupTimeoutAutoRecoverAttempts = 0;
 	originalEnvVars: OriginalEnvVars = {};
 	// Whether to auto-queue /context after each turn (default: true)
 	// Disabled for room-managed agents to prevent interleaved messages after terminal state

@@ -4,7 +4,8 @@
  * Tests for SDK query execution with streaming input.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { tmpdir } from 'node:os';
 import { QueryRunner, type QueryRunnerContext } from '../../../src/lib/agent/query-runner';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -184,6 +185,7 @@ describe('QueryRunner', () => {
 			queryAbortController: null,
 			firstMessageReceived: false,
 			startupTimeoutTimer: null,
+			startupTimeoutAutoRecoverAttempts: 0,
 			originalEnvVars: {},
 
 			// Methods for state coordination
@@ -714,6 +716,108 @@ describe('QueryRunner', () => {
 			expect(ctx.queryObject).toBe(originalQueryObject);
 		});
 	});
+
+	describe('startup timeout auto-recovery', () => {
+		// Integration tests: exercise the runQuery() catch block when a startup-timeout
+		// error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
+		// test never waits for the real 15-second timer.
+		// ANTHROPIC_API_KEY is set to a dummy value so the pre-query auth check passes.
+
+		let savedApiKey: string | undefined;
+
+		beforeEach(() => {
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			// Use a real directory so fs.mkdir() succeeds (reached after auth passes)
+			mockSession.workspacePath = tmpdir();
+			buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+		});
+
+		afterEach(() => {
+			if (savedApiKey === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = savedApiKey;
+			}
+		});
+
+		it('should NOT call messageQueue.clear() when onStartupTimeoutAutoRecover is registered', async () => {
+			const ctx = createContext({
+				onStartupTimeoutAutoRecover: mock(async () => {}),
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).not.toHaveBeenCalled();
+		});
+
+		it('should call messageQueue.clear() when onStartupTimeoutAutoRecover is absent', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).toHaveBeenCalled();
+		});
+
+		it('should schedule onStartupTimeoutAutoRecover after ~300ms', async () => {
+			const recoverSpy = mock(async () => {});
+			const ctx = createContext({
+				onStartupTimeoutAutoRecover: recoverSpy,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Not yet called — deferred by setTimeout(300ms)
+			expect(recoverSpy).not.toHaveBeenCalled();
+
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(recoverSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('should NOT invoke onStartupTimeoutAutoRecover when isCleaningUp returns true', async () => {
+			const recoverSpy = mock(async () => {});
+			const ctx = createContext({
+				isCleaningUp: () => true,
+				onStartupTimeoutAutoRecover: recoverSpy,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(recoverSpy).not.toHaveBeenCalled();
+		});
+
+		it('should surface error normally and NOT recover when retry limit (1) is already reached', async () => {
+			const recoverSpy = mock(async () => {});
+			const ctx = createContext({
+				startupTimeoutAutoRecoverAttempts: 1, // already at limit
+				onStartupTimeoutAutoRecover: recoverSpy,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(recoverSpy).not.toHaveBeenCalled();
+			expect(handleErrorSpy).toHaveBeenCalled();
+		});
+
+		it('should increment startupTimeoutAutoRecoverAttempts when recovery is scheduled', async () => {
+			const ctx = createContext({
+				startupTimeoutAutoRecoverAttempts: 0,
+				onStartupTimeoutAutoRecover: mock(async () => {}),
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(1);
+		});
+	});
 });
 
 describe('QueryRunner error categorization', () => {
@@ -1196,147 +1300,6 @@ describe('QueryRunner environment variable handling', () => {
 		Object.keys(originalEnvVars).forEach((key) => delete originalEnvVars[key]);
 
 		expect(Object.keys(originalEnvVars).length).toBe(0);
-	});
-});
-
-describe('QueryRunner startup timeout auto-recovery', () => {
-	// These tests exercise the auto-recovery path in the catch block by directly
-	// manipulating the QueryRunner's createMessageGeneratorWrapper / runQuery path.
-	// We test the logic directly via unit assertions since the full runQuery()
-	// integration path requires credentials that are not present in unit tests.
-
-	it('preserves queued messages when onStartupTimeoutAutoRecover is registered and error is startup timeout', () => {
-		// Core logic: if isStartupTimeout && onStartupTimeoutAutoRecover, do NOT call clear()
-		const isStartupTimeout = true;
-		const hasAutoRecover = true;
-		let clearCalled = false;
-
-		if (!isStartupTimeout || !hasAutoRecover) {
-			clearCalled = true;
-		}
-
-		expect(clearCalled).toBe(false);
-	});
-
-	it('clears queue when no onStartupTimeoutAutoRecover and error is startup timeout', () => {
-		const isStartupTimeout = true;
-		const hasAutoRecover = false;
-		let clearCalled = false;
-
-		if (!isStartupTimeout || !hasAutoRecover) {
-			clearCalled = true;
-		}
-
-		expect(clearCalled).toBe(true);
-	});
-
-	it('clears queue for non-startup-timeout errors even when onStartupTimeoutAutoRecover is registered', () => {
-		const isStartupTimeout = false;
-		const hasAutoRecover = true;
-		let clearCalled = false;
-
-		if (!isStartupTimeout || !hasAutoRecover) {
-			clearCalled = true;
-		}
-
-		expect(clearCalled).toBe(true);
-	});
-
-	it('clears sdkSessionId on startup timeout regardless of auto-recover presence', () => {
-		// sdkSessionId clearing must happen even when auto-recovery is scheduled,
-		// so the new query starts without a stale resume pointer.
-		const isStartupTimeout = true;
-		let sdkSessionId: string | undefined = 'existing-session-id';
-		let dbUpdateCalled = false;
-
-		if (isStartupTimeout && sdkSessionId) {
-			sdkSessionId = undefined;
-			dbUpdateCalled = true;
-		}
-
-		expect(sdkSessionId).toBeUndefined();
-		expect(dbUpdateCalled).toBe(true);
-	});
-
-	it('does NOT schedule auto-recovery when isCleaningUp returns true', () => {
-		const isStartupTimeout = true;
-		const isCleaningUp = true;
-		const hasAutoRecover = true;
-		let recoverScheduled = false;
-
-		const canAutoRecover = isStartupTimeout && !isCleaningUp && hasAutoRecover;
-		if (canAutoRecover) {
-			recoverScheduled = true;
-		}
-
-		expect(recoverScheduled).toBe(false);
-	});
-
-	it('does NOT schedule auto-recovery when onStartupTimeoutAutoRecover is absent', () => {
-		const isStartupTimeout = true;
-		const isCleaningUp = false;
-		const hasAutoRecover = false;
-		let recoverScheduled = false;
-
-		const canAutoRecover = isStartupTimeout && !isCleaningUp && hasAutoRecover;
-		if (canAutoRecover) {
-			recoverScheduled = true;
-		}
-
-		expect(recoverScheduled).toBe(false);
-	});
-
-	it('schedules auto-recovery when startup timeout fires and not cleaning up', () => {
-		const isStartupTimeout = true;
-		const isCleaningUp = false;
-		const hasAutoRecover = true;
-		let recoverScheduled = false;
-
-		const canAutoRecover = isStartupTimeout && !isCleaningUp && hasAutoRecover;
-		if (canAutoRecover) {
-			recoverScheduled = true;
-		}
-
-		expect(recoverScheduled).toBe(true);
-	});
-
-	it('onStartupTimeoutAutoRecover is optional in QueryRunnerContext and can be undefined', () => {
-		// Verifies that the interface allows the property to be absent, which is the
-		// default for contexts that do not need auto-recovery (non-provider-switch paths).
-		const ctx: Partial<QueryRunnerContext> = {
-			isCleaningUp: () => false,
-			// onStartupTimeoutAutoRecover intentionally absent
-		};
-		expect(ctx.onStartupTimeoutAutoRecover).toBeUndefined();
-	});
-
-	it('does not call clear() in auto-recovery path — simulated via canAutoRecover flag', async () => {
-		// Simulate the catch block's decision tree:
-		// isStartupTimeout=true, canAutoRecover=true → clear() skipped, recover scheduled
-		let clearCalled = false;
-		let errorHandlerCalled = false;
-		let recoverScheduled = false;
-
-		const isStartupTimeout = true;
-		const canAutoRecover = true;
-		const isAbortError = false;
-
-		// Mirrors the catch block logic
-		if (!isStartupTimeout || !canAutoRecover) {
-			clearCalled = true;
-		}
-
-		if (!isAbortError) {
-			if (canAutoRecover) {
-				recoverScheduled = true;
-			} else {
-				errorHandlerCalled = true;
-			}
-		}
-
-		expect(clearCalled).toBe(false);
-		expect(recoverScheduled).toBe(true);
-		expect(errorHandlerCalled).toBe(false);
 	});
 });
 
