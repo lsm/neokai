@@ -431,7 +431,17 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			fs.writeFileSync(logPath, '');
 
 			const startResult = await runDevProxyCommand(
-				['--detach', '--no-first-run', '--port', String(port), '--log-level', logLevel, '--record'],
+				[
+					'--detach',
+					'--no-first-run',
+					'--as-system-proxy',
+					'false',
+					'--port',
+					String(port),
+					'--log-level',
+					logLevel,
+					'--record',
+				],
 				startTimeout
 			);
 
