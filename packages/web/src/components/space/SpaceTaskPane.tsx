@@ -78,10 +78,10 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 		try {
 			setSubmitting(true);
 			setError(null);
-			await spaceStore.updateTask(task.id, {
-				inputDraft: inputText.trim(),
-				status: 'in_progress',
-			});
+			// Persist the draft first so it is never lost even if the status transition fails
+			await spaceStore.updateTask(task.id, { inputDraft: inputText.trim() });
+			// Then attempt to resume the task — the server validates the transition
+			await spaceStore.updateTask(task.id, { status: 'in_progress' });
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to submit response');
 		} finally {

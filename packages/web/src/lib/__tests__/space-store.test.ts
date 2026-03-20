@@ -121,6 +121,8 @@ function makeMockHub() {
 			// spaceWorkflow handlers return wrapped { workflow }
 			if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
 			if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
+			// space.list returns array of spaces
+			if (method === 'space.list') return [makeSpace('s1'), makeSpace('s2')];
 			return {};
 		}),
 	};
@@ -859,5 +861,147 @@ describe('SpaceStore — CRUD methods', () => {
 			'No space selected'
 		);
 		await expect(spaceStore.createWorkflow({ name: 'W' })).rejects.toThrow('No space selected');
+	});
+});
+
+// -------------------------------------------------------
+// Helper to access/reset private globalListInitialized flag
+// -------------------------------------------------------
+
+type SpaceStorePrivate = {
+	globalListInitialized: boolean;
+};
+
+function resetGlobalListState() {
+	(spaceStore as unknown as SpaceStorePrivate).globalListInitialized = false;
+	spaceStore.spaces.value = [];
+}
+
+describe('SpaceStore — initGlobalList', () => {
+	beforeEach(async () => {
+		await resetStore();
+		resetGlobalListState();
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('fetches space list and populates spaces signal', async () => {
+		await spaceStore.initGlobalList();
+
+		expect(mockHub.request).toHaveBeenCalledWith('space.list', {});
+		expect(spaceStore.spaces.value).toHaveLength(2);
+		expect(spaceStore.spaces.value[0].id).toBe('s1');
+		expect(spaceStore.spaces.value[1].id).toBe('s2');
+	});
+
+	it('is idempotent — second call skips fetch', async () => {
+		await spaceStore.initGlobalList();
+		const callCount = mockHub.request.mock.calls.length;
+
+		await spaceStore.initGlobalList();
+
+		// No additional request calls on the second invocation
+		expect(mockHub.request.mock.calls.length).toBe(callCount);
+	});
+
+	it('adds new space on space.created when not already in list', async () => {
+		await spaceStore.initGlobalList();
+		const newSpace = makeSpace('new-s');
+
+		mockEventHandlers.get('space.created')?.({ spaceId: 'new-s', space: newSpace });
+
+		expect(spaceStore.spaces.value.some((s) => s.id === 'new-s')).toBe(true);
+		expect(spaceStore.spaces.value).toHaveLength(3);
+	});
+
+	it('does not add duplicate on space.created if already in list', async () => {
+		await spaceStore.initGlobalList();
+		const count = spaceStore.spaces.value.length;
+
+		mockEventHandlers.get('space.created')?.({ spaceId: 's1', space: makeSpace('s1') });
+
+		expect(spaceStore.spaces.value).toHaveLength(count);
+	});
+
+	it('updates matching space on space.updated', async () => {
+		await spaceStore.initGlobalList();
+
+		mockEventHandlers.get('space.updated')?.({ spaceId: 's1', space: { name: 'Renamed' } });
+
+		expect(spaceStore.spaces.value.find((s) => s.id === 's1')?.name).toBe('Renamed');
+		// Other spaces unaffected
+		expect(spaceStore.spaces.value.find((s) => s.id === 's2')?.name).toBe('Test Space');
+	});
+
+	it('replaces matching space on space.archived', async () => {
+		await spaceStore.initGlobalList();
+		const archived = { ...makeSpace('s1'), status: 'archived' } as Space;
+
+		mockEventHandlers.get('space.archived')?.({ spaceId: 's1', space: archived });
+
+		expect(spaceStore.spaces.value.find((s) => s.id === 's1')?.status).toBe('archived');
+		expect(spaceStore.spaces.value).toHaveLength(2);
+	});
+
+	it('removes matching space on space.deleted', async () => {
+		await spaceStore.initGlobalList();
+		expect(spaceStore.spaces.value.some((s) => s.id === 's1')).toBe(true);
+
+		mockEventHandlers.get('space.deleted')?.({ spaceId: 's1' });
+
+		expect(spaceStore.spaces.value.some((s) => s.id === 's1')).toBe(false);
+		expect(spaceStore.spaces.value).toHaveLength(1);
+	});
+
+	it('resets globalListInitialized flag on failure so retry works', async () => {
+		mockHub.request.mockRejectedValueOnce(new Error('Network error'));
+		await spaceStore.initGlobalList();
+
+		const priv = spaceStore as unknown as SpaceStorePrivate;
+		expect(priv.globalListInitialized).toBe(false);
+
+		// Retry should succeed and set flag to true
+		await spaceStore.initGlobalList();
+		expect(priv.globalListInitialized).toBe(true);
+		expect(spaceStore.spaces.value).toHaveLength(2);
+	});
+});
+
+describe('SpaceStore — refresh', () => {
+	beforeEach(async () => {
+		await resetStore();
+		resetGlobalListState();
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('re-initializes global list on reconnect when previously initialized', async () => {
+		await spaceStore.initGlobalList();
+		mockHub.request.mockClear();
+
+		await spaceStore.refresh();
+
+		// space.list should be re-fetched (init ran again)
+		expect(mockHub.request).toHaveBeenCalledWith('space.list', {});
+	});
+
+	it('does not re-init global list when never initialized', async () => {
+		// globalListInitialized is false — never called initGlobalList
+		await spaceStore.refresh();
+
+		expect(mockHub.request).not.toHaveBeenCalledWith('space.list', expect.anything());
+	});
+
+	it('re-fetches space overview when a space is selected', async () => {
+		await spaceStore.selectSpace('space-1');
+		mockHub.request.mockClear();
+
+		await spaceStore.refresh();
+
+		expect(mockHub.request).toHaveBeenCalledWith('space.overview', { id: 'space-1' });
+	});
+
+	it('is a no-op for space state when no space is selected', async () => {
+		await spaceStore.refresh();
+
+		expect(mockHub.request).not.toHaveBeenCalledWith('space.overview', expect.anything());
 	});
 });

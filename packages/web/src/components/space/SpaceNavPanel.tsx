@@ -163,7 +163,7 @@ export function SpaceNavPanel({
 				</div>
 			)}
 
-			{/* Navigation Links */}
+			{/* Navigation Links — TODO: wire onClick once Agent/Workflow/Settings routes are implemented */}
 			<div class="mt-auto pt-4 border-t border-dark-700 px-1">
 				<div class="space-y-0.5">
 					<NavLink label="Agents" icon={AgentIcon} />

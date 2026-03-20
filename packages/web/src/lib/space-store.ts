@@ -567,8 +567,23 @@ class SpaceStore {
 	/**
 	 * Refresh current space state from server.
 	 * Called by the connection manager on WebSocket reconnect.
+	 *
+	 * Also re-initializes the global space list when it was previously set up.
+	 * The old hub connection is closed on disconnect, tearing down any event
+	 * subscriptions registered in initGlobalList(). Resetting the flag here
+	 * ensures initGlobalList() runs again with the new hub connection — either
+	 * immediately (if the global list was active) or lazily (on next Spaces
+	 * section navigation).
 	 */
 	async refresh(): Promise<void> {
+		// Re-initialize global list subscriptions on the new hub if they existed
+		if (this.globalListInitialized) {
+			this.globalListInitialized = false;
+			this.initGlobalList().catch((err) => {
+				logger.error('Failed to re-initialize global space list on reconnect:', err);
+			});
+		}
+
 		const spaceId = this.spaceId.value;
 		if (!spaceId) return;
 

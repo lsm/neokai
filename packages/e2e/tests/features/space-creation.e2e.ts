@@ -43,8 +43,10 @@ test.describe('Space Creation UX', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
-		// Small settle time after connection
-		await page.waitForTimeout(300);
+		// Wait for the NavRail to be visible — deterministic signal that the app is ready
+		await expect(page.getByRole('button', { name: 'Spaces', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	test.afterEach(async ({ page }) => {

@@ -146,6 +146,7 @@ export function SpaceDashboard({
 			)}
 
 			{/* Quick actions */}
+			{/* TODO: onStartWorkflow and onCreateTask are unwired scaffolding — will be connected once workflow/task creation dialogs are implemented */}
 			<div>
 				<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
 					Quick Actions
