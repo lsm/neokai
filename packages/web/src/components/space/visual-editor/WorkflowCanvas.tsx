@@ -225,14 +225,11 @@ export function WorkflowCanvas({
 		[onEdgeSelect]
 	);
 
-	const handleEdgeDelete = useCallback(
-		(transitionId: string) => {
-			setSelectedEdgeId(null);
-			onEdgeSelectRef.current?.(null);
-			onDeleteEdgeRef.current?.(transitionId);
-		},
-		[]
-	);
+	const handleEdgeDelete = useCallback((transitionId: string) => {
+		setSelectedEdgeId(null);
+		onEdgeSelectRef.current?.(null);
+		onDeleteEdgeRef.current?.(transitionId);
+	}, []);
 
 	const handleBackgroundClick = useCallback(() => {
 		setSelectedNodeId(null);
