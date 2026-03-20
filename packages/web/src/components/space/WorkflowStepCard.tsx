@@ -201,6 +201,8 @@ interface WorkflowStepCardProps {
 	onMoveUp: () => void;
 	onMoveDown: () => void;
 	onRemove: () => void;
+	/** When true, the Remove button is disabled (e.g. only one step remains) */
+	disableRemove?: boolean;
 }
 
 export function WorkflowStepCard({
@@ -219,6 +221,7 @@ export function WorkflowStepCard({
 	onMoveUp,
 	onMoveDown,
 	onRemove,
+	disableRemove = false,
 }: WorkflowStepCardProps) {
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
 
@@ -282,7 +285,8 @@ export function WorkflowStepCard({
 					</button>
 					<button
 						onClick={onRemove}
-						class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 transition-colors"
+						disabled={disableRemove}
+						class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
 						title="Remove step"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -333,7 +337,7 @@ export function WorkflowStepCard({
 							{agents.map((a) => (
 								<option key={a.id} value={a.id}>
 									{a.name}
-									{a.role ? ` (${a.role})` : ''}
+									{` (${a.role})`}
 								</option>
 							))}
 						</select>

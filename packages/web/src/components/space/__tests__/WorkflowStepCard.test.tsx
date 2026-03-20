@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Unit tests for WorkflowStepCard
  *
@@ -104,7 +103,7 @@ describe('WorkflowStepCard', () => {
 		it('calls onToggleExpand when header clicked', () => {
 			const onToggleExpand = vi.fn();
 			const { container } = render(<WorkflowStepCard {...makeProps({ onToggleExpand })} />);
-			const header = container.querySelector('.cursor-pointer');
+			const header = container.querySelector('.cursor-pointer') as HTMLElement;
 			fireEvent.click(header);
 			expect(onToggleExpand).toHaveBeenCalledOnce();
 		});
@@ -125,12 +124,12 @@ describe('WorkflowStepCard', () => {
 
 		it('disables move up button for first step', () => {
 			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ isFirst: true })} />);
-			expect(getByTitle('Move up').disabled).toBe(true);
+			expect((getByTitle('Move up') as HTMLButtonElement).disabled).toBe(true);
 		});
 
 		it('disables move down button for last step', () => {
 			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ isLast: true })} />);
-			expect(getByTitle('Move down').disabled).toBe(true);
+			expect((getByTitle('Move down') as HTMLButtonElement).disabled).toBe(true);
 		});
 
 		it('calls onRemove when remove button clicked', () => {
@@ -138,6 +137,16 @@ describe('WorkflowStepCard', () => {
 			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ onRemove })} />);
 			fireEvent.click(getByTitle('Remove step'));
 			expect(onRemove).toHaveBeenCalledOnce();
+		});
+
+		it('disables Remove button when disableRemove is true', () => {
+			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ disableRemove: true })} />);
+			expect((getByTitle('Remove step') as HTMLButtonElement).disabled).toBe(true);
+		});
+
+		it('enables Remove button when disableRemove is false', () => {
+			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ disableRemove: false })} />);
+			expect((getByTitle('Remove step') as HTMLButtonElement).disabled).toBe(false);
 		});
 
 		it('shows human gate icon when entry condition is human', () => {
@@ -187,7 +196,7 @@ describe('WorkflowStepCard', () => {
 			const { container } = render(<WorkflowStepCard {...makeProps({ expanded: true })} />);
 			const selects = container.querySelectorAll('select');
 			// Agent select + entry gate select + exit gate select = 3 selects
-			const agentSelect = selects[0];
+			const agentSelect = selects[0] as HTMLSelectElement;
 			const options = Array.from(agentSelect.querySelectorAll('option')).map((o) => o.textContent);
 			expect(options).toContain('planner (planner)');
 			expect(options).toContain('coder (coder)');
@@ -226,7 +235,7 @@ describe('WorkflowStepCard', () => {
 			const { container } = render(
 				<WorkflowStepCard {...makeProps({ expanded: true, onUpdate })} />
 			);
-			const textarea = container.querySelector('textarea');
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 			fireEvent.input(textarea, { target: { value: 'Do the thing.' } });
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({ instructions: 'Do the thing.' })

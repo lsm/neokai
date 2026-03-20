@@ -68,7 +68,7 @@ function makeDefaultCondition(): ConditionDraft {
  */
 export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
 	return agents.filter(
-		(a) => a.name.toLowerCase() !== 'leader' && a.role?.toLowerCase() !== 'leader'
+		(a) => a.name.toLowerCase() !== 'leader' && a.role.toLowerCase() !== 'leader'
 	);
 }
 
@@ -264,6 +264,17 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 			}
 		}
 
+		// Validate condition-type transitions have a non-empty shell expression
+		for (let i = 0; i < transitions.length; i++) {
+			if (transitions[i].type === 'condition' && !transitions[i].expression?.trim()) {
+				setError(
+					`Transition after step ${i + 1} requires a shell expression when using Shell Condition type.`
+				);
+				setExpandedIndex(i); // expand the step whose exit gate is the problem
+				return;
+			}
+		}
+
 		setSaving(true);
 		setError(null);
 
@@ -449,6 +460,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 								onMoveUp={() => moveStep(i, 'up')}
 								onMoveDown={() => moveStep(i, 'down')}
 								onRemove={() => removeStep(i)}
+								disableRemove={steps.length === 1}
 							/>
 						))}
 					</div>

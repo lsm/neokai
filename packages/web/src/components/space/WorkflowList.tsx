@@ -140,10 +140,10 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 			return;
 		}
 		try {
-			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>(
-				'spaceExport.workflows',
-				{ spaceId, workflowIds: [workflow.id] }
-			);
+			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.workflows', {
+				spaceId,
+				workflowIds: [workflow.id],
+			});
 			downloadBundle(bundle, spaceName, 'workflows');
 			toast.success(`Exported "${workflow.name}"`);
 		} catch (err) {
@@ -288,10 +288,9 @@ export function WorkflowList({
 			return;
 		}
 		try {
-			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>(
-				'spaceExport.workflows',
-				{ spaceId }
-			);
+			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.workflows', {
+				spaceId,
+			});
 			downloadBundle(bundle, spaceName, 'workflows');
 			toast.success(`Exported ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`);
 		} catch (err) {
@@ -366,8 +365,7 @@ export function WorkflowList({
 			{/* Header */}
 			<div class="flex items-center justify-between px-6 py-4 border-b border-dark-700 flex-shrink-0">
 				<h1 class="text-sm font-semibold text-gray-100">
-					Workflows{' '}
-					<span class="text-xs text-gray-500 font-normal">({workflows.length})</span>
+					Workflows <span class="text-xs text-gray-500 font-normal">({workflows.length})</span>
 				</h1>
 				<div class="flex items-center gap-2">
 					<button

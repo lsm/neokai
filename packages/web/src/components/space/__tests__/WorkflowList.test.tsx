@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Unit tests for WorkflowList
  *
@@ -11,34 +10,42 @@
  * - "Create Workflow" header button fires onCreateWorkflow
  * - Edit button on card fires onEditWorkflow with correct ID
  * - Delete confirmation flow (inline confirm pattern)
+ * - Delete failure shows error banner
  * - Real-time updates via SpaceStore signal
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
-import { signal } from '@preact/signals';
+import { signal, type Signal } from '@preact/signals';
 import type { SpaceWorkflow } from '@neokai/shared';
 
 // ---- Mocks ----
+// Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
 
-let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
-let mockLoading: ReturnType<typeof signal<boolean>>;
+const mockLoading: Signal<boolean> = signal(false);
 
 const mockDeleteWorkflow = vi.fn();
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
 		return {
-			workflows: mockWorkflows,
 			loading: mockLoading,
 			deleteWorkflow: mockDeleteWorkflow,
 		};
 	},
 }));
 
-// Initialize signals before import
-mockWorkflows = signal<SpaceWorkflow[]>([]);
-mockLoading = signal(false);
+vi.mock('../../../lib/connection-manager.ts', () => ({
+	connectionManager: { getHubIfConnected: vi.fn() },
+}));
+vi.mock('../../../lib/toast.ts', () => ({
+	toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+vi.mock('../ImportPreviewDialog.tsx', () => ({ ImportPreviewDialog: () => null }));
+vi.mock('../export-import-utils.ts', () => ({
+	downloadBundle: vi.fn(),
+	pickImportFile: vi.fn(),
+}));
 
 import { WorkflowList } from '../WorkflowList';
 
@@ -65,6 +72,9 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 }
 
 const defaultProps = {
+	spaceId: 'space-1',
+	spaceName: 'Test Space',
+	workflows: [] as SpaceWorkflow[],
 	onCreateWorkflow: vi.fn(),
 	onEditWorkflow: vi.fn(),
 };
@@ -72,9 +82,9 @@ const defaultProps = {
 describe('WorkflowList', () => {
 	beforeEach(() => {
 		cleanup();
-		mockWorkflows.value = [];
 		mockLoading.value = false;
 		mockDeleteWorkflow.mockResolvedValue(undefined);
+		defaultProps.workflows = [];
 		defaultProps.onCreateWorkflow.mockClear();
 		defaultProps.onEditWorkflow.mockClear();
 	});
@@ -97,7 +107,7 @@ describe('WorkflowList', () => {
 
 	it('renders Workflows heading', () => {
 		const { getByText } = render(<WorkflowList {...defaultProps} />);
-		expect(getByText('Workflows')).toBeTruthy();
+		expect(getByText(/Workflows/)).toBeTruthy();
 	});
 
 	it('renders Create Workflow button in header', () => {
@@ -118,109 +128,127 @@ describe('WorkflowList', () => {
 	});
 
 	it('renders workflow card with name', () => {
-		mockWorkflows.value = [makeWorkflow({ name: 'Feature Pipeline' })];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = { ...defaultProps, workflows: [makeWorkflow({ name: 'Feature Pipeline' })] };
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('Feature Pipeline')).toBeTruthy();
 	});
 
 	it('renders workflow description', () => {
-		mockWorkflows.value = [makeWorkflow({ description: 'Runs features end-to-end' })];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = {
+			...defaultProps,
+			workflows: [makeWorkflow({ description: 'Runs features end-to-end' })],
+		};
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('Runs features end-to-end')).toBeTruthy();
 	});
 
 	it('renders step count', () => {
-		mockWorkflows.value = [makeWorkflow()];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = { ...defaultProps, workflows: [makeWorkflow()] };
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('2 steps')).toBeTruthy();
 	});
 
 	it('renders singular "1 step"', () => {
 		const s1 = 'step-1';
-		mockWorkflows.value = [
-			makeWorkflow({
-				steps: [{ id: s1, name: 'Plan', agentId: 'a1' }],
-				transitions: [],
-				startStepId: s1,
-			}),
-		];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = {
+			...defaultProps,
+			workflows: [
+				makeWorkflow({
+					steps: [{ id: s1, name: 'Plan', agentId: 'a1' }],
+					transitions: [],
+					startStepId: s1,
+				}),
+			],
+		};
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('1 step')).toBeTruthy();
 	});
 
 	it('renders tag chips', () => {
-		mockWorkflows.value = [makeWorkflow({ tags: ['ci', 'dev'] })];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = { ...defaultProps, workflows: [makeWorkflow({ tags: ['ci', 'dev'] })] };
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('ci')).toBeTruthy();
 		expect(getByText('dev')).toBeTruthy();
 	});
 
 	it('renders mini step dots (one per step)', () => {
-		mockWorkflows.value = [makeWorkflow()]; // 2 steps
-		const { container } = render(<WorkflowList {...defaultProps} />);
-		// Each step dot has bg-blue-400 or bg-blue-500 class
+		const props = { ...defaultProps, workflows: [makeWorkflow()] };
+		const { container } = render(<WorkflowList {...props} />);
 		const dots = container.querySelectorAll('.bg-blue-400, .bg-blue-500');
 		expect(dots.length).toBeGreaterThanOrEqual(2);
 	});
 
-	it('calls onEditWorkflow with workflow ID when Edit clicked', async () => {
-		mockWorkflows.value = [makeWorkflow({ id: 'wf-abc' })];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+	it('calls onEditWorkflow with workflow ID when Edit clicked', () => {
+		const props = { ...defaultProps, workflows: [makeWorkflow({ id: 'wf-abc' })] };
+		const { getByText } = render(<WorkflowList {...props} />);
 		fireEvent.click(getByText('Edit'));
 		expect(defaultProps.onEditWorkflow).toHaveBeenCalledWith('wf-abc');
 	});
 
 	it('renders multiple workflows', () => {
-		mockWorkflows.value = [
-			makeWorkflow({ id: 'wf-1', name: 'Alpha' }),
-			makeWorkflow({ id: 'wf-2', name: 'Beta' }),
-		];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = {
+			...defaultProps,
+			workflows: [
+				makeWorkflow({ id: 'wf-1', name: 'Alpha' }),
+				makeWorkflow({ id: 'wf-2', name: 'Beta' }),
+			],
+		};
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('Alpha')).toBeTruthy();
 		expect(getByText('Beta')).toBeTruthy();
 	});
 
 	it('handles workflow with no steps in mini viz', () => {
-		mockWorkflows.value = [makeWorkflow({ steps: [], transitions: [], startStepId: '' })];
-		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		const props = {
+			...defaultProps,
+			workflows: [makeWorkflow({ steps: [], transitions: [], startStepId: '' })],
+		};
+		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('No steps')).toBeTruthy();
 	});
 
 	it('renders human gate connector for human condition transition', () => {
 		const s1 = 'step-1';
 		const s2 = 'step-2';
-		mockWorkflows.value = [
-			makeWorkflow({
-				steps: [
-					{ id: s1, name: 'Plan', agentId: 'a1' },
-					{ id: s2, name: 'Code', agentId: 'a2' },
-				],
-				transitions: [{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' }, order: 0 }],
-				startStepId: s1,
-			}),
-		];
-		const { container } = render(<WorkflowList {...defaultProps} />);
-		// Human gate indicator: bg-yellow-400 class on mini connector dot
+		const props = {
+			...defaultProps,
+			workflows: [
+				makeWorkflow({
+					steps: [
+						{ id: s1, name: 'Plan', agentId: 'a1' },
+						{ id: s2, name: 'Code', agentId: 'a2' },
+					],
+					transitions: [
+						{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' as const }, order: 0 },
+					],
+					startStepId: s1,
+				}),
+			],
+		};
+		const { container } = render(<WorkflowList {...props} />);
 		expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
 	});
 
 	describe('delete workflow', () => {
 		it('shows inline Delete? confirmation when trash icon clicked', () => {
-			mockWorkflows.value = [makeWorkflow()];
-			const { getByText, container } = render(<WorkflowList {...defaultProps} />);
-			// Find the delete button (trash icon button, second action button)
-			const actionBtns = container.querySelectorAll('button[title="Delete workflow"]');
-			expect(actionBtns.length).toBe(1);
-			fireEvent.click(actionBtns[0]);
+			const props = { ...defaultProps, workflows: [makeWorkflow()] };
+			const { getByText, container } = render(<WorkflowList {...props} />);
+			const trashBtn = container.querySelector(
+				'button[title="Delete workflow"]'
+			) as HTMLButtonElement;
+			expect(trashBtn).toBeTruthy();
+			fireEvent.click(trashBtn);
 			expect(getByText('Delete?')).toBeTruthy();
 			expect(getByText('Confirm')).toBeTruthy();
 			expect(getByText('Cancel')).toBeTruthy();
 		});
 
 		it('calls deleteWorkflow when Confirm clicked', async () => {
-			mockWorkflows.value = [makeWorkflow({ id: 'wf-del' })];
-			const { getByText, container } = render(<WorkflowList {...defaultProps} />);
-			const trashBtn = container.querySelector('button[title="Delete workflow"]');
+			const props = { ...defaultProps, workflows: [makeWorkflow({ id: 'wf-del' })] };
+			const { getByText, container } = render(<WorkflowList {...props} />);
+			const trashBtn = container.querySelector(
+				'button[title="Delete workflow"]'
+			) as HTMLButtonElement;
 			fireEvent.click(trashBtn);
 			fireEvent.click(getByText('Confirm'));
 			await waitFor(() => {
@@ -229,13 +257,29 @@ describe('WorkflowList', () => {
 		});
 
 		it('hides confirmation when Cancel clicked', () => {
-			mockWorkflows.value = [makeWorkflow()];
-			const { getByText, queryByText, container } = render(<WorkflowList {...defaultProps} />);
-			const trashBtn = container.querySelector('button[title="Delete workflow"]');
+			const props = { ...defaultProps, workflows: [makeWorkflow()] };
+			const { getByText, queryByText, container } = render(<WorkflowList {...props} />);
+			const trashBtn = container.querySelector(
+				'button[title="Delete workflow"]'
+			) as HTMLButtonElement;
 			fireEvent.click(trashBtn);
 			expect(getByText('Delete?')).toBeTruthy();
 			fireEvent.click(getByText('Cancel'));
 			expect(queryByText('Delete?')).toBeNull();
+		});
+
+		it('shows error banner when deleteWorkflow fails', async () => {
+			mockDeleteWorkflow.mockRejectedValueOnce(new Error('Delete failed'));
+			const props = { ...defaultProps, workflows: [makeWorkflow()] };
+			const { getByText, container } = render(<WorkflowList {...props} />);
+			const trashBtn = container.querySelector(
+				'button[title="Delete workflow"]'
+			) as HTMLButtonElement;
+			fireEvent.click(trashBtn);
+			fireEvent.click(getByText('Confirm'));
+			await waitFor(() => {
+				expect(getByText('Delete failed')).toBeTruthy();
+			});
 		});
 	});
 });
