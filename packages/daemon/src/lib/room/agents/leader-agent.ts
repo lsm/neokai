@@ -24,6 +24,7 @@ import type {
 	McpServerConfig,
 	AgentDefinition,
 	SubagentConfig,
+	Provider,
 } from '@neokai/shared';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
@@ -82,7 +83,7 @@ export interface LeaderAgentConfig {
 	model?: string;
 	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
 	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
-	provider?: string;
+	provider?: Provider;
 	/** What type of work is being reviewed */
 	reviewContext?: ReviewContext;
 	/** Dependencies for the leader context MCP server (optional - only needed when creating MCP server) */

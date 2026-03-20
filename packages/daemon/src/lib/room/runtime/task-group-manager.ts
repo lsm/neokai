@@ -12,7 +12,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { Room, RoomGoal, NeoTask, MessageDeliveryMode } from '@neokai/shared';
+import type { Room, RoomGoal, NeoTask, MessageDeliveryMode, Provider } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { Logger } from '../../logger';
 import type {
@@ -156,7 +156,7 @@ export interface TaskGroupManagerConfig {
 	model?: string;
 	/** Provider ID for the leader model (e.g. 'anthropic', 'anthropic-copilot').
 	 *  Resolved from the model cache so routing is deterministic. */
-	provider?: string;
+	provider?: Provider;
 	/** Worker model (defaults to model if not set) */
 	workerModel?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
@@ -181,7 +181,7 @@ export class TaskGroupManager {
 	private readonly daemonHub?: DaemonHub;
 	readonly workspacePath: string;
 	private _model?: string;
-	private _provider?: string;
+	private _provider?: Provider;
 	readonly workerModel?: string;
 
 	constructor(config: TaskGroupManagerConfig) {
@@ -206,12 +206,12 @@ export class TaskGroupManager {
 	}
 
 	/** Get the current provider for leader sessions */
-	get provider(): string | undefined {
+	get provider(): Provider | undefined {
 		return this._provider;
 	}
 
 	/** Update the model and provider for new leader sessions (e.g., when room settings change) */
-	updateModel(model: string | undefined, provider?: string): void {
+	updateModel(model: string | undefined, provider?: Provider): void {
 		this._model = model;
 		this._provider = provider;
 	}

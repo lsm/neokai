@@ -22,6 +22,7 @@ import {
 	type TaskPriority,
 	type AgentType,
 	type RuntimeState,
+	type Provider,
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
@@ -74,6 +75,7 @@ import {
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 import { getNextRunAt } from './cron-utils';
 import { getAvailableModels } from '../../model-service';
+import { getProviderRegistry } from '../../providers/registry';
 
 const log = new Logger('room-runtime');
 
@@ -333,14 +335,6 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Resolve model for a room agent role.
-	 * Priority: room.config.agentModels[role] > room.defaultModel > global default.
-	 */
-	private resolveAgentModel(room: Room, role: 'leader' | 'planner' | 'coder' | 'general'): string {
-		return this.resolveAgentModelWithProvider(room, role).model;
-	}
-
-	/**
 	 * Resolve both the model ID and its provider for a given agent role.
 	 *
 	 * Looks up the model in the global model cache so that providers sharing the
@@ -349,11 +343,17 @@ export class RoomRuntime {
 	 * query-runner.ts falls back to the deprecated detectProvider() heuristic which
 	 * always returns Anthropic first — causing Copilot-targeted sessions to be
 	 * misrouted to Anthropic.
+	 *
+	 * Fallback: when the model is absent from the cache (e.g. cache not yet warmed,
+	 * or Anthropic provider deduped the dot-notation ID behind its canonical alias),
+	 * the registry's detectProvider() is used. detectProvider iterates providers in
+	 * registration order (Anthropic first) and returns the first owner — so
+	 * `claude-opus-4.6` correctly resolves to 'anthropic'.
 	 */
 	private resolveAgentModelWithProvider(
 		room: Room,
 		role: 'leader' | 'planner' | 'coder' | 'general'
-	): { model: string; provider: string | undefined } {
+	): { model: string; provider: Provider | undefined } {
 		const config = (room.config ?? {}) as Record<string, unknown>;
 		const agentModels = config.agentModels as Record<string, string> | undefined;
 		const roleModel = agentModels?.[role];
@@ -367,9 +367,18 @@ export class RoomRuntime {
 		}
 		// Look up provider from the global model cache. getAvailableModels() is sync
 		// and safe to call here (cache is pre-warmed at startup via initializeModels).
+		// ModelInfo.provider is string; cast to the Provider union at this boundary.
 		const availableModels = getAvailableModels('global');
 		const modelInfo = availableModels.find((m) => m.id === modelId || m.alias === modelId);
-		return { model: modelId, provider: modelInfo?.provider };
+		if (modelInfo) {
+			return { model: modelId, provider: modelInfo.provider as Provider };
+		}
+		// Model not found in cache — fall back to registry's heuristic detectProvider().
+		// This covers: cache not yet warmed, or the Anthropic provider deduplicated the
+		// dot-notation ID behind its canonical short alias (e.g. 'claude-opus-4.6' → 'opus').
+		// detectProvider returns Anthropic first for any 'claude-*' model ID.
+		const detectedProvider = getProviderRegistry().detectProvider(modelId);
+		return { model: modelId, provider: detectedProvider?.id as Provider | undefined };
 	}
 
 	/**

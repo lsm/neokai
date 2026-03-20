@@ -23,13 +23,22 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'sonnet[1m]']);
 
 /**
- * Detect if a model ID is a full version-specific ID (e.g., claude-sonnet-4-5-20250929)
- * vs a canonical short ID (e.g., sonnet, opus, haiku)
+ * Detect if a model ID is a full version-specific ID vs a canonical short ID.
+ *
+ * Recognises two formats:
+ * - Dash-separated: claude-sonnet-4-5-20250929, claude-opus-4-5-20251101
+ * - Dot-notation: claude-opus-4.6, claude-sonnet-4.6 (newer SDK format)
  */
 function isFullVersionId(modelId: string): boolean {
-	// Full IDs match pattern: claude-{family}-{version}-{date}
-	// e.g., claude-sonnet-4-5-20250929, claude-opus-4-5-20251101
-	return /^claude-(sonnet|opus|haiku)-[\d-]+$/.test(modelId);
+	// Dash-separated: claude-{family}-{major}-{minor}[-{date}]
+	if (/^claude-(sonnet|opus|haiku)-[\d-]+$/.test(modelId)) {
+		return true;
+	}
+	// Dot-notation: claude-{family}-{major}.{minor}
+	if (/^claude-(sonnet|opus|haiku)-\d+\.\d+$/.test(modelId)) {
+		return true;
+	}
+	return false;
 }
 
 /**
@@ -76,16 +85,23 @@ function parseModelId(
 		};
 	}
 
-	// Full version IDs: claude-{family}-{major}-{minor}-{date}
-	// Example: claude-sonnet-4-5-20250929
-	const match = modelId.match(/^claude-(sonnet|opus|haiku)-(\d+)-(\d+)(?:-\d{8})?$/);
-	if (match) {
-		const family = match[1];
-		const major = match[2];
-		const minor = match[3];
+	// Full version IDs: claude-{family}-{major}-{minor}[-{date}]
+	// Example: claude-sonnet-4-5-20250929, claude-opus-4-5-20251101
+	const dashMatch = modelId.match(/^claude-(sonnet|opus|haiku)-(\d+)-(\d+)(?:-\d{8})?$/);
+	if (dashMatch) {
 		return {
-			family,
-			version: `${major}.${minor}`, // Extract version as "4.5"
+			family: dashMatch[1],
+			version: `${dashMatch[2]}.${dashMatch[3]}`, // e.g. "4.5"
+		};
+	}
+
+	// Dot-notation IDs: claude-{family}-{major}.{minor}
+	// Example: claude-opus-4.6, claude-sonnet-4.6
+	const dotMatch = modelId.match(/^claude-(sonnet|opus|haiku)-(\d+)\.(\d+)$/);
+	if (dotMatch) {
+		return {
+			family: dotMatch[1],
+			version: `${dotMatch[2]}.${dotMatch[3]}`, // e.g. "4.6"
 		};
 	}
 

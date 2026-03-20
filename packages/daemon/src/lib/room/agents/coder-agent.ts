@@ -18,6 +18,7 @@ import type {
 	SessionFeatures,
 	AgentDefinition,
 	SubagentConfig,
+	Provider,
 } from '@neokai/shared';
 
 const DEFAULT_CODER_MODEL = 'claude-sonnet-4-5-20250929';
@@ -39,7 +40,7 @@ export interface CoderAgentConfig {
 	model?: string;
 	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
 	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
-	provider?: string;
+	provider?: Provider;
 	/** Summaries of previously completed tasks in the same goal */
 	previousTaskSummaries?: string[];
 }

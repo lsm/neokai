@@ -83,6 +83,7 @@ import type {
 	SelectiveRewindResult,
 	SystemPromptConfig,
 	McpServerConfig,
+	Provider,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
@@ -130,7 +131,7 @@ export interface AgentSessionInit {
 	 * multiple providers (e.g. claude-opus-4.6 owned by both Anthropic and Copilot)
 	 * are routed to the correct provider.
 	 */
-	provider?: string;
+	provider?: Provider;
 
 	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
 	coordinatorMode?: boolean;
@@ -497,7 +498,7 @@ export class AgentSession
 			// Room-spawned sessions (leader, coder, general) pass this from the model cache
 			// so providers that share canonical model IDs (e.g. anthropic vs anthropic-copilot
 			// for 'claude-opus-4.6') are routed deterministically.
-			provider: init.provider as import('@neokai/shared').Provider | undefined,
+			provider: init.provider,
 		};
 
 		const metadata: SessionMetadata = {

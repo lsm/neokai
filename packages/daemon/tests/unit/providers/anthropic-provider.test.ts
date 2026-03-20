@@ -192,6 +192,101 @@ describe('AnthropicProvider', () => {
 		});
 	});
 
+	describe('convertSdkModels — dot-notation model IDs', () => {
+		/**
+		 * Regression tests for the provider routing bug:
+		 * claude-opus-4.6 (dot-notation) was not recognised as a full-version ID by
+		 * isFullVersionId(), so it was never deduplicated against the canonical 'opus'
+		 * alias when both appeared in the SDK response.
+		 */
+		it('recognises claude-opus-4.6 as a full-version ID (dot notation)', () => {
+			// Canonical 'opus' is returned first with description that encodes version 4.6
+			const sdkModels = [
+				{ value: 'opus', displayName: 'Opus', description: 'Opus 4.6 · Most capable' },
+				{
+					value: 'claude-opus-4.6',
+					displayName: 'Claude Opus 4.6',
+					description: 'Opus 4.6 · Most capable',
+				},
+			];
+			const result = provider.convertSdkModels(sdkModels);
+			// claude-opus-4.6 should be deduplicated away because canonical 'opus' exists for version 4.6
+			const opusIds = result.map((m) => m.id);
+			expect(opusIds).toContain('opus');
+			expect(opusIds).not.toContain('claude-opus-4.6');
+		});
+
+		it('keeps claude-opus-4.6 when no canonical opus alias is present', () => {
+			// Only the full dot-notation ID is returned (no canonical alias)
+			const sdkModels = [
+				{
+					value: 'claude-opus-4.6',
+					displayName: 'Claude Opus 4.6',
+					description: 'Opus 4.6 · Most capable',
+				},
+			];
+			const result = provider.convertSdkModels(sdkModels);
+			const opusIds = result.map((m) => m.id);
+			expect(opusIds).toContain('claude-opus-4.6');
+		});
+
+		it('keeps claude-sonnet-4.6 when no canonical sonnet alias is present', () => {
+			const sdkModels = [
+				{
+					value: 'claude-sonnet-4.6',
+					displayName: 'Claude Sonnet 4.6',
+					description: 'Sonnet 4.6 · Best balance',
+				},
+			];
+			const result = provider.convertSdkModels(sdkModels);
+			expect(result.map((m) => m.id)).toContain('claude-sonnet-4.6');
+		});
+
+		it('deduplicates claude-sonnet-4.6 when canonical sonnet alias exists for same version', () => {
+			const sdkModels = [
+				{ value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 4.6 · Best balance' },
+				{
+					value: 'claude-sonnet-4.6',
+					displayName: 'Claude Sonnet 4.6',
+					description: 'Sonnet 4.6 · Best balance',
+				},
+			];
+			const result = provider.convertSdkModels(sdkModels);
+			const ids = result.map((m) => m.id);
+			expect(ids).toContain('sonnet');
+			expect(ids).not.toContain('claude-sonnet-4.6');
+		});
+
+		it('correctly sets provider to anthropic for kept dot-notation models', () => {
+			const sdkModels = [
+				{
+					value: 'claude-opus-4.6',
+					displayName: 'Claude Opus 4.6',
+					description: 'Opus 4.6 · Most capable',
+				},
+			];
+			const result = provider.convertSdkModels(sdkModels);
+			const model = result.find((m) => m.id === 'claude-opus-4.6');
+			expect(model?.provider).toBe('anthropic');
+			expect(model?.family).toBe('opus');
+		});
+
+		it('continues to handle dash-notation IDs correctly (regression guard)', () => {
+			const sdkModels = [
+				{ value: 'opus', displayName: 'Opus', description: 'Opus 4.5 · Most capable' },
+				{
+					value: 'claude-opus-4-5-20251101',
+					displayName: 'Opus',
+					description: 'Opus 4.5 · Most capable',
+				},
+			];
+			const result = provider.convertSdkModels(sdkModels);
+			const ids = result.map((m) => m.id);
+			expect(ids).toContain('opus');
+			expect(ids).not.toContain('claude-opus-4-5-20251101');
+		});
+	});
+
 	describe('model cache', () => {
 		it('should allow setting model cache', async () => {
 			const customModels = [

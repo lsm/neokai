@@ -29,6 +29,7 @@ import type {
 	TaskPriority,
 	AgentType,
 	AgentDefinition,
+	Provider,
 } from '@neokai/shared';
 
 const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-5-20250929';
@@ -84,7 +85,7 @@ export interface PlannerAgentConfig {
 	model?: string;
 	/** Provider ID resolved from the model (e.g. 'anthropic', 'anthropic-copilot').
 	 *  When set, routing is deterministic — no deprecated detectProvider fallback. */
-	provider?: string;
+	provider?: Provider;
 	/** Callback to create a draft task linked to this planning task */
 	createDraftTask: (params: PlannerCreateTaskParams) => Promise<{ id: string; title: string }>;
 	/** Callback to update an existing draft task */
