@@ -669,7 +669,7 @@ describe('ModelSwitchHandler', () => {
 				expect(callArg).not.toHaveProperty('sdkSessionId');
 			});
 
-			it('does nothing when sdkSessionId is already unset and provider changes', async () => {
+			it('succeeds (no-op in-memory) when sdkSessionId is already unset and provider changes', async () => {
 				mockSession.sdkSessionId = undefined;
 				mockSession.config.model = 'glm-5';
 				mockSession.config.provider = 'glm';
@@ -682,6 +682,22 @@ describe('ModelSwitchHandler', () => {
 				// DB update includes sdkSessionId: undefined (the spread still adds the key)
 				const callArg = updateSessionSpy.mock.calls[0][1] as Record<string, unknown>;
 				expect(callArg).toHaveProperty('sdkSessionId', undefined);
+			});
+
+			it('clears sdkSessionId when transport not ready (queryObject set but firstMessageReceived=false) and provider changes', async () => {
+				mockSession.config.model = 'glm-5';
+				mockSession.config.provider = 'glm';
+
+				// queryObject is non-null but transport is not ready (no first message yet)
+				handler = createHandler({ firstMessageReceived: false });
+				await handler.switchModel('opus', 'anthropic');
+
+				// Takes the !transportReady branch — must still clear sdkSessionId
+				expect(mockSession.sdkSessionId).toBeUndefined();
+				const callArg = updateSessionSpy.mock.calls[0][1] as Record<string, unknown>;
+				expect(callArg).toHaveProperty('sdkSessionId', undefined);
+				// restart is NOT called since transport is not ready
+				expect(restartSpy).not.toHaveBeenCalled();
 			});
 		});
 	});

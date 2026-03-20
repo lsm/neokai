@@ -193,7 +193,7 @@ export class ModelSwitchHandler {
 
 				// Clear SDK session ID when switching providers so the new subprocess
 				// does not attempt to resume an incompatible old session file.
-				if (providerChanged && session.sdkSessionId) {
+				if (providerChanged) {
 					session.sdkSessionId = undefined;
 				}
 
@@ -231,7 +231,7 @@ export class ModelSwitchHandler {
 				// Clear SDK session ID when switching providers so the restarted subprocess
 				// does not attempt to resume an incompatible old session file (which would
 				// cause the 15 s SDK startup timeout error).
-				if (providerChanged && session.sdkSessionId) {
+				if (providerChanged) {
 					session.sdkSessionId = undefined;
 				}
 
