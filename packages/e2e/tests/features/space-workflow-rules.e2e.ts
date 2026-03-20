@@ -26,16 +26,32 @@ const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 async function createTestSpace(page: Page): Promise<string> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
-	const uniquePath = `${workspaceRoot}/e2e-workflow-rules-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-	return page.evaluate(async (wsPath) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('space.create', {
-			name: `E2E Rules Test Space ${Date.now()}`,
-			workspacePath: wsPath,
-		});
-		return (res as { space: { id: string } }).space.id;
-	}, uniquePath);
+	const spaceName = `E2E Rules Test Space ${Date.now()}`;
+	return page.evaluate(
+		async ({ wsPath, name }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+
+			// Delete any leftover space from a previous failed run
+			try {
+				const spaces = await hub.request('space.list', {});
+				const list = (spaces as { spaces: Array<{ id: string; workspacePath: string }> }).spaces;
+				const existing = list.find((s) => s.workspacePath === wsPath);
+				if (existing) {
+					await hub.request('space.delete', { id: existing.id });
+				}
+			} catch {
+				// Ignore cleanup errors
+			}
+
+			const res = await hub.request('space.create', {
+				name,
+				workspacePath: wsPath,
+			});
+			return (res as { space: { id: string } }).space.id;
+		},
+		{ wsPath: workspaceRoot, name: spaceName }
+	);
 }
 
 async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
