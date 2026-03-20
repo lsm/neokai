@@ -179,11 +179,24 @@ export class ModelSwitchHandler {
 				return { success: false, model: session.config.model, error: errMsg };
 			}
 
+			// Detect provider change: the old provider's SDK session file is incompatible
+			// with the new provider.  If we leave sdkSessionId intact, the new SDK
+			// subprocess will try to resume an old session file and hang until the 15 s
+			// startup timeout fires.  Capture the flag before mutating session.config.provider.
+			const providerChanged = session.config.provider !== (newProviderInstance.id as Provider);
+
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
+
+				// Clear SDK session ID when switching providers so the new subprocess
+				// does not attempt to resume an incompatible old session file.
+				if (providerChanged && session.sdkSessionId) {
+					session.sdkSessionId = undefined;
+				}
+
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
@@ -192,6 +205,7 @@ export class ModelSwitchHandler {
 						model: resolvedModel,
 						provider: newProviderInstance.id as Provider,
 					} as SessionConfig,
+					...(providerChanged ? { sdkSessionId: undefined } : {}),
 				});
 
 				// Update context tracker model
@@ -213,6 +227,14 @@ export class ModelSwitchHandler {
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
+
+				// Clear SDK session ID when switching providers so the restarted subprocess
+				// does not attempt to resume an incompatible old session file (which would
+				// cause the 15 s SDK startup timeout error).
+				if (providerChanged && session.sdkSessionId) {
+					session.sdkSessionId = undefined;
+				}
+
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
@@ -221,6 +243,7 @@ export class ModelSwitchHandler {
 						model: resolvedModel,
 						provider: newProviderInstance.id as Provider,
 					} as SessionConfig,
+					...(providerChanged ? { sdkSessionId: undefined } : {}),
 				});
 
 				// Update context tracker model
