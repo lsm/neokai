@@ -76,8 +76,8 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
 		});
 
-		it('owns gemini-3-pro-preview bare ID', () => {
-			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(true);
+		it('owns gemini-3.1-pro-preview bare ID', () => {
+			expect(provider.ownsModel('gemini-3.1-pro-preview')).toBe(true);
 		});
 
 		it('does not own unknown models', () => {
