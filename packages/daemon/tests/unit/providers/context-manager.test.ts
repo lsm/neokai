@@ -332,7 +332,7 @@ describe('ProviderContextManager', () => {
 			expect(context.modelId).toBe('default');
 		});
 
-		it('should fall back to detection when explicit provider not found', () => {
+		it('should fall back to Anthropic when explicit provider is unknown', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -358,7 +358,7 @@ describe('ProviderContextManager', () => {
 
 			const context = manager.createContext(session);
 
-			// Falls back to detection, which finds anthropic
+			// Falls back to Anthropic for sessions with unrecognised provider IDs
 			expect(context.provider.id).toBe('anthropic');
 		});
 
@@ -653,23 +653,6 @@ describe('ProviderContextManager', () => {
 
 		it('should return undefined for unknown provider', () => {
 			const provider = manager.getProvider('unknown' as unknown as ProviderId);
-			expect(provider).toBeUndefined();
-		});
-	});
-
-	describe('detectProvider (deprecated legacy heuristic)', () => {
-		it('should detect provider from model ID', () => {
-			const provider = manager.detectProvider('claude-3-opus');
-			expect(provider?.id).toBe('anthropic');
-		});
-
-		it('should detect GLM provider', () => {
-			const provider = manager.detectProvider('glm-4');
-			expect(provider?.id).toBe('glm');
-		});
-
-		it('should return undefined for unknown model', () => {
-			const provider = manager.detectProvider('unknown-model-xyz');
 			expect(provider).toBeUndefined();
 		});
 	});

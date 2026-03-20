@@ -460,52 +460,6 @@ describe('ProviderService', () => {
 		});
 	});
 
-	describe('isGlmModel', () => {
-		it('should return true for GLM model', () => {
-			const isGlm = service.isGlmModel('glm-4');
-			expect(isGlm).toBe(true);
-		});
-
-		it('should return false for non-GLM model', () => {
-			const isGlm = service.isGlmModel('claude-3-opus');
-			expect(isGlm).toBe(false);
-		});
-	});
-
-	describe('detectProviderFromModel', () => {
-		it('should detect anthropic provider', () => {
-			const provider = service.detectProviderFromModel('claude-3-opus');
-			expect(provider).toBe('anthropic');
-		});
-
-		it('should detect glm provider', () => {
-			const provider = service.detectProviderFromModel('glm-4');
-			expect(provider).toBe('glm');
-		});
-
-		it('should default to anthropic for unknown model', () => {
-			const provider = service.detectProviderFromModel('unknown-model');
-			expect(provider).toBe('anthropic');
-		});
-	});
-
-	describe('translateModelIdForSdk', () => {
-		it('should translate GLM model ID', () => {
-			const translated = service.translateModelIdForSdk('glm-4');
-			expect(translated).toBe('translated-4');
-		});
-
-		it('should pass through anthropic model ID', () => {
-			const translated = service.translateModelIdForSdk('claude-3-opus');
-			expect(translated).toBe('claude-3-opus');
-		});
-
-		it('should pass through unknown model ID', () => {
-			const translated = service.translateModelIdForSdk('unknown-model');
-			expect(translated).toBe('unknown-model');
-		});
-	});
-
 	describe('getEnvVarsForModel', () => {
 		it('should return empty object for anthropic model', () => {
 			const envVars = service.getEnvVarsForModel('claude-3-opus', 'anthropic');
@@ -519,8 +473,8 @@ describe('ProviderService', () => {
 			expect(envVars.API_TIMEOUT_MS).toBe('120000');
 		});
 
-		it('should return empty object for unknown model', () => {
-			const envVars = service.getEnvVarsForModel('unknown-model');
+		it('should return empty object for unknown provider', () => {
+			const envVars = service.getEnvVarsForModel('unknown-model', 'anthropic');
 			expect(envVars).toEqual({});
 		});
 
@@ -528,19 +482,18 @@ describe('ProviderService', () => {
 			registry.register(new ThrowingMockProvider());
 
 			// Must not throw
-			const envVars = service.getEnvVarsForModel('throwing-model');
+			const envVars = service.getEnvVarsForModel('throwing-model', 'throwing');
 			expect(envVars).toEqual({});
 		});
 
-		it('uses providerId to look up provider even when model ID matches another provider', () => {
-			// AnthropicMockProvider is already registered and owns 'claude-opus-4.6'.
-			// CopilotMockProvider also owns 'claude-opus-4.6' but is registered later.
-			// Without providerId, detectProvider returns Anthropic (registered first) → {}.
-			// With providerId='anthropic-copilot', the correct provider is found → has ANTHROPIC_BASE_URL.
+		it('uses explicit providerId to route to the correct provider for colliding model IDs', () => {
+			// Both AnthropicMockProvider and CopilotMockProvider claim 'claude-opus-4.6'.
+			// The provider ID selects deterministically: 'anthropic' → {} (no extra env vars),
+			// 'anthropic-copilot' → has ANTHROPIC_BASE_URL.
 			registry.register(new CopilotMockProvider());
 
-			const envVarsNoId = service.getEnvVarsForModel('claude-opus-4.6');
-			expect(envVarsNoId.ANTHROPIC_BASE_URL).toBeUndefined(); // Anthropic wins the auto-detect
+			const envVarsAnthropic = service.getEnvVarsForModel('claude-opus-4.6', 'anthropic');
+			expect(envVarsAnthropic.ANTHROPIC_BASE_URL).toBeUndefined();
 
 			const envVarsWithId = service.getEnvVarsForModel('claude-opus-4.6', 'anthropic-copilot');
 			expect(envVarsWithId.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:54321');

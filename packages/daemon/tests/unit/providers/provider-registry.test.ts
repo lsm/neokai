@@ -224,35 +224,6 @@ describe('ProviderRegistry', () => {
 		});
 	});
 
-	describe('detectProvider', () => {
-		it('should detect provider from model ID', () => {
-			const provider = new MockProvider(true, 'custom-');
-			registry.register(provider);
-
-			expect(registry.detectProvider('custom-model')?.id).toBe('mock');
-		});
-
-		it('should return undefined when no provider owns the model', () => {
-			const provider = new MockProvider(true, 'mock-');
-			registry.register(provider);
-
-			expect(registry.detectProvider('unknown-model')).toBeUndefined();
-		});
-
-		it('should return undefined when no providers registered', () => {
-			expect(registry.detectProvider('any-model')).toBeUndefined();
-		});
-
-		it('should return the first registered provider (legacy heuristic, no warning)', () => {
-			// detectProvider is deprecated — it does simple first-match, no collision warning
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCopilotProvider());
-
-			const result = registry.detectProvider('claude-opus-4.6');
-			expect(result?.id).toBe('anthropic');
-		});
-	});
-
 	describe('detectProviderForModel', () => {
 		it('should return copilot provider when providerId is anthropic-copilot', () => {
 			registry.register(makeAnthropicProvider());
@@ -414,15 +385,6 @@ describe('ProviderRegistry', () => {
 
 			expect(codex.ownsModel('gpt-5.3-codex')).toBe(true);
 			expect(codex.ownsModel('claude-opus-4.6')).toBe(true);
-		});
-
-		it('detectProvider (deprecated heuristic) is ambiguous — returns first registered for claude- models', () => {
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCopilotProvider());
-
-			// Heuristic returns first match — non-deterministic when collision exists
-			const result = registry.detectProvider('claude-sonnet-4.6');
-			expect(result?.id).toBe('anthropic'); // First registered wins
 		});
 
 		it('detectProviderForModel is deterministic for colliding model IDs', () => {

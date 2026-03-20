@@ -136,11 +136,11 @@ export class QueryRunner {
 			const modelId = session.config.model || 'sonnet';
 			// Routing is deterministic: session.config.provider is always set by the model
 			// picker and stored on every model switch. Legacy sessions without a stored
-			// provider fall back to heuristic detection (@deprecated path).
+			// provider default to Anthropic via the context manager.
 			const explicitProviderId = session.config.provider as string | undefined;
 			const provider = explicitProviderId
 				? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
-				: providerRegistry.detectProvider(modelId);
+				: providerRegistry.get('anthropic');
 
 			// Check if the provider can make API calls (env vars, auth.json, gh CLI — all count).
 			// isAvailable() is the runtime gate; getAuthStatus().isAuthenticated is UI-only

@@ -81,8 +81,7 @@ export class ProviderContextManager {
 	 *
 	 * Resolves the provider from:
 	 * 1. Explicit session.config.provider
-	 * 2. Model-based detection via registry
-	 * 3. Default to Anthropic
+	 * 2. Default to Anthropic (for legacy sessions without a stored provider)
 	 */
 	createContext(session: Session): ProviderContext {
 		// Resolve provider for this session
@@ -108,15 +107,7 @@ export class ProviderContextManager {
 			}
 		}
 
-		// 2. Legacy fallback: detect from model ID for old sessions that pre-date explicit routing.
-		// @deprecated — new sessions always store session.config.provider.
-		const modelId = session.config.model || 'default';
-		const detected = this.registry.detectProvider(modelId);
-		if (detected) {
-			return detected;
-		}
-
-		// 3. Default to Anthropic
+		// 2. Default to Anthropic for legacy sessions that pre-date explicit routing.
 		const anthropic = this.registry.get('anthropic');
 		if (anthropic) {
 			return anthropic;
@@ -152,14 +143,6 @@ export class ProviderContextManager {
 	 */
 	getProvider(providerId: ProviderId): Provider | undefined {
 		return this.registry.get(providerId);
-	}
-
-	/**
-	 * @deprecated Use `getProvider(providerId)` or `registry.detectProviderForModel(modelId, providerId)`.
-	 *   Heuristic model-ID-only detection is ambiguous when providers share model IDs.
-	 */
-	detectProvider(modelId: string): Provider | undefined {
-		return this.registry.detectProvider(modelId);
 	}
 
 	/**
