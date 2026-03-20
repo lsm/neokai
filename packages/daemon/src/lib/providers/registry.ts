@@ -83,7 +83,7 @@ export class ProviderRegistry {
 	 */
 	findProviderForModel(modelId: string): Provider | undefined {
 		for (const provider of this.providers.values()) {
-			if (provider.ownsModel(modelId)) {
+			if (typeof provider.ownsModel === 'function' && provider.ownsModel(modelId)) {
 				return provider;
 			}
 		}
@@ -239,20 +239,28 @@ export function resetProviderRegistry(): void {
 }
 
 /**
- * Infer the provider for a given model ID based on known naming conventions.
+ * Infer the provider for a given model ID.
  *
- * This is a static heuristic that avoids loading the full provider registry
- * (which may require optional SDK dependencies). It covers all known provider
- * model naming conventions:
- * - `glm-*` → 'glm'
- * - `minimax-*` → 'minimax'
- * - `gpt-*` → 'anthropic-codex' (Codex bridge models like gpt-5.3-codex)
- * - Everything else → 'anthropic' (standard Claude models, and Copilot models
- *   which share Claude model IDs and are routed via explicit providerId)
+ * Strategy (two-pass):
+ * 1. Try the live registry via `findProviderForModel()` — covers all registered providers
+ *    including `anthropic-copilot` and `anthropic-codex`, which have dynamic model lists.
+ *    Returns the correct provider whenever the daemon has finished initializing.
+ * 2. Fall back to a static naming heuristic when the registry is empty (e.g., unit tests
+ *    or early-startup callers where providers are not yet registered):
+ *    - `glm-*` → 'glm'
+ *    - `minimax-*` → 'minimax'
+ *    - `gpt-*` → 'anthropic-codex'
+ *    - everything else → 'anthropic'
  *
- * @public Exported so callers that cannot use the full registry can still infer providers.
+ * Callers should NOT call `initializeProviders()` just for this function — the registry
+ * is populated at daemon startup; calling it lazily at spawn-time is safe and avoids
+ * test-interference from re-registering providers.
  */
 export function inferProviderForModel(modelId: string): ProviderIdStr {
+	// Live registry lookup (populated at daemon startup, empty in unit tests)
+	const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
+	if (fromRegistry) return fromRegistry as ProviderIdStr;
+	// Static fallback when registry is empty
 	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
 	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
 	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
