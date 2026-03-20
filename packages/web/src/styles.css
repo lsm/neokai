@@ -100,11 +100,11 @@ html {
 }
 
 ::-webkit-scrollbar-track {
-	background: rgb(var(--color-dark-900));
+	background: rgb(var(--color-dark-950));
 }
 
 ::-webkit-scrollbar-thumb {
-	background: rgb(var(--color-dark-700));
+	background: rgb(var(--color-dark-600));
 	border-radius: 4px;
 }
 
@@ -129,7 +129,7 @@ html {
 .prose p {
 	margin-top: 1.25em;
 	margin-bottom: 1.25em;
-	line-height: 1.75;
+	line-height: 1.7;
 }
 
 .prose h1,
@@ -170,7 +170,7 @@ html {
 	color: #93c5fd;
 	font-weight: 500;
 	font-size: 0.875em;
-	background: rgb(var(--color-dark-800));
+	background: rgb(var(--color-dark-800-rgb));
 	padding: 0.2em 0.4em;
 	border-radius: 0.25rem;
 	/* Prevent long inline code from overflowing */
@@ -517,6 +517,17 @@ a:focus-visible {
 	);
 	background-size: 1000px 100%;
 	animation: shimmer 2s infinite;
+}
+
+/* text-wrap: balance for short headings and labels — fallback: no-op on unsupported browsers */
+.text-balance {
+	text-wrap: balance;
+}
+
+/* Surface utility for modals, panels, and card components */
+.surface-panel {
+	background: rgb(var(--color-dark-900));
+	border: 1px solid rgb(var(--color-dark-700));
 }
 
 /* Mobile styles for status bar controls */
