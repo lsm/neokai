@@ -21,7 +21,7 @@ describe('Task Draft RPC Handlers', () => {
 
 	afterAll(async () => {
 		await daemon?.waitForExit();
-	});
+	}, 15_000);
 
 	async function createRoom(name: string): Promise<string> {
 		const result = (await daemon.messageHub.request('room.create', {

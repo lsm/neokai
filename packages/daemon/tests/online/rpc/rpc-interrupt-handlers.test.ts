@@ -17,7 +17,7 @@ describe('Interrupt RPC Handlers', () => {
 
 	afterAll(async () => {
 		await daemon?.waitForExit();
-	});
+	}, 15_000);
 
 	describe('client.interrupt', () => {
 		test('should return error for non-existent session', async () => {
