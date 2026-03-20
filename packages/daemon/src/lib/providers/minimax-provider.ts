@@ -62,6 +62,17 @@ export class MinimaxProvider implements Provider {
 			releaseDate: '2026-01-01',
 			available: true,
 		},
+		{
+			id: 'MiniMax-M2.7-highspeed',
+			name: 'MiniMax-M2.7-highspeed',
+			alias: 'minimax-m27-fast',
+			family: 'minimax',
+			provider: 'minimax',
+			contextWindow: 200000,
+			description: 'MiniMax-M2.7-highspeed · Fast Coding Model (M2.7)',
+			releaseDate: '2026-03-01',
+			available: true,
+		},
 	];
 
 	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
