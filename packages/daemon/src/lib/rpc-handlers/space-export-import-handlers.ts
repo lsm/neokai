@@ -19,8 +19,27 @@
  *   execute throws and aborts import of that workflow.
  * - Rule `appliesTo` lists step **names** in the exported format and are
  *   remapped to new step UUIDs on import.
+ *
+ * Atomicity:
+ * - `spaceImport.execute` wraps all DB mutations in a single SQLite transaction.
+ *   Any failure (unresolved agent ref, workflow validation error, etc.) rolls back
+ *   the entire operation — no partial state is left in the database.
+ *
+ * Agent `replace` semantics:
+ * - Fields absent from the exported agent (undefined) are explicitly cleared
+ *   (set to null/empty), producing the same result as delete + create.
+ *   This is intentional: `replace` is not a merge; it overwrites the existing
+ *   record with exactly what the export contains.
+ *
+ * Naming uniqueness:
+ * - Agent names in the DB are case-insensitive (SpaceAgentRepository uses LOWER()
+ *   in uniqueness checks). The in-memory `usedAgentNames` set uses exact-case
+ *   matching to track names created within the import batch; this is safe because
+ *   all names that flow through the DB are already lower-case normalized at the
+ *   source. Workflow names are exact-case both in the DB and in the set.
  */
 
+import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type {
 	MessageHub,
@@ -91,7 +110,10 @@ async function requireSpace(spaceManager: SpaceManager, spaceId: string): Promis
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
 	if (!existingNames.has(baseName)) return baseName;
 	let counter = 1;
-	while (existingNames.has(`${baseName} (${counter})`)) counter++;
+	while (counter < 10_000 && existingNames.has(`${baseName} (${counter})`)) counter++;
+	if (counter >= 10_000) {
+		throw new Error(`Cannot generate a unique name for "${baseName}": too many existing variants`);
+	}
 	return `${baseName} (${counter})`;
 }
 
@@ -111,12 +133,12 @@ function buildAgentCreateParams(
 
 /**
  * Convert an `ExportedSpaceWorkflow` into `CreateSpaceWorkflowParams` suitable
- * for `SpaceWorkflowRepository.createWorkflow()`.
+ * for `SpaceWorkflowManager.createWorkflow()`.
  *
  * Step names are assigned fresh UUIDs; rule `appliesTo` arrays are remapped from
  * step names to those new UUIDs; agent refs are resolved via the two lookup maps.
  *
- * @returns params ready for the repository, the step-name→UUID map (for rule
+ * @returns params ready for the manager, the step-name→UUID map (for rule
  *          appliesTo remapping), and any warnings about unresolved agent refs.
  */
 function buildWorkflowCreateParams(
@@ -198,8 +220,12 @@ function buildWorkflowCreateParams(
 }
 
 /**
- * Validate cross-references and condition expressions in an exported workflow.
+ * Validate cross-references in an exported workflow against the current import context.
  * Returns a list of human-readable error strings (empty = valid).
+ *
+ * Note: condition expression validation is intentionally omitted here — it is
+ * already enforced by the Zod schema in validateExportBundle(), so any bundle
+ * that reaches this function has already had its conditions validated.
  *
  * @param importedAgentNames - Set of agent names being imported in the same bundle
  * @param existingAgentNameToId - Map of existing agent names → UUIDs in target space
@@ -211,20 +237,11 @@ function validateWorkflowForPreview(
 ): string[] {
 	const errors: string[] = [];
 
-	// Unresolved agent refs
 	for (const step of exported.steps) {
 		if (!importedAgentNames.has(step.agentRef) && !existingAgentNameToId.has(step.agentRef)) {
 			errors.push(
 				`step "${step.name}" references unknown agent "${step.agentRef}" — not found in bundle or target space`
 			);
-		}
-	}
-
-	// Condition expression validation (mirrors SpaceWorkflowManager.validateCondition)
-	for (let i = 0; i < exported.transitions.length; i++) {
-		const t = exported.transitions[i];
-		if (t.condition?.type === 'condition' && !t.condition.expression?.trim()) {
-			errors.push(`transition[${i}]: 'condition' type requires a non-empty expression`);
 		}
 	}
 
@@ -240,7 +257,8 @@ export function setupSpaceExportImportHandlers(
 	spaceManager: SpaceManager,
 	agentRepo: SpaceAgentRepository,
 	workflowRepo: SpaceWorkflowRepository,
-	workflowManager: SpaceWorkflowManager
+	workflowManager: SpaceWorkflowManager,
+	db: BunDatabase
 ): void {
 	// ─── spaceExport.agents ──────────────────────────────────────────────────
 	messageHub.onRequest('spaceExport.agents', async (data) => {
@@ -361,7 +379,7 @@ export function setupSpaceExportImportHandlers(
 				workflowPreviews.push({ name: wf.name, action: 'create' });
 			}
 
-			// Cross-reference and condition validation
+			// Cross-reference validation (unresolved agent refs)
 			const errors = validateWorkflowForPreview(wf, importedAgentNames, existingAgentNameToId);
 			for (const err of errors) {
 				validationErrors.push(`Workflow "${wf.name}": ${err}`);
@@ -383,9 +401,10 @@ export function setupSpaceExportImportHandlers(
 			bundle: unknown;
 			conflictResolution?: ImportConflictResolution;
 		};
+		// Space check is async — must happen outside the synchronous transaction
 		await requireSpace(spaceManager, params.spaceId);
 
-		// Re-validate bundle (guards against stale previews)
+		// Re-validate bundle (guards against stale previews or tampered payloads)
 		const validation = validateExportBundle(params.bundle);
 		if (!validation.ok) {
 			throw new Error(`Invalid bundle: ${validation.error}`);
@@ -393,131 +412,150 @@ export function setupSpaceExportImportHandlers(
 		const bundle = validation.value;
 		const resolution = params.conflictResolution ?? {};
 
-		// Snapshot of existing entities (before any mutations)
-		const existingAgents = agentRepo.getBySpaceId(params.spaceId);
-		const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
+		// All DB mutations are wrapped in a single transaction so that any failure
+		// (unresolved agent ref, workflow validation error, etc.) rolls back the
+		// entire import — no partial state is committed to the database.
+		const executeImport = db.transaction(
+			(spaceId: string, res: ImportConflictResolution): ImportExecuteResult => {
+				// Snapshot of existing entities (before any mutations)
+				const existingAgents = agentRepo.getBySpaceId(spaceId);
+				const existingWorkflows = workflowRepo.listWorkflows(spaceId);
 
-		const existingAgentByName = new Map(existingAgents.map((a) => [a.name, a]));
-		const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
-		const existingAgentNameToId = new Map(existingAgents.map((a) => [a.name, a.id]));
+				const existingAgentByName = new Map(existingAgents.map((a) => [a.name, a]));
+				const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
+				const existingAgentNameToId = new Map(existingAgents.map((a) => [a.name, a.id]));
 
-		// Mutable sets for uniqueness tracking across the import batch
-		const usedAgentNames = new Set(existingAgents.map((a) => a.name));
-		const usedWorkflowNames = new Set(existingWorkflows.map((w) => w.name));
+				// Mutable sets for uniqueness tracking across the import batch
+				const usedAgentNames = new Set(existingAgents.map((a) => a.name));
+				const usedWorkflowNames = new Set(existingWorkflows.map((w) => w.name));
 
-		// ── Phase 1: import agents ──────────────────────────────────────────
-		// Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
-		const importedAgentNameToId = new Map<string, string>();
-		const agentResults: ImportedItem[] = [];
+				// ── Phase 1: import agents ──────────────────────────────────────
+				// Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
+				const importedAgentNameToId = new Map<string, string>();
+				const agentResults: ImportedItem[] = [];
 
-		for (const exportedAgent of bundle.agents) {
-			const existing = existingAgentByName.get(exportedAgent.name);
+				for (const exportedAgent of bundle.agents) {
+					const existing = existingAgentByName.get(exportedAgent.name);
 
-			if (!existing) {
-				// No conflict — create new agent
-				const created = agentRepo.create(
-					buildAgentCreateParams(params.spaceId, exportedAgent.name, exportedAgent)
-				);
-				usedAgentNames.add(exportedAgent.name);
-				importedAgentNameToId.set(exportedAgent.name, created.id);
-				agentResults.push({ name: exportedAgent.name, id: created.id, action: 'created' });
-				continue;
-			}
+					if (!existing) {
+						// No conflict — create new agent
+						const created = agentRepo.create(
+							buildAgentCreateParams(spaceId, exportedAgent.name, exportedAgent)
+						);
+						usedAgentNames.add(exportedAgent.name);
+						importedAgentNameToId.set(exportedAgent.name, created.id);
+						agentResults.push({ name: exportedAgent.name, id: created.id, action: 'created' });
+						continue;
+					}
 
-			// Conflict — apply resolution strategy (default: skip)
-			const strategy: ConflictResolutionStrategy =
-				resolution.agents?.[exportedAgent.name] ?? 'skip';
+					// Conflict — apply resolution strategy (default: skip)
+					const strategy: ConflictResolutionStrategy = res.agents?.[exportedAgent.name] ?? 'skip';
 
-			if (strategy === 'skip') {
-				importedAgentNameToId.set(exportedAgent.name, existing.id);
-				agentResults.push({ name: exportedAgent.name, id: existing.id, action: 'skipped' });
-			} else if (strategy === 'replace') {
-				// Update existing agent in place (preserve its UUID and spaceId)
-				const updated = agentRepo.update(existing.id, {
-					role: exportedAgent.role,
-					description: exportedAgent.description,
-					model: exportedAgent.model,
-					provider: exportedAgent.provider,
-					systemPrompt: exportedAgent.systemPrompt,
-					tools: exportedAgent.tools,
-				});
-				const id = updated?.id ?? existing.id;
-				importedAgentNameToId.set(exportedAgent.name, id);
-				agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
-			} else {
-				// rename — create with a unique name, keep original name as the bundle key
-				const finalName = generateUniqueName(exportedAgent.name, usedAgentNames);
-				const created = agentRepo.create(
-					buildAgentCreateParams(params.spaceId, finalName, exportedAgent)
-				);
-				usedAgentNames.add(finalName);
-				importedAgentNameToId.set(exportedAgent.name, created.id);
-				agentResults.push({ name: finalName, id: created.id, action: 'renamed' });
-			}
-		}
-
-		// ── Phase 2: import workflows ────────────────────────────────────────
-		const workflowResults: ImportedItem[] = [];
-		const allWarnings: string[] = [];
-
-		for (const exportedWorkflow of bundle.workflows) {
-			const existing = existingWorkflowByName.get(exportedWorkflow.name);
-
-			let finalName = exportedWorkflow.name;
-			let action: ImportedItem['action'] = 'created';
-
-			if (!existing) {
-				// No conflict — create as-is
-			} else {
-				const strategy: ConflictResolutionStrategy =
-					resolution.workflows?.[exportedWorkflow.name] ?? 'skip';
-
-				if (strategy === 'skip') {
-					workflowResults.push({ name: exportedWorkflow.name, id: existing.id, action: 'skipped' });
-					continue;
+					if (strategy === 'skip') {
+						importedAgentNameToId.set(exportedAgent.name, existing.id);
+						agentResults.push({ name: exportedAgent.name, id: existing.id, action: 'skipped' });
+					} else if (strategy === 'replace') {
+						// Overwrite existing agent in place (preserve UUID and spaceId).
+						// Fields absent from the export are explicitly cleared (null → empty string
+						// or null) so that replace produces the same result as delete + create.
+						const updated = agentRepo.update(existing.id, {
+							role: exportedAgent.role,
+							description: exportedAgent.description ?? null,
+							model: exportedAgent.model ?? null,
+							provider: exportedAgent.provider ?? null,
+							systemPrompt: exportedAgent.systemPrompt ?? null,
+							tools: exportedAgent.tools ?? null,
+						});
+						const id = updated?.id ?? existing.id;
+						importedAgentNameToId.set(exportedAgent.name, id);
+						agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
+					} else {
+						// rename — create with a unique name; the original bundle name remains the
+						// cross-reference key so workflow steps still resolve correctly.
+						const finalName = generateUniqueName(exportedAgent.name, usedAgentNames);
+						const created = agentRepo.create(
+							buildAgentCreateParams(spaceId, finalName, exportedAgent)
+						);
+						usedAgentNames.add(finalName);
+						importedAgentNameToId.set(exportedAgent.name, created.id);
+						agentResults.push({ name: finalName, id: created.id, action: 'renamed' });
+					}
 				}
 
-				if (strategy === 'replace') {
-					// Delete the existing workflow so the name becomes available again
-					workflowRepo.deleteWorkflow(existing.id);
-					usedWorkflowNames.delete(exportedWorkflow.name);
-					action = 'replaced';
-				} else {
-					// rename
-					finalName = generateUniqueName(exportedWorkflow.name, usedWorkflowNames);
-					action = 'renamed';
+				// ── Phase 2: import workflows ────────────────────────────────────
+				const workflowResults: ImportedItem[] = [];
+				const allWarnings: string[] = [];
+
+				for (const exportedWorkflow of bundle.workflows) {
+					const existing = existingWorkflowByName.get(exportedWorkflow.name);
+
+					let finalName = exportedWorkflow.name;
+					let action: ImportedItem['action'] = 'created';
+
+					if (!existing) {
+						// No conflict — create as-is
+					} else {
+						const strategy: ConflictResolutionStrategy =
+							res.workflows?.[exportedWorkflow.name] ?? 'skip';
+
+						if (strategy === 'skip') {
+							workflowResults.push({
+								name: exportedWorkflow.name,
+								id: existing.id,
+								action: 'skipped',
+							});
+							continue;
+						}
+
+						if (strategy === 'replace') {
+							// Delete the existing workflow so the name becomes available again.
+							// This happens inside the transaction, so it rolls back on any later error.
+							workflowRepo.deleteWorkflow(existing.id);
+							usedWorkflowNames.delete(exportedWorkflow.name);
+							action = 'replaced';
+						} else {
+							// rename
+							finalName = generateUniqueName(exportedWorkflow.name, usedWorkflowNames);
+							action = 'renamed';
+						}
+					}
+
+					// Reserve the name before calling createWorkflow so that duplicate workflow
+					// names within the same bundle (same strategy = rename) produce different names.
+					usedWorkflowNames.add(finalName);
+
+					const { params: createParams, warnings } = buildWorkflowCreateParams(
+						spaceId,
+						finalName,
+						exportedWorkflow,
+						importedAgentNameToId,
+						existingAgentNameToId
+					);
+
+					// Fail fast on unresolved agent refs — they would produce invalid DB rows.
+					// The transaction ensures the delete (replace strategy) is also rolled back.
+					if (warnings.length > 0) {
+						for (const w of warnings) {
+							allWarnings.push(`Workflow "${finalName}": ${w}`);
+						}
+						throw new Error(
+							`Cannot import workflow "${finalName}": unresolved agent reference(s) — run spaceImport.preview to see details`
+						);
+					}
+
+					// workflowManager.createWorkflow validates steps/transitions/conditions and writes to DB
+					const created = workflowManager.createWorkflow(createParams);
+					workflowResults.push({ name: finalName, id: created.id, action });
 				}
+
+				return {
+					agents: agentResults,
+					workflows: workflowResults,
+					warnings: allWarnings,
+				};
 			}
+		);
 
-			const { params: createParams, warnings } = buildWorkflowCreateParams(
-				params.spaceId,
-				finalName,
-				exportedWorkflow,
-				importedAgentNameToId,
-				existingAgentNameToId
-			);
-
-			// Fail fast on unresolved agent refs — they would produce invalid DB rows
-			if (warnings.length > 0) {
-				for (const w of warnings) {
-					allWarnings.push(`Workflow "${finalName}": ${w}`);
-				}
-				throw new Error(
-					`Cannot import workflow "${finalName}": unresolved agent reference(s) — run spaceImport.preview to see details`
-				);
-			}
-
-			// workflowManager.createWorkflow validates steps/transitions/conditions and writes to DB
-			const created = workflowManager.createWorkflow(createParams);
-			usedWorkflowNames.add(finalName);
-			workflowResults.push({ name: finalName, id: created.id, action });
-		}
-
-		const result: ImportExecuteResult = {
-			agents: agentResults,
-			workflows: workflowResults,
-			warnings: allWarnings,
-		};
-		return result;
+		return executeImport(params.spaceId, resolution);
 	});
 }

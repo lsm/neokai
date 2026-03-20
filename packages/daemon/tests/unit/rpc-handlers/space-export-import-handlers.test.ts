@@ -208,7 +208,8 @@ describe('Space Export/Import RPC Handlers', () => {
 			spaceManager,
 			agentRepo,
 			workflowRepo,
-			workflowManager
+			workflowManager,
+			db as any
 		);
 	});
 
@@ -933,6 +934,134 @@ describe('Space Export/Import RPC Handlers', () => {
 			});
 
 			expect(result.warnings).toHaveLength(0);
+		});
+
+		// ─── Transaction atomicity ─────────────────────────────────────────
+
+		describe('transaction atomicity', () => {
+			it('rolls back agent creation when workflow import fails (unresolved agent ref)', async () => {
+				// Bundle: first workflow imports fine, second has an unresolved agent ref.
+				// After failure, neither agent nor workflow should exist.
+				const bundle = {
+					version: 1,
+					type: 'bundle',
+					name: 'Atomic Test',
+					agents: [{ version: 1, type: 'agent', name: 'NewAgent', role: 'coder' }],
+					workflows: [
+						{
+							version: 1,
+							type: 'workflow',
+							name: 'BadWorkflow',
+							steps: [{ agentRef: 'GhostAgent', name: 'S' }],
+							transitions: [],
+							startStep: 'S',
+							rules: [],
+							tags: [],
+						},
+					],
+					exportedAt: Date.now(),
+				};
+
+				await expect(
+					call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+				).rejects.toThrow('unresolved agent reference');
+
+				// Nothing should have been committed — NewAgent must not exist
+				const agents = agentRepo.getBySpaceId(SPACE_ID);
+				expect(agents.find((a) => a.name === 'NewAgent')).toBeUndefined();
+			});
+
+			it('rolls back workflow deletion when replacement creation fails', async () => {
+				// A workflow that exists in the target space should NOT be deleted
+				// if the replacement creation fails.
+				const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+				const existingWf = workflowManager.createWorkflow({
+					spaceId: SPACE_ID,
+					name: 'ToReplace',
+					steps: [{ name: 'S', agentId: existingAgent.id }],
+					transitions: [],
+				});
+
+				// Bundle: replace "ToReplace" but the replacement references a ghost agent
+				const bundle = {
+					version: 1,
+					type: 'bundle',
+					name: 'Replace Test',
+					agents: [],
+					workflows: [
+						{
+							version: 1,
+							type: 'workflow',
+							name: 'ToReplace',
+							steps: [{ agentRef: 'GhostAgent', name: 'S2' }],
+							transitions: [],
+							startStep: 'S2',
+							rules: [],
+							tags: [],
+						},
+					],
+					exportedAt: Date.now(),
+				};
+
+				await expect(
+					call(handlers, 'spaceImport.execute', {
+						spaceId: SPACE_ID,
+						bundle,
+						conflictResolution: { workflows: { ToReplace: 'replace' } },
+					})
+				).rejects.toThrow('unresolved agent reference');
+
+				// The original workflow must still exist (deletion was rolled back)
+				const wf = workflowRepo.getWorkflow(existingWf.id);
+				expect(wf).not.toBeNull();
+				expect(wf!.name).toBe('ToReplace');
+			});
+		});
+
+		// ─── replace agent field clearing ─────────────────────────────────
+
+		describe('replace agent: unset fields are cleared', () => {
+			it('clears model when not present in exported agent', async () => {
+				const existing = agentRepo.create({
+					spaceId: SPACE_ID,
+					name: 'Coder',
+					role: 'coder',
+					model: 'old-model',
+				});
+
+				// Exported agent has no model field
+				const bundle = makeBundle([{ name: 'Coder', role: 'reviewer' }], []);
+
+				await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'replace' } },
+				});
+
+				// model should be cleared (not preserved from the existing agent)
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.model).toBeUndefined();
+			});
+
+			it('clears systemPrompt when not present in exported agent', async () => {
+				const existing = agentRepo.create({
+					spaceId: SPACE_ID,
+					name: 'Coder',
+					role: 'coder',
+					systemPrompt: 'Old prompt.',
+				});
+
+				const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
+
+				await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'replace' } },
+				});
+
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.systemPrompt).toBeUndefined();
+			});
 		});
 	});
 });
