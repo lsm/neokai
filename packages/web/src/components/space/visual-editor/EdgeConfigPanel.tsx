@@ -6,24 +6,25 @@
  */
 
 import { useCallback } from 'preact/hooks';
-import type { WorkflowConditionType } from '@neokai/shared';
+import type { WorkflowCondition, WorkflowConditionType } from '@neokai/shared';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface EdgeTransition {
-	/** Unique identifier for the transition */
+	/**
+	 * Unique identifier for the transition — used as a stable key forwarded to
+	 * onUpdateCondition and onDelete callbacks so the parent can locate the edge.
+	 */
 	id: string;
 	/** Source step name (human-readable, read-only) */
 	fromStepName: string;
 	/** Target step name (human-readable, read-only) */
 	toStepName: string;
-	/** Condition guarding this transition */
-	condition: {
-		type: WorkflowConditionType;
-		expression?: string;
-	};
+	/** Condition guarding this transition. Extra fields (description, maxRetries, etc.)
+	 *  are passed through unchanged; the panel only edits `type` and `expression`. */
+	condition: WorkflowCondition;
 }
 
 export interface EdgeConfigPanelProps {
@@ -47,6 +48,9 @@ const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
 	condition: 'Expression',
 };
 
+/** Explicit ordering for the condition type <select> options. */
+const CONDITION_TYPE_ORDER: WorkflowConditionType[] = ['always', 'human', 'condition'];
+
 export function EdgeConfigPanel({
 	transition,
 	onUpdateCondition,
@@ -58,7 +62,10 @@ export function EdgeConfigPanel({
 	const handleTypeChange = useCallback(
 		(e: Event) => {
 			const type = (e.target as HTMLSelectElement).value as WorkflowConditionType;
-			// When switching away from 'condition', clear the expression
+			// When switching away from 'condition', clear the expression so callers
+			// don't persist a stale expression string under a non-expression condition.
+			// Note: the parent is responsible for preserving the expression across
+			// two-way type switches if that behaviour is desired.
 			onUpdateCondition(id, type, type === 'condition' ? condition.expression : undefined);
 		},
 		[id, condition.expression, onUpdateCondition]
@@ -90,7 +97,7 @@ export function EdgeConfigPanel({
 					onClick={onClose}
 					aria-label="Close"
 				>
-					✕
+					×
 				</button>
 			</div>
 
@@ -128,7 +135,7 @@ export function EdgeConfigPanel({
 					value={condition.type}
 					onChange={handleTypeChange}
 				>
-					{(Object.keys(CONDITION_LABELS) as WorkflowConditionType[]).map((type) => (
+					{CONDITION_TYPE_ORDER.map((type) => (
 						<option key={type} value={type}>
 							{CONDITION_LABELS[type]}
 						</option>
