@@ -222,8 +222,8 @@ describe('Migration 29: Space system tables', () => {
 
 		// Insert a space agent
 		db.exec(
-			`INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
-			 VALUES ('agent-1', 'sp-1', 'Agent 1', ${now}, ${now})`
+			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at)
+			 VALUES ('agent-1', 'sp-1', 'Agent 1', 'coder', ${now}, ${now})`
 		);
 
 		// Insert a workflow
