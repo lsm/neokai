@@ -63,6 +63,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 		it('owns all copilot-anthropic-* aliases', () => {
 			expect(provider.ownsModel('copilot-anthropic-opus')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-sonnet')).toBe(true);
+			expect(provider.ownsModel('copilot-anthropic-codex')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-gemini')).toBe(true);
 			expect(provider.ownsModel('copilot-anthropic-mini')).toBe(true);
 		});
@@ -71,6 +72,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			// No legacy CLI provider collision — bare IDs are owned by this provider
 			expect(provider.ownsModel('claude-opus-4.6')).toBe(true);
 			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(true);
+			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
 			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
 		});
 

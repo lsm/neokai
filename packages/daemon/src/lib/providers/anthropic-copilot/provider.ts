@@ -153,6 +153,17 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 		available: true,
 	},
 	{
+		id: 'gpt-5.3-codex',
+		name: 'GPT-5.3 Codex (Copilot)',
+		alias: 'copilot-anthropic-codex',
+		family: 'gpt',
+		provider: 'anthropic-copilot',
+		contextWindow: 272000,
+		description: 'GPT-5.3 Codex via GitHub Copilot · Best for coding',
+		releaseDate: '2025-12-01',
+		available: true,
+	},
+	{
 		// Intentionally "gemini-3-pro-preview" (not "gemini-3.1-pro-preview").
 		// The legacy CLI path used "gemini-3.1-pro-preview" because it passed IDs
 		// directly to Copilot CLI. This provider passes IDs as hints to the embedded
