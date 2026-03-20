@@ -217,6 +217,7 @@ export class AgentSession
 	queryAbortController: AbortController | null = null;
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+	startupTimeoutAutoRecoverAttempts = 0;
 	originalEnvVars: OriginalEnvVars = {};
 	// Whether to auto-queue /context after each turn (default: true)
 	// Disabled for room-managed agents to prevent interleaved messages after terminal state
@@ -781,6 +782,12 @@ export class AgentSession
 
 	async onMarkApiSuccess(): Promise<void> {
 		this.errorManager.markApiSuccess();
+	}
+
+	async onStartupTimeoutAutoRecover(): Promise<void> {
+		if (this.isCleaningUp()) return;
+		this.logger.warn('Auto-recovering after SDK startup timeout — starting fresh without resume.');
+		await this.startStreamingQuery();
 	}
 
 	// ============================================================================

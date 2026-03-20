@@ -72,6 +72,10 @@ export interface QueryRunnerContext {
 	queryAbortController: AbortController | null;
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
+	// Tracks consecutive auto-recovery attempts for the current query.
+	// Reset to 0 when a query receives its first message (successful startup).
+	// Prevents infinite retry loops when the SDK is permanently broken.
+	startupTimeoutAutoRecoverAttempts: number;
 	originalEnvVars: OriginalEnvVars;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
@@ -83,6 +87,12 @@ export interface QueryRunnerContext {
 	onSlashCommandsFetched(): Promise<void>;
 	onModelsFetched(): Promise<void>;
 	onMarkApiSuccess(): Promise<void>;
+
+	// Optional auto-recovery callback invoked when the SDK startup timer fires.
+	// If set, the catch block skips messageQueue.clear() (preserving queued messages
+	// for transparent retry) and schedules a fresh startStreamingQuery() call
+	// instead of surfacing an error to the user.
+	onStartupTimeoutAutoRecover?(): Promise<void>;
 }
 
 /**
@@ -271,6 +281,8 @@ export class QueryRunner {
 				if (timer && messageCount === 1) {
 					clearTimeout(timer);
 					this.ctx.startupTimeoutTimer = null;
+					// Reset auto-recovery counter: query started successfully.
+					this.ctx.startupTimeoutAutoRecoverAttempts = 0;
 				}
 
 				this.ctx.firstMessageReceived = true;
@@ -302,15 +314,22 @@ export class QueryRunner {
 			}
 		} catch (error) {
 			logger.error('Streaming query error:', error);
-			messageQueue.clear();
 
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
+			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
+
+			// Preserve queued messages for transparent retry when auto-recovery is
+			// registered (startup timeout + provider switch).  In all other cases,
+			// clear the queue so stale messages don't bleed into the next session.
+			if (!isStartupTimeout || isAbortError || !this.ctx.onStartupTimeoutAutoRecover) {
+				messageQueue.clear();
+			}
 
 			// If startup timed out while trying to resume a session, clear sdkSessionId
 			// so the next attempt (Reset Agent, or sending a message) starts a fresh SDK
 			// session instead of repeatedly failing on the same problematic session file.
-			if (errorMessage.includes('SDK startup timeout') && session.sdkSessionId) {
+			if (isStartupTimeout && session.sdkSessionId) {
 				logger.error(
 					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
 						'Next query will start fresh without resume.'
@@ -320,78 +339,111 @@ export class QueryRunner {
 			}
 
 			if (!isAbortError) {
-				const apiErrorHandled = await this.handleApiValidationError(error);
+				// On startup timeout, attempt transparent auto-recovery (up to 1 retry):
+				// restart the query without the old resume handle (sdkSessionId already
+				// cleared above).  Queued messages are preserved so the user's pending
+				// send is retried automatically without any visible error.
+				// The retry limit (attempts <= 1) prevents infinite loops when the SDK is
+				// permanently broken: after 1 failed recovery, the error surfaces normally.
+				const startupRecoverAttempts = this.ctx.startupTimeoutAutoRecoverAttempts + 1;
+				const canAutoRecover =
+					isStartupTimeout &&
+					!this.ctx.isCleaningUp() &&
+					!!this.ctx.onStartupTimeoutAutoRecover &&
+					startupRecoverAttempts <= 1;
 
-				if (!apiErrorHandled) {
-					let category = ErrorCategory.SYSTEM;
-					const providerId = session.config.provider as string | undefined;
-
-					// Detect provider-specific errors before general categorization
-					const isProviderSession =
-						providerId && providerId !== 'anthropic' && providerId !== 'glm';
-
-					if (
-						isProviderSession &&
-						(errorMessage.includes('401') ||
-							errorMessage.includes('403') ||
-							errorMessage.includes('unauthorized') ||
-							errorMessage.includes('Unauthorized') ||
-							errorMessage.includes('token expired') ||
-							errorMessage.includes('token_expired') ||
-							errorMessage.includes('not authenticated') ||
-							errorMessage.includes('invalid_api_key'))
-					) {
-						category = ErrorCategory.PROVIDER_AUTH_ERROR;
-					} else if (
-						isProviderSession &&
-						(errorMessage.includes('ECONNREFUSED') ||
-							errorMessage.includes('ENOTFOUND') ||
-							errorMessage.includes('EHOSTUNREACH') ||
-							errorMessage.includes('service unavailable') ||
-							errorMessage.includes('503') ||
-							errorMessage.includes('502'))
-					) {
-						category = ErrorCategory.PROVIDER_UNAVAILABLE;
-					} else if (
-						errorMessage.includes('401') ||
-						errorMessage.includes('unauthorized') ||
-						errorMessage.includes('invalid_api_key')
-					) {
-						category = ErrorCategory.AUTHENTICATION;
-					} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
-						category = ErrorCategory.CONNECTION;
-					} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-						category = ErrorCategory.RATE_LIMIT;
-					} else if (errorMessage.includes('timeout')) {
-						category = ErrorCategory.TIMEOUT;
-					} else if (errorMessage.includes('model_not_found')) {
-						category = ErrorCategory.MODEL;
-					} else if (
-						errorMessage.includes('cannot be run as root') ||
-						errorMessage.includes('dangerously-skip-permissions') ||
-						errorMessage.includes('permission') ||
-						errorMessage.includes('Exit code: 1')
-					) {
-						category = ErrorCategory.PERMISSION;
-					}
-
-					const processingState = stateManager.getState();
-
-					await errorManager.handleError(
-						session.id,
-						error as Error,
-						category,
-						undefined,
-						processingState,
-						{
-							errorMessage,
-							queueSize: messageQueue.size(),
-							providerId: providerId ?? 'anthropic',
-						}
+				if (canAutoRecover) {
+					this.ctx.startupTimeoutAutoRecoverAttempts = startupRecoverAttempts;
+					logger.warn(
+						`SDK startup timeout — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
 					);
-				}
+					// Defer until after finally{} completes so shared state is reset first.
+					setTimeout(() => {
+						this.ctx.onStartupTimeoutAutoRecover!().catch((err: unknown) => {
+							logger.error('Auto-recovery after SDK startup timeout failed:', err);
+						});
+					}, 300);
+					// setIdle is handled by the finally block; skipping here avoids a double call.
+				} else {
+					// Reset counter so a future successfully-started session can recover again.
+					if (isStartupTimeout) {
+						this.ctx.startupTimeoutAutoRecoverAttempts = 0;
+					}
+					const apiErrorHandled = await this.handleApiValidationError(error);
 
-				await stateManager.setIdle();
+					if (!apiErrorHandled) {
+						let category = ErrorCategory.SYSTEM;
+						const providerId = session.config.provider as string | undefined;
+
+						// Detect provider-specific errors before general categorization
+						const isProviderSession =
+							providerId && providerId !== 'anthropic' && providerId !== 'glm';
+
+						if (
+							isProviderSession &&
+							(errorMessage.includes('401') ||
+								errorMessage.includes('403') ||
+								errorMessage.includes('unauthorized') ||
+								errorMessage.includes('Unauthorized') ||
+								errorMessage.includes('token expired') ||
+								errorMessage.includes('token_expired') ||
+								errorMessage.includes('not authenticated') ||
+								errorMessage.includes('invalid_api_key'))
+						) {
+							category = ErrorCategory.PROVIDER_AUTH_ERROR;
+						} else if (
+							isProviderSession &&
+							(errorMessage.includes('ECONNREFUSED') ||
+								errorMessage.includes('ENOTFOUND') ||
+								errorMessage.includes('EHOSTUNREACH') ||
+								errorMessage.includes('service unavailable') ||
+								errorMessage.includes('503') ||
+								errorMessage.includes('502'))
+						) {
+							category = ErrorCategory.PROVIDER_UNAVAILABLE;
+						} else if (
+							errorMessage.includes('401') ||
+							errorMessage.includes('unauthorized') ||
+							errorMessage.includes('invalid_api_key')
+						) {
+							category = ErrorCategory.AUTHENTICATION;
+						} else if (
+							errorMessage.includes('ECONNREFUSED') ||
+							errorMessage.includes('ENOTFOUND')
+						) {
+							category = ErrorCategory.CONNECTION;
+						} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+							category = ErrorCategory.RATE_LIMIT;
+						} else if (errorMessage.includes('timeout')) {
+							category = ErrorCategory.TIMEOUT;
+						} else if (errorMessage.includes('model_not_found')) {
+							category = ErrorCategory.MODEL;
+						} else if (
+							errorMessage.includes('cannot be run as root') ||
+							errorMessage.includes('dangerously-skip-permissions') ||
+							errorMessage.includes('permission') ||
+							errorMessage.includes('Exit code: 1')
+						) {
+							category = ErrorCategory.PERMISSION;
+						}
+
+						const processingState = stateManager.getState();
+
+						await errorManager.handleError(
+							session.id,
+							error as Error,
+							category,
+							undefined,
+							processingState,
+							{
+								errorMessage,
+								queueSize: messageQueue.size(),
+								providerId: providerId ?? 'anthropic',
+							}
+						);
+					}
+					await stateManager.setIdle();
+				}
 			}
 		} finally {
 			// Check for stale query FIRST to avoid race conditions.
