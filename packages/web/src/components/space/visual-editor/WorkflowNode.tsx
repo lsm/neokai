@@ -57,7 +57,11 @@ export function WorkflowNode({
 				top: `${position.y}px`,
 				width: `${NODE_WIDTH}px`,
 			}}
-			onClick={() => onClick?.(step.localId)}
+			data-testid={`workflow-node-${step.localId}`}
+			onClick={(e) => {
+				e.stopPropagation();
+				onClick?.(step.localId);
+			}}
 			onMouseDown={(e) => onMouseDown?.(step.localId, e as unknown as MouseEvent)}
 		>
 			{/* Input port — top-center, hidden for start node */}

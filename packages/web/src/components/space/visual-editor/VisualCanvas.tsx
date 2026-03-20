@@ -59,6 +59,8 @@ interface VisualCanvasProps {
 	children?: ComponentChildren;
 	viewportState: ViewportState;
 	onViewportChange: (state: ViewportState) => void;
+	/** Called when the canvas background is clicked (not on a child node). */
+	onBackgroundClick?: () => void;
 	/** Render prop for injecting SVG edge content. Receives current viewport state. */
 	edgeLayer?: (viewport: ViewportState) => ComponentChildren;
 	/** Node positions used by the fit-to-view toolbar button. */
@@ -71,11 +73,13 @@ export function VisualCanvas({
 	children,
 	viewportState,
 	onViewportChange,
+	onBackgroundClick,
 	edgeLayer,
 	nodes = {},
 	showToolbar = true,
 }: VisualCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const transformRef = useRef<HTMLDivElement>(null);
 	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 
 	// Track spacebar state for pan-drag mode
@@ -87,6 +91,8 @@ export function VisualCanvas({
 		originOffsetX: number;
 		originOffsetY: number;
 	} | null>(null);
+	// Track whether a spacebar-drag actually moved the canvas (suppress background click)
+	const didDrag = useRef(false);
 
 	// Keep a ref to the latest viewport so event handlers don't stale-close over it
 	const viewportRef = useRef(viewportState);
@@ -162,6 +168,7 @@ export function VisualCanvas({
 	const handleMouseDown = useCallback((e: MouseEvent) => {
 		if (!spacebarDown.current || e.button !== 0) return;
 		e.preventDefault();
+		didDrag.current = false;
 		dragState.current = {
 			startX: e.clientX,
 			startY: e.clientY,
@@ -176,6 +183,7 @@ export function VisualCanvas({
 	const handleMouseMove = useCallback(
 		(e: MouseEvent) => {
 			if (!dragState.current) return;
+			didDrag.current = true;
 			const dx = e.clientX - dragState.current.startX;
 			const dy = e.clientY - dragState.current.startY;
 			onViewportChange({
@@ -204,6 +212,26 @@ export function VisualCanvas({
 		};
 	}, [handleMouseMove, handleMouseUp]);
 
+	// ---- Background click: fires when clicking the canvas outside of child nodes ----
+	// Child nodes should call e.stopPropagation() to prevent this from firing.
+	const handleContainerClick = useCallback(
+		(e: MouseEvent) => {
+			// Suppress if a spacebar-drag just finished
+			if (didDrag.current) {
+				didDrag.current = false;
+				return;
+			}
+			// Use refs instead of data-testid so this works correctly in production
+			// (where data-testid attributes may be stripped by build tooling).
+			const target = e.target as HTMLElement;
+			const isBackground = target === containerRef.current || target === transformRef.current;
+			if (isBackground) {
+				onBackgroundClick?.();
+			}
+		},
+		[onBackgroundClick]
+	);
+
 	const transform = `translate(${viewportState.offsetX}px, ${viewportState.offsetY}px) scale(${viewportState.scale})`;
 
 	return (
@@ -213,9 +241,11 @@ export function VisualCanvas({
 			style={{ overflow: 'hidden', width: '100%', height: '100%', position: 'relative' }}
 			onMouseDown={handleMouseDown}
 			onWheel={handleWheel}
+			onClick={handleContainerClick}
 			data-testid="visual-canvas"
 		>
 			<div
+				ref={transformRef}
 				class="visual-canvas-transform"
 				style={{
 					transform,
