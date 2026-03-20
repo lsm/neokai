@@ -420,7 +420,14 @@ export class QueryRunner {
 							errorMessage.includes('ENOTFOUND')
 						) {
 							category = ErrorCategory.CONNECTION;
-						} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+						} else if (
+							errorMessage.includes('429') ||
+							errorMessage.includes('rate limit') ||
+							errorMessage.includes('402') ||
+							errorMessage.toLowerCase().includes('no quota') ||
+							errorMessage.toLowerCase().includes('quota exceeded') ||
+							errorMessage.toLowerCase().includes('insufficient_quota')
+						) {
 							category = ErrorCategory.RATE_LIMIT;
 						} else if (errorMessage.includes('timeout')) {
 							category = ErrorCategory.TIMEOUT;
@@ -614,29 +621,63 @@ export class QueryRunner {
 		try {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 
+			// JSON-body 4xx (standard Anthropic API errors: "402 {...}")
 			const apiErrorMatch = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
-			if (!apiErrorMatch) {
-				return false;
+			if (apiErrorMatch) {
+				const [, statusCode, jsonBody] = apiErrorMatch;
+
+				let errorBody: { type?: string; error?: { type?: string; message?: string } };
+				try {
+					errorBody = JSON.parse(jsonBody);
+				} catch {
+					return false;
+				}
+
+				const apiErrorMessage = errorBody.error?.message || errorMessage;
+				const apiErrorType = errorBody.error?.type || 'api_error';
+
+				await this.displayErrorAsAssistantMessage(
+					`**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
+					{ markAsError: true }
+				);
+
+				return true;
 			}
 
-			const [, statusCode, jsonBody] = apiErrorMatch;
+			// Plain-text 4xx (e.g. Copilot returns "402 You have no quota (Request ID: ...)")
+			const plainErrorMatch = errorMessage.match(/^(4\d{2})\s+(.+)$/s);
+			if (plainErrorMatch) {
+				const [, statusCode, plainMessage] = plainErrorMatch;
+				await this.displayErrorAsAssistantMessage(
+					`**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
+					{ markAsError: true }
+				);
+				return true;
+			}
 
-			let errorBody: { type?: string; error?: { type?: string; message?: string } };
+			// JSON SSE error event (e.g. from Copilot bridge: {"type":"error","error":{"type":"api_error","message":"402 You have no quota ..."}})
 			try {
-				errorBody = JSON.parse(jsonBody);
+				const parsed = JSON.parse(errorMessage) as {
+					type?: string;
+					error?: { type?: string; message?: string };
+				};
+				const innerMessage = parsed?.error?.message;
+				if (typeof innerMessage === 'string') {
+					const innerMatch = innerMessage.match(/^(4\d{2})\s+(.+)$/s);
+					if (innerMatch) {
+						const [, statusCode, plainMessage] = innerMatch;
+						await this.displayErrorAsAssistantMessage(
+							`**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
+							{ markAsError: true }
+						);
+						return true;
+					}
+				}
 			} catch {
-				return false;
+				// not JSON
 			}
 
-			const apiErrorMessage = errorBody.error?.message || errorMessage;
-			const apiErrorType = errorBody.error?.type || 'api_error';
-
-			await this.displayErrorAsAssistantMessage(
-				`**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
-				{ markAsError: true }
-			);
-
-			return true;
+			return false;
 		} catch (err) {
 			logger.warn('Failed to handle API validation error:', err);
 			return false;
