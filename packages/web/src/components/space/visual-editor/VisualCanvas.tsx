@@ -58,9 +58,16 @@ interface VisualCanvasProps {
 	children?: ComponentChildren;
 	viewportState: ViewportState;
 	onViewportChange: (state: ViewportState) => void;
+	/** Called when the canvas background is clicked (not on a child node). */
+	onBackgroundClick?: () => void;
 }
 
-export function VisualCanvas({ children, viewportState, onViewportChange }: VisualCanvasProps) {
+export function VisualCanvas({
+	children,
+	viewportState,
+	onViewportChange,
+	onBackgroundClick,
+}: VisualCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	// Track spacebar state for pan-drag mode
@@ -72,6 +79,8 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 		originOffsetX: number;
 		originOffsetY: number;
 	} | null>(null);
+	// Track whether a spacebar-drag actually moved the canvas (suppress background click)
+	const didDrag = useRef(false);
 
 	// Keep a ref to the latest viewport so event handlers don't stale-close over it
 	const viewportRef = useRef(viewportState);
@@ -128,6 +137,7 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 	const handleMouseDown = useCallback((e: MouseEvent) => {
 		if (!spacebarDown.current || e.button !== 0) return;
 		e.preventDefault();
+		didDrag.current = false;
 		dragState.current = {
 			startX: e.clientX,
 			startY: e.clientY,
@@ -142,6 +152,7 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 	const handleMouseMove = useCallback(
 		(e: MouseEvent) => {
 			if (!dragState.current) return;
+			didDrag.current = true;
 			const dx = e.clientX - dragState.current.startX;
 			const dy = e.clientY - dragState.current.startY;
 			onViewportChange({
@@ -170,6 +181,27 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 		};
 	}, [handleMouseMove, handleMouseUp]);
 
+	// ---- Background click: fires when clicking the canvas outside of child nodes ----
+	// Child nodes should call e.stopPropagation() to prevent this from firing.
+	const handleContainerClick = useCallback(
+		(e: MouseEvent) => {
+			// Suppress if a spacebar-drag just finished
+			if (didDrag.current) {
+				didDrag.current = false;
+				return;
+			}
+			// Only fire for direct clicks on the container or transform layer, not nodes
+			const target = e.target as HTMLElement;
+			const isBackground =
+				target === containerRef.current ||
+				target.getAttribute('data-testid') === 'visual-canvas-transform';
+			if (isBackground) {
+				onBackgroundClick?.();
+			}
+		},
+		[onBackgroundClick]
+	);
+
 	const transform = `translate(${viewportState.offsetX}px, ${viewportState.offsetY}px) scale(${viewportState.scale})`;
 
 	return (
@@ -179,6 +211,7 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 			style={{ overflow: 'hidden', width: '100%', height: '100%', position: 'relative' }}
 			onMouseDown={handleMouseDown}
 			onWheel={handleWheel}
+			onClick={handleContainerClick}
 			data-testid="visual-canvas"
 		>
 			<div
