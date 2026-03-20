@@ -68,6 +68,33 @@ const execFileAsync = promisify(execFile);
 const logger = new Logger('anthropic-copilot-provider');
 
 /**
+ * Pick the most appropriate model from `models` for a given tier.
+ *
+ * Used by getModelForTier() when the static fallback ID is not in the dynamic
+ * model list.  Prefers models whose ID or name contains keywords associated
+ * with the tier; falls back to the first available model.
+ */
+function pickModelForTier(models: ModelInfo[], tier: ModelTier): string | undefined {
+	if (models.length === 0) return undefined;
+	const available = models.filter((m) => m.available !== false);
+	if (available.length === 0) return undefined;
+
+	const keywordsByTier: Record<ModelTier, string[]> = {
+		opus: ['opus', 'pro', 'ultra'],
+		sonnet: ['sonnet', '4o', 'turbo', 'flash'],
+		haiku: ['mini', 'haiku', 'flash', 'fast', 'lite'],
+		default: ['sonnet', '4o', 'turbo'],
+	};
+	const keywords = keywordsByTier[tier] ?? [];
+	for (const kw of keywords) {
+		const match = available.find((m) => m.id.toLowerCase().includes(kw));
+		if (match) return match.id;
+	}
+	// Fall back to first available model.
+	return available[0].id;
+}
+
+/**
  * Infer the model family from a Copilot SDK model ID.
  * Returns 'sonnet', 'opus', 'haiku', 'gpt', or 'gemini'.
  */
@@ -220,10 +247,24 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	private tokenCache: TokenCacheEntry | null = null;
 	/**
 	 * Dynamically fetched models from the Copilot API (via client.listModels()).
-	 * Populated in getModels() and used by ownsModel() so that real Copilot model
-	 * IDs (which may differ from our static list) are recognised by this provider.
+	 * Populated in getModels() and used by ownsModel()/getModelForTier() so that
+	 * real Copilot model IDs (which may differ from our static list) are recognised
+	 * by this provider.
+	 *
+	 * NOTE — ownsModel() call-order dependency:
+	 * ownsModel() checks this cache but cannot populate it (the method is synchronous
+	 * while listModels() is async). In the normal lifecycle getModels() is always
+	 * called before a session is created (the UI fetches models before offering them
+	 * to the user), so the cache is populated before ownsModel() is needed for routing.
+	 * Sessions resumed from a restart are looked up via the stored explicit providerId
+	 * (registry.detectProviderForModel), so ownsModel() is not on the critical path
+	 * for those.  If ownsModel() is called before getModels() for a real Copilot SDK
+	 * model ID that is not in the static list, it will return false — a known
+	 * limitation documented here.
 	 */
 	private dynamicModelsCache: ModelInfo[] | null = null;
+	/** Expiry timestamp for dynamicModelsCache (epoch ms). 0 means "not set". */
+	private dynamicModelsCacheExpiresAt = 0;
 
 	/** Path to stored authentication tokens */
 	private readonly authPath: string;
@@ -273,6 +314,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 		// the user's account can actually use.  Hardcoded model IDs are used as
 		// display-name / context-window enrichment when a match is found, and as a
 		// last-resort fallback when the API call fails.
+		// The result is cached with a TTL matching the token cache (5 minutes) to
+		// avoid making a listModels() API call on every model-list request.
+		const now = Date.now();
+		if (this.dynamicModelsCache && now < this.dynamicModelsCacheExpiresAt) {
+			return this.dynamicModelsCache;
+		}
+
 		if (this.clientCache) {
 			try {
 				const sdkModels = await this.clientCache.listModels();
@@ -281,6 +329,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 					.map((m) => this.mapCopilotSdkModel(m));
 				if (mapped.length > 0) {
 					this.dynamicModelsCache = mapped;
+					this.dynamicModelsCacheExpiresAt = now + TOKEN_CACHE_TTL_MS;
 					return mapped;
 				}
 			} catch (err) {
@@ -309,7 +358,22 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 			haiku: 'gpt-5-mini',
 			default: 'claude-sonnet-4.6',
 		};
-		return tierMap[tier];
+		const staticId = tierMap[tier];
+
+		// If the dynamic cache is populated, prefer a model from it to avoid
+		// returning an ID that does not exist on the user's Copilot account.
+		const cache = this.dynamicModelsCache;
+		if (cache && cache.length > 0) {
+			// 1. Static ID is in the cache → it is a real Copilot model, use it.
+			if (cache.some((m) => m.id === staticId || m.alias === staticId)) {
+				return staticId;
+			}
+			// 2. Find the best matching model in the cache for this tier.
+			const preferred = pickModelForTier(cache, tier);
+			if (preferred) return preferred;
+		}
+
+		return staticId;
 	}
 
 	/**

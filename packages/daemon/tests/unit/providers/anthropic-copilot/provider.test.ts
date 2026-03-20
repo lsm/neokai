@@ -87,20 +87,88 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 	});
 
 	describe('getModelForTier', () => {
-		it('maps opus tier to claude-opus-4.6', () => {
+		it('maps opus tier to claude-opus-4.6 (no dynamic cache)', () => {
 			expect(provider.getModelForTier('opus')).toBe('claude-opus-4.6');
 		});
 
-		it('maps sonnet tier to claude-sonnet-4.6', () => {
+		it('maps sonnet tier to claude-sonnet-4.6 (no dynamic cache)', () => {
 			expect(provider.getModelForTier('sonnet')).toBe('claude-sonnet-4.6');
 		});
 
-		it('maps haiku tier to gpt-5-mini', () => {
+		it('maps haiku tier to gpt-5-mini (no dynamic cache)', () => {
 			expect(provider.getModelForTier('haiku')).toBe('gpt-5-mini');
 		});
 
-		it('maps default tier to claude-sonnet-4.6', () => {
+		it('maps default tier to claude-sonnet-4.6 (no dynamic cache)', () => {
 			expect(provider.getModelForTier('default')).toBe('claude-sonnet-4.6');
+		});
+
+		it('returns static ID when dynamic cache contains a matching model', () => {
+			// Inject dynamic cache that includes the static haiku ID
+			(provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+				{
+					id: 'gpt-5-mini',
+					name: 'GPT-5 Mini (Copilot)',
+					alias: 'copilot-anthropic-mini',
+					family: 'gpt',
+					provider: 'anthropic-copilot',
+					contextWindow: 128000,
+					description: 'test',
+					releaseDate: '2025-01-01',
+					available: true,
+				},
+			];
+			expect(provider.getModelForTier('haiku')).toBe('gpt-5-mini');
+		});
+
+		it('returns an available model from dynamic cache when static ID is not present', () => {
+			// Dynamic cache has gpt-4o-mini (fits haiku keywords) but NOT gpt-5-mini
+			(provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+				{
+					id: 'gpt-4o',
+					name: 'GPT-4o (Copilot)',
+					alias: 'copilot-gpt-4o',
+					family: 'gpt',
+					provider: 'anthropic-copilot',
+					contextWindow: 128000,
+					description: 'test',
+					releaseDate: '2025-01-01',
+					available: true,
+				},
+				{
+					id: 'gpt-4o-mini',
+					name: 'GPT-4o Mini (Copilot)',
+					alias: 'copilot-gpt-4o-mini',
+					family: 'gpt',
+					provider: 'anthropic-copilot',
+					contextWindow: 128000,
+					description: 'test',
+					releaseDate: '2025-01-01',
+					available: true,
+				},
+			];
+			// haiku tier should find gpt-4o-mini (contains 'mini' keyword)
+			expect(provider.getModelForTier('haiku')).toBe('gpt-4o-mini');
+			// sonnet tier should find gpt-4o (contains '4o' keyword)
+			expect(provider.getModelForTier('sonnet')).toBe('gpt-4o');
+		});
+
+		it('returns first available model from dynamic cache when no keyword match', () => {
+			// Dynamic cache has only an unusual model ID
+			(provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+				{
+					id: 'some-custom-model',
+					name: 'Custom (Copilot)',
+					alias: 'copilot-custom',
+					family: 'gpt',
+					provider: 'anthropic-copilot',
+					contextWindow: 128000,
+					description: 'test',
+					releaseDate: '2025-01-01',
+					available: true,
+				},
+			];
+			expect(provider.getModelForTier('haiku')).toBe('some-custom-model');
 		});
 	});
 
@@ -452,6 +520,48 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			// Should fall back to static list
 			expect(models.length).toBeGreaterThan(0);
 			expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
+		});
+
+		it('returns cached models within TTL without calling listModels() again', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
+			spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+
+			let callCount = 0;
+			(p as unknown as Record<string, unknown>)['clientCache'] = {
+				listModels: async () => {
+					callCount++;
+					return [
+						{
+							id: 'gpt-4o',
+							name: 'GPT-4o',
+							capabilities: {
+								supports: { vision: true, reasoningEffort: false },
+								limits: { max_context_window_tokens: 128000 },
+							},
+							policy: { state: 'enabled', terms: '' },
+						},
+					];
+				},
+			};
+
+			// First call — should invoke listModels()
+			await p.getModels();
+			expect(callCount).toBe(1);
+
+			// Second call within TTL — should return cached result
+			await p.getModels();
+			expect(callCount).toBe(1); // listModels NOT called again
+
+			// Force expiry
+			(p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] = Date.now() - 1;
+
+			// Third call after expiry — should invoke listModels() again
+			await p.getModels();
+			expect(callCount).toBe(2);
 		});
 
 		it('falls back to static model list when client.listModels() returns empty', async () => {
