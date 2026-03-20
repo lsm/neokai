@@ -16,6 +16,15 @@ import type { SpaceWorkflow, SpaceAgent } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowStepCard } from './WorkflowStepCard';
 import type { StepDraft, ConditionDraft } from './WorkflowStepCard';
+import { WorkflowRulesEditor } from './WorkflowRulesEditor';
+import type { RuleDraft } from './WorkflowRulesEditor';
+import { rulesToDrafts } from './WorkflowRulesEditor';
+
+// ============================================================================
+// Tags constants
+// ============================================================================
+
+const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment'];
 
 // ============================================================================
 // Template Definitions
@@ -83,6 +92,8 @@ export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
 export function initFromWorkflow(wf: SpaceWorkflow): {
 	steps: StepDraft[];
 	transitions: ConditionDraft[];
+	rules: RuleDraft[];
+	tags: string[];
 } {
 	const stepMap = new Map(wf.steps.map((s) => [s.id, s]));
 	const ordered: StepDraft[] = [];
@@ -131,7 +142,12 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		);
 	}
 
-	return { steps: ordered, transitions: conditions };
+	return {
+		steps: ordered,
+		transitions: conditions,
+		rules: rulesToDrafts(wf.rules ?? []),
+		tags: wf.tags ?? [],
+	};
 }
 
 // ============================================================================
@@ -154,6 +170,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [description, setDescription] = useState(workflow?.description ?? '');
 	const [steps, setSteps] = useState<StepDraft[]>(initial?.steps ?? [makeEmptyStep()]);
 	const [transitions, setTransitions] = useState<ConditionDraft[]>(initial?.transitions ?? []);
+	const [rules, setRules] = useState<RuleDraft[]>(initial?.rules ?? []);
+	const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
+	const [tagInput, setTagInput] = useState('');
 	const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -219,6 +238,29 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		// exit condition of step[i] = transitions[i]
 		if (index === steps.length - 1) return;
 		setTransitions((prev) => prev.map((t, i) => (i === index ? cond : t)));
+	}
+
+	// ---- Tags ----
+
+	function addTag(value: string) {
+		const trimmed = value.trim().toLowerCase();
+		if (trimmed && !tags.includes(trimmed)) {
+			setTags((prev) => [...prev, trimmed]);
+		}
+	}
+
+	function removeTag(tag: string) {
+		setTags((prev) => prev.filter((t) => t !== tag));
+	}
+
+	function handleTagInputKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ',') {
+			e.preventDefault();
+			addTag(tagInput);
+			setTagInput('');
+		} else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
+			removeTag(tags[tags.length - 1]);
+		}
 	}
 
 	// ---- Template ----
@@ -302,21 +344,41 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				order: i,
 			}));
 
+			// Build rules — filter out completely blank drafts
+			const filteredRuleDrafts = rules.filter((r) => r.name.trim() || r.content.trim());
+
 			if (isEditing && workflow) {
+				// Update needs full WorkflowRule objects with IDs
+				const updateRules = filteredRuleDrafts.map((r) => ({
+					id: r.id ?? crypto.randomUUID(),
+					name: r.name.trim() || 'Untitled Rule',
+					content: r.content,
+					appliesTo: r.appliesTo,
+				}));
 				await spaceStore.updateWorkflow(workflow.id, {
 					name: name.trim(),
 					description: description.trim() || null,
 					steps: builtSteps,
 					transitions: builtTransitions,
 					startStepId: stepIds[0],
+					rules: updateRules,
+					tags,
 				});
 			} else {
+				// Create uses WorkflowRuleInput (no id)
+				const createRules = filteredRuleDrafts.map((r) => ({
+					name: r.name.trim() || 'Untitled Rule',
+					content: r.content,
+					appliesTo: r.appliesTo,
+				}));
 				await spaceStore.createWorkflow({
 					name: name.trim(),
 					description: description.trim() || undefined,
 					steps: builtSteps,
 					transitions: builtTransitions,
 					startStepId: stepIds[0],
+					rules: createRules,
+					tags,
 				});
 			}
 
@@ -480,6 +542,68 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						Add Step
 					</button>
 				</div>
+
+				{/* Tags */}
+				<div class="space-y-3">
+					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</h2>
+					<div class="flex flex-wrap gap-1.5 items-center min-h-[2rem] bg-dark-850 border border-dark-700 rounded-lg px-3 py-1.5">
+						{tags.map((tag) => (
+							<span
+								key={tag}
+								class="flex items-center gap-1 text-xs bg-dark-700 border border-dark-600 text-gray-300 rounded px-2 py-0.5"
+							>
+								{tag}
+								<button
+									type="button"
+									onClick={() => removeTag(tag)}
+									class="text-gray-500 hover:text-red-400 transition-colors ml-0.5"
+									aria-label={`Remove tag ${tag}`}
+								>
+									×
+								</button>
+							</span>
+						))}
+						<input
+							type="text"
+							value={tagInput}
+							placeholder={tags.length === 0 ? 'Add tags (press Enter or comma)…' : ''}
+							onInput={(e) => setTagInput((e.currentTarget as HTMLInputElement).value)}
+							onKeyDown={handleTagInputKeyDown}
+							onBlur={() => {
+								if (tagInput.trim()) {
+									addTag(tagInput);
+									setTagInput('');
+								}
+							}}
+							class="flex-1 min-w-[8rem] bg-transparent text-sm text-gray-200 outline-none placeholder-gray-700"
+						/>
+					</div>
+					{/* Suggestions */}
+					<div class="flex flex-wrap gap-1.5">
+						{TAG_SUGGESTIONS.filter((s) => !tags.includes(s)).map((s) => (
+							<button
+								key={s}
+								type="button"
+								onClick={() => addTag(s)}
+								class="text-xs text-gray-600 hover:text-gray-300 border border-dark-700 hover:border-dark-500 rounded px-2 py-0.5 transition-colors"
+							>
+								+ {s}
+							</button>
+						))}
+					</div>
+				</div>
+
+				{/* Rules */}
+				<WorkflowRulesEditor
+					rules={rules}
+					steps={steps.map((s, i) => ({
+						id: s.id ?? s.localId,
+						name: s.name || `Step ${i + 1}`,
+						agentId: s.agentId,
+						instructions: s.instructions,
+					}))}
+					onChange={setRules}
+				/>
 			</div>
 		</div>
 	);

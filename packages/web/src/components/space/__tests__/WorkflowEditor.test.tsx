@@ -483,5 +483,156 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={makeWorkflow()} />);
 			expect(getByText('Plan')).toBeTruthy();
 		});
+
+		it('loads tags from existing workflow', () => {
+			const wf = makeWorkflow({ tags: ['coding', 'review'] });
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			expect(getByText('coding')).toBeTruthy();
+			expect(getByText('review')).toBeTruthy();
+		});
+
+		it('loads rules from existing workflow', () => {
+			const wf = makeWorkflow({
+				rules: [{ id: 'r1', name: 'My Rule', content: 'Rule content', appliesTo: [] }],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			expect(getByText('1 rule')).toBeTruthy();
+		});
+	});
+
+	describe('tags', () => {
+		it('renders tags section with Add tags placeholder', () => {
+			const { container } = render(<WorkflowEditor {...defaultProps} />);
+			const tagInput = container.querySelector(
+				'input[placeholder*="Add tags"]'
+			) as HTMLInputElement;
+			expect(tagInput).toBeTruthy();
+		});
+
+		it('shows tag suggestion buttons', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByText('+ coding')).toBeTruthy();
+			expect(getByText('+ review')).toBeTruthy();
+		});
+
+		it('clicking a suggestion adds the tag', () => {
+			const { getByText, queryByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(queryByText('coding')).toBeNull();
+			fireEvent.click(getByText('+ coding'));
+			// After adding, the chip appears and the suggestion button disappears
+			// The tag chip text is rendered, so the suggestion "coding" should show as a chip
+			// Check suggestion button is gone (tag was added)
+			expect(queryByText('+ coding')).toBeNull();
+		});
+
+		it('tags are included in createWorkflow call', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			// Set name
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'Tagged Workflow' } });
+			// Select agent
+			selectAgent(container, 'agent-1');
+			// Add tag via suggestion
+			fireEvent.click(getByText('+ coding'));
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({ tags: ['coding'] })
+				);
+			});
+		});
+
+		it('tags are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({ tags: ['research'] });
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({ tags: ['research'] })
+				);
+			});
+		});
+	});
+
+	describe('rules', () => {
+		it('renders the Rules section with "Add Rule" button', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByText('Add Rule')).toBeTruthy();
+		});
+
+		it('clicking Add Rule shows a rule card', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText('Add Rule'));
+			expect(getByText('1 rule')).toBeTruthy();
+		});
+
+		it('rules are included in createWorkflow call (non-blank rules only)', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
+			fireEvent.click(getByText('Add Rule'));
+			// Fill rule name — rule card has an input with "Rule name" placeholder
+			const ruleNameInput = container.querySelector(
+				'input[placeholder*="Rule name"]'
+			) as HTMLInputElement;
+			fireEvent.input(ruleNameInput, { target: { value: 'Follow conventions' } });
+			// Fill rule content — rule card textarea has "Describe the rule" placeholder
+			const ruleTextarea = container.querySelector(
+				'textarea[placeholder*="Describe the rule"]'
+			) as HTMLTextAreaElement;
+			fireEvent.input(ruleTextarea, { target: { value: 'Write clean code' } });
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({
+						rules: expect.arrayContaining([
+							expect.objectContaining({
+								name: 'Follow conventions',
+								content: 'Write clean code',
+							}),
+						]),
+					})
+				);
+			});
+		});
+
+		it('blank rules are excluded from the createWorkflow call', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
+			// Add a rule but leave it blank
+			fireEvent.click(getByText('Add Rule'));
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(expect.objectContaining({ rules: [] }));
+			});
+		});
+
+		it('rules are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({
+				rules: [{ id: 'r1', name: 'Existing Rule', content: 'Some content', appliesTo: [] }],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({
+						rules: expect.arrayContaining([
+							expect.objectContaining({ name: 'Existing Rule', content: 'Some content' }),
+						]),
+					})
+				);
+			});
+		});
 	});
 });
