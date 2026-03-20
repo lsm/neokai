@@ -1,10 +1,9 @@
 /**
  * SpaceIsland — main content area for the Space view.
- * Rendered by MainContent when currentSpaceIdSignal is set.
  *
  * 3-column layout:
  * - Left (~240px): SpaceNavPanel — workflow runs, tasks, nav links
- * - Middle (flex-1): SpaceDashboard (default) or other detail views
+ * - Middle (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
  * - Right (~320px, conditional): SpaceTaskPane when a task is selected
  */
 
@@ -15,12 +14,26 @@ import { navigateToSpaceTask, navigateToSpace } from '../lib/router';
 import { SpaceNavPanel } from '../components/space/SpaceNavPanel';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
+import { SpaceAgentList } from '../components/space/SpaceAgentList';
+import { WorkflowList } from '../components/space/WorkflowList';
+import { SpaceSettings } from '../components/space/SpaceSettings';
+import { cn } from '../lib/utils';
 
 interface SpaceIslandProps {
 	spaceId: string;
 }
 
+type SpaceTab = 'dashboard' | 'agents' | 'workflows' | 'settings';
+
+const TABS: { id: SpaceTab; label: string }[] = [
+	{ id: 'dashboard', label: 'Dashboard' },
+	{ id: 'agents', label: 'Agents' },
+	{ id: 'workflows', label: 'Workflows' },
+	{ id: 'settings', label: 'Settings' },
+];
+
 export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
+	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
 	const [activeRunId, setActiveRunId] = useState<string | null>(null);
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
@@ -77,6 +90,10 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 		);
 	}
 
+	const space = spaceStore.space.value;
+	const agents = spaceStore.agents.value;
+	const workflows = spaceStore.workflows.value;
+
 	return (
 		<div class="flex-1 flex overflow-hidden bg-dark-900">
 			{/* Left column — navigation panel */}
@@ -90,9 +107,38 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 				/>
 			</div>
 
-			{/* Middle column — main content */}
+			{/* Middle column — tabbed content */}
 			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-				<SpaceDashboard spaceId={spaceId} />
+				{/* Tab bar */}
+				<div class="flex border-b border-dark-700 px-4 flex-shrink-0">
+					{TABS.map((tab) => (
+						<button
+							key={tab.id}
+							type="button"
+							onClick={() => setActiveTab(tab.id)}
+							class={cn(
+								'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
+								activeTab === tab.id
+									? 'text-gray-100 border-blue-400'
+									: 'text-gray-400 border-transparent hover:text-gray-200'
+							)}
+						>
+							{tab.label}
+						</button>
+					))}
+				</div>
+
+				{/* Tab content */}
+				<div class="flex-1 overflow-hidden">
+					{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
+					{activeTab === 'agents' && space && (
+						<SpaceAgentList spaceId={spaceId} spaceName={space.name} agents={agents} />
+					)}
+					{activeTab === 'workflows' && space && (
+						<WorkflowList spaceId={spaceId} spaceName={space.name} workflows={workflows} />
+					)}
+					{activeTab === 'settings' && space && <SpaceSettings space={space} />}
+				</div>
 			</div>
 
 			{/* Right column — task detail pane (conditionally shown) */}

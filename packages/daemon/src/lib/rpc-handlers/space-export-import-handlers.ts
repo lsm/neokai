@@ -45,6 +45,7 @@ import type {
 	MessageHub,
 	Space,
 	SpaceAgent,
+	SpaceWorkflow,
 	CreateSpaceAgentParams,
 	CreateSpaceWorkflowParams,
 	WorkflowStepInput,
@@ -54,11 +55,15 @@ import type {
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
 } from '@neokai/shared';
+import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { exportBundle, validateExportBundle } from '../space/export-format';
+import { Logger } from '../logger';
+
+const log = new Logger('space-export-import-handlers');
 
 // ============================================================================
 // Public types
@@ -87,6 +92,14 @@ export interface ImportedItem {
 	name: string;
 	id: string;
 	action: 'created' | 'skipped' | 'renamed' | 'replaced';
+	/**
+	 * For workflow `replace` imports only: the UUID of the workflow that was
+	 * deleted to make room for the replacement. Used post-transaction to emit
+	 * `spaceWorkflow.deleted` for the old UUID before emitting
+	 * `spaceWorkflow.created` for the new one, ensuring SpaceStore removes the
+	 * stale entry rather than appending a duplicate.
+	 */
+	previousId?: string;
 }
 
 export interface ImportExecuteResult {
@@ -258,7 +271,8 @@ export function setupSpaceExportImportHandlers(
 	agentRepo: SpaceAgentRepository,
 	workflowRepo: SpaceWorkflowRepository,
 	workflowManager: SpaceWorkflowManager,
-	db: BunDatabase
+	db: BunDatabase,
+	daemonHub: DaemonHub
 ): void {
 	// ─── spaceExport.agents ──────────────────────────────────────────────────
 	messageHub.onRequest('spaceExport.agents', async (data) => {
@@ -491,6 +505,7 @@ export function setupSpaceExportImportHandlers(
 
 					let finalName = exportedWorkflow.name;
 					let action: ImportedItem['action'] = 'created';
+					let replacedOldId: string | undefined;
 
 					if (!existing) {
 						// No conflict — create as-is
@@ -510,6 +525,7 @@ export function setupSpaceExportImportHandlers(
 						if (strategy === 'replace') {
 							// Delete the existing workflow so the name becomes available again.
 							// This happens inside the transaction, so it rolls back on any later error.
+							replacedOldId = existing.id;
 							workflowRepo.deleteWorkflow(existing.id);
 							usedWorkflowNames.delete(exportedWorkflow.name);
 							action = 'replaced';
@@ -545,7 +561,11 @@ export function setupSpaceExportImportHandlers(
 
 					// workflowManager.createWorkflow validates steps/transitions/conditions and writes to DB
 					const created = workflowManager.createWorkflow(createParams);
-					workflowResults.push({ name: finalName, id: created.id, action });
+					const wfItem: ImportedItem = { name: finalName, id: created.id, action };
+					if (action === 'replaced' && typeof replacedOldId !== 'undefined') {
+						wfItem.previousId = replacedOldId;
+					}
+					workflowResults.push(wfItem);
 				}
 
 				return {
@@ -556,6 +576,78 @@ export function setupSpaceExportImportHandlers(
 			}
 		);
 
-		return executeImport(params.spaceId, resolution);
+		const importResult = executeImport(params.spaceId, resolution);
+
+		// Emit real-time events so SpaceStore updates its agent/workflow signals.
+		// Events are fired after the transaction commits — one per imported item.
+		// "skipped" items produce no event (the existing record is unchanged).
+		const spaceId = params.spaceId;
+
+		for (const item of importResult.agents) {
+			if (item.action === 'skipped') continue;
+			const agent: SpaceAgent | null = agentRepo.getById(item.id);
+			if (!agent) continue;
+			const eventName = item.action === 'replaced' ? 'spaceAgent.updated' : 'spaceAgent.created';
+			daemonHub
+				.emit(eventName, {
+					sessionId: `space:${spaceId}`,
+					spaceId,
+					agent,
+				})
+				.catch((err) => {
+					log.warn(`Failed to emit ${eventName} for imported agent "${item.name}":`, err);
+				});
+		}
+
+		for (const item of importResult.workflows) {
+			if (item.action === 'skipped') continue;
+			// P2: use getWorkflow for O(1) lookup instead of a full list scan
+			const workflow: SpaceWorkflow | null = workflowRepo.getWorkflow(item.id);
+			if (!workflow) continue;
+
+			if (item.action === 'replaced' && item.previousId) {
+				// P1: emit deleted for old UUID so SpaceStore removes the stale entry,
+				// then emit created for the new UUID so it is added fresh.
+				daemonHub
+					.emit('spaceWorkflow.deleted', {
+						sessionId: 'global',
+						spaceId,
+						workflowId: item.previousId,
+					})
+					.catch((err) => {
+						log.warn(
+							`Failed to emit spaceWorkflow.deleted for replaced workflow "${item.name}":`,
+							err
+						);
+					});
+				daemonHub
+					.emit('spaceWorkflow.created', {
+						sessionId: 'global',
+						spaceId,
+						workflow,
+					})
+					.catch((err) => {
+						log.warn(
+							`Failed to emit spaceWorkflow.created for replaced workflow "${item.name}":`,
+							err
+						);
+					});
+			} else {
+				daemonHub
+					.emit('spaceWorkflow.created', {
+						sessionId: 'global',
+						spaceId,
+						workflow,
+					})
+					.catch((err) => {
+						log.warn(
+							`Failed to emit spaceWorkflow.created for imported workflow "${item.name}":`,
+							err
+						);
+					});
+			}
+		}
+
+		return importResult;
 	});
 }
