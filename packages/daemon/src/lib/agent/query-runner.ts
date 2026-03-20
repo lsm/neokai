@@ -322,7 +322,7 @@ export class QueryRunner {
 			// Preserve queued messages for transparent retry when auto-recovery is
 			// registered (startup timeout + provider switch).  In all other cases,
 			// clear the queue so stale messages don't bleed into the next session.
-			if (!isStartupTimeout || !this.ctx.onStartupTimeoutAutoRecover) {
+			if (!isStartupTimeout || isAbortError || !this.ctx.onStartupTimeoutAutoRecover) {
 				messageQueue.clear();
 			}
 

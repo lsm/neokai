@@ -761,6 +761,24 @@ describe('QueryRunner', () => {
 			expect(clearSpy).toHaveBeenCalled();
 		});
 
+		it('should call messageQueue.clear() on startup-timeout AbortError even when handler is registered', async () => {
+			// Guard: if the throw site ever becomes an AbortError, queue must still be
+			// cleared because the recovery path is gated behind !isAbortError and will
+			// not run — leaving stale preserved messages would be wrong.
+			const abortError = new Error('SDK startup timeout - query aborted');
+			abortError.name = 'AbortError';
+			buildSpy.mockRejectedValue(abortError);
+
+			const ctx = createContext({
+				onStartupTimeoutAutoRecover: mock(async () => {}),
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).toHaveBeenCalled();
+		});
+
 		it('should schedule onStartupTimeoutAutoRecover after ~300ms', async () => {
 			const recoverSpy = mock(async () => {});
 			const ctx = createContext({
