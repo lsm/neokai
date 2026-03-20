@@ -15,7 +15,7 @@
  * - Delete Step button with confirmation (disabled for start node)
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import type { StepDraft } from '../WorkflowStepCard';
 import { GateConfig } from './GateConfig';
@@ -31,6 +31,16 @@ export interface NodeConfigPanelProps {
 	entryCondition: ConditionDraft | null;
 	exitCondition: ConditionDraft | null;
 	isStartNode: boolean;
+	/**
+	 * When true, the entry gate shows "Workflow starts here" (no selector).
+	 * Mirrors the WorkflowStepCard terminal message for the first step.
+	 */
+	isFirstStep?: boolean;
+	/**
+	 * When true, the exit gate shows "Workflow ends here" (no selector).
+	 * Mirrors the WorkflowStepCard terminal message for the last step.
+	 */
+	isLastStep?: boolean;
 	onUpdate: (step: StepDraft) => void;
 	onUpdateEntryCondition: (cond: ConditionDraft) => void;
 	onUpdateExitCondition: (cond: ConditionDraft) => void;
@@ -51,6 +61,8 @@ export function NodeConfigPanel({
 	entryCondition,
 	exitCondition,
 	isStartNode,
+	isFirstStep = false,
+	isLastStep = false,
 	onUpdate,
 	onUpdateEntryCondition,
 	onUpdateExitCondition,
@@ -60,8 +72,14 @@ export function NodeConfigPanel({
 }: NodeConfigPanelProps) {
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 
+	// Reset confirmation dialog when the selected step changes so a previously
+	// open confirmation on one node doesn't bleed through to the next node.
+	useEffect(() => {
+		setConfirmingDelete(false);
+	}, [step.localId]);
+
 	const handleDeleteClick = () => {
-		if (isStartNode) return; // guarded in UI
+		if (isStartNode) return; // defence-in-depth: button is also disabled
 		setConfirmingDelete(true);
 	};
 
@@ -86,10 +104,8 @@ export function NodeConfigPanel({
 				display: 'flex',
 				flexDirection: 'column',
 				zIndex: 20,
-				transform: 'translateX(0)',
-				transition: 'transform 0.2s ease',
 			}}
-			class="bg-dark-900 border-l border-dark-700 shadow-xl"
+			class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
 		>
 			{/* Header */}
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
@@ -177,6 +193,7 @@ export function NodeConfigPanel({
 					label="Entry Gate"
 					condition={entryCondition ?? { type: 'always' }}
 					onChange={onUpdateEntryCondition}
+					terminalMessage={isFirstStep ? 'Workflow starts here' : undefined}
 				/>
 
 				{/* Exit Gate */}
@@ -184,6 +201,7 @@ export function NodeConfigPanel({
 					label="Exit Gate"
 					condition={exitCondition ?? { type: 'always' }}
 					onChange={onUpdateExitCondition}
+					terminalMessage={isLastStep ? 'Workflow ends here' : undefined}
 				/>
 
 				{/* Instructions */}

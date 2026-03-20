@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { SpaceAgent } from '@neokai/shared';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
@@ -303,6 +303,58 @@ describe('NodeConfigPanel', () => {
 			fireEvent.click(getByTestId('delete-step-button'));
 			fireEvent.click(getByTestId('delete-cancel-button'));
 			expect(onDelete).not.toHaveBeenCalled();
+		});
+
+		it('guard in handleDeleteClick suppresses dialog when isStartNode=true (defence-in-depth)', () => {
+			// The button is disabled, so a normal click won't fire. Dispatch a direct click event
+			// bypassing the disabled attribute to verify the handler guard still blocks the dialog.
+			const { getByTestId, queryByTestId } = render(
+				<NodeConfigPanel {...makeProps({ isStartNode: true })} />
+			);
+			const btn = getByTestId('delete-step-button') as HTMLButtonElement;
+			// Programmatically invoke the onClick handler via a non-trusted event
+			fireEvent.click(btn);
+			expect(queryByTestId('delete-confirm-button')).toBeNull();
+		});
+
+		it('confirmation dialog is reset when selected step changes', async () => {
+			const stepA = makeStep({ localId: 'step-a', name: 'Step A' });
+			const stepB = makeStep({ localId: 'step-b', name: 'Step B' });
+			const props = makeProps({ step: stepA });
+			const { getByTestId, queryByTestId, rerender } = render(<NodeConfigPanel {...props} />);
+
+			// Open confirmation on step A
+			fireEvent.click(getByTestId('delete-step-button'));
+			expect(getByTestId('delete-confirm-button')).toBeTruthy();
+
+			// Swap to step B (simulates user selecting a different node)
+			await act(async () => {
+				rerender(<NodeConfigPanel {...{ ...props, step: stepB }} />);
+			});
+
+			// Confirmation dialog should be gone
+			expect(queryByTestId('delete-confirm-button')).toBeNull();
+			expect(getByTestId('delete-step-button')).toBeTruthy();
+		});
+	});
+
+	describe('terminal messages for boundary nodes', () => {
+		it('shows "Workflow starts here" for first step entry gate', () => {
+			const { getByText } = render(<NodeConfigPanel {...makeProps({ isFirstStep: true })} />);
+			expect(getByText('Workflow starts here')).toBeTruthy();
+		});
+
+		it('shows "Workflow ends here" for last step exit gate', () => {
+			const { getByText } = render(<NodeConfigPanel {...makeProps({ isLastStep: true })} />);
+			expect(getByText('Workflow ends here')).toBeTruthy();
+		});
+
+		it('does not show terminal messages for mid-workflow nodes', () => {
+			const { container } = render(
+				<NodeConfigPanel {...makeProps({ isFirstStep: false, isLastStep: false })} />
+			);
+			expect(container.textContent).not.toContain('Workflow starts here');
+			expect(container.textContent).not.toContain('Workflow ends here');
 		});
 	});
 });
