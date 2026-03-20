@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
+import type { ComponentChildren, RefObject } from 'preact';
 import type { NodePosition, ViewportState } from './types';
 import { CanvasToolbar } from './CanvasToolbar';
 
@@ -67,6 +67,13 @@ interface VisualCanvasProps {
 	nodes?: NodePosition;
 	/** Whether to show the zoom/fit toolbar overlay. Defaults to true. */
 	showToolbar?: boolean;
+	/**
+	 * Optional external ref to the canvas container element.
+	 * When provided, coordinate calculations (e.g. for ghost edges) use the same
+	 * element that VisualCanvas uses internally, avoiding any bounding-rect drift
+	 * if an outer wrapper gains padding/borders in future.
+	 */
+	containerRef?: RefObject<HTMLDivElement>;
 }
 
 export function VisualCanvas({
@@ -77,8 +84,12 @@ export function VisualCanvas({
 	edgeLayer,
 	nodes = {},
 	showToolbar = true,
+	containerRef: externalContainerRef,
 }: VisualCanvasProps) {
-	const containerRef = useRef<HTMLDivElement>(null);
+	const internalContainerRef = useRef<HTMLDivElement>(null);
+	// Use externally-provided ref when available so callers can do their own
+	// coordinate math against the exact same element VisualCanvas uses.
+	const containerRef = externalContainerRef ?? internalContainerRef;
 	const transformRef = useRef<HTMLDivElement>(null);
 	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 

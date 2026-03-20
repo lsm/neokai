@@ -220,35 +220,34 @@ export function WorkflowCanvas({
 	);
 
 	return (
-		<div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
-			<VisualCanvas
-				viewportState={viewportState}
-				onViewportChange={onViewportChange}
-				onBackgroundClick={handleBackgroundClick}
-				edgeLayer={edgeLayer}
-			>
-				{nodes.map((node) => {
-					const stepId = node.step.localId;
-					// A node is a valid drop target if: drag is active, not the source, not start node
-					const isDropTarget =
-						dragState.active && dragState.fromStepId !== stepId && !node.isStartNode;
+		<VisualCanvas
+			containerRef={containerRef}
+			viewportState={viewportState}
+			onViewportChange={onViewportChange}
+			onBackgroundClick={handleBackgroundClick}
+			edgeLayer={edgeLayer}
+		>
+			{nodes.map((node) => {
+				const stepId = node.step.localId;
+				// A node is a valid drop target if: drag is active, not the source, not start node
+				const isDropTarget =
+					dragState.active && dragState.fromStepId !== stepId && !node.isStartNode;
 
-					return (
-						<WorkflowNode
-							key={stepId}
-							{...node}
-							scale={viewportState.scale}
-							onPositionChange={onNodePositionChange ?? (() => {})}
-							isSelected={selectedNodeId === stepId}
-							isDropTarget={isDropTarget}
-							onClick={handleNodeSelect}
-							onPortMouseDown={handlePortMouseDown}
-							onPortMouseEnter={handlePortMouseEnter}
-							onPortMouseLeave={handlePortMouseLeave}
-						/>
-					);
-				})}
-			</VisualCanvas>
-		</div>
+				return (
+					<WorkflowNode
+						key={stepId}
+						{...node}
+						scale={viewportState.scale}
+						onPositionChange={onNodePositionChange ?? (() => {})}
+						isSelected={selectedNodeId === stepId}
+						isDropTarget={isDropTarget}
+						onClick={handleNodeSelect}
+						onPortMouseDown={handlePortMouseDown}
+						onPortMouseEnter={handlePortMouseEnter}
+						onPortMouseLeave={handlePortMouseLeave}
+					/>
+				);
+			})}
+		</VisualCanvas>
 	);
 }
