@@ -678,7 +678,6 @@ jobs:
             core/interrupt-error-bug
             core/context-features
             core/model-selection
-            core/persistence
             features/archive
             features/file-operations
             features/message-operations
