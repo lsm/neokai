@@ -58,9 +58,16 @@ interface VisualCanvasProps {
 	children?: ComponentChildren;
 	viewportState: ViewportState;
 	onViewportChange: (state: ViewportState) => void;
+	/** Render prop for injecting SVG edge content. Receives current viewport state. */
+	edgeLayer?: (viewport: ViewportState) => ComponentChildren;
 }
 
-export function VisualCanvas({ children, viewportState, onViewportChange }: VisualCanvasProps) {
+export function VisualCanvas({
+	children,
+	viewportState,
+	onViewportChange,
+	edgeLayer,
+}: VisualCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	// Track spacebar state for pan-drag mode
@@ -192,6 +199,21 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 				}}
 				data-testid="visual-canvas-transform"
 			>
+				<svg
+					class="visual-canvas-edge-layer"
+					style={{
+						position: 'absolute',
+						top: 0,
+						left: 0,
+						width: '100%',
+						height: '100%',
+						pointerEvents: 'none',
+						overflow: 'visible',
+					}}
+					data-testid="visual-canvas-svg"
+				>
+					{edgeLayer?.(viewportState)}
+				</svg>
 				{children}
 			</div>
 		</div>
