@@ -125,6 +125,36 @@ describe('MinimaxProvider', () => {
 			expect(config.isAnthropicCompatible).toBe(true);
 		});
 
+		it('should route to MiniMax-M2.7-highspeed when that model is selected', () => {
+			process.env.MINIMAX_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('MiniMax-M2.7-highspeed');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('MiniMax-M2.7-highspeed');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('MiniMax-M2.7-highspeed');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.7-highspeed');
+		});
+
+		it('should route to MiniMax-M2.5-highspeed when that model is selected', () => {
+			process.env.MINIMAX_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('MiniMax-M2.5-highspeed');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('MiniMax-M2.5-highspeed');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('MiniMax-M2.5-highspeed');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.5-highspeed');
+		});
+
+		it('should fall back to MiniMax-M2.5 for unrecognised model IDs', () => {
+			process.env.MINIMAX_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('unknown-model');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('MiniMax-M2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('MiniMax-M2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.5');
+		});
+
 		it('should use session config API key override', () => {
 			process.env.MINIMAX_API_KEY = 'env-key';
 
