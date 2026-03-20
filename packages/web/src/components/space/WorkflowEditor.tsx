@@ -324,6 +324,12 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 			// Generate IDs for new steps
 			const stepIds = steps.map((s) => s.id ?? crypto.randomUUID());
 
+			// Map from the display ID used in WorkflowRulesEditor (s.id ?? s.localId)
+			// to the final persisted step ID, so appliesTo references survive the save.
+			const displayIdToStepId = new Map<string, string>(
+				steps.map((s, i) => [s.id ?? s.localId, stepIds[i]])
+			);
+
 			const builtSteps = steps.map((s, i) => ({
 				id: stepIds[i],
 				name: s.name || `Step ${i + 1}`,
@@ -353,7 +359,8 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					id: r.id ?? crypto.randomUUID(),
 					name: r.name.trim() || 'Untitled Rule',
 					content: r.content,
-					appliesTo: r.appliesTo,
+					// Remap display IDs (localId for new steps) to final persisted step IDs
+					appliesTo: r.appliesTo.map((id) => displayIdToStepId.get(id) ?? id),
 				}));
 				await spaceStore.updateWorkflow(workflow.id, {
 					name: name.trim(),
@@ -369,7 +376,8 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				const createRules = filteredRuleDrafts.map((r) => ({
 					name: r.name.trim() || 'Untitled Rule',
 					content: r.content,
-					appliesTo: r.appliesTo,
+					// Remap display IDs (localId for new steps) to final persisted step IDs
+					appliesTo: r.appliesTo.map((id) => displayIdToStepId.get(id) ?? id),
 				}));
 				await spaceStore.createWorkflow({
 					name: name.trim(),
@@ -570,8 +578,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 							onInput={(e) => setTagInput((e.currentTarget as HTMLInputElement).value)}
 							onKeyDown={handleTagInputKeyDown}
 							onBlur={() => {
+								// Split on commas so pasting "coding,review" and blurring works correctly
 								if (tagInput.trim()) {
-									addTag(tagInput);
+									tagInput.split(',').forEach((t) => addTag(t));
 									setTagInput('');
 								}
 							}}

@@ -251,55 +251,72 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 
 	// ─── Workflow deletion ────────────────────────────────────────────────────
 
-	test('can delete a workflow via list UI', async ({ page }) => {
-		// First create a workflow via RPC
-		const workflowName = `Deletable Workflow ${Date.now()}`;
-		const workflowId = await page.evaluate(
-			async ({ sid, wname }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('Hub not available');
+	// Nested describe so beforeEach/afterEach can set up workflow infrastructure
+	// without putting RPC calls inside the test body (CLAUDE.md E2E rules).
+	test.describe('workflow deletion', () => {
+		const deletableWorkflowName = `Deletable Workflow ${Date.now()}`;
+		let workflowCreated = false;
 
-				// Need a step with an agent — use the preset planner agent
-				const agentsRes = await hub.request('spaceAgent.list', { spaceId: sid });
-				const agents = (agentsRes as { agents: Array<{ id: string; role: string }> }).agents;
-				const planner = agents.find((a) => a.role === 'planner') ?? agents[0];
-				if (!planner) throw new Error('No agents available');
+		test.beforeEach(async ({ page }) => {
+			// Create a workflow via RPC — infrastructure setup, not test action
+			await page.evaluate(
+				async ({ sid, wname }) => {
+					const hub = window.__messageHub || window.appState?.messageHub;
+					if (!hub?.request) throw new Error('Hub not available');
 
-				const step = { id: crypto.randomUUID(), name: 'Step 1', agentId: planner.id };
-				const res = await hub.request('spaceWorkflow.create', {
-					spaceId: sid,
-					name: wname,
-					steps: [step],
-					transitions: [],
-					startStepId: step.id,
-					rules: [],
-					tags: [],
-				});
-				return (res as { workflow: { id: string } }).workflow.id;
-			},
-			{ sid: spaceId, wname: workflowName }
-		);
-		expect(workflowId).toBeTruthy();
+					const agentsRes = await hub.request('spaceAgent.list', { spaceId: sid });
+					const agents = (agentsRes as { agents: Array<{ id: string; role: string }> }).agents;
+					const planner = agents.find((a) => a.role === 'planner') ?? agents[0];
+					if (!planner) throw new Error('No agents seeded in space');
 
-		await navigateToSpace(page, spaceId);
-		await page.locator('text=Workflows').first().click();
+					const step = { id: crypto.randomUUID(), name: 'Step 1', agentId: planner.id };
+					await hub.request('spaceWorkflow.create', {
+						spaceId: sid,
+						name: wname,
+						steps: [step],
+						transitions: [],
+						startStepId: step.id,
+						rules: [],
+						tags: [],
+					});
+				},
+				{ sid: spaceId, wname: deletableWorkflowName }
+			);
+			workflowCreated = true;
+		});
 
-		// The workflow card should appear
-		await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
+		test('can delete a workflow via list UI', async ({ page }) => {
+			await navigateToSpace(page, spaceId);
+			await page.locator('text=Workflows').first().click();
 
-		// Click the delete button on the workflow card
-		const deleteBtn = page
-			.locator('[title="Delete workflow"]')
-			.or(page.locator('button[aria-label="Delete workflow"]'))
-			.first();
-		await expect(deleteBtn).toBeVisible({ timeout: 3000 });
-		await deleteBtn.click();
+			// The workflow card should appear in the list
+			await expect(page.locator(`text=${deletableWorkflowName}`)).toBeVisible({ timeout: 5000 });
 
-		// Confirm deletion
-		await expect(page.locator('text=Delete').last()).toBeVisible({ timeout: 3000 });
-		await page.locator('text=Delete').last().click();
+			// Click the delete button on the workflow card
+			const deleteBtn = page
+				.locator('[title="Delete workflow"]')
+				.or(page.locator('button[aria-label="Delete workflow"]'))
+				.first();
+			await expect(deleteBtn).toBeVisible({ timeout: 3000 });
+			await deleteBtn.click();
 
-		// Workflow should disappear
-		await expect(page.locator(`text=${workflowName}`)).not.toBeVisible({ timeout: 5000 });
+			// Confirm deletion in the confirmation dialog
+			await expect(page.locator('text=Delete').last()).toBeVisible({ timeout: 3000 });
+			await page.locator('text=Delete').last().click();
+
+			// Workflow should disappear from the list
+			await expect(page.locator(`text=${deletableWorkflowName}`)).not.toBeVisible({
+				timeout: 5000,
+			});
+			workflowCreated = false;
+		});
+
+		// Ignored — satisfies variable usage for ESLint
+		test.afterEach(() => {
+			// workflowCreated is false if the test succeeded (workflow was deleted via UI)
+			// and true if the test failed — in which case the parent afterEach deletes the
+			// entire Space, so the workflow is removed as a side effect.
+			void workflowCreated;
+		});
 	});
 });

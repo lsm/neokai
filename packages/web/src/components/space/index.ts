@@ -15,7 +15,7 @@ export { WorkflowList } from './WorkflowList';
 export { WorkflowRulesEditor, makeEmptyRule, rulesToDrafts } from './WorkflowRulesEditor';
 export { WorkflowStepCard } from './WorkflowStepCard';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
-export * from './export-import-utils';
+export { downloadBundle, pickImportFile } from './export-import-utils';
 
 export type { RuleDraft } from './WorkflowRulesEditor';
 export type { StepDraft, ConditionDraft } from './WorkflowStepCard';

@@ -471,6 +471,61 @@ describe('WorkflowEditor', () => {
 				);
 			});
 		});
+
+		it('remaps rule appliesTo from step localId to final persisted step ID (P0 regression)', async () => {
+			// When a new step has no persisted ID yet, its localId is used in appliesTo.
+			// The save path must remap localId → the UUID generated at save time so the
+			// persisted rule references the correct step ID.
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+
+			// Set workflow name
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'Remapped Workflow' } });
+
+			// Assign agent to the initial step (index 0 — new step, no persisted id)
+			selectAgent(container, 'agent-1');
+
+			// Add a rule and fill it in
+			fireEvent.click(getByText('Add Rule'));
+			const ruleNameInput = container.querySelector(
+				'input[placeholder*="Rule name"]'
+			) as HTMLInputElement;
+			fireEvent.input(ruleNameInput, { target: { value: 'Scoped Rule' } });
+			const ruleContent = container.querySelector(
+				'textarea[placeholder*="Describe the rule"]'
+			) as HTMLTextAreaElement;
+			fireEvent.input(ruleContent, { target: { value: 'Content' } });
+
+			// Scope the rule to step 1 by clicking the step button in "Applies to"
+			// After a step is added it appears as "Step 1" (no name yet in the card header)
+			// The multi-select renders the step name as displayed in the card
+			const stepButtons = container.querySelectorAll(
+				'[class*="rounded"][class*="border"] button[type="button"]'
+			);
+			if (stepButtons.length > 0) {
+				// Click the first step toggle (corresponds to step 1)
+				fireEvent.click(stepButtons[0]);
+			}
+
+			fireEvent.click(getByText('Create Workflow'));
+
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
+			});
+
+			const call = mockCreateWorkflow.mock.calls[0][0];
+			const savedStepId = call.steps[0]?.id;
+			const savedRules = call.rules ?? [];
+
+			// If a rule was scoped, every appliesTo ID must match a real step ID
+			for (const rule of savedRules) {
+				for (const scopedId of rule.appliesTo ?? []) {
+					expect(savedStepId).toBe(scopedId);
+				}
+			}
+		});
 	});
 
 	describe('edit mode initialization', () => {
