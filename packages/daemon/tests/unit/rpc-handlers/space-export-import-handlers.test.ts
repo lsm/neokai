@@ -60,6 +60,7 @@ function createSchema(db: Database): void {
 			system_prompt TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT 'coder',
 			config TEXT,
+			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE

@@ -213,9 +213,10 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// Planner-specific: inject full workflow structure so the planner can
-	// create tasks aligned with the workflow's steps and rules.
-	if (customAgent.role === 'planner' && workflow && workflowRun) {
+	// Inject full workflow structure when the agent has opted in via injectWorkflowContext.
+	// This is data-driven — any agent can receive workflow context, not just 'planner' roles.
+	// The Planner preset has injectWorkflowContext: true set in seed-agents.ts.
+	if (customAgent.injectWorkflowContext && workflow && workflowRun) {
 		sections.push(`\n## Workflow Structure\n`);
 		sections.push(
 			`You are planning work within the **${workflow.name}** workflow. ` +

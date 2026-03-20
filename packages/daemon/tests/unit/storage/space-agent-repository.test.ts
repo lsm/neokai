@@ -274,4 +274,54 @@ describe('SpaceAgentRepository', () => {
 			expect(result.workflowNames[0]).toBe('CI Workflow');
 		});
 	});
+
+	describe('injectWorkflowContext field', () => {
+		it('stores injectWorkflowContext: true and reads it back', () => {
+			const agent = repo.create({
+				spaceId: 'space-1',
+				name: 'Planner',
+				role: 'planner',
+				injectWorkflowContext: true,
+			});
+			expect(agent.injectWorkflowContext).toBe(true);
+
+			const fetched = repo.getById(agent.id);
+			expect(fetched?.injectWorkflowContext).toBe(true);
+		});
+
+		it('returns undefined for injectWorkflowContext when not set (falsy default)', () => {
+			const agent = repo.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
+			expect(agent.injectWorkflowContext).toBeUndefined();
+		});
+
+		it('returns undefined when injectWorkflowContext is explicitly false', () => {
+			const agent = repo.create({
+				spaceId: 'space-1',
+				name: 'General',
+				role: 'general',
+				injectWorkflowContext: false,
+			});
+			// 0 stored in DB → read back as undefined (falsy collapses to undefined)
+			expect(agent.injectWorkflowContext).toBeUndefined();
+		});
+
+		it('can update injectWorkflowContext from unset to true', () => {
+			const agent = repo.create({ spaceId: 'space-1', name: 'Reviewer', role: 'reviewer' });
+			expect(agent.injectWorkflowContext).toBeUndefined();
+
+			const updated = repo.update(agent.id, { injectWorkflowContext: true });
+			expect(updated?.injectWorkflowContext).toBe(true);
+		});
+
+		it('can clear injectWorkflowContext by setting null', () => {
+			const agent = repo.create({
+				spaceId: 'space-1',
+				name: 'PlannerX',
+				role: 'planner',
+				injectWorkflowContext: true,
+			});
+			const updated = repo.update(agent.id, { injectWorkflowContext: null });
+			expect(updated?.injectWorkflowContext).toBeUndefined();
+		});
+	});
 });

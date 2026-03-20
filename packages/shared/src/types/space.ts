@@ -367,6 +367,15 @@ export interface SpaceAgent {
 	tools?: string[];
 	/** Tool configuration overrides */
 	toolConfig?: Record<string, unknown>;
+	/**
+	 * When true, the agent's task message includes the full workflow structure
+	 * (steps, current step marker, and rules) when the agent runs inside an active
+	 * workflow run. Set this on agents whose role involves planning or orchestration
+	 * so they can create tasks aligned with the current workflow step.
+	 *
+	 * Driven by data, not by hardcoded role checks — any agent can have this set.
+	 */
+	injectWorkflowContext?: boolean;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -387,6 +396,8 @@ export interface CreateSpaceAgentParams {
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
 	toolConfig?: Record<string, unknown>;
+	/** When true, the agent receives workflow structure context in its task message. */
+	injectWorkflowContext?: boolean;
 }
 
 /**
@@ -402,6 +413,8 @@ export interface UpdateSpaceAgentParams {
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
 	toolConfig?: Record<string, unknown> | null;
+	/** When true, the agent receives workflow structure context in its task message. */
+	injectWorkflowContext?: boolean | null;
 }
 
 // ============================================================================
