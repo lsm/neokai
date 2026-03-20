@@ -77,11 +77,15 @@ export class ProviderContextManager {
 	constructor(private readonly registry: ProviderRegistry) {}
 
 	/**
-	 * Create a provider context for a session
+	 * Create a provider context for a session.
 	 *
-	 * Resolves the provider from the explicit `session.config.provider` ID.
-	 * Throws if the session has no stored provider or the stored ID is not registered —
-	 * silent rerouting to a default provider is intentionally not allowed here.
+	 * Provider resolution order:
+	 * 1. Explicit `session.config.provider` — used for all sessions created after PR #466.
+	 * 2. Anthropic fallback — for legacy sessions that pre-date PR #466 and have no stored
+	 *    provider. This keeps existing DB sessions working on upgrade.
+	 *
+	 * Throws only when a provider ID IS stored but that ID is not registered (hard
+	 * misconfiguration that should not be silently swallowed).
 	 */
 	createContext(session: Session): ProviderContext {
 		// Resolve provider for this session
@@ -98,27 +102,32 @@ export class ProviderContextManager {
 	/**
 	 * Resolve the provider for a session.
 	 *
-	 * Throws — never silently falls back — so misconfigured sessions surface as
-	 * clear errors rather than being silently rerouted to the wrong provider.
+	 * - No stored provider ID → fall back to Anthropic (legacy session from before PR #466).
+	 * - Stored provider ID not registered → throw (explicit misconfiguration, not a migration gap).
 	 */
 	private resolveProvider(session: Session): Provider {
 		const providerId = session.config.provider;
 
-		if (!providerId) {
-			throw new Error(
-				`Session '${session.id}' has no provider stored in config. ` +
-					`All sessions created after PR #466 store an explicit provider ID.`
-			);
+		if (providerId) {
+			const provider = this.registry.get(providerId);
+			if (!provider) {
+				throw new Error(
+					`Provider '${providerId}' (requested by session '${session.id}') is not registered.`
+				);
+			}
+			return provider;
 		}
 
-		const provider = this.registry.get(providerId);
-		if (!provider) {
-			throw new Error(
-				`Provider '${providerId}' (requested by session '${session.id}') is not registered.`
-			);
+		// Legacy path: sessions created before PR #466 have no stored provider.
+		// Fall back to Anthropic so existing DB sessions continue to work after upgrade.
+		const anthropic = this.registry.get('anthropic');
+		if (anthropic) {
+			return anthropic;
 		}
 
-		return provider;
+		throw new Error(
+			`Session '${session.id}' has no provider stored and the Anthropic provider is not registered.`
+		);
 	}
 
 	/**
@@ -132,7 +141,16 @@ export class ProviderContextManager {
 	 * @param newProviderId - Target provider ID (explicit — must be known by the caller)
 	 */
 	requiresQueryRestart(session: Session, newModelId: string, newProviderId: string): boolean {
-		const currentProvider = this.resolveProvider(session);
+		let currentProvider: Provider;
+		try {
+			currentProvider = this.resolveProvider(session);
+		} catch {
+			// Cannot resolve the current provider — assume the switch crosses providers.
+			// This is the conservative/safe value: a restart that wasn't strictly needed
+			// is far less harmful than skipping a restart that was required.
+			return true;
+		}
+
 		const newProvider = this.registry.get(newProviderId);
 
 		// If the new provider is unknown, assume a different one — safer to restart

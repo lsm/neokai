@@ -1,17 +1,17 @@
 /**
  * Integration tests for GLM (智谱AI) provider support
  *
- * Tests the model-based provider detection flow:
- * 1. ProviderService model ID detection (glm-* models)
- * 2. QueryOptionsBuilder model-based env var injection
- * 3. Actual API call to GLM
+ * Covers:
+ * 1. ProviderService — GLM availability, provider listing, model defaults, provider switching
+ * 2. QueryOptionsBuilder — env var injection for GLM sessions (explicit provider field required)
+ * 3. ModelService — GLM model inclusion in getAvailableModels
+ * 4. Actual API call to GLM
  *
  * Run with: GLM_API_KEY=xxx bun test packages/daemon/tests/online/glm/glm-provider.test.ts
  *
  * REQUIREMENTS:
  * - GLM_API_KEY environment variable (or ZHIPU_API_KEY)
- * - Makes real API calls for some tests
- * - Tests will SKIP if credentials are not available
+ * - The GLM API-call test (describe 'GLM API Call') requires real credentials and will fail if absent.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -339,10 +339,10 @@ describe('GLM Provider Integration', () => {
 		it('should inject GLM env vars when session uses GLM model', async () => {
 			const settingsManager = new SettingsManager(env.db, env.testWorkspace);
 
-			// Create session with GLM model (model-based detection, no provider config needed)
 			const session = createTestSession(env.testWorkspace, {
 				config: {
-					model: 'glm-5', // GLM model ID triggers env var injection
+					model: 'glm-5',
+					provider: 'glm',
 				},
 			});
 
@@ -376,6 +376,7 @@ describe('GLM Provider Integration', () => {
 			const session = createTestSession(env.testWorkspace, {
 				config: {
 					model: 'glm-5',
+					provider: 'glm',
 					env: {
 						// API_TIMEOUT_MS is now filtered as provider-specific var
 						// Provider env vars are managed by the provider system, not options.env
@@ -411,7 +412,8 @@ describe('GLM Provider Integration', () => {
 
 			const session = createTestSession(env.testWorkspace, {
 				config: {
-					model: 'default', // Anthropic model
+					model: 'default',
+					provider: 'anthropic',
 				},
 			});
 
@@ -426,10 +428,10 @@ describe('GLM Provider Integration', () => {
 			const settingsManager = new SettingsManager(env.db, env.testWorkspace);
 
 			const opusSession = createTestSession(env.testWorkspace, {
-				config: { model: 'opus' },
+				config: { model: 'opus', provider: 'anthropic' },
 			});
 			const haikuSession = createTestSession(env.testWorkspace, {
-				config: { model: 'haiku' },
+				config: { model: 'haiku', provider: 'anthropic' },
 			});
 
 			const opusBuilder = new QueryOptionsBuilder({ session: opusSession, settingsManager });

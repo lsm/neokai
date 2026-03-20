@@ -335,7 +335,7 @@ describe('ProviderContextManager', () => {
 			);
 		});
 
-		it('should throw when no provider is stored in session config', () => {
+		it('should fall back to Anthropic when no provider is stored (legacy pre-#466 session)', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -358,9 +358,9 @@ describe('ProviderContextManager', () => {
 				},
 			};
 
-			expect(() => manager.createContext(session)).toThrow(
-				"Session 'test-session' has no provider stored in config."
-			);
+			// Legacy sessions without a stored provider fall back to Anthropic
+			const context = manager.createContext(session);
+			expect(context.provider.id).toBe('anthropic');
 		});
 
 		it('should include session provider config', () => {
