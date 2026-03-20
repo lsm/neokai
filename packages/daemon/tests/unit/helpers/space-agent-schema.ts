@@ -27,6 +27,7 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
+	// Keep in sync with migration-31 (runMigration31) and space-test-db.ts.
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,

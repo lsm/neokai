@@ -29,6 +29,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
+	// Keep in sync with migration-31 (runMigration31) and space-agent-schema.ts.
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agents (
 			id TEXT PRIMARY KEY,
@@ -41,7 +42,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			role TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT 'coder',
 			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
