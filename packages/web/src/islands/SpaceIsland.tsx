@@ -152,28 +152,28 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 				{/* Tab content */}
 				<div class="flex-1 overflow-hidden">
-				{showWorkflowEditor ? (
-					<WorkflowEditor
-						workflow={editingWorkflow}
-						onSave={() => setWorkflowEditId(null)}
-						onCancel={() => setWorkflowEditId(null)}
-					/>
-				) : (
-					<>
-						{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
-						{activeTab === 'agents' && <SpaceAgentList />}
-						{activeTab === 'workflows' && space && (
-							<WorkflowList
-								spaceId={spaceId}
-								spaceName={space.name}
-								workflows={workflows}
-								onCreateWorkflow={() => setWorkflowEditId('new')}
-								onEditWorkflow={(id) => setWorkflowEditId(id)}
-							/>
-						)}
-						{activeTab === 'settings' && space && <SpaceSettings space={space} />}
-					</>
-				)}
+					{showWorkflowEditor ? (
+						<WorkflowEditor
+							workflow={editingWorkflow}
+							onSave={() => setWorkflowEditId(null)}
+							onCancel={() => setWorkflowEditId(null)}
+						/>
+					) : (
+						<>
+							{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
+							{activeTab === 'agents' && <SpaceAgentList />}
+							{activeTab === 'workflows' && space && (
+								<WorkflowList
+									spaceId={spaceId}
+									spaceName={space.name}
+									workflows={workflows}
+									onCreateWorkflow={() => setWorkflowEditId('new')}
+									onEditWorkflow={(id) => setWorkflowEditId(id)}
+								/>
+							)}
+							{activeTab === 'settings' && space && <SpaceSettings space={space} />}
+						</>
+					)}
 				</div>
 			</div>
 
