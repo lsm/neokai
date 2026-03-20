@@ -25,6 +25,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import {
 	WorkflowExecutor,
 	WorkflowTransitionError,
+	WorkflowGateError,
 } from '../../../src/lib/space/runtime/workflow-executor.ts';
 import type {
 	CommandRunner,
@@ -502,7 +503,7 @@ describe('WorkflowExecutor', () => {
 			// run.config has no humanApproved
 			const executor = makeExecutor(workflow, run);
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
 
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
@@ -769,8 +770,8 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run);
 
-			// First call: condition fails → needs_attention
-			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			// First call: human gate blocks → WorkflowGateError
+			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
 
 			// Second call: must throw immediately (not re-evaluate)
 			await expect(executor.advance()).rejects.toThrow('needs_attention');
@@ -788,7 +789,7 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run);
 
-			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
 
 			const statusBefore = runRepo.getRun(run.id)?.status;
 			await expect(executor.advance()).rejects.toThrow('needs_attention');
@@ -803,8 +804,8 @@ describe('WorkflowExecutor', () => {
 	// WorkflowTransitionError properties
 	// =========================================================================
 
-	describe('WorkflowTransitionError', () => {
-		test('condition failure throws WorkflowTransitionError with descriptive message', async () => {
+	describe('WorkflowGateError', () => {
+		test('human gate throws WorkflowGateError with descriptive message', async () => {
 			const { workflow, run } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
 				{
@@ -816,11 +817,11 @@ describe('WorkflowExecutor', () => {
 			]);
 			const executor = makeExecutor(workflow, run);
 
-			let caught: WorkflowTransitionError | undefined;
+			let caught: WorkflowGateError | undefined;
 			try {
 				await executor.advance();
 			} catch (err) {
-				if (err instanceof WorkflowTransitionError) caught = err;
+				if (err instanceof WorkflowGateError) caught = err;
 			}
 
 			expect(caught).toBeDefined();
@@ -938,8 +939,8 @@ describe('WorkflowExecutor', () => {
 
 			const executor = makeExecutor(workflow, run);
 
-			// Both human conditions fail → needs_attention
-			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			// Both human conditions fail → WorkflowGateError + needs_attention
+			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
 		});
 

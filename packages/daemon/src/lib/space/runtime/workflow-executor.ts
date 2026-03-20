@@ -65,6 +65,19 @@ export class WorkflowTransitionError extends Error {
 	}
 }
 
+/**
+ * Error thrown by advance() when a human-gate transition blocks advancement.
+ * Indicates that the run is paused waiting for explicit human approval.
+ * The SpaceRuntime catches this and keeps the executor in the map for retry
+ * once the gate is resolved.
+ */
+export class WorkflowGateError extends WorkflowTransitionError {
+	constructor(message: string) {
+		super(message);
+		this.name = 'WorkflowGateError';
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -280,6 +293,7 @@ export class WorkflowExecutor {
 		// needs_attention and a WorkflowTransitionError thrown.
 		const context = this.getConditionContext();
 		let lastReason: string | undefined;
+		let blockedByHumanGate = false;
 
 		for (const transition of transitions) {
 			const condition = transition.condition;
@@ -302,14 +316,19 @@ export class WorkflowExecutor {
 			}
 
 			lastReason = result.reason;
+			if (condition.type === 'human') {
+				blockedByHumanGate = true;
+			}
 			// Condition did not pass — continue to next transition
 		}
 
 		// All transitions evaluated; none passed → needs_attention
 		this.markNeedsAttention();
-		throw new WorkflowTransitionError(
-			`No matching transition from step "${current.name}": ${lastReason ?? 'no condition passed'}`
-		);
+		const gateMessage = `No matching transition from step "${current.name}": ${lastReason ?? 'no condition passed'}`;
+		if (blockedByHumanGate) {
+			throw new WorkflowGateError(gateMessage);
+		}
+		throw new WorkflowTransitionError(gateMessage);
 	}
 
 	// -------------------------------------------------------------------------

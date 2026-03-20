@@ -56,7 +56,9 @@ import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
-import { SpaceRuntime } from '../space/runtime/space-runtime';
+import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
+import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 
 export interface RPCHandlerDependencies {
@@ -81,10 +83,19 @@ const log = new Logger('rpc-handlers');
 export type RPCHandlerCleanup = () => void;
 
 /**
- * Register all RPC handlers on MessageHub
- * Returns a cleanup function that should be called to stop background services
+ * Result returned by setupRPCHandlers — includes both the cleanup function
+ * and any services that need to be surfaced in DaemonAppContext.
  */
-export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanup {
+export interface RPCHandlerSetupResult {
+	cleanup: RPCHandlerCleanup;
+	spaceRuntimeService: SpaceRuntimeService;
+}
+
+/**
+ * Register all RPC handlers on MessageHub
+ * Returns a result with cleanup function and exposed services
+ */
+export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
 	// Room handlers (create roomManager first as session handlers depend on it)
 	const roomManager = new RoomManager(deps.db.getDatabase());
 
@@ -224,8 +235,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.daemonHub
 	);
 
-	// Space Runtime — workflow orchestration tick loop
-	const spaceRuntime = new SpaceRuntime({
+	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API
+	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
@@ -233,7 +244,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
 	});
-	spaceRuntime.start();
+	spaceRuntimeService.start();
 
 	// Space export/import handlers
 	setupSpaceExportImportHandlers(
@@ -245,9 +256,26 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.db.getDatabase()
 	);
 
-	// Return cleanup function to stop background services
-	return () => {
-		roomRuntimeService.stop();
-		spaceRuntime.stop();
+	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers
+	const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
+		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
+	};
+	setupSpaceWorkflowRunHandlers(
+		deps.messageHub,
+		deps.spaceManager,
+		spaceWorkflowManager,
+		spaceWorkflowRunRepo,
+		spaceRuntimeService,
+		spaceWorkflowRunTaskManagerFactory,
+		deps.daemonHub
+	);
+
+	// Return result with cleanup function and exposed services
+	return {
+		cleanup: () => {
+			roomRuntimeService.stop();
+			spaceRuntimeService.stop();
+		},
+		spaceRuntimeService,
 	};
 }

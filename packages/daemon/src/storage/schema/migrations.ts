@@ -111,9 +111,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	runMigration28(db);
 
 	// Migration 29: Create all Space system tables with the final consolidated schema.
-	// Migrations 30–32 are collapsed here: space_agents already includes role/provider,
-	// space_workflows includes start_step_id, space_workflow_runs includes current_step_id,
-	// and space_workflow_transitions is created from the start.
+	// Includes space_session_groups.workflow_run_id and current_step_id columns.
 	runMigration29(db);
 }
 
@@ -1442,7 +1440,7 @@ function runMigration28(db: BunDatabase): void {
 }
 
 /**
- * Migration 29: Create all Space system tables (consolidated — formerly migrations 29–32)
+ * Migration 29: Create all Space system tables (fully consolidated schema)
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
@@ -1452,7 +1450,7 @@ function runMigration28(db: BunDatabase): void {
  * - space_workflow_transitions: directed edges between steps (graph navigation)
  * - space_workflow_runs: active/historical workflow executions (includes current_step_id)
  * - space_tasks: tasks with built-in custom_agent_id, workflow_run_id, workflow_step_id
- * - space_session_groups: named groups of related sessions
+ * - space_session_groups: named groups of related sessions (includes workflow_run_id, current_step_id)
  * - space_session_group_members: membership records for session groups
  *
  * All tables are created with IF NOT EXISTS so the migration is idempotent.
@@ -1668,6 +1666,8 @@ function runMigration29(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT,
+			workflow_run_id TEXT,
+			current_step_id TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
