@@ -38,6 +38,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
 			config TEXT,
+			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			role TEXT NOT NULL,

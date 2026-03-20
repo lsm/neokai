@@ -60,6 +60,7 @@ function createSchema(db: Database): void {
 			system_prompt TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT 'coder',
 			config TEXT,
+			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -355,6 +356,31 @@ describe('Space Export/Import RPC Handlers', () => {
 				spaceId: SPACE_ID,
 			});
 			expect(bundle.agents).toHaveLength(0);
+		});
+
+		it('exports injectWorkflowContext: true when set on agent', async () => {
+			agentRepo.create({
+				spaceId: SPACE_ID,
+				name: 'Planner',
+				role: 'planner',
+				injectWorkflowContext: true,
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+			});
+
+			expect(bundle.agents[0].injectWorkflowContext).toBe(true);
+		});
+
+		it('omits injectWorkflowContext from export when not set', async () => {
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+			});
+
+			expect(bundle.agents[0].injectWorkflowContext).toBeUndefined();
 		});
 	});
 
@@ -1083,6 +1109,54 @@ describe('Space Export/Import RPC Handlers', () => {
 				const agent = agentRepo.getById(existing.id)!;
 				expect(agent.systemPrompt).toBeUndefined();
 			});
+
+			it('clears injectWorkflowContext when not present in exported agent', async () => {
+				const existing = agentRepo.create({
+					spaceId: SPACE_ID,
+					name: 'Planner',
+					role: 'planner',
+					injectWorkflowContext: true,
+				});
+
+				const bundle = makeBundle([{ name: 'Planner', role: 'planner' }], []);
+
+				await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Planner: 'replace' } },
+				});
+
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.injectWorkflowContext).toBeUndefined();
+			});
+		});
+
+		it('imports injectWorkflowContext: true from exported agent', async () => {
+			const bundle = {
+				version: 1,
+				type: 'bundle',
+				name: 'Test Bundle',
+				agents: [
+					{
+						version: 1,
+						type: 'agent',
+						name: 'Planner',
+						role: 'planner',
+						injectWorkflowContext: true,
+					},
+				],
+				workflows: [],
+				exportedAt: Date.now(),
+			};
+
+			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.agents).toHaveLength(1);
+			const created = agentRepo.getBySpaceId(SPACE_ID).find((a) => a.name === 'Planner')!;
+			expect(created.injectWorkflowContext).toBe(true);
 		});
 	});
 

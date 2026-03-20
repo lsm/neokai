@@ -38,6 +38,21 @@ export { selectWorkflow } from './runtime/workflow-selector';
 export type { WorkflowSelectionContext } from './runtime/workflow-selector';
 
 export {
+	buildCustomAgentSystemPrompt,
+	buildCustomAgentTaskMessage,
+	createCustomAgentInit,
+	resolveAgentInit,
+} from './agents/custom-agent';
+export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent';
+
+export { buildSpaceChatSystemPrompt } from './agents/space-chat-agent';
+export type {
+	SpaceChatAgentContext,
+	WorkflowSummary,
+	AgentSummary,
+} from './agents/space-chat-agent';
+
+export {
 	createSpaceAgentToolHandlers,
 	createSpaceAgentMcpServer,
 } from './tools/space-agent-tools';

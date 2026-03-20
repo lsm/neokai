@@ -141,4 +141,21 @@ describe('seedPresetAgents', () => {
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].name).toBe('Coder');
 	});
+
+	it('Planner preset has injectWorkflowContext: true', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const planner = seeded.find((a) => a.role === 'planner');
+
+		expect(planner).toBeDefined();
+		expect(planner?.injectWorkflowContext).toBe(true);
+	});
+
+	it('non-planner presets do not have injectWorkflowContext set', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const nonPlanners = seeded.filter((a) => a.role !== 'planner');
+
+		for (const agent of nonPlanners) {
+			expect(agent.injectWorkflowContext).toBeUndefined();
+		}
+	});
 });
