@@ -19,10 +19,6 @@ import { Modal } from '../ui/Modal';
 import type { SpaceAgent } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 
-interface SpaceAgentListProps {
-	spaceId: string;
-}
-
 function RoleBadge({ role }: { role: string }) {
 	const colorMap: Record<string, string> = {
 		worker: 'bg-blue-900/40 text-blue-300 border-blue-800/60',
@@ -129,7 +125,7 @@ function AgentIcon() {
 	);
 }
 
-export function SpaceAgentList({ spaceId: _spaceId }: SpaceAgentListProps) {
+export function SpaceAgentList() {
 	const agents = spaceStore.agents.value;
 	const loading = spaceStore.loading.value;
 	const workflows = spaceStore.workflows.value;
@@ -142,7 +138,7 @@ export function SpaceAgentList({ spaceId: _spaceId }: SpaceAgentListProps) {
 
 	function getWorkflowNamesReferencingAgent(agentId: string): string[] {
 		return workflows
-			.filter((wf) => wf.steps?.some((step) => step.agentId === agentId))
+			.filter((wf) => wf.steps.some((step) => step.agentId === agentId))
 			.map((wf) => wf.name);
 	}
 

@@ -186,13 +186,15 @@ function makeWorkflow(agentId: string): SpaceWorkflow {
 		name: 'Coding Workflow',
 		steps: [{ id: 'step-1', name: 'Step 1', agentId }],
 		transitions: [],
+		startStepId: 'step-1',
 		rules: [],
+		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
 }
 
-const DEFAULT_PROPS = { spaceId: 'space-1' };
+const DEFAULT_PROPS = {};
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
