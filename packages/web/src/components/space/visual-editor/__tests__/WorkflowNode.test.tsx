@@ -211,6 +211,34 @@ describe('WorkflowNode click', () => {
 		fireEvent.click(getByTestId('workflow-node'));
 		expect(onClick).toHaveBeenCalledWith('step-local-1');
 	});
+
+	it('does NOT call onClick after a drag completes', () => {
+		const onClick = vi.fn();
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
+		const node = getByTestId('workflow-node');
+
+		// Simulate drag: mousedown → move past threshold → mouseup → click
+		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(20, 20); // well past 3px threshold
+		windowMouseUp();
+		fireEvent.click(node);
+
+		expect(onClick).not.toHaveBeenCalled();
+	});
+
+	it('calls onClick normally after a sub-threshold mousedown (no real drag)', () => {
+		const onClick = vi.fn();
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
+		const node = getByTestId('workflow-node');
+
+		// Mousedown then release without crossing threshold
+		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(1, 1); // below 3px threshold — not a drag
+		windowMouseUp();
+		fireEvent.click(node);
+
+		expect(onClick).toHaveBeenCalledWith('step-local-1');
+	});
 });
 
 // ============================================================================
@@ -309,6 +337,36 @@ describe('WorkflowNode drag-and-drop', () => {
 			{ x: 20, y: 15 },
 			{ x: 30, y: 25 },
 		]);
+
+		windowMouseUp();
+	});
+
+	it('does not fire onPositionChange for moves below 3px threshold', () => {
+		const onPositionChange = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 1 })} />
+		);
+
+		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(2, 1); // 2px — below the 3px threshold
+		expect(onPositionChange).not.toHaveBeenCalled();
+
+		windowMouseUp();
+	});
+
+	it('guards against scale=0 (no Infinity positions)', () => {
+		const onPositionChange = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ onPositionChange, position: { x: 0, y: 0 }, scale: 0 })} />
+		);
+
+		fireEvent.mouseDown(getByTestId('workflow-node'), { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(10, 10);
+
+		expect(onPositionChange).toHaveBeenCalledOnce();
+		const [, pos] = onPositionChange.mock.calls[0];
+		expect(isFinite(pos.x)).toBe(true);
+		expect(isFinite(pos.y)).toBe(true);
 
 		windowMouseUp();
 	});
