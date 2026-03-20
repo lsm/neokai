@@ -12,13 +12,16 @@ import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
 import type { WorkflowNodeProps } from './WorkflowNode';
-import type { ViewportState } from './types';
+import type { ViewportState, Point } from './types';
 
 /**
  * Per-node data passed to WorkflowCanvas.
- * All WorkflowNodeProps except `isSelected` and `onClick`, which WorkflowCanvas injects.
+ * WorkflowCanvas injects: isSelected, onClick, scale, onPositionChange.
  */
-export type WorkflowNodeData = Omit<WorkflowNodeProps, 'isSelected' | 'onClick'>;
+export type WorkflowNodeData = Omit<
+	WorkflowNodeProps,
+	'isSelected' | 'onClick' | 'scale' | 'onPositionChange'
+>;
 
 export interface WorkflowCanvasProps {
 	nodes: WorkflowNodeData[];
@@ -28,6 +31,8 @@ export interface WorkflowCanvasProps {
 	onNodeSelect?: (stepId: string | null) => void;
 	/** Called when Delete/Backspace is pressed with a node selected. */
 	onDeleteNode?: (stepId: string) => void;
+	/** Called when a node is dragged to a new position. */
+	onNodePositionChange?: (stepId: string, position: Point) => void;
 }
 
 export function WorkflowCanvas({
@@ -36,6 +41,7 @@ export function WorkflowCanvas({
 	onViewportChange,
 	onNodeSelect,
 	onDeleteNode,
+	onNodePositionChange,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -102,6 +108,8 @@ export function WorkflowCanvas({
 				<WorkflowNode
 					key={node.step.localId}
 					{...node}
+					scale={viewportState.scale}
+					onPositionChange={onNodePositionChange ?? (() => {})}
 					isSelected={selectedNodeId === node.step.localId}
 					onClick={handleNodeSelect}
 				/>

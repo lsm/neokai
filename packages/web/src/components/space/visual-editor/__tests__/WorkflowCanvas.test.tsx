@@ -48,7 +48,7 @@ const AGENTS: SpaceAgent[] = [makeAgent('agent-1', 'Coder')];
 const NODES: WorkflowNodeData[] = [
 	{
 		step: makeStep('step-1', 'Step One'),
-		stepNumber: 1,
+		stepIndex: 1,
 		position: { x: 10, y: 10 },
 		agents: AGENTS,
 		isStartNode: false,
@@ -56,7 +56,7 @@ const NODES: WorkflowNodeData[] = [
 	},
 	{
 		step: makeStep('step-2', 'Step Two'),
-		stepNumber: 2,
+		stepIndex: 2,
 		position: { x: 200, y: 10 },
 		agents: AGENTS,
 		isStartNode: false,
