@@ -9,10 +9,15 @@
  * - Fallback path is used when SDK call fails
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, mock } from 'bun:test';
 
 // Track query call arguments to verify options
 let lastQueryOptions: Record<string, unknown> | undefined;
+
+// Mutable state controlling what messages the SDK query mock returns.
+// Tests set this in beforeEach to avoid calling mock.module() inside test bodies,
+// which would permanently override the module registry for subsequent tests.
+let mockSdkMessages: unknown[] = [];
 
 async function* makeAsyncGen(messages: unknown[]) {
 	for (const msg of messages) {
@@ -20,20 +25,11 @@ async function* makeAsyncGen(messages: unknown[]) {
 	}
 }
 
-// Must be declared at top level so Bun hoists it before imports
+// All mock.module calls must be at the top level — Bun hoists them before imports.
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 	query: (params: { prompt: string; options?: Record<string, unknown> }) => {
 		lastQueryOptions = params.options;
-		// By default, return an assistant message with a text block
-		const messages = [
-			{
-				type: 'assistant',
-				message: {
-					content: [{ type: 'text', text: 'My Generated Title' }],
-				},
-			},
-		];
-		return makeAsyncGen(messages);
+		return makeAsyncGen(mockSdkMessages);
 	},
 }));
 
@@ -89,7 +85,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 	let mockAgentSessionFactory: AgentSessionFactory;
 	let config: SessionLifecycleConfig;
 
-	const makeSessionCache = (sessionOverrides: Record<string, unknown> = {}) => {
+	const makeSessionCache = () => {
 		const mockAgentSession = {
 			cleanup: mock(async () => {}),
 			updateMetadata: mock(() => {}),
@@ -101,7 +97,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 				metadata: { titleGenerated: false, worktreeChoice: undefined },
 				config: {},
 				worktree: undefined,
-				...sessionOverrides,
 			})),
 		};
 		return {
@@ -119,6 +114,15 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
 	beforeEach(() => {
 		lastQueryOptions = undefined;
+		// Default: assistant message with a plain text block
+		mockSdkMessages = [
+			{
+				type: 'assistant',
+				message: {
+					content: [{ type: 'text', text: 'My Generated Title' }],
+				},
+			},
+		];
 
 		mockDb = {
 			createSession: mock(() => {}),
@@ -201,30 +205,14 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 	});
 
 	it('should strip markdown formatting from extracted title', async () => {
-		// Override the SDK mock for this test to return a title with markdown
-		mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-			query: () =>
-				makeAsyncGen([
-					{
-						type: 'assistant',
-						message: {
-							content: [{ type: 'text', text: '**Bold Title Here**' }],
-						},
-					},
-				]),
-		}));
-
-		// Re-create lifecycle to pick up new mock
-		lifecycle = new SessionLifecycle(
-			mockDb,
-			mockWorktreeManager,
-			mockSessionCache,
-			mockEventBus,
-			mockMessageHub,
-			config,
-			mockToolsConfigManager,
-			mockAgentSessionFactory
-		);
+		mockSdkMessages = [
+			{
+				type: 'assistant',
+				message: {
+					content: [{ type: 'text', text: '**Bold Title Here**' }],
+				},
+			},
+		];
 
 		const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
@@ -232,32 +220,32 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 		expect(result.title).toBe('Bold Title Here');
 	});
 
-	it('should fall back to message text when SDK returns no text blocks', async () => {
-		// Override the SDK mock for this test to return only result messages (no text)
-		mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-			query: () =>
-				makeAsyncGen([
-					{
-						type: 'result',
-						subtype: 'success',
-					},
-				]),
-		}));
-
-		lifecycle = new SessionLifecycle(
-			mockDb,
-			mockWorktreeManager,
-			mockSessionCache,
-			mockEventBus,
-			mockMessageHub,
-			config,
-			mockToolsConfigManager,
-			mockAgentSessionFactory
-		);
+	it('should fall back to message text when assistant message contains only thinking blocks', async () => {
+		// Regression test for the original bug: models with adaptive thinking (e.g. Opus 4.6)
+		// may return an assistant message whose content array contains only thinking blocks with
+		// no text block. Without `thinking: { type: 'disabled' }` in the query options, this
+		// caused a "No text content in SDK response" error. With the fix in place, this scenario
+		// cannot occur in production, but the defensive fallback path should still work correctly.
+		mockSdkMessages = [
+			{
+				type: 'assistant',
+				message: {
+					content: [{ type: 'thinking', thinking: 'Long internal reasoning about the title...' }],
+				},
+			},
+		];
 
 		const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
-		// Should fall back to the first 50 chars of the message
+		expect(result.isFallback).toBe(true);
+		expect(result.title).toBe('Create a login form');
+	});
+
+	it('should fall back to message text when SDK returns no assistant messages', async () => {
+		mockSdkMessages = [{ type: 'result', subtype: 'success' }];
+
+		const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
 		expect(result.isFallback).toBe(true);
 		expect(result.title).toBe('Create a login form');
 	});
