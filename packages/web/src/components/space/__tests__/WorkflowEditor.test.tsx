@@ -476,7 +476,7 @@ describe('WorkflowEditor', () => {
 			// When a new step has no persisted ID yet, its localId is used in appliesTo.
 			// The save path must remap localId → the UUID generated at save time so the
 			// persisted rule references the correct step ID.
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const { getByRole, getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 
 			// Set workflow name
 			const nameInput = container.querySelector(
@@ -484,11 +484,18 @@ describe('WorkflowEditor', () => {
 			) as HTMLInputElement;
 			fireEvent.input(nameInput, { target: { value: 'Remapped Workflow' } });
 
-			// Assign agent to the initial step (index 0 — new step, no persisted id)
+			// Give the step a unique name so StepMultiSelect renders a named button we
+			// can find via getByRole — which throws on no match, unlike querySelectorAll.
+			const stepNameInput = container.querySelector(
+				'input[placeholder*="Plan the approach"]'
+			) as HTMLInputElement;
+			fireEvent.input(stepNameInput, { target: { value: 'UniqueStepName' } });
+
+			// Assign agent to the step (new step, no persisted id)
 			selectAgent(container, 'agent-1');
 
 			// Add a rule and fill it in
-			fireEvent.click(getByText('Add Rule'));
+			fireEvent.click(getByRole('button', { name: 'Add Rule' }));
 			const ruleNameInput = container.querySelector(
 				'input[placeholder*="Rule name"]'
 			) as HTMLInputElement;
@@ -498,16 +505,12 @@ describe('WorkflowEditor', () => {
 			) as HTMLTextAreaElement;
 			fireEvent.input(ruleContent, { target: { value: 'Content' } });
 
-			// Scope the rule to step 1 by clicking the step button in "Applies to"
-			// After a step is added it appears as "Step 1" (no name yet in the card header)
-			// The multi-select renders the step name as displayed in the card
-			const stepButtons = container.querySelectorAll(
-				'[class*="rounded"][class*="border"] button[type="button"]'
-			);
-			if (stepButtons.length > 0) {
-				// Click the first step toggle (corresponds to step 1)
-				fireEvent.click(stepButtons[0]);
-			}
+			// Scope the rule to the step by clicking the named step button in "Applies to".
+			// getByRole('button', { name }) throws if no such button exists, ensuring the
+			// test fails rather than silently skips when the DOM structure changes.
+			// The StepMultiSelect renders exactly one <button> per step using the step name.
+			const scopeButton = getByRole('button', { name: 'UniqueStepName' });
+			fireEvent.click(scopeButton);
 
 			fireEvent.click(getByText('Create Workflow'));
 
@@ -519,10 +522,16 @@ describe('WorkflowEditor', () => {
 			const savedStepId = call.steps[0]?.id;
 			const savedRules = call.rules ?? [];
 
-			// If a rule was scoped, every appliesTo ID must match a real step ID
+			// The scoped rule must have at least one appliesTo entry — a zero length
+			// means the scope click was silently ignored and the loop below never runs.
+			expect(savedRules.length).toBeGreaterThan(0);
+			expect(savedRules[0].appliesTo.length).toBeGreaterThan(0);
+
+			// Every scoped ID must exactly match the final persisted step UUID,
+			// not the draft localId that was visible in the UI before save.
 			for (const rule of savedRules) {
 				for (const scopedId of rule.appliesTo ?? []) {
-					expect(savedStepId).toBe(scopedId);
+					expect(scopedId).toBe(savedStepId);
 				}
 			}
 		});
