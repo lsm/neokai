@@ -21,8 +21,12 @@ import type {
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import { seedPresetAgents } from '../space/agents/seed-agents';
+import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
 const log = new Logger('space-handlers');
@@ -39,7 +43,9 @@ export function setupSpaceHandlers(
 	spaceManager: SpaceManager,
 	taskRepo: SpaceTaskRepository,
 	workflowRunRepo: SpaceWorkflowRunRepository,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	spaceAgentManager: SpaceAgentManager,
+	spaceWorkflowManager: SpaceWorkflowManager
 ): void {
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
@@ -53,6 +59,27 @@ export function setupSpaceHandlers(
 		}
 
 		const space = await spaceManager.createSpace(params);
+
+		// Seed preset agents (Coder, General, Planner, Reviewer) for the new space.
+		// Errors are non-fatal — the space is still usable without preset agents.
+		try {
+			await seedPresetAgents(space.id, spaceAgentManager);
+		} catch (err) {
+			log.warn('Failed to seed preset agents for space', space.id, err);
+		}
+
+		// Seed built-in workflow templates after preset agents are available.
+		// Resolves role names ('planner', 'coder', 'general') to SpaceAgent UUIDs.
+		try {
+			const agents = spaceAgentManager.listBySpaceId(space.id);
+			seedBuiltInWorkflows(
+				space.id,
+				spaceWorkflowManager,
+				(role) => agents.find((a) => a.role === role)?.id
+			);
+		} catch (err) {
+			log.warn('Failed to seed built-in workflows for space', space.id, err);
+		}
 
 		daemonHub
 			.emit('space.created', { sessionId: 'global', spaceId: space.id, space })

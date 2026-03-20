@@ -88,14 +88,49 @@ describe('SpaceWorkflowRunRepository', () => {
 	});
 
 	describe('getActiveRuns', () => {
-		it('returns only pending/in_progress runs', () => {
+		it('returns only in_progress runs (excludes pending and completed)', () => {
+			// 'pending' is a transient state that should NOT appear in active runs
 			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
-			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
-			repo.updateStatus(r2.id, 'completed');
+
+			// 'in_progress' — should appear
+			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Active' });
+			repo.updateStatus(r2.id, 'in_progress');
+
+			// 'completed' — should not appear
+			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
+			repo.updateStatus(r3.id, 'completed');
 
 			const active = repo.getActiveRuns(spaceId);
 			expect(active).toHaveLength(1);
-			expect(active[0].title).toBe('Pending');
+			expect(active[0].title).toBe('Active');
+		});
+	});
+
+	describe('getRehydratableRuns', () => {
+		it('returns in_progress and needs_attention runs; excludes pending, completed, cancelled', () => {
+			// 'pending' — excluded (transient creation state)
+			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
+
+			// 'in_progress' — included
+			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'InProgress' });
+			repo.updateStatus(r2.id, 'in_progress');
+
+			// 'needs_attention' (human gate blocked) — included so gate can be resolved after restart
+			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'NeedsAttention' });
+			repo.updateStatus(r3.id, 'needs_attention');
+
+			// 'completed' — excluded
+			const r4 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
+			repo.updateStatus(r4.id, 'completed');
+
+			// 'cancelled' — excluded
+			const r5 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Cancelled' });
+			repo.updateStatus(r5.id, 'cancelled');
+
+			const rehydratable = repo.getRehydratableRuns(spaceId);
+			expect(rehydratable).toHaveLength(2);
+			const titles = rehydratable.map((r) => r.title).sort();
+			expect(titles).toEqual(['InProgress', 'NeedsAttention']);
 		});
 	});
 

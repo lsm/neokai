@@ -72,11 +72,35 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * List active (non-terminal) workflow runs for a space
+	 * List in-progress workflow runs for a space.
+	 *
+	 * Only `in_progress` runs are returned — `pending` is a transient state that
+	 * exists only briefly inside `startWorkflowRun` between `createRun` and the
+	 * `updateStatus('in_progress')` call. Including `pending` here would cause
+	 * a run that failed mid-creation to be rehydrated without a task and silently
+	 * loop forever in the executor map.
 	 */
 	getActiveRuns(spaceId: string): SpaceWorkflowRun[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('pending', 'in_progress') ORDER BY created_at ASC`
+			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status = 'in_progress' ORDER BY created_at ASC`
+		);
+		const rows = stmt.all(spaceId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToRun(r));
+	}
+
+	/**
+	 * List runs that need an executor on startup: in_progress and needs_attention.
+	 *
+	 * This superset of getActiveRuns() is used exclusively by rehydrateExecutors()
+	 * so that runs blocked at a human gate (needs_attention) get an executor
+	 * reloaded on restart. Without this, a run waiting for human approval would
+	 * be permanently stuck after a process restart.
+	 *
+	 * `pending` is still excluded for the same reason as in getActiveRuns().
+	 */
+	getRehydratableRuns(spaceId: string): SpaceWorkflowRun[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('in_progress', 'needs_attention') ORDER BY created_at ASC`
 		);
 		const rows = stmt.all(spaceId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToRun(r));

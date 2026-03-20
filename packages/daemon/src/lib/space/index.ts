@@ -22,7 +22,14 @@ export {
 	WorkflowExecutor,
 	WorkflowTransitionError,
 } from './runtime/workflow-executor';
-export type { ConditionContext, ConditionResult, CommandRunner } from './runtime/workflow-executor';
+export type {
+	ConditionContext,
+	ConditionResult,
+	CommandRunner,
+	TaskTypeResolver,
+} from './runtime/workflow-executor';
+export { SpaceRuntime } from './runtime/space-runtime';
+export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
 
 export {
 	exportAgent,
