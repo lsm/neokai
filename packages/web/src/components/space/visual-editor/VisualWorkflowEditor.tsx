@@ -230,14 +230,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const newLocalId = crypto.randomUUID();
 		const newStep: StepDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
+		// Capture emptiness before the setNodes call so we can call setStartStepId
+		// outside the updater. State setter calls inside updater functions are side
+		// effects and violate the purity requirement (React StrictMode double-invokes
+		// updaters to catch exactly this pattern).
+		const isFirstNode = nodes.length === 0;
 		setNodes((prev) => {
 			// Stagger new nodes so they don't stack exactly
 			const position: Point = { x: 120 + prev.length * 20, y: 80 + prev.length * 20 };
-			// First node automatically becomes the start node — checked inside the
-			// functional updater so it reflects the actual state at execution time.
-			if (prev.length === 0) setStartStepId(newLocalId);
 			return [...prev, { step: newStep, position }];
 		});
+		if (isFirstNode) setStartStepId(newLocalId);
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {

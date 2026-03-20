@@ -30,7 +30,7 @@
  * - handleUpdateEdgeCondition: changing condition type updates panel
  *
  * handleCreateTransition
- * - Creating duplicate transition is ignored
+ * - Renders exactly one edge for the single transition in the workflow (port-drag dedup not testable in JSDOM)
  *
  * Save — validation
  * - Error when name is empty
@@ -337,10 +337,12 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('deleting a node removes it from the canvas and closes the panel', () => {
-			const { getAllByTestId, queryByTestId, getByTestId } = render(
+			const { container, getAllByTestId, queryByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 			const nodesBefore = getAllByTestId(/^workflow-node-/).length;
+			// The workflow has one edge (step-1 → step-2); confirm it renders before deletion
+			expect(container.querySelector('[data-edge-id]')).toBeTruthy();
 
 			// Select the non-start node (the one without the start badge)
 			const nodes = getAllByTestId(/^workflow-node-/);
@@ -353,6 +355,8 @@ describe('VisualWorkflowEditor', () => {
 
 			expect(getAllByTestId(/^workflow-node-/).length).toBe(nodesBefore - 1);
 			expect(queryByTestId('node-config-panel')).toBeNull();
+			// Edges referencing the deleted node must also be removed
+			expect(container.querySelector('[data-edge-id]')).toBeNull();
 		});
 
 		it('editing step name in NodeConfigPanel updates the node step', () => {
@@ -452,19 +456,16 @@ describe('VisualWorkflowEditor', () => {
 	// -------------------------------------------------------------------------
 
 	describe('handleCreateTransition', () => {
-		it('does not create a duplicate transition between the same pair of nodes', () => {
-			// The existing workflow already has one transition step-1 → step-2.
-			// After rendering there should be exactly one edge hitbox.
+		it('renders exactly one edge for the single transition in the workflow', () => {
+			// Smoke test: makeWorkflow has one transition (step-1 → step-2); confirm
+			// exactly one edge element is rendered. The port-drag dedup logic in
+			// handleCreateTransition cannot be exercised in JSDOM (requires real
+			// mousemove/mouseup across port elements), so this test only validates
+			// the initial render state.
 			const { container } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 			// EdgeRenderer wraps each edge in a <g data-edge-id="..."> element
-			const edgesBefore = container.querySelectorAll('[data-edge-id]').length;
-			expect(edgesBefore).toBe(1);
-
-			// No UI action can create a duplicate via port drag in JSDOM (it requires
-			// real mouse events across ports), but we can verify the initial dedup by
-			// asserting the count stays at 1 across a re-render.
 			expect(container.querySelectorAll('[data-edge-id]').length).toBe(1);
 		});
 	});
