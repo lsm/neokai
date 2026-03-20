@@ -60,6 +60,50 @@ describe('IconButton', () => {
 			const button = container.querySelector('button');
 			expect(button?.className).toContain('bg-dark-800');
 		});
+
+		it('should render default variant', () => {
+			const { container } = render(
+				<IconButton variant="default">
+					<span>Icon</span>
+				</IconButton>
+			);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('bg-dark-800');
+		});
+
+		it('should render danger variant', () => {
+			const { container } = render(
+				<IconButton variant="danger">
+					<span>Icon</span>
+				</IconButton>
+			);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('text-red-400');
+			expect(button?.className).toContain('hover:bg-red-500/10');
+		});
+	});
+
+	describe('Active State', () => {
+		it('should not be active by default', () => {
+			const { container } = render(
+				<IconButton>
+					<span>Icon</span>
+				</IconButton>
+			);
+			const button = container.querySelector('button');
+			expect(button?.className).not.toContain('bg-indigo-500/20');
+		});
+
+		it('should apply accent styles when active', () => {
+			const { container } = render(
+				<IconButton active>
+					<span>Icon</span>
+				</IconButton>
+			);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('bg-indigo-500/20');
+			expect(button?.className).toContain('text-indigo-400');
+		});
 	});
 
 	describe('Sizes', () => {
