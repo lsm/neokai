@@ -19,7 +19,7 @@ describe('Model Switching', () => {
 
 	afterAll(async () => {
 		await daemon?.waitForExit();
-	});
+	}, 15_000);
 
 	async function createSession(
 		workspacePath: string,

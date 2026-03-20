@@ -75,6 +75,17 @@ export class SpaceRuntimeService {
 	}
 
 	/**
+	 * Returns the shared SpaceRuntime without space validation.
+	 * For system-level access (e.g. Global Spaces Agent) where no specific space context exists.
+	 */
+	getSharedRuntime(): SpaceRuntime {
+		if (!this.started) {
+			this.start();
+		}
+		return this.runtime;
+	}
+
+	/**
 	 * Release the runtime for a given space.
 	 *
 	 * Currently a no-op — the shared runtime handles all spaces together.

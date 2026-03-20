@@ -41,6 +41,11 @@ import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:spacestore');
 
+/** Space enriched with active tasks for the sidebar list */
+export interface SpaceWithTasks extends Space {
+	tasks: SpaceTask[];
+}
+
 class SpaceStore {
 	// ========================================
 	// Core Signals
@@ -51,6 +56,12 @@ class SpaceStore {
 	 * Populated by initGlobalList(); not tied to any selected space.
 	 */
 	readonly spaces = signal<Space[]>([]);
+
+	/**
+	 * Spaces with their active (non-completed, non-cancelled) tasks.
+	 * Used by the Context Panel thread-style list.
+	 */
+	readonly spacesWithTasks = signal<SpaceWithTasks[]>([]);
 
 	/** Current active space ID */
 	readonly spaceId = signal<string | null>(null);
@@ -163,8 +174,10 @@ class SpaceStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const spaces = await hub.request<Space[]>('space.list', {});
-			this.spaces.value = spaces ?? [];
+			const enriched = await hub.request<SpaceWithTasks[]>('space.listWithTasks', {});
+			const spaces = (enriched ?? []).map(({ tasks: _tasks, ...space }) => space);
+			this.spaces.value = spaces;
+			this.spacesWithTasks.value = enriched ?? [];
 
 			// Subscribe to global space events to keep list up-to-date
 			this.globalListCleanupFns.push(
@@ -173,6 +186,10 @@ class SpaceStore {
 						const exists = this.spaces.value.some((s) => s.id === event.spaceId);
 						if (!exists) {
 							this.spaces.value = [...this.spaces.value, event.space];
+							this.spacesWithTasks.value = [
+								...this.spacesWithTasks.value,
+								{ ...event.space, tasks: [] },
+							];
 						}
 					}
 				})
@@ -183,6 +200,9 @@ class SpaceStore {
 					this.spaces.value = this.spaces.value.map((s) =>
 						s.id === event.spaceId ? ({ ...s, ...event.space } as Space) : s
 					);
+					this.spacesWithTasks.value = this.spacesWithTasks.value.map((s) =>
+						s.id === event.spaceId ? ({ ...s, ...event.space } as SpaceWithTasks) : s
+					);
 				})
 			);
 
@@ -191,12 +211,84 @@ class SpaceStore {
 					this.spaces.value = this.spaces.value.map((s) =>
 						s.id === event.spaceId ? event.space : s
 					);
+					this.spacesWithTasks.value = this.spacesWithTasks.value.map((s) =>
+						s.id === event.spaceId ? ({ ...event.space, tasks: s.tasks } as SpaceWithTasks) : s
+					);
 				})
 			);
 
 			this.globalListCleanupFns.push(
 				hub.onEvent<{ spaceId: string }>('space.deleted', (event) => {
 					this.spaces.value = this.spaces.value.filter((s) => s.id !== event.spaceId);
+					this.spacesWithTasks.value = this.spacesWithTasks.value.filter(
+						(s) => s.id !== event.spaceId
+					);
+				})
+			);
+
+			// Keep spacesWithTasks in sync when tasks are created/updated
+			this.globalListCleanupFns.push(
+				hub.onEvent<{
+					sessionId: string;
+					spaceId: string;
+					taskId: string;
+					task: SpaceTask;
+				}>('space.task.created', (event) => {
+					const swt = this.spacesWithTasks.value;
+					const idx = swt.findIndex((s) => s.id === event.spaceId);
+					if (idx >= 0) {
+						// Only add if not completed/cancelled
+						if (event.task.status !== 'completed' && event.task.status !== 'cancelled') {
+							this.spacesWithTasks.value = [
+								...swt.slice(0, idx),
+								{ ...swt[idx], tasks: [...swt[idx].tasks, event.task] },
+								...swt.slice(idx + 1),
+							];
+						}
+					}
+				})
+			);
+
+			this.globalListCleanupFns.push(
+				hub.onEvent<{
+					sessionId: string;
+					spaceId: string;
+					taskId: string;
+					task: SpaceTask;
+				}>('space.task.updated', (event) => {
+					const swt = this.spacesWithTasks.value;
+					const idx = swt.findIndex((s) => s.id === event.spaceId);
+					if (idx >= 0) {
+						const spaceTasks = swt[idx].tasks;
+						const taskIdx = spaceTasks.findIndex((t) => t.id === event.task.id);
+						// If task was completed/cancelled, remove it
+						if (event.task.status === 'completed' || event.task.status === 'cancelled') {
+							if (taskIdx >= 0) {
+								const updated = spaceTasks.filter((t) => t.id !== event.task.id);
+								this.spacesWithTasks.value = [
+									...swt.slice(0, idx),
+									{ ...swt[idx], tasks: updated },
+									...swt.slice(idx + 1),
+								];
+							}
+						} else if (taskIdx >= 0) {
+							// Update in place
+							const updated = [...spaceTasks];
+							updated[taskIdx] = event.task;
+							this.spacesWithTasks.value = [
+								...swt.slice(0, idx),
+								{ ...swt[idx], tasks: updated },
+								...swt.slice(idx + 1),
+							];
+						} else {
+							// Task wasn't tracked but is now active — add it
+							this.spacesWithTasks.value = [
+								...swt.slice(0, idx),
+								{ ...swt[idx], tasks: [...spaceTasks, event.task] },
+								...swt.slice(idx + 1),
+							];
+						}
+					}
 				})
 			);
 		} catch (err) {

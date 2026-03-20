@@ -171,6 +171,21 @@ export function setupSpaceHandlers(
 		return { success: true };
 	});
 
+	// ─── space.listWithTasks ────────────────────────────────────────────────────
+	// Returns all spaces with their active (non-completed, non-cancelled) tasks.
+	// Used by the Context Panel to show thread-style space list with nested tasks.
+	messageHub.onRequest('space.listWithTasks', async (data) => {
+		const params = (data ?? {}) as { includeArchived?: boolean };
+		const spaces = await spaceManager.listSpaces(params.includeArchived ?? false);
+
+		return spaces.map((space) => ({
+			...space,
+			tasks: taskRepo
+				.listBySpace(space.id)
+				.filter((t) => t.status !== 'completed' && t.status !== 'cancelled'),
+		}));
+	});
+
 	// ─── space.overview ─────────────────────────────────────────────────────────
 	messageHub.onRequest('space.overview', async (data) => {
 		const params = data as { id: string };

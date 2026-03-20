@@ -47,7 +47,15 @@ export interface CreateSessionParams {
 	// - 'leader': Leader agent session (Room Runtime)
 	// - 'general': General agent session (Room Runtime)
 	// - 'lobby': Instance-level agent session
-	sessionType?: 'room_chat' | 'planner' | 'coder' | 'leader' | 'general' | 'worker' | 'lobby';
+	sessionType?:
+		| 'room_chat'
+		| 'planner'
+		| 'coder'
+		| 'leader'
+		| 'general'
+		| 'worker'
+		| 'lobby'
+		| 'spaces_global';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;

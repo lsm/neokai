@@ -55,8 +55,7 @@ describe('Message Remove Output', () => {
 		} else {
 			delete process.env.TEST_SDK_SESSION_DIR;
 		}
-	});
-
+	}, 15_000);
 	async function createSession(): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),

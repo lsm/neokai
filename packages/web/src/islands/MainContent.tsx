@@ -13,6 +13,7 @@ import Room from './Room.tsx';
 import SpaceIsland from './SpaceIsland.tsx';
 import Lobby from './Lobby.tsx';
 import { SessionsPage } from './SessionsPage.tsx';
+import { SpacesPage } from './SpacesPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
 import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
@@ -35,6 +36,11 @@ export default function MainContent() {
 	// Space route takes priority
 	if (spaceId) {
 		return <SpaceIsland key={spaceId} spaceId={spaceId} />;
+	}
+
+	// /spaces route: show standalone spaces page (no sidebar)
+	if (navSection === 'spaces') {
+		return <SpacesPage />;
 	}
 
 	// Room route

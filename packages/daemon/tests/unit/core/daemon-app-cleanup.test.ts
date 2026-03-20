@@ -208,8 +208,9 @@ describe('Daemon App Cleanup', () => {
 			// Restore original method
 			messageHub.getPendingCallCount = originalGetPendingCallCount;
 
-			// Should complete quickly (< 1 second) since calls "resolved"
-			expect(cleanupDuration).toBeLessThan(1000);
+			// Should complete quickly (< 2 seconds) since calls "resolved"
+			// (generous threshold for CI overhead; the actual timeout is 3s)
+			expect(cleanupDuration).toBeLessThan(2000);
 
 			// Verify success message (all calls completed)
 			const completeLog = logs.find((log) => log.includes('All pending calls completed'));

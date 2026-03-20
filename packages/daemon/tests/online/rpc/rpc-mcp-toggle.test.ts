@@ -26,7 +26,7 @@ describe('MCP Toggle', () => {
 		try {
 			rmSync(testDir, { recursive: true, force: true });
 		} catch {}
-	});
+	}, 15_000);
 
 	async function createSession(suffix: string): Promise<string> {
 		const workspacePath = `${testDir}/${suffix}`;

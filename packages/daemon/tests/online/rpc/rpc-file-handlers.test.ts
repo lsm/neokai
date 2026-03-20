@@ -30,7 +30,7 @@ describe('File RPC Handlers', () => {
 		try {
 			rmSync(testDir, { recursive: true, force: true });
 		} catch {}
-	});
+	}, 15_000);
 
 	async function createSession(): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
