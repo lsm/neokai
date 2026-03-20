@@ -13,9 +13,10 @@
  *  - Scale is clamped to [0.25, 2.0] and zooms toward cursor position.
  */
 
-import { useEffect, useRef, useCallback } from 'preact/hooks';
+import { useEffect, useRef, useCallback, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import type { ViewportState } from './types';
+import type { NodePosition, ViewportState } from './types';
+import { CanvasToolbar } from './CanvasToolbar';
 
 export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 2.0;
@@ -62,6 +63,10 @@ interface VisualCanvasProps {
 	onBackgroundClick?: () => void;
 	/** Render prop for injecting SVG edge content. Receives current viewport state. */
 	edgeLayer?: (viewport: ViewportState) => ComponentChildren;
+	/** Node positions used by the fit-to-view toolbar button. */
+	nodes?: NodePosition;
+	/** Whether to show the zoom/fit toolbar overlay. Defaults to true. */
+	showToolbar?: boolean;
 }
 
 export function VisualCanvas({
@@ -70,9 +75,12 @@ export function VisualCanvas({
 	onViewportChange,
 	onBackgroundClick,
 	edgeLayer,
+	nodes = {},
+	showToolbar = true,
 }: VisualCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const transformRef = useRef<HTMLDivElement>(null);
+	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 
 	// Track spacebar state for pan-drag mode
 	const spacebarDown = useRef(false);
@@ -89,6 +97,25 @@ export function VisualCanvas({
 	// Keep a ref to the latest viewport so event handlers don't stale-close over it
 	const viewportRef = useRef(viewportState);
 	viewportRef.current = viewportState;
+
+	// ---- Track container size for toolbar fit-to-view ----
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+		const obs = new ResizeObserver((entries) => {
+			const entry = entries[0];
+			if (entry) {
+				setContainerSize({
+					width: entry.contentRect.width,
+					height: entry.contentRect.height,
+				});
+			}
+		});
+		obs.observe(el);
+		// Set initial size
+		setContainerSize({ width: el.clientWidth, height: el.clientHeight });
+		return () => obs.disconnect();
+	}, []);
 
 	// ---- Wheel handler (pan + zoom) ----
 	// Registered via onWheel JSX prop so Preact attaches it as a non-passive
@@ -246,6 +273,15 @@ export function VisualCanvas({
 				</svg>
 				{children}
 			</div>
+			{showToolbar && (
+				<CanvasToolbar
+					viewport={viewportState}
+					nodes={nodes}
+					viewportWidth={containerSize.width}
+					viewportHeight={containerSize.height}
+					onViewportChange={onViewportChange}
+				/>
+			)}
 		</div>
 	);
 }

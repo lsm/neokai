@@ -19,6 +19,7 @@ import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
+import { inferProviderForModel } from '../providers/registry';
 import { Logger } from '../logger';
 
 const log = new Logger('room-handlers');
@@ -65,6 +66,7 @@ export function setupRoomHandlers(
 					workspacePath: defaultPath ?? allowedPaths[0]?.path,
 					config: {
 						model: room.defaultModel,
+						provider: room.defaultModel ? inferProviderForModel(room.defaultModel) : undefined,
 					},
 					sessionType: 'room_chat',
 					roomId: room.id,
@@ -145,6 +147,28 @@ export function setupRoomHandlers(
 
 		if (!room) {
 			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		// When defaultModel changes, sync the room chat session's model so it uses
+		// the new model on the next query. This prevents stale sessions from running
+		// with a model that is no longer configured (e.g., after switching from GLM to Anthropic).
+		if (params.defaultModel && sessionManager) {
+			const roomChatSessionId = `room:chat:${room.id}`;
+			try {
+				const existingSession = sessionManager.getSessionFromDB(roomChatSessionId);
+				if (existingSession) {
+					const newProvider = inferProviderForModel(params.defaultModel);
+					await sessionManager.updateSession(roomChatSessionId, {
+						config: {
+							...existingSession.config,
+							model: params.defaultModel,
+							provider: newProvider,
+						},
+					});
+				}
+			} catch (err) {
+				log.warn(`Could not sync room chat session model for room ${room.id}:`, err);
+			}
 		}
 
 		// Broadcast room update event

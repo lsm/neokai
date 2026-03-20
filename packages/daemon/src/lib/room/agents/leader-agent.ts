@@ -80,6 +80,8 @@ export interface LeaderAgentConfig {
 	workspacePath: string;
 	groupId: string;
 	model?: string;
+	/** Provider ID for this session — auto-detected from model if omitted */
+	provider?: string;
 	/** What type of work is being reviewed */
 	reviewContext?: ReviewContext;
 	/** Dependencies for the leader context MCP server (optional - only needed when creating MCP server) */
@@ -1150,6 +1152,7 @@ export function createLeaderAgentInit(
 			context: { roomId: config.room.id },
 			type: 'leader' as const,
 			model: config.model ?? DEFAULT_LEADER_MODEL,
+			provider: config.provider,
 			agent: 'Leader',
 			agents: allAgents,
 			contextAutoQueue: false,
@@ -1173,6 +1176,7 @@ export function createLeaderAgentInit(
 		context: { roomId: config.room.id },
 		type: 'leader',
 		model: config.model ?? DEFAULT_LEADER_MODEL,
+		provider: config.provider,
 		contextAutoQueue: false,
 	};
 }

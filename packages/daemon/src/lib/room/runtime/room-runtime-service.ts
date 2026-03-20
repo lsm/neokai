@@ -29,6 +29,7 @@ import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from '../managers/room-manager';
 import { WorktreeManager } from '../../worktree-manager';
+import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 
 const log = new Logger('room-runtime-service');
@@ -452,11 +453,32 @@ export class RoomRuntimeService {
 		// DaemonHub subscriptions and duplicate query execution.
 		void this.ctx.sessionManager
 			.getSessionAsync(roomChatSessionId)
-			.then((roomChatSession) => {
+			.then(async (roomChatSession) => {
 				if (!roomChatSession) {
 					log.warn(`Room chat session not found for room ${room.id}`);
 					return;
 				}
+
+				// Sync room chat session model with the room's current defaultModel.
+				// This fixes stale sessions created when the room had a different model
+				// (e.g., glm-5-turbo) that is no longer configured or accessible.
+				const currentModel = room.defaultModel ?? this.ctx.defaultModel;
+				const sessionData = roomChatSession.getSessionData();
+				const sessionModel = sessionData.config.model;
+				if (currentModel && sessionModel !== currentModel) {
+					try {
+						const newProvider = inferProviderForModel(currentModel);
+						await this.ctx.sessionManager.updateSession(roomChatSessionId, {
+							config: { ...sessionData.config, model: currentModel, provider: newProvider },
+						});
+						log.info(
+							`Synced room chat session ${roomChatSessionId}: model ${sessionModel} → ${currentModel} (${newProvider})`
+						);
+					} catch (err) {
+						log.warn(`Failed to sync room chat session model for room ${room.id}:`, err);
+					}
+				}
+
 				roomChatSession.setRuntimeMcpServers({
 					'room-agent-tools': roomAgentMcpServer,
 				});

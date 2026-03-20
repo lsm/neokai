@@ -11,6 +11,7 @@
 
 import { createLogger } from '@neokai/shared/logger';
 import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
+import type { Provider as ProviderIdStr } from '@neokai/shared';
 
 const log = createLogger('kai:providers:registry');
 
@@ -73,6 +74,20 @@ export class ProviderRegistry {
 			})
 		);
 		return results.filter((p): p is Provider => p !== null);
+	}
+
+	/**
+	 * Find the first registered provider that owns this model ID.
+	 * Uses each provider's ownsModel() heuristic for auto-detection.
+	 * Returns undefined if no provider claims the model.
+	 */
+	findProviderForModel(modelId: string): Provider | undefined {
+		for (const provider of this.providers.values()) {
+			if (typeof provider.ownsModel === 'function' && provider.ownsModel(modelId)) {
+				return provider;
+			}
+		}
+		return undefined;
 	}
 
 	/**
@@ -221,4 +236,33 @@ export function getProviderRegistry(): ProviderRegistry {
  */
 export function resetProviderRegistry(): void {
 	registryInstance = null;
+}
+
+/**
+ * Infer the provider for a given model ID.
+ *
+ * Strategy (two-pass):
+ * 1. Try the live registry via `findProviderForModel()` — covers all registered providers
+ *    including `anthropic-copilot` and `anthropic-codex`, which have dynamic model lists.
+ *    Returns the correct provider whenever the daemon has finished initializing.
+ * 2. Fall back to a static naming heuristic when the registry is empty (e.g., unit tests
+ *    or early-startup callers where providers are not yet registered):
+ *    - `glm-*` → 'glm'
+ *    - `minimax-*` → 'minimax'
+ *    - `gpt-*` → 'anthropic-codex'
+ *    - everything else → 'anthropic'
+ *
+ * Callers should NOT call `initializeProviders()` just for this function — the registry
+ * is populated at daemon startup; calling it lazily at spawn-time is safe and avoids
+ * test-interference from re-registering providers.
+ */
+export function inferProviderForModel(modelId: string): ProviderIdStr {
+	// Live registry lookup (populated at daemon startup, empty in unit tests)
+	const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
+	if (fromRegistry) return fromRegistry as ProviderIdStr;
+	// Static fallback when registry is empty
+	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
+	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
+	return 'anthropic';
 }
