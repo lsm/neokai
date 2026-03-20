@@ -170,7 +170,7 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 		family: 'gemini',
 		provider: 'anthropic-copilot',
 		contextWindow: 128000,
-		description: 'Gemini 3 Pro Preview via GitHub Copilot',
+		description: 'Gemini 3.1 Pro Preview via GitHub Copilot',
 		releaseDate: '2025-11-15',
 		available: true,
 	},
@@ -679,10 +679,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	 * for 5 minutes by `resolveGitHubToken`. Expected latency: 3–15 s (subprocess spawn
 	 * + OAuth exchange). A 20 s hard timeout prevents indefinite hangs on slow networks.
 	 *
-	 * Note: uses `gpt-5-mini` as the validation model — the designated free-tier
-	 * Copilot model used across CI. If Copilot ever removes that model, validation
-	 * will spuriously return false (prompting the user to re-authenticate via OAuth
-	 * rather than silently succeeding).
+	 * Uses `client.listModels()` for validation — a non-empty model list proves the
+	 * token has Copilot API access without depending on any specific model being
+	 * available on the user's plan.  This is intentionally model-agnostic: a user
+	 * on an enterprise plan with a different model catalogue should still be
+	 * authenticated correctly.
 	 */
 	private async validateCopilotToken(token: string): Promise<boolean> {
 		const TIMEOUT_MS = 20_000;
@@ -693,11 +694,8 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 		});
 		try {
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-			const session = await Promise.race([
-				client.createSession({
-					model: 'gpt-5-mini',
-					onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
-				}),
+			const models = await Promise.race([
+				client.listModels(),
 				new Promise<never>((_, reject) => {
 					timeoutHandle = setTimeout(
 						() => reject(new Error('validateCopilotToken timed out')),
@@ -706,8 +704,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 				}),
 			]);
 			clearTimeout(timeoutHandle);
-			await session.disconnect();
-			return true;
+			return models.length > 0;
 		} catch {
 			return false;
 		} finally {
