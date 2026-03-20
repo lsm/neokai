@@ -44,6 +44,18 @@ class SessionStore {
 	/** SDK messages from state.sdkMessages channel */
 	readonly sdkMessages = signal<SDKMessage[]>([]);
 
+	/** API retry attempts (populated from session.retryAttempt events) */
+	readonly retryAttempts = signal<
+		Array<{
+			attempt: number;
+			max_retries: number;
+			delay_ms: number;
+			error_status: number | null;
+			error: string;
+			occurredAt: number;
+		}>
+	>([]);
+
 	// ========================================
 	// Computed Accessors
 	// ========================================
@@ -164,6 +176,7 @@ class SessionStore {
 		// 2. Clear state
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
+		this.retryAttempts.value = []; // Clear retry attempts on session switch
 		this._initialMessageCount.value = 0;
 		this._hasMoreMessages.value = false;
 		this._contextInfo.value = null; // Clear context info on session switch
@@ -270,7 +283,33 @@ class SessionStore {
 			});
 			this.cleanupFunctions.push(unsubSDKMessagesDelta);
 
-			// 3. Fetch initial state via RPC (pure WebSocket - no REST API)
+			// 3. API retry attempt events (from SDK retry handling)
+			const unsubRetryAttempt = hub.onEvent<{
+				sessionId: string;
+				attempt: number;
+				max_retries: number;
+				delay_ms: number;
+				error_status: number | null;
+				error: string;
+			}>('session.retryAttempt', (retryInfo) => {
+				// Only handle events for the current session
+				if (retryInfo.sessionId !== sessionId) return;
+				// Append retry attempt to the list
+				this.retryAttempts.value = [
+					...this.retryAttempts.value,
+					{
+						attempt: retryInfo.attempt,
+						max_retries: retryInfo.max_retries,
+						delay_ms: retryInfo.delay_ms,
+						error_status: retryInfo.error_status,
+						error: retryInfo.error,
+						occurredAt: Date.now(),
+					},
+				];
+			});
+			this.cleanupFunctions.push(unsubRetryAttempt);
+
+			// 4. Fetch initial state via RPC (pure WebSocket - no REST API)
 			// This replaces the old REST API calls and state.sdkMessages subscription
 			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
@@ -494,6 +533,8 @@ class SessionStore {
 				error: null,
 			};
 		}
+		// Also clear retry attempts when error is dismissed
+		this.retryAttempts.value = [];
 	}
 
 	/**

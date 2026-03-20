@@ -86,6 +86,16 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'session.error': { sessionId: string; error: string; details?: unknown };
 	'session.errorClear': { sessionId: string };
 
+	// API retry events
+	'session.retryAttempt': {
+		sessionId: string;
+		attempt: number;
+		max_retries: number;
+		delay_ms: number;
+		error_status: number | null;
+		error: string;
+	};
+
 	// Message events
 	'message.sent': { sessionId: string };
 

@@ -774,8 +774,20 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		return { currentAction: undefined, streamingPhase: null };
 	}, [agentState, messages]);
 
-	// Combined error (local + store)
-	const error = localError || storeError?.message || null;
+	// Get retry attempts from session store
+	const retryAttempts = sessionStore.retryAttempts.value;
+
+	// Build retry status message if there are retry attempts
+	const retryStatusMessage = useMemo(() => {
+		if (retryAttempts.length === 0) return null;
+		const lastRetry = retryAttempts[retryAttempts.length - 1];
+		const progress = `${lastRetry.attempt}/${lastRetry.max_retries}`;
+		const errorInfo = lastRetry.error_status ? ` (${lastRetry.error_status})` : '';
+		return `API retry: attempt ${progress}${errorInfo} - ${lastRetry.error}`;
+	}, [retryAttempts]);
+
+	// Combined error (local + store + retry status)
+	const error = localError || retryStatusMessage || storeError?.message || null;
 
 	// Build provider-specific action buttons for structured errors
 	const errorDetails = storeError?.details as StructuredError | undefined;
