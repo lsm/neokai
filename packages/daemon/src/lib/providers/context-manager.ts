@@ -79,9 +79,9 @@ export class ProviderContextManager {
 	/**
 	 * Create a provider context for a session
 	 *
-	 * Resolves the provider from:
-	 * 1. Explicit session.config.provider
-	 * 2. Default to Anthropic (for legacy sessions without a stored provider)
+	 * Resolves the provider from the explicit `session.config.provider` ID.
+	 * Throws if the session has no stored provider or the stored ID is not registered —
+	 * silent rerouting to a default provider is intentionally not allowed here.
 	 */
 	createContext(session: Session): ProviderContext {
 		// Resolve provider for this session
@@ -96,24 +96,29 @@ export class ProviderContextManager {
 	}
 
 	/**
-	 * Resolve the provider for a session
+	 * Resolve the provider for a session.
+	 *
+	 * Throws — never silently falls back — so misconfigured sessions surface as
+	 * clear errors rather than being silently rerouted to the wrong provider.
 	 */
 	private resolveProvider(session: Session): Provider {
-		// 1. Prefer explicit provider stored in session config (always set for new sessions)
-		if (session.config.provider) {
-			const provider = this.registry.get(session.config.provider);
-			if (provider) {
-				return provider;
-			}
+		const providerId = session.config.provider;
+
+		if (!providerId) {
+			throw new Error(
+				`Session '${session.id}' has no provider stored in config. ` +
+					`All sessions created after PR #466 store an explicit provider ID.`
+			);
 		}
 
-		// 2. Default to Anthropic for legacy sessions that pre-date explicit routing.
-		const anthropic = this.registry.get('anthropic');
-		if (anthropic) {
-			return anthropic;
+		const provider = this.registry.get(providerId);
+		if (!provider) {
+			throw new Error(
+				`Provider '${providerId}' (requested by session '${session.id}') is not registered.`
+			);
 		}
 
-		throw new Error('No provider available for session');
+		return provider;
 	}
 
 	/**
