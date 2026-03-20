@@ -57,6 +57,7 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceRuntime } from '../space/runtime/space-runtime';
+import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -233,6 +234,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		taskRepo: spaceTaskRepo,
 	});
 	spaceRuntime.start();
+
+	// Space export/import handlers
+	setupSpaceExportImportHandlers(
+		deps.messageHub,
+		deps.spaceManager,
+		spaceAgentRepo,
+		spaceWorkflowRepo,
+		spaceWorkflowManager,
+		deps.db.getDatabase()
+	);
 
 	// Return cleanup function to stop background services
 	return () => {
