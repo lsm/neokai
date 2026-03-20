@@ -27,3 +27,5 @@ export {
 	SELECTED_STROKE_WIDTH,
 } from './EdgeRenderer';
 export type { EdgeRendererProps, EdgePoints } from './EdgeRenderer';
+export { EdgeConfigPanel } from './EdgeConfigPanel';
+export type { EdgeConfigPanelProps, EdgeTransition } from './EdgeConfigPanel';
