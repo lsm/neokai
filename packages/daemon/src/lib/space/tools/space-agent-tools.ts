@@ -57,6 +57,52 @@ function jsonResult(data: unknown): ToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
+/**
+ * Common English stop words filtered out by suggest_workflow before keyword matching.
+ * Hoisted to module scope so the Set is constructed once, not on every tool call.
+ */
+const SUGGEST_WORKFLOW_STOP_WORDS = new Set([
+	'the',
+	'and',
+	'for',
+	'are',
+	'but',
+	'not',
+	'you',
+	'all',
+	'can',
+	'her',
+	'was',
+	'one',
+	'our',
+	'out',
+	'day',
+	'get',
+	'has',
+	'him',
+	'his',
+	'how',
+	'its',
+	'may',
+	'new',
+	'now',
+	'old',
+	'see',
+	'two',
+	'use',
+	'way',
+	'who',
+	'did',
+	'let',
+	'put',
+	'say',
+	'she',
+	'too',
+	'had',
+	'any',
+	'via',
+]);
+
 // ---------------------------------------------------------------------------
 // Tool handlers (separated for testability)
 // ---------------------------------------------------------------------------
@@ -231,51 +277,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 
 			// Extract meaningful keywords (3+ chars, skip stop words)
-			const STOP_WORDS = new Set([
-				'the',
-				'and',
-				'for',
-				'are',
-				'but',
-				'not',
-				'you',
-				'all',
-				'can',
-				'her',
-				'was',
-				'one',
-				'our',
-				'out',
-				'day',
-				'get',
-				'has',
-				'him',
-				'his',
-				'how',
-				'its',
-				'may',
-				'new',
-				'now',
-				'old',
-				'see',
-				'two',
-				'use',
-				'way',
-				'who',
-				'did',
-				'let',
-				'put',
-				'say',
-				'she',
-				'too',
-				'had',
-				'any',
-				'via',
-			]);
 			const keywords = args.description
 				.toLowerCase()
 				.split(/\W+/)
-				.filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+				.filter((w) => w.length >= 3 && !SUGGEST_WORKFLOW_STOP_WORDS.has(w));
 
 			if (keywords.length === 0) {
 				// No meaningful keywords — return all in creation order

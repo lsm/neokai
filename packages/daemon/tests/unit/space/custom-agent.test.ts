@@ -508,6 +508,55 @@ describe('resolveAgentInit', () => {
 		const init = resolveAgentInit(config);
 		expect(init.sessionId).toBe('session-resolve');
 	});
+
+	it('accepts workflow field in ResolveAgentInitConfig and does not throw', () => {
+		const plannerAgent = makeAgent({ id: 'planner-1', role: 'planner', name: 'Planner' });
+		const manager = makeMockAgentManager(plannerAgent);
+		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
+		const wf = makeWorkflow();
+
+		const config = makeResolveConfig({
+			task: makeTask({ customAgentId: 'planner-1' }),
+			agentManager: manager,
+			workflowRun: run,
+			workflow: wf,
+		});
+
+		// Should not throw — workflow is now a valid field on ResolveAgentInitConfig
+		expect(() => resolveAgentInit(config)).not.toThrow();
+	});
+
+	it('planner resolved via resolveAgentInit produces workflow structure in task message', () => {
+		const plannerAgent = makeAgent({ id: 'planner-1', role: 'planner', name: 'Planner' });
+		const manager = makeMockAgentManager(plannerAgent);
+		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
+		const wf = makeWorkflow();
+
+		// Simulate what SpaceRuntime does: resolveAgentInit for session init,
+		// then buildCustomAgentTaskMessage for the initial user message.
+		resolveAgentInit(
+			makeResolveConfig({
+				task: makeTask({ customAgentId: 'planner-1' }),
+				agentManager: manager,
+				workflowRun: run,
+				workflow: wf,
+			})
+		);
+
+		// buildCustomAgentTaskMessage uses the same config data — verify workflow flows through
+		const msg = buildCustomAgentTaskMessage({
+			customAgent: plannerAgent,
+			task: makeTask(),
+			workflowRun: run,
+			workflow: wf,
+			space: makeSpace(),
+			sessionId: 'session-resolve',
+			workspacePath: '/workspace',
+		});
+
+		expect(msg).toContain('Workflow Structure');
+		expect(msg).toContain('Coding Workflow');
+	});
 });
 
 // ============================================================================

@@ -375,6 +375,13 @@ export interface ResolveAgentInitConfig {
 	workspacePath: string;
 	/** Workflow run context (null when outside a workflow) */
 	workflowRun?: SpaceWorkflowRun | null;
+	/**
+	 * Full workflow definition — forwarded to `buildCustomAgentTaskMessage` so
+	 * planner agents receive the "Workflow Structure" context section.
+	 * Required when the agent role is 'planner' and a workflow run is active;
+	 * ignored for all other agent roles.
+	 */
+	workflow?: SpaceWorkflow | null;
 	/** Summaries of previously completed tasks */
 	previousTaskSummaries?: string[];
 }
@@ -399,6 +406,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		sessionId,
 		workspacePath,
 		workflowRun,
+		workflow,
 		previousTaskSummaries,
 	} = config;
 
@@ -417,6 +425,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		customAgent: agent,
 		task,
 		workflowRun: workflowRun ?? null,
+		workflow: workflow ?? null,
 		space,
 		sessionId,
 		workspacePath,
