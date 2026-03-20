@@ -36,8 +36,10 @@ async function createTestSpace(page: Page): Promise<{
 
 			// Delete any leftover space from a previous failed run
 			try {
-				const spaces = await hub.request('space.list', {});
-				const list = (spaces as { spaces: Array<{ id: string; workspacePath: string }> }).spaces;
+				const list = (await hub.request('space.list', {})) as Array<{
+					id: string;
+					workspacePath: string;
+				}>;
 				const existing = list.find((s) => s.workspacePath === workspacePath);
 				if (existing) {
 					await hub.request('space.delete', { id: existing.id });
