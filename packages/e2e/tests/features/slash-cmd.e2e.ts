@@ -316,11 +316,11 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await expect(page.getByRole('button', { name: 'help', exact: true })).toBeVisible();
 	});
 
-	test('should show /context command', async ({ page }) => {
-		await typeInMessageInput(page, '/con');
+	test('should show /clear command', async ({ page }) => {
+		await typeInMessageInput(page, '/cl');
 
-		// Should show context command
-		await expect(page.locator('button:has-text("context")')).toBeVisible();
+		// Should show clear command
+		await expect(page.locator('button:has-text("clear")')).toBeVisible();
 	});
 
 	test('should show /init command', async ({ page }) => {
@@ -336,8 +336,8 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		// Wait for dropdown
 		await expect(getAutocompleteDropdown(page)).toBeVisible();
 
-		// Should show at least the context command
-		await expect(page.locator('button:has-text("context")')).toBeVisible();
+		// Should show at least the clear command
+		await expect(page.locator('button:has-text("clear")')).toBeVisible();
 	});
 });
 
@@ -475,7 +475,7 @@ test.describe('Slash Command Autocomplete - SDK Commands from system:init', () =
 		});
 	});
 
-	test('should show /context command after assistant response', async ({ page }) => {
+	test('should show /clear command after assistant response', async ({ page }) => {
 		const textarea = getMessageInput(page);
 		await textarea.waitFor({ state: 'visible', timeout: 5000 });
 		await textarea.fill('hello');
@@ -483,8 +483,8 @@ test.describe('Slash Command Autocomplete - SDK Commands from system:init', () =
 
 		await waitForAssistantResponse(page);
 
-		await typeInMessageInput(page, '/con');
-		await expect(page.locator('button:has-text("context")')).toBeVisible({ timeout: 5000 });
+		await typeInMessageInput(page, '/cl');
+		await expect(page.locator('button:has-text("clear")')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('should show all commands matching / after assistant response', async ({ page }) => {

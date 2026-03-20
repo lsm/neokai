@@ -677,9 +677,16 @@ jobs:
             core/interrupt-button
             core/interrupt-error-bug
             core/context-features
+            core/model-selection
             features/archive
             features/file-operations
+            features/message-operations
             features/rewind-features
+            features/session-operations
+            features/slash-cmd
+            features/worktree-isolation
+            responsive/mobile
+            responsive/tablet
             settings/auto-title
           )
 
