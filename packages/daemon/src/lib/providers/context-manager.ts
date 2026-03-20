@@ -77,12 +77,15 @@ export class ProviderContextManager {
 	constructor(private readonly registry: ProviderRegistry) {}
 
 	/**
-	 * Create a provider context for a session
+	 * Create a provider context for a session.
 	 *
-	 * Resolves the provider from:
-	 * 1. Explicit session.config.provider
-	 * 2. Model-based detection via registry
-	 * 3. Default to Anthropic
+	 * Provider resolution order:
+	 * 1. Explicit `session.config.provider` — used for all sessions created after PR #466.
+	 * 2. Anthropic fallback — for legacy sessions that pre-date PR #466 and have no stored
+	 *    provider. This keeps existing DB sessions working on upgrade.
+	 *
+	 * Throws only when a provider ID IS stored but that ID is not registered (hard
+	 * misconfiguration that should not be silently swallowed).
 	 */
 	createContext(session: Session): ProviderContext {
 		// Resolve provider for this session
@@ -97,32 +100,34 @@ export class ProviderContextManager {
 	}
 
 	/**
-	 * Resolve the provider for a session
+	 * Resolve the provider for a session.
+	 *
+	 * - No stored provider ID → fall back to Anthropic (legacy session from before PR #466).
+	 * - Stored provider ID not registered → throw (explicit misconfiguration, not a migration gap).
 	 */
 	private resolveProvider(session: Session): Provider {
-		// 1. Prefer explicit provider stored in session config (always set for new sessions)
-		if (session.config.provider) {
-			const provider = this.registry.get(session.config.provider);
-			if (provider) {
-				return provider;
+		const providerId = session.config.provider;
+
+		if (providerId) {
+			const provider = this.registry.get(providerId);
+			if (!provider) {
+				throw new Error(
+					`Provider '${providerId}' (requested by session '${session.id}') is not registered.`
+				);
 			}
+			return provider;
 		}
 
-		// 2. Legacy fallback: detect from model ID for old sessions that pre-date explicit routing.
-		// @deprecated — new sessions always store session.config.provider.
-		const modelId = session.config.model || 'default';
-		const detected = this.registry.detectProvider(modelId);
-		if (detected) {
-			return detected;
-		}
-
-		// 3. Default to Anthropic
+		// Legacy path: sessions created before PR #466 have no stored provider.
+		// Fall back to Anthropic so existing DB sessions continue to work after upgrade.
 		const anthropic = this.registry.get('anthropic');
 		if (anthropic) {
 			return anthropic;
 		}
 
-		throw new Error('No provider available for session');
+		throw new Error(
+			`Session '${session.id}' has no provider stored and the Anthropic provider is not registered.`
+		);
 	}
 
 	/**
@@ -136,7 +141,16 @@ export class ProviderContextManager {
 	 * @param newProviderId - Target provider ID (explicit — must be known by the caller)
 	 */
 	requiresQueryRestart(session: Session, newModelId: string, newProviderId: string): boolean {
-		const currentProvider = this.resolveProvider(session);
+		let currentProvider: Provider;
+		try {
+			currentProvider = this.resolveProvider(session);
+		} catch {
+			// Cannot resolve the current provider — assume the switch crosses providers.
+			// This is the conservative/safe value: a restart that wasn't strictly needed
+			// is far less harmful than skipping a restart that was required.
+			return true;
+		}
+
 		const newProvider = this.registry.get(newProviderId);
 
 		// If the new provider is unknown, assume a different one — safer to restart
@@ -152,14 +166,6 @@ export class ProviderContextManager {
 	 */
 	getProvider(providerId: ProviderId): Provider | undefined {
 		return this.registry.get(providerId);
-	}
-
-	/**
-	 * @deprecated Use `getProvider(providerId)` or `registry.detectProviderForModel(modelId, providerId)`.
-	 *   Heuristic model-ID-only detection is ambiguous when providers share model IDs.
-	 */
-	detectProvider(modelId: string): Provider | undefined {
-		return this.registry.detectProvider(modelId);
 	}
 
 	/**

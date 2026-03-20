@@ -134,13 +134,15 @@ export class QueryRunner {
 			const { initializeProviders } = await import('../providers/factory.js');
 			const providerRegistry = initializeProviders();
 			const modelId = session.config.model || 'sonnet';
-			// Routing is deterministic: session.config.provider is always set by the model
-			// picker and stored on every model switch. Legacy sessions without a stored
-			// provider fall back to heuristic detection (@deprecated path).
+			// As of PR #466, all new agent sessions store an explicit provider ID in
+			// session.config.provider. The registry.get('anthropic') fallback below is a
+			// temporary shim for sessions created before that change. It must NOT be
+			// expanded or used as a design pattern — new code should always have an
+			// explicit provider stored.
 			const explicitProviderId = session.config.provider as string | undefined;
 			const provider = explicitProviderId
 				? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
-				: providerRegistry.detectProvider(modelId);
+				: providerRegistry.get('anthropic');
 
 			// Check if the provider can make API calls (env vars, auth.json, gh CLI — all count).
 			// isAvailable() is the runtime gate; getAuthStatus().isAuthenticated is UI-only

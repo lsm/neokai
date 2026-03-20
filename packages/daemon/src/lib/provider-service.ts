@@ -5,7 +5,7 @@
  *
  * 1. **Compatibility Layer** - Delegates provider operations to the provider registry.
  *    The new provider system is in `packages/daemon/src/lib/providers/`.
- *    Methods like `getDefaultProvider()`, `detectProviderFromModel()`, etc. delegate to the registry.
+ *    Methods like `getDefaultProvider()` etc. delegate to the registry.
  *
  * 2. **Process-level Environment Management** - Handles process.env manipulation.
  *    Methods like `applyEnvVarsToProcess()` and `restoreEnvVars()` modify process.env
@@ -331,48 +331,6 @@ export class ProviderService {
 		}
 
 		return provider.ownsModel(model);
-	}
-
-	/**
-	 * Detect if a model ID belongs to GLM provider.
-	 *
-	 * @deprecated Use explicit `providerId` comparison instead. GLM model IDs are currently
-	 *   unique (no collision), but prefer routing by provider ID for consistency.
-	 */
-	isGlmModel(modelId: string): boolean {
-		const registry = this.getRegistry();
-		const provider = registry.detectProvider(modelId);
-		return provider?.id === 'glm';
-	}
-
-	/**
-	 * Detect provider from model ID alone.
-	 *
-	 * @deprecated Use `detectProviderForModel(modelId, providerId)` with an explicit provider ID.
-	 *   This method is ambiguous when multiple providers claim the same model ID.
-	 */
-	detectProviderFromModel(modelId: string): Provider {
-		const registry = this.getRegistry();
-		const provider = registry.detectProvider(modelId);
-		return (provider?.id as Provider) || 'anthropic';
-	}
-
-	/**
-	 * Translate a model ID to an SDK-recognized model ID.
-	 *
-	 * @deprecated Pass explicit `providerId` to resolve which provider's translation to apply.
-	 *   Delegates to provider.translateModelIdForSdk()
-	 */
-	translateModelIdForSdk(modelId: string): string {
-		const registry = this.getRegistry();
-		const provider = registry.detectProvider(modelId);
-
-		if (provider && provider.translateModelIdForSdk) {
-			return provider.translateModelIdForSdk(modelId);
-		}
-
-		// Anthropic models pass through
-		return modelId;
 	}
 
 	/**

@@ -7,7 +7,6 @@
  * This enables:
  * - Adding new providers without modifying core code
  * - Plugin-style provider architecture
- * - Provider auto-detection from model IDs
  */
 
 import { createLogger } from '@neokai/shared/logger';
@@ -91,23 +90,6 @@ export class ProviderRegistry {
 			log.error(`[routing] Unknown provider '${providerId}' for model '${modelId}'`);
 		}
 		return provider;
-	}
-
-	/**
-	 * Heuristic provider detection from model ID alone.
-	 *
-	 * @deprecated Use `detectProviderForModel(modelId, providerId)` with an explicit provider ID.
-	 *   This method is ambiguous when multiple providers claim the same model ID
-	 *   (e.g. 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
-	 *   It is retained only for legacy paths (e.g. old sessions without a stored provider).
-	 */
-	detectProvider(modelId: string): Provider | undefined {
-		for (const provider of this.getAll()) {
-			if (provider.ownsModel(modelId)) {
-				return provider;
-			}
-		}
-		return undefined;
 	}
 
 	/**

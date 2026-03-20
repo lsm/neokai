@@ -249,7 +249,7 @@ describe('ProviderContextManager', () => {
 			expect(context.modelId).toBe('glm-4');
 		});
 
-		it('should detect provider from model ID', () => {
+		it('should create context for anthropic session with explicit provider', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -261,6 +261,7 @@ describe('ProviderContextManager', () => {
 					model: 'claude-3-opus',
 					maxTokens: 8192,
 					temperature: 1.0,
+					provider: 'anthropic',
 				},
 				metadata: {
 					messageCount: 0,
@@ -277,35 +278,7 @@ describe('ProviderContextManager', () => {
 			expect(context.provider.id).toBe('anthropic');
 		});
 
-		it('should default to anthropic for unknown model', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'unknown-model',
-					maxTokens: 8192,
-					temperature: 1.0,
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
-
-			const context = manager.createContext(session);
-
-			expect(context.provider.id).toBe('anthropic');
-		});
-
-		it('should use "default" model ID when not specified', () => {
+		it('should use "default" model ID when model not specified', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -316,6 +289,7 @@ describe('ProviderContextManager', () => {
 				config: {
 					maxTokens: 8192,
 					temperature: 1.0,
+					provider: 'anthropic',
 				} as Session['config'],
 				metadata: {
 					messageCount: 0,
@@ -332,7 +306,7 @@ describe('ProviderContextManager', () => {
 			expect(context.modelId).toBe('default');
 		});
 
-		it('should fall back to detection when explicit provider not found', () => {
+		it('should throw when the stored provider ID is not registered', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -356,15 +330,12 @@ describe('ProviderContextManager', () => {
 				},
 			};
 
-			const context = manager.createContext(session);
-
-			// Falls back to detection, which finds anthropic
-			expect(context.provider.id).toBe('anthropic');
+			expect(() => manager.createContext(session)).toThrow(
+				"Provider 'nonexistent' (requested by session 'test-session') is not registered."
+			);
 		});
 
-		it('should throw when no provider available', () => {
-			registry.clear(); // Remove all providers
-
+		it('should fall back to Anthropic when no provider is stored (legacy pre-#466 session)', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -387,7 +358,9 @@ describe('ProviderContextManager', () => {
 				},
 			};
 
-			expect(() => manager.createContext(session)).toThrow('No provider available');
+			// Legacy sessions without a stored provider fall back to Anthropic
+			const context = manager.createContext(session);
+			expect(context.provider.id).toBe('anthropic');
 		});
 
 		it('should include session provider config', () => {
@@ -653,23 +626,6 @@ describe('ProviderContextManager', () => {
 
 		it('should return undefined for unknown provider', () => {
 			const provider = manager.getProvider('unknown' as unknown as ProviderId);
-			expect(provider).toBeUndefined();
-		});
-	});
-
-	describe('detectProvider (deprecated legacy heuristic)', () => {
-		it('should detect provider from model ID', () => {
-			const provider = manager.detectProvider('claude-3-opus');
-			expect(provider?.id).toBe('anthropic');
-		});
-
-		it('should detect GLM provider', () => {
-			const provider = manager.detectProvider('glm-4');
-			expect(provider?.id).toBe('glm');
-		});
-
-		it('should return undefined for unknown model', () => {
-			const provider = manager.detectProvider('unknown-model-xyz');
 			expect(provider).toBeUndefined();
 		});
 	});
