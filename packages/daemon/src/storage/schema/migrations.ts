@@ -115,6 +115,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// space_workflows includes start_step_id, space_workflow_runs includes current_step_id,
 	// and space_workflow_transitions is created from the start.
 	runMigration29(db);
+
+	// Migration 30: Add workflow_run_id and current_step_id to space_session_groups
+	// for associating session groups with workflow runs and tracking step progress
+	runMigration30(db);
 }
 
 /**
@@ -1699,4 +1703,24 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
 	);
+}
+
+/**
+ * Migration 30: Add workflow_run_id and current_step_id to space_session_groups
+ * for associating session groups with workflow runs and tracking step progress.
+ */
+function runMigration30(db: BunDatabase): void {
+	// Add workflow_run_id to space_session_groups (idempotent)
+	try {
+		db.prepare(`SELECT workflow_run_id FROM space_session_groups LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_session_groups ADD COLUMN workflow_run_id TEXT`);
+	}
+
+	// Add current_step_id to space_session_groups (idempotent)
+	try {
+		db.prepare(`SELECT current_step_id FROM space_session_groups LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_session_groups ADD COLUMN current_step_id TEXT`);
+	}
 }

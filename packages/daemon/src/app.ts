@@ -18,6 +18,7 @@ import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
 import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
+import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -57,6 +58,8 @@ export interface DaemonAppContext {
 	spaceAgentManager: SpaceAgentManager;
 	/** Space manager for Space CRUD and workspace path validation */
 	spaceManager: SpaceManager;
+	/** Space runtime service for workflow run lifecycle management */
+	spaceRuntimeService: SpaceRuntimeService;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -206,8 +209,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] GitHub integration disabled - authentication required');
 	}
 
-	// Setup RPC handlers (returns cleanup function)
-	const rpcHandlerCleanup = setupRPCHandlers({
+	// Setup RPC handlers (returns cleanup function + exposed services)
+	const { cleanup: rpcHandlerCleanup, spaceRuntimeService } = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
@@ -435,6 +438,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		liveQueries,
 		spaceAgentManager,
 		spaceManager,
+		spaceRuntimeService,
 		cleanup,
 	};
 }

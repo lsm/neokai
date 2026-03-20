@@ -12,11 +12,15 @@ export interface CreateSessionGroupParams {
 	spaceId: string;
 	name: string;
 	description?: string;
+	workflowId?: string;
+	currentStepId?: string;
 }
 
 export interface UpdateSessionGroupParams {
 	name?: string;
 	description?: string;
+	workflowId?: string | null;
+	currentStepId?: string | null;
 }
 
 export class SpaceSessionGroupRepository {
@@ -30,11 +34,20 @@ export class SpaceSessionGroupRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_session_groups (id, space_id, name, description, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_session_groups (id, space_id, name, description, workflow_id, current_step_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
-		stmt.run(id, params.spaceId, params.name, params.description ?? null, now, now);
+		stmt.run(
+			id,
+			params.spaceId,
+			params.name,
+			params.description ?? null,
+			params.workflowId ?? null,
+			params.currentStepId ?? null,
+			now,
+			now
+		);
 
 		return this.getGroup(id)!;
 	}
@@ -99,6 +112,14 @@ export class SpaceSessionGroupRepository {
 		if (params.description !== undefined) {
 			fields.push('description = ?');
 			values.push(params.description ?? null);
+		}
+		if (params.workflowId !== undefined) {
+			fields.push('workflow_id = ?');
+			values.push(params.workflowId ?? null);
+		}
+		if (params.currentStepId !== undefined) {
+			fields.push('current_step_id = ?');
+			values.push(params.currentStepId ?? null);
 		}
 
 		if (fields.length > 0) {
@@ -217,6 +238,8 @@ export class SpaceSessionGroupRepository {
 			spaceId: row.space_id as string,
 			name: row.name as string,
 			description: (row.description as string | null) ?? undefined,
+			workflowId: (row.workflow_id as string | null) ?? undefined,
+			currentStepId: (row.current_step_id as string | null) ?? undefined,
 			members,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
