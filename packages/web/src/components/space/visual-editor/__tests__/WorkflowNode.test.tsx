@@ -175,14 +175,24 @@ describe('WorkflowNode port events', () => {
 			<WorkflowNode {...makeProps({ onPortMouseDown, isStartNode: false })} />
 		);
 		fireEvent.mouseDown(getByTestId('port-input'), { button: 0 });
-		expect(onPortMouseDown).toHaveBeenCalledWith('step-local-1', 'input', expect.any(Object));
+		expect(onPortMouseDown).toHaveBeenCalledWith(
+			'step-local-1',
+			'input',
+			expect.any(Object),
+			expect.any(Object)
+		);
 	});
 
 	it('calls onPortMouseDown with output type when output port is pressed', () => {
 		const onPortMouseDown = vi.fn();
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ onPortMouseDown })} />);
 		fireEvent.mouseDown(getByTestId('port-output'), { button: 0 });
-		expect(onPortMouseDown).toHaveBeenCalledWith('step-local-1', 'output', expect.any(Object));
+		expect(onPortMouseDown).toHaveBeenCalledWith(
+			'step-local-1',
+			'output',
+			expect.any(Object),
+			expect.any(Object)
+		);
 	});
 
 	it('port mousedown does not trigger drag (stopPropagation)', () => {

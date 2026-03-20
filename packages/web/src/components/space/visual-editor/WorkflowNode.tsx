@@ -41,7 +41,13 @@ export interface WorkflowNodeProps {
 	/** Called continuously while the node is being dragged */
 	onPositionChange: (stepId: string, newPosition: Point) => void;
 	/** Called when a connection port is pressed */
-	onPortMouseDown?: (stepId: string, portType: PortType, e: MouseEvent) => void;
+	onPortMouseDown?: (stepId: string, portType: PortType, e: MouseEvent, portEl: Element) => void;
+	/** Called when the mouse enters a port during a connection drag */
+	onPortMouseEnter?: (stepId: string, portType: PortType) => void;
+	/** Called when the mouse leaves a port during a connection drag */
+	onPortMouseLeave?: (stepId: string, portType: PortType) => void;
+	/** Highlight the input port as a valid drop target (during connection drag) */
+	isDropTarget?: boolean;
 	/** Called when the card body is clicked (for selection) */
 	onClick?: (stepId: string) => void;
 }
@@ -57,9 +63,12 @@ export function WorkflowNode({
 	agents,
 	isSelected = false,
 	isStartNode = false,
+	isDropTarget = false,
 	scale,
 	onPositionChange,
 	onPortMouseDown,
+	onPortMouseEnter,
+	onPortMouseLeave,
 	onClick,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
@@ -166,7 +175,7 @@ export function WorkflowNode({
 	const handleInputPortMouseDown = useCallback(
 		(e: MouseEvent) => {
 			e.stopPropagation(); // prevent card drag from starting
-			onPortMouseDown?.(stepId, 'input', e);
+			onPortMouseDown?.(stepId, 'input', e, e.currentTarget as Element);
 		},
 		[onPortMouseDown, stepId]
 	);
@@ -174,10 +183,23 @@ export function WorkflowNode({
 	const handleOutputPortMouseDown = useCallback(
 		(e: MouseEvent) => {
 			e.stopPropagation(); // prevent card drag from starting
-			onPortMouseDown?.(stepId, 'output', e);
+			onPortMouseDown?.(stepId, 'output', e, e.currentTarget as Element);
 		},
 		[onPortMouseDown, stepId]
 	);
+
+	// Prevent clicks on ports from bubbling to the card and triggering node selection
+	const stopClickPropagation = useCallback((e: MouseEvent) => {
+		e.stopPropagation();
+	}, []);
+
+	const handleInputPortMouseEnter = useCallback(() => {
+		onPortMouseEnter?.(stepId, 'input');
+	}, [onPortMouseEnter, stepId]);
+
+	const handleInputPortMouseLeave = useCallback(() => {
+		onPortMouseLeave?.(stepId, 'input');
+	}, [onPortMouseLeave, stepId]);
 
 	// ---- Styles ----
 	const borderClass = isStartNode
@@ -185,6 +207,10 @@ export function WorkflowNode({
 		: isSelected
 			? 'border-blue-500'
 			: 'border-gray-700';
+
+	const inputPortBg = isDropTarget ? '#22c55e' : '#6b7280';
+	const inputPortBorder = isDropTarget ? '#16a34a' : '#374151';
+	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
 
@@ -213,15 +239,20 @@ export function WorkflowNode({
 						position: 'absolute',
 						top: -7,
 						left: '50%',
-						transform: 'translateX(-50%)',
+						transform: `translateX(-50%) ${inputPortScale}`,
 						width: 14,
 						height: 14,
 						borderRadius: '50%',
-						background: '#6b7280',
-						border: '2px solid #374151',
+						background: inputPortBg,
+						border: `2px solid ${inputPortBorder}`,
 						cursor: 'crosshair',
+						transition: 'transform 0.1s, background 0.1s',
+						zIndex: isDropTarget ? 10 : undefined,
 					}}
 					onMouseDown={handleInputPortMouseDown}
+					onMouseEnter={handleInputPortMouseEnter}
+					onMouseLeave={handleInputPortMouseLeave}
+					onClick={stopClickPropagation}
 				/>
 			)}
 
@@ -276,6 +307,7 @@ export function WorkflowNode({
 					cursor: 'crosshair',
 				}}
 				onMouseDown={handleOutputPortMouseDown}
+				onClick={stopClickPropagation}
 			/>
 		</div>
 	);

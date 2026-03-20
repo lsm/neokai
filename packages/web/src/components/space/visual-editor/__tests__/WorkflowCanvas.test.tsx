@@ -52,7 +52,6 @@ const NODES: WorkflowNodeData[] = [
 		position: { x: 10, y: 10 },
 		agents: AGENTS,
 		isStartNode: false,
-		onPortMouseDown: vi.fn(),
 	},
 	{
 		step: makeStep('step-2', 'Step Two'),
@@ -60,7 +59,6 @@ const NODES: WorkflowNodeData[] = [
 		position: { x: 200, y: 10 },
 		agents: AGENTS,
 		isStartNode: false,
-		onPortMouseDown: vi.fn(),
 	},
 ];
 
