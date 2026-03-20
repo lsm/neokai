@@ -403,6 +403,51 @@ describe('createCustomAgentInit', () => {
 		expect(init.systemPrompt?.append).toContain('Planner Agent');
 		expect(init.systemPrompt?.append).not.toContain('Review Responsibilities');
 	});
+
+	// Provider inference tests — verifies the fix for the missing provider bug
+	it('always sets provider on simple-path init (Anthropic model)', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929' }),
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.provider).toBe('anthropic');
+	});
+
+	it('always sets provider on simple-path init (GLM model)', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'glm-4-flash' }),
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.provider).toBe('glm');
+	});
+
+	it('always sets provider on agent/agents-path init', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-opus-4-6', tools: ['Read', 'Bash'] }),
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.provider).toBe('anthropic');
+	});
+
+	it('inherits provider from space.defaultModel when agent model is unset', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: undefined }),
+			space: makeSpace({ defaultModel: 'glm-5-turbo' }),
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.provider).toBe('glm');
+	});
+
+	it('never produces undefined provider (always falls back to hardcoded default)', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: undefined }),
+			space: makeSpace({ defaultModel: undefined }),
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.provider).toBeDefined();
+		expect(typeof init.provider).toBe('string');
+		expect(init.provider!.length).toBeGreaterThan(0);
+	});
 });
 
 // ============================================================================

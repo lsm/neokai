@@ -17,6 +17,7 @@ import type {
 	AgentDefinition,
 } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import { inferProviderForModel } from '../../providers/registry';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
 
@@ -308,6 +309,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
 
 	const model = customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+	const provider = inferProviderForModel(model);
 
 	const behavioralPrompt = buildCustomAgentSystemPrompt(customAgent);
 
@@ -335,6 +337,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			context: { spaceId: space.id },
 			type: 'worker',
 			model,
+			provider,
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
 			contextAutoQueue: false,
@@ -354,6 +357,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		context: { spaceId: space.id },
 		type: 'worker',
 		model,
+		provider,
 		contextAutoQueue: false,
 	};
 }
