@@ -12,6 +12,8 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentSpaceIdSignal,
+	navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
@@ -23,6 +25,7 @@ import {
 	navigateToRoomSession,
 	navigateToRoomTask,
 	navigateToHome,
+	navigateToSpacesPage,
 	createSessionPath,
 	createRoomPath,
 	createRoomSessionPath,
@@ -81,6 +84,8 @@ export function App() {
 			const roomId = currentRoomIdSignal.value;
 			const roomSessionId = currentRoomSessionIdSignal.value;
 			const roomTaskId = currentRoomTaskIdSignal.value;
+			const spaceId = currentSpaceIdSignal.value;
+			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
@@ -90,7 +95,11 @@ export function App() {
 						? createRoomSessionPath(roomId, roomSessionId)
 						: roomId
 							? createRoomPath(roomId)
-							: '/';
+							: navSection === 'spaces' && !spaceId
+								? '/spaces'
+								: navSection === 'chats'
+									? '/sessions'
+									: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -103,6 +112,10 @@ export function App() {
 					navigateToRoomSession(roomId, roomSessionId, true);
 				} else if (roomId) {
 					navigateToRoom(roomId, true);
+				} else if (navSection === 'spaces' && !spaceId) {
+					navigateToSpacesPage(true);
+				} else if (navSection === 'chats') {
+					// Already at /sessions or no navigation needed
 				} else {
 					navigateToHome(true);
 				}
