@@ -471,6 +471,70 @@ describe('WorkflowEditor', () => {
 				);
 			});
 		});
+
+		it('remaps rule appliesTo from step localId to final persisted step ID (P0 regression)', async () => {
+			// When a new step has no persisted ID yet, its localId is used in appliesTo.
+			// The save path must remap localId → the UUID generated at save time so the
+			// persisted rule references the correct step ID.
+			const { getByRole, getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+
+			// Set workflow name
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'Remapped Workflow' } });
+
+			// Give the step a unique name so StepMultiSelect renders a named button we
+			// can find via getByRole — which throws on no match, unlike querySelectorAll.
+			const stepNameInput = container.querySelector(
+				'input[placeholder*="Plan the approach"]'
+			) as HTMLInputElement;
+			fireEvent.input(stepNameInput, { target: { value: 'UniqueStepName' } });
+
+			// Assign agent to the step (new step, no persisted id)
+			selectAgent(container, 'agent-1');
+
+			// Add a rule and fill it in
+			fireEvent.click(getByRole('button', { name: 'Add Rule' }));
+			const ruleNameInput = container.querySelector(
+				'input[placeholder*="Rule name"]'
+			) as HTMLInputElement;
+			fireEvent.input(ruleNameInput, { target: { value: 'Scoped Rule' } });
+			const ruleContent = container.querySelector(
+				'textarea[placeholder*="Describe the rule"]'
+			) as HTMLTextAreaElement;
+			fireEvent.input(ruleContent, { target: { value: 'Content' } });
+
+			// Scope the rule to the step by clicking the named step button in "Applies to".
+			// getByRole('button', { name }) throws if no such button exists, ensuring the
+			// test fails rather than silently skips when the DOM structure changes.
+			// The StepMultiSelect renders exactly one <button> per step using the step name.
+			const scopeButton = getByRole('button', { name: 'UniqueStepName' });
+			fireEvent.click(scopeButton);
+
+			fireEvent.click(getByText('Create Workflow'));
+
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
+			});
+
+			const call = mockCreateWorkflow.mock.calls[0][0];
+			const savedStepId = call.steps[0]?.id;
+			const savedRules = call.rules ?? [];
+
+			// The scoped rule must have at least one appliesTo entry — a zero length
+			// means the scope click was silently ignored and the loop below never runs.
+			expect(savedRules.length).toBeGreaterThan(0);
+			expect(savedRules[0].appliesTo.length).toBeGreaterThan(0);
+
+			// Every scoped ID must exactly match the final persisted step UUID,
+			// not the draft localId that was visible in the UI before save.
+			for (const rule of savedRules) {
+				for (const scopedId of rule.appliesTo ?? []) {
+					expect(scopedId).toBe(savedStepId);
+				}
+			}
+		});
 	});
 
 	describe('edit mode initialization', () => {
@@ -482,6 +546,157 @@ describe('WorkflowEditor', () => {
 		it('loads step names from existing workflow', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={makeWorkflow()} />);
 			expect(getByText('Plan')).toBeTruthy();
+		});
+
+		it('loads tags from existing workflow', () => {
+			const wf = makeWorkflow({ tags: ['coding', 'review'] });
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			expect(getByText('coding')).toBeTruthy();
+			expect(getByText('review')).toBeTruthy();
+		});
+
+		it('loads rules from existing workflow', () => {
+			const wf = makeWorkflow({
+				rules: [{ id: 'r1', name: 'My Rule', content: 'Rule content', appliesTo: [] }],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			expect(getByText('1 rule')).toBeTruthy();
+		});
+	});
+
+	describe('tags', () => {
+		it('renders tags section with Add tags placeholder', () => {
+			const { container } = render(<WorkflowEditor {...defaultProps} />);
+			const tagInput = container.querySelector(
+				'input[placeholder*="Add tags"]'
+			) as HTMLInputElement;
+			expect(tagInput).toBeTruthy();
+		});
+
+		it('shows tag suggestion buttons', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByText('+ coding')).toBeTruthy();
+			expect(getByText('+ review')).toBeTruthy();
+		});
+
+		it('clicking a suggestion adds the tag', () => {
+			const { getByText, queryByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(queryByText('coding')).toBeNull();
+			fireEvent.click(getByText('+ coding'));
+			// After adding, the chip appears and the suggestion button disappears
+			// The tag chip text is rendered, so the suggestion "coding" should show as a chip
+			// Check suggestion button is gone (tag was added)
+			expect(queryByText('+ coding')).toBeNull();
+		});
+
+		it('tags are included in createWorkflow call', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			// Set name
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'Tagged Workflow' } });
+			// Select agent
+			selectAgent(container, 'agent-1');
+			// Add tag via suggestion
+			fireEvent.click(getByText('+ coding'));
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({ tags: ['coding'] })
+				);
+			});
+		});
+
+		it('tags are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({ tags: ['research'] });
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({ tags: ['research'] })
+				);
+			});
+		});
+	});
+
+	describe('rules', () => {
+		it('renders the Rules section with "Add Rule" button', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			expect(getByText('Add Rule')).toBeTruthy();
+		});
+
+		it('clicking Add Rule shows a rule card', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText('Add Rule'));
+			expect(getByText('1 rule')).toBeTruthy();
+		});
+
+		it('rules are included in createWorkflow call (non-blank rules only)', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
+			fireEvent.click(getByText('Add Rule'));
+			// Fill rule name — rule card has an input with "Rule name" placeholder
+			const ruleNameInput = container.querySelector(
+				'input[placeholder*="Rule name"]'
+			) as HTMLInputElement;
+			fireEvent.input(ruleNameInput, { target: { value: 'Follow conventions' } });
+			// Fill rule content — rule card textarea has "Describe the rule" placeholder
+			const ruleTextarea = container.querySelector(
+				'textarea[placeholder*="Describe the rule"]'
+			) as HTMLTextAreaElement;
+			fireEvent.input(ruleTextarea, { target: { value: 'Write clean code' } });
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({
+						rules: expect.arrayContaining([
+							expect.objectContaining({
+								name: 'Follow conventions',
+								content: 'Write clean code',
+							}),
+						]),
+					})
+				);
+			});
+		});
+
+		it('blank rules are excluded from the createWorkflow call', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector(
+				'input[placeholder="e.g. Feature Development"]'
+			) as HTMLInputElement;
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
+			// Add a rule but leave it blank
+			fireEvent.click(getByText('Add Rule'));
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(expect.objectContaining({ rules: [] }));
+			});
+		});
+
+		it('rules are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({
+				rules: [{ id: 'r1', name: 'Existing Rule', content: 'Some content', appliesTo: [] }],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({
+						rules: expect.arrayContaining([
+							expect.objectContaining({ name: 'Existing Rule', content: 'Some content' }),
+						]),
+					})
+				);
+			});
 		});
 	});
 });

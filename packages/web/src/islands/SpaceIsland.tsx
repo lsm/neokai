@@ -124,6 +124,8 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 					onRunSelect={handleRunSelect}
 					onTaskSelect={handleTaskSelect}
 					onAgentsClick={() => setActiveTab('agents')}
+					onWorkflowsClick={() => setActiveTab('workflows')}
+					onSettingsClick={() => setActiveTab('settings')}
 				/>
 			</div>
 
