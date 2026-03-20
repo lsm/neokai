@@ -15,21 +15,23 @@ Wire the visual editor into the existing Space workflow tab, add a view toggle b
 **Subtasks**:
 1. Create `packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx`:
    - Props: same interface as existing `WorkflowEditor` (`workflow?: SpaceWorkflow`, `onSave`, `onCancel`)
-   - Internal state: `steps` (StepDraft[]), `transitions` (ConditionDraft[] with from/to), `nodePositions` (Map), `selectedNodeId`, `selectedEdgeId`, `viewportState`, `rules` (RuleDraft[]), `tags` (string[])
-   - On mount: if editing existing workflow, use `workflowToVisualState` + `autoLayout` to initialize positions
+   - Internal state: `steps` (StepDraft[]), `transitions` (ConditionDraft[] with from/to), `nodePositions` (Map), `selectedNodeId`, `selectedEdgeId`, `viewportState`, `rules` (RuleDraft[]), `tags` (string[]), `startStepId`
+   - On mount: if editing existing workflow, use `workflowToVisualState` to initialize (positions from `layout` field or auto-layout fallback)
    - Compose: `VisualCanvas` with `CanvasToolbar`, `WorkflowNode` for each step, `EdgeRenderer` for transitions, `NodeConfigPanel` or `EdgeConfigPanel` based on selection
    - Add "Add Step" button in the toolbar that creates a new node at center of viewport
    - Header bar with workflow name/description inputs, Save/Cancel buttons (reuse layout from existing `WorkflowEditor`)
    - Include `WorkflowRulesEditor` and tags section below the canvas (collapsible)
-   - On save: use `visualStateToWorkflowParams` to produce params, call `spaceStore.createWorkflow` or `spaceStore.updateWorkflow`
-2. Wire up all event handlers: node drag, node select, port drag, edge select, edge delete, node delete, condition updates
-3. Add integration tests: component renders with empty workflow, component renders with existing workflow, save produces valid params
+   - On save: use `visualStateToWorkflowParams` to produce params (including `layout` for position persistence), call `spaceStore.createWorkflow` or `spaceStore.updateWorkflow`
+   - `startStepId` is managed explicitly: first node added becomes start by default, user can change via "Set as Start" in config panel
+2. Wire up all event handlers: node drag, node select, port drag, edge select, edge delete, node delete, condition updates, set-as-start
+3. Add integration tests: component renders with empty workflow, component renders with existing workflow (with and without saved layout), save produces valid params including layout
 
 **Acceptance criteria**:
-- Visual editor renders existing workflows correctly
+- Visual editor renders existing workflows correctly (using saved positions or auto-layout)
 - New workflows can be created from scratch
 - All editing operations work: add/remove/drag nodes, create/delete edges, edit properties via config panel
-- Save produces valid SpaceWorkflow parameters
+- Start node can be explicitly designated via config panel
+- Save produces valid SpaceWorkflow parameters including layout positions
 - Cancel returns to list view without changes
 - Tests pass
 
@@ -60,27 +62,5 @@ Wire the visual editor into the existing Space workflow tab, add a view toggle b
 - Tests pass
 
 **Dependencies**: Task 6.1
-
-**Changes must be on a feature branch with a GitHub PR created via `gh pr create`.**
-
-### Task 6.3: Update existing tests for compatibility
-
-**Description**: Ensure all existing workflow-related tests still pass after the integration. Update any tests that may break due to extracted components (e.g., `GateConfig` moved to shared file) or new imports.
-
-**Agent type**: coder
-
-**Subtasks**:
-1. Run existing test suites: `WorkflowEditor.test.tsx`, `WorkflowList.test.tsx`, `WorkflowStepCard.test.tsx`, `WorkflowRulesEditor.test.tsx`
-2. Fix any import path changes from extracting `GateConfig`
-3. Update `WorkflowStepCard.test.tsx` if `GateConfig` was extracted
-4. Verify all tests pass: `cd packages/web && bunx vitest run`
-5. Run linter and type checker: `bun run lint && bun run typecheck`
-
-**Acceptance criteria**:
-- All existing workflow tests pass without modification (or with minimal import fixes)
-- No lint errors or type errors introduced
-- `bun run check` passes clean
-
-**Dependencies**: Tasks 6.1, 6.2
 
 **Changes must be on a feature branch with a GitHub PR created via `gh pr create`.**

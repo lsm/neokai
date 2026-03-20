@@ -16,11 +16,12 @@ Render workflow steps as draggable node cards on the canvas, with visual connect
 1. Create `packages/web/src/components/space/visual-editor/WorkflowNode.tsx`:
    - Props: `step` (StepDraft), `position` (Point), `agents` (SpaceAgent[]), `isSelected`, `isStartNode`, connection port event handlers
    - Render a card with: step number badge (top-left), step name, agent name (resolved from agents list), selection highlight border
+   - Start node gets a green border (`border-green-500`) and a "START" badge (top-right) for clear visual distinction
    - Render input port (small circle, top-center, hidden on start node) and output port (small circle, bottom-center)
    - Port circles emit `onPortMouseDown(stepId, 'input'|'output')` for connection creation
    - Apply `cursor: grab` and selection ring (`ring-2 ring-blue-500`) when selected
 2. Style to match existing NeoKai dark theme, consistent with `WorkflowStepCard` visual language
-3. Add unit tests: renders step name, shows agent name, applies selected style, renders ports
+3. Add unit tests: renders step name, shows agent name, applies selected style, renders ports, start node shows START badge and green border
 
 **Acceptance criteria**:
 - Node renders step name and agent name correctly

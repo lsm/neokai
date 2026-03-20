@@ -14,17 +14,20 @@ Build a side panel that appears when a node or edge is selected, allowing users 
 
 **Subtasks**:
 1. Create `packages/web/src/components/space/visual-editor/NodeConfigPanel.tsx`:
-   - Props: `step` (StepDraft), `agents` (SpaceAgent[]), `entryCondition`, `exitCondition`, `isFirst`, `isLast`, `onUpdate`, `onUpdateEntryCondition`, `onUpdateExitCondition`, `onClose`, `onDelete`
+   - Props: `step` (StepDraft), `agents` (SpaceAgent[]), `entryCondition`, `exitCondition`, `isStartNode`, `onUpdate`, `onUpdateEntryCondition`, `onUpdateExitCondition`, `onSetAsStart`, `onClose`, `onDelete`
    - Render a right-anchored panel with header (step name + close button) and scrollable body
    - Fields: Step Name input, Agent dropdown, Entry Gate selector (reuse `GateConfig` pattern from WorkflowStepCard), Exit Gate selector, Instructions textarea
-   - Delete Step button at bottom with confirmation
+   - **"Set as Start" button**: Prominently placed below the step name. When clicked, calls `onSetAsStart(stepId)` which updates `startStepId` in the parent state. Button is disabled/hidden when the node is already the start node. This is the explicit, primary mechanism for designating the start node — no heuristic-based detection.
+   - Delete Step button at bottom with confirmation (disabled for start node — user must designate another start node first)
 2. Extract the `GateConfig` sub-component from `WorkflowStepCard.tsx` into a shared file `packages/web/src/components/space/visual-editor/GateConfig.tsx` so both the old editor and the visual editor can use it
 3. Style consistent with NeoKai dark theme; panel animates in from right
-4. Add tests: renders all fields, updates propagate on change, delete triggers confirmation
+4. Add tests: renders all fields, updates propagate on change, delete triggers confirmation, "Set as Start" button works and is disabled for current start node
 
 **Acceptance criteria**:
 - Panel appears when a node is selected, disappears on close or deselect
 - All step properties can be edited inline
+- "Set as Start" button correctly designates the selected node as start node
+- Start node cannot be deleted until another node is designated as start
 - Gate condition type changes work (always, human, condition with expression)
 - Delete step works with confirmation
 - Tests pass
