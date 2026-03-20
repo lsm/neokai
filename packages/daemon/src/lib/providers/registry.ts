@@ -11,6 +11,7 @@
 
 import { createLogger } from '@neokai/shared/logger';
 import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
+import type { Provider as ProviderIdStr } from '@neokai/shared';
 
 const log = createLogger('kai:providers:registry');
 
@@ -235,4 +236,25 @@ export function getProviderRegistry(): ProviderRegistry {
  */
 export function resetProviderRegistry(): void {
 	registryInstance = null;
+}
+
+/**
+ * Infer the provider for a given model ID based on known naming conventions.
+ *
+ * This is a static heuristic that avoids loading the full provider registry
+ * (which may require optional SDK dependencies). It covers all known provider
+ * model naming conventions:
+ * - `glm-*` → 'glm'
+ * - `minimax-*` → 'minimax'
+ * - `gpt-*` → 'anthropic-codex' (Codex bridge models like gpt-5.3-codex)
+ * - Everything else → 'anthropic' (standard Claude models, and Copilot models
+ *   which share Claude model IDs and are routed via explicit providerId)
+ *
+ * @public Exported so callers that cannot use the full registry can still infer providers.
+ */
+export function inferProviderForModel(modelId: string): ProviderIdStr {
+	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
+	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
+	return 'anthropic';
 }

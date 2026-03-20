@@ -8,7 +8,7 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState, Provider } from '@neokai/shared';
+import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -29,6 +29,7 @@ import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from '../managers/room-manager';
 import { WorktreeManager } from '../../worktree-manager';
+import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 
 const log = new Logger('room-runtime-service');
@@ -432,16 +433,6 @@ export class RoomRuntimeService {
 		return runtime;
 	}
 
-	/**
-	 * Infer the provider for a given model ID based on known naming conventions.
-	 * This avoids loading the full provider registry (which requires optional SDK deps).
-	 */
-	private resolveProviderForModel(modelId: string): Provider {
-		if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
-		if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
-		return 'anthropic';
-	}
-
 	private setupRoomAgentSession(
 		room: Room,
 		groupRepo: SessionGroupRepository,
@@ -476,7 +467,7 @@ export class RoomRuntimeService {
 				const sessionModel = sessionData.config.model;
 				if (currentModel && sessionModel !== currentModel) {
 					try {
-						const newProvider = this.resolveProviderForModel(currentModel);
+						const newProvider = inferProviderForModel(currentModel);
 						await this.ctx.sessionManager.updateSession(roomChatSessionId, {
 							config: { ...sessionData.config, model: currentModel, provider: newProvider },
 						});

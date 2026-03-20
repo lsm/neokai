@@ -13,22 +13,13 @@
  * - agents.cli.list - List detected CLI agents
  */
 
-import type { MessageHub, WorkspacePath, Provider } from '@neokai/shared';
-
-/**
- * Infer the provider for a given model ID based on known naming conventions.
- * This avoids loading the full provider registry (which requires optional SDK deps).
- */
-function inferProviderForModel(modelId: string): Provider {
-	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
-	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
-	return 'anthropic';
-}
+import type { MessageHub, WorkspacePath } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
+import { inferProviderForModel } from '../providers/registry';
 import { Logger } from '../logger';
 
 const log = new Logger('room-handlers');
@@ -75,6 +66,7 @@ export function setupRoomHandlers(
 					workspacePath: defaultPath ?? allowedPaths[0]?.path,
 					config: {
 						model: room.defaultModel,
+						provider: room.defaultModel ? inferProviderForModel(room.defaultModel) : undefined,
 					},
 					sessionType: 'room_chat',
 					roomId: room.id,

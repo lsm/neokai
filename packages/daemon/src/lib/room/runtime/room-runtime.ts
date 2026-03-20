@@ -73,6 +73,7 @@ import {
 } from './lifecycle-hooks';
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 import { getNextRunAt } from './cron-utils';
+import { inferProviderForModel } from '../../providers/registry';
 
 const log = new Logger('room-runtime');
 
@@ -350,13 +351,11 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Infer the provider for a given model ID using a simple naming heuristic.
-	 * Returns 'anthropic' by default if no other provider prefix is matched.
+	 * Infer the provider for a given model ID using naming conventions.
+	 * Delegates to the shared inferProviderForModel utility.
 	 */
 	private resolveProviderForModel(modelId: string): string {
-		if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
-		if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
-		return 'anthropic';
+		return inferProviderForModel(modelId);
 	}
 
 	/**
