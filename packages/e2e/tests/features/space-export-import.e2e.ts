@@ -20,6 +20,8 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
+const SPACE_NAME = 'E2E Export Import Space';
+
 async function createTestSpace(page: Page): Promise<{
 	spaceId: string;
 	agentId: string;
@@ -27,30 +29,44 @@ async function createTestSpace(page: Page): Promise<{
 }> {
 	await waitForWebSocketConnected(page);
 	const wsRoot = await getWorkspaceRoot(page);
-	const uniquePath = `${wsRoot}/e2e-export-import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-	return page.evaluate(async (workspacePath) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
+	return page.evaluate(
+		async ({ workspacePath, name }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
 
-		// Create a space
-		const spaceRes = await hub.request('space.create', {
-			name: 'E2E Export Import Space',
-			description: 'Test space for export/import E2E tests',
-			workspacePath,
-		});
-		const spaceId = (spaceRes as { space: { id: string } }).space.id;
+			// Delete any leftover space from a previous failed run
+			try {
+				const spaces = await hub.request('space.list', {});
+				const list = (spaces as { spaces: Array<{ id: string; workspacePath: string }> }).spaces;
+				const existing = list.find((s) => s.workspacePath === workspacePath);
+				if (existing) {
+					await hub.request('space.delete', { id: existing.id });
+				}
+			} catch {
+				// Ignore cleanup errors
+			}
 
-		// Create an agent in the space
-		const agentRes = await hub.request('spaceAgent.create', {
-			spaceId,
-			name: 'Test Coder',
-			role: 'coder',
-			description: 'A test coder agent',
-		});
-		const agentId = (agentRes as { agent: { id: string } }).agent.id;
+			// Create a space
+			const spaceRes = await hub.request('space.create', {
+				name,
+				description: 'Test space for export/import E2E tests',
+				workspacePath,
+			});
+			const spaceId = (spaceRes as { space: { id: string } }).space.id;
 
-		return { spaceId, agentId, agentName: 'Test Coder' };
-	}, uniquePath);
+			// Create an agent in the space
+			const agentRes = await hub.request('spaceAgent.create', {
+				spaceId,
+				name: 'Test Coder',
+				role: 'coder',
+				description: 'A test coder agent',
+			});
+			const agentId = (agentRes as { agent: { id: string } }).agent.id;
+
+			return { spaceId, agentId, agentName: 'Test Coder' };
+		},
+		{ workspacePath: wsRoot, name: SPACE_NAME }
+	);
 }
 
 async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
