@@ -88,14 +88,21 @@ describe('SpaceWorkflowRunRepository', () => {
 	});
 
 	describe('getActiveRuns', () => {
-		it('returns only pending/in_progress runs', () => {
+		it('returns only in_progress runs (excludes pending and completed)', () => {
+			// 'pending' is a transient state that should NOT appear in active runs
 			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
-			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
-			repo.updateStatus(r2.id, 'completed');
+
+			// 'in_progress' — should appear
+			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Active' });
+			repo.updateStatus(r2.id, 'in_progress');
+
+			// 'completed' — should not appear
+			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
+			repo.updateStatus(r3.id, 'completed');
 
 			const active = repo.getActiveRuns(spaceId);
 			expect(active).toHaveLength(1);
-			expect(active[0].title).toBe('Pending');
+			expect(active[0].title).toBe('Active');
 		});
 	});
 

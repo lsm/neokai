@@ -542,41 +542,52 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 
 	describe('non-gate error propagation', () => {
+		/**
+		 * Creates a workflow directly via the repository (bypassing manager validation)
+		 * with a transition whose target step does not exist in the workflow's step list.
+		 * When advance() is called, followTransition() throws a non-gate Error.
+		 *
+		 * FK checks are temporarily disabled to allow the broken transition row to be
+		 * inserted. They are always re-enabled in a finally block.
+		 */
+		function buildWorkflowWithBrokenTransition(stepId: string, stepName: string): SpaceWorkflow {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				const repo = new SpaceWorkflowRepository(db);
+				return repo.createWorkflow({
+					spaceId: SPACE_ID,
+					name: `Broken ${Date.now()}-${Math.random()}`,
+					description: '',
+					steps: [{ id: stepId, name: stepName, agentId: AGENT_PLANNER }],
+					transitions: [
+						{ from: stepId, to: 'ghost-step-that-does-not-exist', condition: { type: 'always' } },
+					],
+					startStepId: stepId,
+					rules: [],
+					tags: [],
+				});
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+
 		test('executeTick() re-throws non-WorkflowGateError from a run tick', async () => {
-			const workflow = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-				],
-				[{ type: 'always' }]
-			);
+			// Use a workflow with a broken transition so advance() throws a non-gate Error:
+			// "Target step 'ghost-step-that-does-not-exist' not found in workflow ..."
+			const workflow = buildWorkflowWithBrokenTransition('step-err1', 'Plan');
 
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
-
-			// Corrupt the executor meta so buildExecutor() throws a non-gate error on next tick
-			// by pointing the workflow to a non-existent target step.
-			workflowRunRepo.updateRun(run.id, { currentStepId: 'nonexistent-step' });
 
 			await expect(runtime.executeTick()).rejects.toThrow();
 		});
 
 		test('executeTick() processes remaining runs after one run throws a non-gate error', async () => {
-			// Run 1: will be set to an invalid step to cause a non-gate error
-			const wf1 = buildLinearWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: STEP_A, name: 'Step A', agentId: AGENT_PLANNER },
-					{ id: STEP_B, name: 'Step B', agentId: AGENT_CODER },
-				],
-				[{ type: 'always' }]
-			);
-			// Run 2: normal single-step workflow that should complete normally
+			// Run 1: broken transition → advance() will throw a non-gate error
+			const wf1 = buildWorkflowWithBrokenTransition('step-err2', 'Plan Broken');
+			// Run 2: normal single-step workflow (terminal step → completes immediately)
 			const wf2 = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: STEP_C, name: 'Only Step', agentId: AGENT_PLANNER },
+				{ id: 'step-err3', name: 'Only Step', agentId: AGENT_PLANNER },
 			]);
 
 			const { run: run1, tasks: tasks1 } = await runtime.startWorkflowRun(
@@ -594,10 +605,7 @@ describe('SpaceRuntime', () => {
 			taskRepo.updateTask(tasks1[0].id, { status: 'completed' });
 			taskRepo.updateTask(tasks2[0].id, { status: 'completed' });
 
-			// Force run1 to an invalid step so the tick throws a non-gate error
-			workflowRunRepo.updateRun(run1.id, { currentStepId: 'nonexistent-step' });
-
-			// The tick should throw (from run1) but still process run2 first
+			// The tick should throw (from run1's broken transition) but still process run2
 			await expect(runtime.executeTick()).rejects.toThrow();
 
 			// run2 should have completed despite run1's error
