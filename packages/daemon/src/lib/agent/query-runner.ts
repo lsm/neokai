@@ -320,18 +320,24 @@ export class QueryRunner {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
+			const isConversationNotFound = errorMessage.includes('No conversation found');
 
 			// Preserve queued messages for transparent retry when auto-recovery is
-			// registered (startup timeout + provider switch).  In all other cases,
-			// clear the queue so stale messages don't bleed into the next session.
-			if (!isStartupTimeout || isAbortError || !this.ctx.onStartupTimeoutAutoRecover) {
+			// registered (startup timeout / conversation not found + provider switch).
+			// In all other cases, clear the queue so stale messages don't bleed
+			// into the next session.
+			if (
+				!(isStartupTimeout || isConversationNotFound) ||
+				isAbortError ||
+				!this.ctx.onStartupTimeoutAutoRecover
+			) {
 				messageQueue.clear();
 			}
 
-			// If startup timed out while trying to resume a session, clear sdkSessionId
-			// so the next attempt (Reset Agent, or sending a message) starts a fresh SDK
-			// session instead of repeatedly failing on the same problematic session file.
-			if (isStartupTimeout && session.sdkSessionId) {
+			// If startup timed out or conversation not found while trying to resume a session,
+			// clear sdkSessionId so the next attempt starts a fresh SDK session instead of
+			// repeatedly failing on the same problematic session file.
+			if ((isStartupTimeout || isConversationNotFound) && session.sdkSessionId) {
 				logger.error(
 					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
 						'Next query will start fresh without resume.'
@@ -341,15 +347,15 @@ export class QueryRunner {
 			}
 
 			if (!isAbortError) {
-				// On startup timeout, attempt transparent auto-recovery (up to 1 retry):
-				// restart the query without the old resume handle (sdkSessionId already
-				// cleared above).  Queued messages are preserved so the user's pending
-				// send is retried automatically without any visible error.
+				// On startup timeout or conversation not found, attempt transparent auto-recovery
+				// (up to 1 retry): restart the query without the old resume handle
+				// (sdkSessionId already cleared above). Queued messages are preserved so
+				// the user's pending send is retried automatically without any visible error.
 				// The retry limit (attempts <= 1) prevents infinite loops when the SDK is
 				// permanently broken: after 1 failed recovery, the error surfaces normally.
 				const startupRecoverAttempts = this.ctx.startupTimeoutAutoRecoverAttempts + 1;
 				const canAutoRecover =
-					isStartupTimeout &&
+					(isStartupTimeout || isConversationNotFound) &&
 					!this.ctx.isCleaningUp() &&
 					!!this.ctx.onStartupTimeoutAutoRecover &&
 					startupRecoverAttempts <= 1;
@@ -357,7 +363,7 @@ export class QueryRunner {
 				if (canAutoRecover) {
 					this.ctx.startupTimeoutAutoRecoverAttempts = startupRecoverAttempts;
 					logger.warn(
-						`SDK startup timeout — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
+						`SDK ${isConversationNotFound ? 'conversation not found' : 'startup timeout'} — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
 					);
 					// Defer until after finally{} completes so shared state is reset first.
 					setTimeout(() => {
@@ -368,7 +374,7 @@ export class QueryRunner {
 					// setIdle is handled by the finally block; skipping here avoids a double call.
 				} else {
 					// Reset counter so a future successfully-started session can recover again.
-					if (isStartupTimeout) {
+					if (isStartupTimeout || isConversationNotFound) {
 						this.ctx.startupTimeoutAutoRecoverAttempts = 0;
 					}
 					const apiErrorHandled = await this.handleApiValidationError(error);
