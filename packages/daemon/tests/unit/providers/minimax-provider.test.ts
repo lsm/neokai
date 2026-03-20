@@ -57,10 +57,11 @@ describe('MinimaxProvider', () => {
 
 			const models = await provider.getModels();
 
-			expect(models).toHaveLength(3);
+			expect(models).toHaveLength(4);
 			expect(models.map((m) => m.id)).toEqual([
 				'MiniMax-M2.5',
 				'MiniMax-M2.5-highspeed',
+				'MiniMax-M2.7',
 				'MiniMax-M2.7-highspeed',
 			]);
 		});
@@ -87,6 +88,7 @@ describe('MinimaxProvider', () => {
 		it('should own minimax- prefixed models', () => {
 			expect(provider.ownsModel('MiniMax-M2.5')).toBe(true);
 			expect(provider.ownsModel('MiniMax-M2.5-highspeed')).toBe(true);
+			expect(provider.ownsModel('MiniMax-M2.7')).toBe(true);
 			expect(provider.ownsModel('MiniMax-M2.7-highspeed')).toBe(true);
 			expect(provider.ownsModel('minimax-m2.5')).toBe(true);
 		});
@@ -123,6 +125,16 @@ describe('MinimaxProvider', () => {
 				ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M2.5',
 			});
 			expect(config.isAnthropicCompatible).toBe(true);
+		});
+
+		it('should route to MiniMax-M2.7 when that model is selected', () => {
+			process.env.MINIMAX_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('MiniMax-M2.7');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('MiniMax-M2.7');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('MiniMax-M2.7');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.7');
 		});
 
 		it('should route to MiniMax-M2.7-highspeed when that model is selected', () => {
@@ -198,12 +210,23 @@ describe('MinimaxProvider', () => {
 
 	describe('static models', () => {
 		it('should have static models defined', () => {
-			expect(MinimaxProvider.MODELS).toHaveLength(3);
+			expect(MinimaxProvider.MODELS).toHaveLength(4);
 			expect(MinimaxProvider.MODELS.map((m) => m.id)).toEqual([
 				'MiniMax-M2.5',
 				'MiniMax-M2.5-highspeed',
+				'MiniMax-M2.7',
 				'MiniMax-M2.7-highspeed',
 			]);
+		});
+
+		it('should have MiniMax-M2.7 with correct properties', () => {
+			const model = MinimaxProvider.MODELS.find((m) => m.id === 'MiniMax-M2.7');
+			expect(model).toBeDefined();
+			expect(model?.alias).toBe('minimax-m27');
+			expect(model?.family).toBe('minimax');
+			expect(model?.provider).toBe('minimax');
+			expect(model?.contextWindow).toBe(200000);
+			expect(model?.available).toBe(true);
 		});
 
 		it('should have MiniMax-M2.7-highspeed with correct properties', () => {
