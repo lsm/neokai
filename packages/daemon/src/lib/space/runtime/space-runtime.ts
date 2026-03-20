@@ -437,8 +437,11 @@ export class SpaceRuntime {
 		const currentStep = freshExecutor.getCurrentStep();
 		if (!currentStep) {
 			// Run is in_progress but currentStepId references a step that doesn't exist in
-			// the workflow. This is a data inconsistency — throw so the error surfaces rather
-			// than the run silently hanging forever.
+			// the workflow. This is a data inconsistency — cancel the run and clean up maps
+			// so it is not rehydrated on every subsequent restart into the same throw loop.
+			this.executors.delete(runId);
+			this.executorMeta.delete(runId);
+			this.config.workflowRunRepo.updateStatus(runId, 'cancelled');
 			throw new Error(
 				`Run "${runId}" has currentStepId "${run.currentStepId}" not found in workflow "${run.workflowId}"`
 			);

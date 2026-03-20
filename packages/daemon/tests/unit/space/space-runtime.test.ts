@@ -623,6 +623,31 @@ describe('SpaceRuntime', () => {
 			await expect(runtime.executeTick()).rejects.toThrow();
 		});
 
+		test('processRunTick cancels and removes run when currentStepId is inconsistent with workflow', async () => {
+			// Create a valid workflow and start a run normally
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(runtime.executorCount).toBe(1);
+
+			// Externally corrupt the run's currentStepId to a step that doesn't exist
+			// in the workflow (simulates data inconsistency, e.g. a workflow was updated
+			// after a run was started).
+			workflowRunRepo.updateRun(run.id, { currentStepId: 'step-that-does-not-exist' });
+
+			// executeTick() should throw (data inconsistency error), but also:
+			// 1. cancel the DB run record so it is not rehydrated on next restart
+			// 2. remove the executor and meta from the in-memory maps
+			await expect(runtime.executeTick()).rejects.toThrow('not found in workflow');
+
+			const updatedRun = workflowRunRepo.getRun(run.id)!;
+			expect(updatedRun.status).toBe('cancelled');
+			expect(runtime.executorCount).toBe(0);
+			expect(runtime.getExecutor(run.id)).toBeUndefined();
+		});
+
 		test('executeTick() processes remaining runs after one run throws a non-gate error', async () => {
 			// Run 1: broken transition → advance() will throw a non-gate error
 			const wf1 = buildWorkflowWithBrokenTransition('step-err2', 'Plan Broken');
