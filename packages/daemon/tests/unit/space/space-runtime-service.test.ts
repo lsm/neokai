@@ -42,6 +42,7 @@ const mockSpace: Space = {
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
 	return {
 		getSpace: mock(async () => space),
+		listSpaces: mock(async () => []),
 	} as unknown as SpaceManager;
 }
 
