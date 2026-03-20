@@ -34,6 +34,8 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
+import { selectWorkflow } from './workflow-selector';
+import type { WorkflowSelectionContext } from './workflow-selector';
 import { Logger } from '../../logger';
 
 const log = new Logger('space-runtime');
@@ -309,6 +311,23 @@ export class SpaceRuntime {
 		return workflow.rules.filter(
 			(r) => !r.appliesTo || r.appliesTo.length === 0 || r.appliesTo.includes(stepId)
 		);
+	}
+
+	/**
+	 * Resolve the best workflow for a new run using the workflow selection algorithm.
+	 *
+	 * Accepts an optional explicit `workflowId`. When omitted, auto-selects via
+	 * tag-based and keyword-based heuristics. Returns null when no workflow matches
+	 * (caller should create a standalone task instead).
+	 *
+	 * This is a thin integration point: it loads the available workflows for the
+	 * space and delegates to the pure `selectWorkflow()` function.
+	 */
+	resolveWorkflowForRun(
+		context: Omit<WorkflowSelectionContext, 'availableWorkflows'>
+	): SpaceWorkflow | null {
+		const availableWorkflows = this.config.spaceWorkflowManager.listWorkflows(context.spaceId);
+		return selectWorkflow({ ...context, availableWorkflows });
 	}
 
 	/**

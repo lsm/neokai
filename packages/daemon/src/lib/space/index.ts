@@ -31,6 +31,15 @@ export type {
 export { SpaceRuntime } from './runtime/space-runtime';
 export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
 
+export { selectWorkflow } from './runtime/workflow-selector';
+export type { WorkflowSelectionContext } from './runtime/workflow-selector';
+
+export {
+	createSpaceAgentToolHandlers,
+	createSpaceAgentMcpServer,
+} from './tools/space-agent-tools';
+export type { SpaceAgentToolsConfig, SpaceAgentMcpServer } from './tools/space-agent-tools';
+
 export {
 	exportAgent,
 	exportWorkflow,
