@@ -55,12 +55,14 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 
 	const handleRunSelect = (runId: string) => {
 		setActiveRunId(runId);
+		setActiveTab('dashboard');
 		// Clear task selection when switching to a run
 		currentSpaceTaskIdSignal.value = null;
 	};
 
 	const handleTaskSelect = (taskId: string) => {
 		setActiveRunId(null);
+		setActiveTab('dashboard');
 		navigateToSpaceTask(spaceId, taskId);
 	};
 
@@ -91,7 +93,6 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	}
 
 	const space = spaceStore.space.value;
-	const agents = spaceStore.agents.value;
 	const workflows = spaceStore.workflows.value;
 
 	return (
@@ -102,8 +103,10 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 					spaceId={spaceId}
 					activeTaskId={activeTaskId}
 					activeRunId={activeRunId}
+					activeView={activeTab}
 					onRunSelect={handleRunSelect}
 					onTaskSelect={handleTaskSelect}
+					onAgentsClick={() => setActiveTab('agents')}
 				/>
 			</div>
 
@@ -131,9 +134,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 				{/* Tab content */}
 				<div class="flex-1 overflow-hidden">
 					{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
-					{activeTab === 'agents' && space && (
-						<SpaceAgentList spaceId={spaceId} spaceName={space.name} agents={agents} />
-					)}
+					{activeTab === 'agents' && <SpaceAgentList />}
 					{activeTab === 'workflows' && space && (
 						<WorkflowList spaceId={spaceId} spaceName={space.name} workflows={workflows} />
 					)}
