@@ -54,6 +54,21 @@ describe('Button', () => {
 			const button = container.querySelector('button');
 			expect(button?.className).toContain('bg-red-600');
 		});
+
+		it('should render approve variant with emerald background', () => {
+			const { container } = render(<Button variant="approve">Approve</Button>);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('bg-emerald-600');
+			expect(button?.className).toContain('hover:bg-emerald-700');
+			expect(button?.className).toContain('text-white');
+		});
+
+		it('should render interrupt variant with amber outline', () => {
+			const { container } = render(<Button variant="interrupt">Interrupt</Button>);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('border-amber-500');
+			expect(button?.className).toContain('text-amber-500');
+		});
 	});
 
 	describe('Sizes', () => {
@@ -61,6 +76,14 @@ describe('Button', () => {
 			const { container } = render(<Button>Medium</Button>);
 			const button = container.querySelector('button');
 			expect(button?.className).toContain('px-4');
+		});
+
+		it('should render xs size', () => {
+			const { container } = render(<Button size="xs">XSmall</Button>);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('h-6');
+			expect(button?.className).toContain('px-2');
+			expect(button?.className).toContain('text-xs');
 		});
 
 		it('should render small size', () => {
@@ -206,6 +229,16 @@ describe('Button', () => {
 			const { container } = render(<Button disabled>Disabled</Button>);
 			const button = container.querySelector('button');
 			expect(button?.className).toContain('disabled:cursor-not-allowed');
+		});
+	});
+
+	describe('Transition', () => {
+		it('should use quick transition from design tokens', () => {
+			const { container } = render(<Button>Transition</Button>);
+			const button = container.querySelector('button');
+			expect(button?.className).toContain('transition-all');
+			expect(button?.className).toContain('duration-150');
+			expect(button?.className).toContain('ease-out');
 		});
 	});
 });
