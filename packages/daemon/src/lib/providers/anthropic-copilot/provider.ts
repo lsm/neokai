@@ -679,9 +679,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	 * for 5 minutes by `resolveGitHubToken`. Expected latency: 3–15 s (subprocess spawn
 	 * + OAuth exchange). A 20 s hard timeout prevents indefinite hangs on slow networks.
 	 *
-	 * Note: uses `gpt-4o-mini` as the validation model. If Copilot ever removes that
-	 * model, validation will spuriously return false (prompting the user to re-authenticate
-	 * via OAuth rather than silently succeeding).
+	 * Note: uses `gpt-5-mini` as the validation model — the designated free-tier
+	 * Copilot model used across CI. If Copilot ever removes that model, validation
+	 * will spuriously return false (prompting the user to re-authenticate via OAuth
+	 * rather than silently succeeding).
 	 */
 	private async validateCopilotToken(token: string): Promise<boolean> {
 		const TIMEOUT_MS = 20_000;
@@ -694,7 +695,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 			const session = await Promise.race([
 				client.createSession({
-					model: 'gpt-4o-mini',
+					model: 'gpt-5-mini',
 					onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
 				}),
 				new Promise<never>((_, reject) => {
