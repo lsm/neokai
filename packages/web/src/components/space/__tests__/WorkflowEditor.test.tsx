@@ -12,6 +12,7 @@
  * - Save calls spaceStore.createWorkflow with correct params
  * - Save calls spaceStore.updateWorkflow when editing
  * - Error shown when name is empty on save
+ * - Error shown when a step has no agent assigned
  * - Cancel fires onCancel
  */
 
@@ -47,7 +48,7 @@ vi.mock('../../../lib/utils', () => ({
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 
-import { WorkflowEditor, filterAgents } from '../WorkflowEditor';
+import { WorkflowEditor, filterAgents, initFromWorkflow } from '../WorkflowEditor';
 
 function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
 	return {
@@ -86,6 +87,12 @@ const defaultProps = {
 	onSave: vi.fn(),
 	onCancel: vi.fn(),
 };
+
+/** Select an agent on the currently-expanded step card */
+function selectAgent(container: HTMLElement, agentId: string) {
+	const agentSelect = container.querySelectorAll('select')[0];
+	fireEvent.change(agentSelect, { target: { value: agentId } });
+}
 
 describe('WorkflowEditor', () => {
 	beforeEach(() => {
@@ -195,6 +202,16 @@ describe('WorkflowEditor', () => {
 			expect(filtered.map((a) => a.name)).toEqual(['planner', 'coder']);
 		});
 
+		it('excludes agents with role "leader" regardless of name', () => {
+			const agents: SpaceAgent[] = [
+				makeAgent('1', 'orchestrator', 'leader'),
+				makeAgent('2', 'coordinator', 'Leader'),
+				makeAgent('3', 'coder', 'coder'),
+			];
+			const filtered = filterAgents(agents);
+			expect(filtered.map((a) => a.name)).toEqual(['coder']);
+		});
+
 		it('preserves all non-leader agents', () => {
 			const agents: SpaceAgent[] = [
 				makeAgent('1', 'planner'),
@@ -204,6 +221,45 @@ describe('WorkflowEditor', () => {
 			];
 			const filtered = filterAgents(agents);
 			expect(filtered).toHaveLength(4);
+		});
+	});
+
+	describe('initFromWorkflow', () => {
+		it('returns ordered steps following startStepId', () => {
+			const wf = makeWorkflow();
+			const { steps } = initFromWorkflow(wf);
+			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code']);
+		});
+
+		it('returns transitions between sequential steps', () => {
+			const wf = makeWorkflow();
+			const { transitions } = initFromWorkflow(wf);
+			expect(transitions).toHaveLength(1);
+			expect(transitions[0].type).toBe('always');
+		});
+
+		it('preserves transition condition type', () => {
+			const s1 = 'step-1';
+			const s2 = 'step-2';
+			const wf = makeWorkflow({
+				transitions: [{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' }, order: 0 }],
+			});
+			const { transitions } = initFromWorkflow(wf);
+			expect(transitions[0].type).toBe('human');
+		});
+
+		it('appends orphaned steps not reachable from startStepId', () => {
+			const wf = makeWorkflow({
+				steps: [
+					{ id: 'step-1', name: 'Plan', agentId: 'a1' },
+					{ id: 'step-2', name: 'Code', agentId: 'a2' },
+					{ id: 'orphan', name: 'Orphan', agentId: 'a3' },
+				],
+				transitions: [{ id: 'tr-1', from: 'step-1', to: 'step-2', order: 0 }],
+				startStepId: 'step-1',
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code', 'Orphan']);
 		});
 	});
 
@@ -293,10 +349,24 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
+		it('shows error when a step has no agent assigned', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
+			const nameInput = container.querySelector('input[placeholder="e.g. Feature Development"]');
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			// Do NOT select an agent — step.agentId stays empty
+			fireEvent.click(getByText('Create Workflow'));
+			await waitFor(() => {
+				expect(getByText('Step 1 requires an agent.')).toBeTruthy();
+			});
+			expect(mockCreateWorkflow).not.toHaveBeenCalled();
+		});
+
 		it('calls createWorkflow on save in create mode', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector('input[placeholder="e.g. Feature Development"]');
 			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			// Select an agent so validation passes
+			selectAgent(container, 'agent-1');
 			fireEvent.click(getByText('Create Workflow'));
 			await waitFor(() => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(
@@ -320,6 +390,7 @@ describe('WorkflowEditor', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector('input[placeholder="e.g. Feature Development"]');
 			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
 			fireEvent.click(getByText('Create Workflow'));
 			await waitFor(() => {
 				expect(defaultProps.onSave).toHaveBeenCalledOnce();
@@ -331,6 +402,7 @@ describe('WorkflowEditor', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector('input[placeholder="e.g. Feature Development"]');
 			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
+			selectAgent(container, 'agent-1');
 			fireEvent.click(getByText('Create Workflow'));
 			await waitFor(() => {
 				expect(getByText('Server error')).toBeTruthy();
@@ -341,8 +413,12 @@ describe('WorkflowEditor', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector('input[placeholder="e.g. Feature Development"]');
 			fireEvent.input(nameInput, { target: { value: 'Test' } });
+			// Select agent for first step
+			selectAgent(container, 'agent-1');
 			// Add a second step
 			fireEvent.click(getByText('Add Step'));
+			// Select agent for second step (it becomes expanded)
+			selectAgent(container, 'agent-2');
 			fireEvent.click(getByText('Create Workflow'));
 			await waitFor(() => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(

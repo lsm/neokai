@@ -50,7 +50,7 @@ const TEMPLATES: WorkflowTemplate[] = [
 // ============================================================================
 
 function makeLocalId(): string {
-	return Math.random().toString(36).slice(2);
+	return crypto.randomUUID();
 }
 
 function makeEmptyStep(): StepDraft {
@@ -61,9 +61,77 @@ function makeDefaultCondition(): ConditionDraft {
 	return { type: 'always' };
 }
 
-/** Filter agents: exclude any agent named 'leader' (case-insensitive) */
+/**
+ * Filter agents for step assignment: exclude any agent whose name or role is
+ * 'leader' (case-insensitive). The 'leader' role is reserved for the
+ * orchestration layer and must not be assigned to workflow steps.
+ */
 export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
-	return agents.filter((a) => a.name.toLowerCase() !== 'leader');
+	return agents.filter(
+		(a) => a.name.toLowerCase() !== 'leader' && a.role?.toLowerCase() !== 'leader'
+	);
+}
+
+/**
+ * Derive ordered steps and positional transition conditions from an existing
+ * workflow. Graph traversal follows startStepId through outgoing transitions.
+ * Orphaned steps (not reachable from startStepId) are appended at the end.
+ *
+ * Defined outside the component so it is not recreated on each render and
+ * is clearly a pure initialization helper, not a reactive dependency.
+ */
+export function initFromWorkflow(wf: SpaceWorkflow): {
+	steps: StepDraft[];
+	transitions: ConditionDraft[];
+} {
+	const stepMap = new Map(wf.steps.map((s) => [s.id, s]));
+	const ordered: StepDraft[] = [];
+	const visited = new Set<string>();
+	let currentId: string | undefined = wf.startStepId;
+
+	while (currentId && !visited.has(currentId)) {
+		visited.add(currentId);
+		const s = stepMap.get(currentId);
+		if (s) {
+			ordered.push({
+				localId: makeLocalId(),
+				id: s.id,
+				name: s.name,
+				agentId: s.agentId,
+				instructions: s.instructions ?? '',
+			});
+		}
+		const outgoing = wf.transitions
+			.filter((t) => t.from === currentId)
+			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+		currentId = outgoing[0]?.to;
+	}
+
+	for (const s of wf.steps) {
+		if (!visited.has(s.id)) {
+			ordered.push({
+				localId: makeLocalId(),
+				id: s.id,
+				name: s.name,
+				agentId: s.agentId,
+				instructions: s.instructions ?? '',
+			});
+		}
+	}
+
+	const conditions: ConditionDraft[] = [];
+	for (let i = 0; i < ordered.length - 1; i++) {
+		const fromId = ordered[i].id;
+		const toId = ordered[i + 1].id;
+		const t = wf.transitions.find((tr) => tr.from === fromId && tr.to === toId);
+		conditions.push(
+			t?.condition
+				? { type: t.condition.type, expression: t.condition.expression }
+				: { type: 'always' }
+		);
+	}
+
+	return { steps: ordered, transitions: conditions };
 }
 
 // ============================================================================
@@ -79,65 +147,6 @@ interface WorkflowEditorProps {
 
 export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorProps) {
 	const isEditing = !!workflow;
-
-	// Derive initial steps and transitions from an existing workflow (linear model)
-	function initFromWorkflow(wf: SpaceWorkflow): {
-		steps: StepDraft[];
-		transitions: ConditionDraft[];
-	} {
-		// Build ordered step list by following startStepId → transitions
-		const stepMap = new Map(wf.steps.map((s) => [s.id, s]));
-		const ordered: StepDraft[] = [];
-		const visited = new Set<string>();
-		let currentId: string | undefined = wf.startStepId;
-
-		while (currentId && !visited.has(currentId)) {
-			visited.add(currentId);
-			const s = stepMap.get(currentId);
-			if (s) {
-				ordered.push({
-					localId: makeLocalId(),
-					id: s.id,
-					name: s.name,
-					agentId: s.agentId,
-					instructions: s.instructions ?? '',
-				});
-			}
-			// Find the next step via transitions (lowest order first)
-			const outgoing = wf.transitions
-				.filter((t) => t.from === currentId)
-				.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-			currentId = outgoing[0]?.to;
-		}
-
-		// Remaining steps not reachable from startStepId
-		for (const s of wf.steps) {
-			if (!visited.has(s.id)) {
-				ordered.push({
-					localId: makeLocalId(),
-					id: s.id,
-					name: s.name,
-					agentId: s.agentId,
-					instructions: s.instructions ?? '',
-				});
-			}
-		}
-
-		// Build transition conditions in step order
-		const conditions: ConditionDraft[] = [];
-		for (let i = 0; i < ordered.length - 1; i++) {
-			const fromId = ordered[i].id;
-			const toId = ordered[i + 1].id;
-			const t = wf.transitions.find((tr) => tr.from === fromId && tr.to === toId);
-			conditions.push(
-				t?.condition
-					? { type: t.condition.type, expression: t.condition.expression }
-					: { type: 'always' }
-			);
-		}
-
-		return { steps: ordered, transitions: conditions };
-	}
 
 	const initial = workflow ? initFromWorkflow(workflow) : null;
 
@@ -164,10 +173,8 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		setSteps((prev) => prev.filter((_, i) => i !== index));
 		setTransitions((prev) => {
 			// When removing step[i]:
-			// - transition[i-1] (incoming) and transition[i] (outgoing) both need to go
-			// - For first step: remove transition[0] only
-			// - For last step: remove transition[n-2] only
-			// - For middle: remove transition[i-1] (we keep the outgoing, dropping incoming)
+			// - For first step (index=0): remove transition[0] — drop the gate after it
+			// - For any other step: remove transition[i-1] — drop the gate before it
 			if (prev.length === 0) return prev;
 			if (index === 0) return prev.slice(1);
 			return prev.filter((_, ti) => ti !== index - 1);
@@ -190,21 +197,10 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 			return next;
 		});
 
-		// Swap adjacent transition: when swapping steps[i] ↔ steps[i+1],
-		// the transition between them stays; but the transitions on the other
-		// sides are unaffected. Only the transition between the two swapped
-		// steps (at index min(i, other)) needs no change — it still connects them.
-		// However if we conceptually track transition[i] as "after step[i]",
-		// swapping steps means we swap transition[i-1] and transition[i] (the
-		// incoming transitions). For simplicity just swap the two relevant entries.
-		const minIdx = Math.min(index, other);
-		if (minIdx < transitions.length && minIdx > 0) {
-			setTransitions((prev) => {
-				const next = [...prev];
-				[next[minIdx - 1], next[minIdx]] = [next[minIdx], next[minIdx - 1]];
-				return next;
-			});
-		}
+		// Gate conditions are positional — transitions[i] represents the gate
+		// between position i and position i+1. Reordering adjacent steps does
+		// not change which positions exist, so transitions stay in place.
+		// This is consistent regardless of which positions are swapped.
 
 		setExpandedIndex(other);
 	}
@@ -257,6 +253,15 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		if (steps.length === 0) {
 			setError('A workflow must have at least one step.');
 			return;
+		}
+
+		// Validate each step has an agent assigned
+		for (let i = 0; i < steps.length; i++) {
+			if (!steps[i].agentId) {
+				setError(`Step ${i + 1} requires an agent.`);
+				setExpandedIndex(i);
+				return;
+			}
 		}
 
 		setSaving(true);

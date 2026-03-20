@@ -10,11 +10,12 @@
  * - Mini step visualization renders dots
  * - "Create Workflow" header button fires onCreateWorkflow
  * - Edit button on card fires onEditWorkflow with correct ID
+ * - Delete confirmation flow (inline confirm pattern)
  * - Real-time updates via SpaceStore signal
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceWorkflow } from '@neokai/shared';
 
@@ -23,11 +24,14 @@ import type { SpaceWorkflow } from '@neokai/shared';
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 
+const mockDeleteWorkflow = vi.fn();
+
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
 		return {
 			workflows: mockWorkflows,
 			loading: mockLoading,
+			deleteWorkflow: mockDeleteWorkflow,
 		};
 	},
 }));
@@ -70,6 +74,7 @@ describe('WorkflowList', () => {
 		cleanup();
 		mockWorkflows.value = [];
 		mockLoading.value = false;
+		mockDeleteWorkflow.mockResolvedValue(undefined);
 		defaultProps.onCreateWorkflow.mockClear();
 		defaultProps.onEditWorkflow.mockClear();
 	});
@@ -160,14 +165,8 @@ describe('WorkflowList', () => {
 
 	it('calls onEditWorkflow with workflow ID when Edit clicked', async () => {
 		mockWorkflows.value = [makeWorkflow({ id: 'wf-abc' })];
-		const { container } = render(<WorkflowList {...defaultProps} />);
-		const card = container.querySelector('.group');
-		// Hover to reveal edit button (opacity-0 group-hover:opacity-100)
-		// In tests, we just query for the button text
-		const editBtn = container.querySelector('button.opacity-0');
-		// fireEvent.click won't work on opacity-0 element if it's not visible,
-		// but happy-dom doesn't respect CSS visibility so click should still work
-		fireEvent.click(editBtn);
+		const { getByText } = render(<WorkflowList {...defaultProps} />);
+		fireEvent.click(getByText('Edit'));
 		expect(defaultProps.onEditWorkflow).toHaveBeenCalledWith('wf-abc');
 	});
 
@@ -203,5 +202,40 @@ describe('WorkflowList', () => {
 		const { container } = render(<WorkflowList {...defaultProps} />);
 		// Human gate indicator: bg-yellow-400 class on mini connector dot
 		expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
+	});
+
+	describe('delete workflow', () => {
+		it('shows inline Delete? confirmation when trash icon clicked', () => {
+			mockWorkflows.value = [makeWorkflow()];
+			const { getByText, container } = render(<WorkflowList {...defaultProps} />);
+			// Find the delete button (trash icon button, second action button)
+			const actionBtns = container.querySelectorAll('button[title="Delete workflow"]');
+			expect(actionBtns.length).toBe(1);
+			fireEvent.click(actionBtns[0]);
+			expect(getByText('Delete?')).toBeTruthy();
+			expect(getByText('Confirm')).toBeTruthy();
+			expect(getByText('Cancel')).toBeTruthy();
+		});
+
+		it('calls deleteWorkflow when Confirm clicked', async () => {
+			mockWorkflows.value = [makeWorkflow({ id: 'wf-del' })];
+			const { getByText, container } = render(<WorkflowList {...defaultProps} />);
+			const trashBtn = container.querySelector('button[title="Delete workflow"]');
+			fireEvent.click(trashBtn);
+			fireEvent.click(getByText('Confirm'));
+			await waitFor(() => {
+				expect(mockDeleteWorkflow).toHaveBeenCalledWith('wf-del');
+			});
+		});
+
+		it('hides confirmation when Cancel clicked', () => {
+			mockWorkflows.value = [makeWorkflow()];
+			const { getByText, queryByText, container } = render(<WorkflowList {...defaultProps} />);
+			const trashBtn = container.querySelector('button[title="Delete workflow"]');
+			fireEvent.click(trashBtn);
+			expect(getByText('Delete?')).toBeTruthy();
+			fireEvent.click(getByText('Cancel'));
+			expect(queryByText('Delete?')).toBeNull();
+		});
 	});
 });

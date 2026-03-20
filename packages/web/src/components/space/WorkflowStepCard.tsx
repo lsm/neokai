@@ -40,7 +40,8 @@ interface GateConfigProps {
 	condition: ConditionDraft;
 	onChange: (cond: ConditionDraft) => void;
 	label: string;
-	disabled?: boolean;
+	/** Message shown when the gate is not configurable (first/last step boundary) */
+	terminalMessage?: string;
 }
 
 const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
@@ -49,14 +50,12 @@ const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
 	condition: 'Shell Condition',
 };
 
-function GateConfig({ condition, onChange, label, disabled }: GateConfigProps) {
+function GateConfig({ condition, onChange, label, terminalMessage }: GateConfigProps) {
 	return (
 		<div class="space-y-1.5">
 			<label class="text-xs font-medium text-gray-400">{label}</label>
-			{disabled ? (
-				<p class="text-xs text-gray-600 italic">
-					{label === 'Entry Gate' ? 'Workflow starts here' : 'Workflow ends here'}
-				</p>
+			{terminalMessage ? (
+				<p class="text-xs text-gray-600 italic">{terminalMessage}</p>
 			) : (
 				<>
 					<select
@@ -345,7 +344,7 @@ export function WorkflowStepCard({
 						label="Entry Gate"
 						condition={entryCondition ?? { type: 'always' }}
 						onChange={onUpdateEntryCondition}
-						disabled={isFirst}
+						terminalMessage={isFirst ? 'Workflow starts here' : undefined}
 					/>
 
 					{/* Exit Gate */}
@@ -353,7 +352,7 @@ export function WorkflowStepCard({
 						label="Exit Gate"
 						condition={exitCondition ?? { type: 'always' }}
 						onChange={onUpdateExitCondition}
-						disabled={isLast}
+						terminalMessage={isLast ? 'Workflow ends here' : undefined}
 					/>
 
 					{/* Instructions */}
