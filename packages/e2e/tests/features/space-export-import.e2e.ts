@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
 
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
@@ -26,7 +26,9 @@ async function createTestSpace(page: Page): Promise<{
 	agentName: string;
 }> {
 	await waitForWebSocketConnected(page);
-	return page.evaluate(async () => {
+	const wsRoot = await getWorkspaceRoot(page);
+	const uniquePath = `${wsRoot}/e2e-export-import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	return page.evaluate(async (workspacePath) => {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
@@ -34,7 +36,7 @@ async function createTestSpace(page: Page): Promise<{
 		const spaceRes = await hub.request('space.create', {
 			name: 'E2E Export Import Space',
 			description: 'Test space for export/import E2E tests',
-			workspacePath: '/tmp',
+			workspacePath,
 		});
 		const spaceId = (spaceRes as { space: { id: string } }).space.id;
 
@@ -48,7 +50,7 @@ async function createTestSpace(page: Page): Promise<{
 		const agentId = (agentRes as { agent: { id: string } }).agent.id;
 
 		return { spaceId, agentId, agentName: 'Test Coder' };
-	});
+	}, uniquePath);
 }
 
 async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
@@ -57,7 +59,7 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 		await page.evaluate(async (id) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) return;
-			await hub.request('space.delete', { spaceId: id });
+			await hub.request('space.delete', { id });
 		}, spaceId);
 	} catch {
 		// Best-effort cleanup
