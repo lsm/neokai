@@ -276,7 +276,11 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			provider: config.model ? this.resolveProviderForModel(config.model) : undefined,
 			workerModel: config.workerModel,
+			workerProvider: config.workerModel
+				? this.resolveProviderForModel(config.workerModel)
+				: undefined,
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
@@ -286,7 +290,8 @@ export class RoomRuntime {
 		// Keep test and direct-runtime usage predictable: when no explicit leader model
 		// is provided, derive it from the initial room config.
 		if (!config.model || config.model.trim() === '') {
-			this.taskGroupManager.updateModel(this.resolveAgentModel(config.room, 'leader'));
+			const leaderModel = this.resolveAgentModel(config.room, 'leader');
+			this.taskGroupManager.updateModel(leaderModel, this.resolveProviderForModel(leaderModel));
 		}
 	}
 
@@ -345,6 +350,16 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Infer the provider for a given model ID using a simple naming heuristic.
+	 * Returns 'anthropic' by default if no other provider prefix is matched.
+	 */
+	private resolveProviderForModel(modelId: string): string {
+		if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
+		if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+		return 'anthropic';
+	}
+
+	/**
 	 * Return the freshest room snapshot available to the runtime.
 	 * Prefer newer snapshots by updatedAt so updateRoom() calls can take effect
 	 * immediately even if an external room provider still returns stale data.
@@ -376,7 +391,11 @@ export class RoomRuntime {
 		const config = (currentRoom.config ?? {}) as Record<string, unknown>;
 
 		// Keep TaskGroupManager model aligned to the current Leader model.
-		this.taskGroupManager.updateModel(this.resolveAgentModel(currentRoom, 'leader'));
+		const updatedLeaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		this.taskGroupManager.updateModel(
+			updatedLeaderModel,
+			this.resolveProviderForModel(updatedLeaderModel)
+		);
 
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
@@ -2780,6 +2799,8 @@ export class RoomRuntime {
 		}
 		const plannerModel = this.resolveAgentModel(currentRoom, 'planner');
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		const plannerProvider = this.resolveProviderForModel(plannerModel);
+		const leaderProvider = this.resolveProviderForModel(leaderModel);
 
 		// Build WorkerConfig for the Planner agent
 		// isPlanApproved uses a mutable ref — groupId is set after spawn() returns
@@ -2795,6 +2816,7 @@ export class RoomRuntime {
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
 			model: plannerModel,
+			provider: plannerProvider,
 			createDraftTask,
 			updateDraftTask,
 			removeDraftTask,
@@ -2814,6 +2836,7 @@ export class RoomRuntime {
 				workspacePath: this.taskGroupManager.workspacePath,
 				groupId: '', // not used by buildLeaderTaskContext
 				model: leaderModel,
+				provider: leaderProvider,
 				reviewContext: 'plan_review',
 			}),
 		};
@@ -2906,6 +2929,8 @@ export class RoomRuntime {
 		const workerRole = agentType === 'general' ? 'general' : 'coder';
 		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		const workerProvider = this.resolveProviderForModel(workerModel);
+		const leaderProvider = this.resolveProviderForModel(leaderModel);
 		let workerConfig: WorkerConfig;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
@@ -2917,6 +2942,7 @@ export class RoomRuntime {
 			workspacePath: this.taskGroupManager.workspacePath,
 			groupId: '',
 			model: leaderModel,
+			provider: leaderProvider,
 			reviewContext: 'code_review' as const,
 		};
 
@@ -2928,6 +2954,7 @@ export class RoomRuntime {
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: workerModel,
+				provider: workerProvider,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -2946,6 +2973,7 @@ export class RoomRuntime {
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: workerModel,
+				provider: workerProvider,
 				previousTaskSummaries,
 			};
 			workerConfig = {

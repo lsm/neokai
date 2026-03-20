@@ -76,6 +76,20 @@ export class ProviderRegistry {
 	}
 
 	/**
+	 * Find the first registered provider that owns this model ID.
+	 * Uses each provider's ownsModel() heuristic for auto-detection.
+	 * Returns undefined if no provider claims the model.
+	 */
+	findProviderForModel(modelId: string): Provider | undefined {
+		for (const provider of this.providers.values()) {
+			if (provider.ownsModel(modelId)) {
+				return provider;
+			}
+		}
+		return undefined;
+	}
+
+	/**
 	 * Resolve provider by explicit (modelId, providerId) pair — fully deterministic.
 	 *
 	 * Both the model ID and provider ID must be known at the call site. This is the
