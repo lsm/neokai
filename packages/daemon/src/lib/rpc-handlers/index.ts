@@ -60,6 +60,9 @@ import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
+import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
+import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
+import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -270,6 +273,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunTaskManagerFactory,
 		deps.daemonHub
 	);
+
+	// Provision the Global Spaces Agent session (spaces:global)
+	// Create shared state synchronously so the RPC handler is available immediately.
+	// The actual session creation and MCP wiring happens asynchronously.
+	const globalSpacesState: GlobalSpacesState = { activeSpaceId: null };
+	setupGlobalSpacesHandlers(deps.messageHub, globalSpacesState);
+
+	provisionGlobalSpacesAgent({
+		sessionManager: deps.sessionManager,
+		spaceManager: deps.spaceManager,
+		spaceAgentManager: deps.spaceAgentManager,
+		spaceWorkflowManager,
+		spaceRuntimeService,
+		taskRepo: spaceTaskRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		state: globalSpacesState,
+	}).catch((error) => {
+		log.error('Failed to provision global spaces agent:', error);
+	});
 
 	// Return result with cleanup function and exposed services
 	return {
