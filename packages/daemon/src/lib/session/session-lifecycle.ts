@@ -832,6 +832,10 @@ ${messageText.slice(0, 2000)}`;
 					pathToClaudeCodeExecutable: cliPath,
 					executable: isRunningUnderBun() ? 'bun' : undefined,
 					env: mergedEnv,
+					// Disable thinking for title generation — we only need a short text response.
+					// Without this, models with adaptive thinking (e.g. Opus 4.6) may return
+					// only thinking blocks with no text block, causing an empty-response error.
+					thinking: { type: 'disabled' },
 				},
 			});
 
