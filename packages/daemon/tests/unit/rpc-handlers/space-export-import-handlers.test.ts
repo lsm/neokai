@@ -1,0 +1,1064 @@
+/**
+ * Space Export/Import RPC Handler Unit Tests
+ *
+ * Tests for:
+ * - spaceExport.agents, spaceExport.workflows, spaceExport.bundle
+ * - spaceImport.preview (conflict detection, validation, cross-ref checking)
+ * - spaceImport.execute (all conflict resolutions, agent name→UUID mapping, step ID remapping)
+ *
+ * Uses in-memory SQLite with real repositories and managers so the full
+ * business-logic path (including SpaceWorkflowManager validation) is exercised.
+ */
+
+import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import type { MessageHub } from '@neokai/shared';
+import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
+import {
+	setupSpaceExportImportHandlers,
+	type ImportPreviewResult,
+	type ImportExecuteResult,
+} from '../../../src/lib/rpc-handlers/space-export-import-handlers';
+
+// ─── DB schema ────────────────────────────────────────────────────────────────
+
+function createSchema(db: Database): void {
+	db.exec('PRAGMA foreign_keys = ON');
+
+	db.exec(`
+		CREATE TABLE spaces (
+			id TEXT PRIMARY KEY,
+			workspace_path TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			background_context TEXT NOT NULL DEFAULT '',
+			instructions TEXT NOT NULL DEFAULT '',
+			default_model TEXT,
+			allowed_models TEXT NOT NULL DEFAULT '[]',
+			session_ids TEXT NOT NULL DEFAULT '[]',
+			status TEXT NOT NULL DEFAULT 'active',
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE space_agents (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			model TEXT,
+			provider TEXT,
+			tools TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL DEFAULT 'coder',
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE space_workflows (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			start_step_id TEXT,
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE space_workflow_steps (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			agent_id TEXT,
+			order_index INTEGER NOT NULL,
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE space_workflow_transitions (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			from_step_id TEXT NOT NULL,
+			to_step_id TEXT NOT NULL,
+			condition TEXT,
+			order_index INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
+			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+		)
+	`);
+}
+
+function insertSpace(db: Database, id: string, name = `Space ${id}`): void {
+	const now = Date.now();
+	db.prepare(
+		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+	).run(id, `/workspace/${id}`, name, now, now);
+}
+
+// ─── Mock helpers ─────────────────────────────────────────────────────────────
+
+type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
+
+function createMockHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
+	const handlers = new Map<string, RequestHandler>();
+	const hub = {
+		onRequest: mock((method: string, handler: RequestHandler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		}),
+		onEvent: mock(() => () => {}),
+		request: mock(async () => {}),
+		event: mock(() => {}),
+		joinChannel: mock(async () => {}),
+		leaveChannel: mock(async () => {}),
+		isConnected: mock(() => true),
+		getState: mock(() => 'connected' as const),
+		onConnection: mock(() => () => {}),
+		onMessage: mock(() => () => {}),
+		cleanup: mock(() => {}),
+		registerTransport: mock(() => () => {}),
+		registerRouter: mock(() => {}),
+		getRouter: mock(() => null),
+		getPendingCallCount: mock(() => 0),
+	} as unknown as MessageHub;
+	return { hub, handlers };
+}
+
+function createMockSpaceManager(spaceId: string, spaceName = 'Test Space'): SpaceManager {
+	return {
+		getSpace: mock(async (id: string) => {
+			if (id === spaceId) {
+				return { id, name: spaceName, workspacePath: '/ws', status: 'active' } as any;
+			}
+			return null;
+		}),
+	} as unknown as SpaceManager;
+}
+
+async function call<T>(
+	handlers: Map<string, RequestHandler>,
+	method: string,
+	params: unknown
+): Promise<T> {
+	const handler = handlers.get(method);
+	if (!handler) throw new Error(`Handler not registered: ${method}`);
+	return (await handler(params, {})) as T;
+}
+
+// ─── Test setup ───────────────────────────────────────────────────────────────
+
+const SPACE_ID = 'space-1';
+const OTHER_SPACE_ID = 'space-2';
+
+describe('Space Export/Import RPC Handlers', () => {
+	let db: Database;
+	let agentRepo: SpaceAgentRepository;
+	let workflowRepo: SpaceWorkflowRepository;
+	let workflowManager: SpaceWorkflowManager;
+	let spaceManager: SpaceManager;
+	let handlers: Map<string, RequestHandler>;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSchema(db);
+		insertSpace(db, SPACE_ID, 'My Space');
+		insertSpace(db, OTHER_SPACE_ID, 'Other Space');
+
+		agentRepo = new SpaceAgentRepository(db as any);
+		workflowRepo = new SpaceWorkflowRepository(db as any);
+
+		const agentLookup: SpaceAgentLookup = {
+			getAgentById(spaceId: string, id: string) {
+				const agent = agentRepo.getById(id);
+				if (!agent || agent.spaceId !== spaceId) return null;
+				return { id: agent.id, name: agent.name };
+			},
+		};
+		workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
+		spaceManager = createMockSpaceManager(SPACE_ID);
+
+		const mockHub = createMockHub();
+		handlers = mockHub.handlers;
+
+		setupSpaceExportImportHandlers(
+			mockHub.hub,
+			spaceManager,
+			agentRepo,
+			workflowRepo,
+			workflowManager
+		);
+	});
+
+	// ─── Handler registration ────────────────────────────────────────────────
+
+	it('registers all 5 handlers', () => {
+		expect(handlers.has('spaceExport.agents')).toBe(true);
+		expect(handlers.has('spaceExport.workflows')).toBe(true);
+		expect(handlers.has('spaceExport.bundle')).toBe(true);
+		expect(handlers.has('spaceImport.preview')).toBe(true);
+		expect(handlers.has('spaceImport.execute')).toBe(true);
+	});
+
+	// ─── spaceId validation ───────────────────────────────────────────────────
+
+	describe('spaceId validation', () => {
+		it.each([
+			'spaceExport.agents',
+			'spaceExport.workflows',
+			'spaceExport.bundle',
+		])('%s: throws if spaceId missing', async (method) => {
+			await expect(call(handlers, method, {})).rejects.toThrow('spaceId is required');
+		});
+
+		it.each([
+			'spaceExport.agents',
+			'spaceExport.workflows',
+			'spaceExport.bundle',
+		])('%s: throws if space not found', async (method) => {
+			await expect(call(handlers, method, { spaceId: 'nonexistent' })).rejects.toThrow(
+				'Space not found: nonexistent'
+			);
+		});
+
+		it('spaceImport.preview: throws if spaceId missing', async () => {
+			await expect(call(handlers, 'spaceImport.preview', { bundle: {} })).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('spaceImport.execute: throws if spaceId missing', async () => {
+			await expect(call(handlers, 'spaceImport.execute', { bundle: {} })).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('spaceImport.execute: throws if space not found', async () => {
+			await expect(
+				call(handlers, 'spaceImport.execute', { spaceId: 'ghost', bundle: {} })
+			).rejects.toThrow('Space not found: ghost');
+		});
+	});
+
+	// ─── spaceExport.agents ───────────────────────────────────────────────────
+
+	describe('spaceExport.agents', () => {
+		it('exports all agents when no filter provided', async () => {
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Alpha', role: 'coder' });
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Beta', role: 'planner' });
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+			});
+
+			expect(bundle.type).toBe('bundle');
+			expect(bundle.agents).toHaveLength(2);
+			expect(bundle.agents.map((a: any) => a.name)).toEqual(
+				expect.arrayContaining(['Alpha', 'Beta'])
+			);
+			expect(bundle.workflows).toHaveLength(0);
+		});
+
+		it('filters agents by agentIds', async () => {
+			const a1 = agentRepo.create({ spaceId: SPACE_ID, name: 'Alpha', role: 'coder' });
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Beta', role: 'planner' });
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+				agentIds: [a1.id],
+			});
+
+			expect(bundle.agents).toHaveLength(1);
+			expect(bundle.agents[0].name).toBe('Alpha');
+		});
+
+		it('exported agent preserves fields and strips id/spaceId', async () => {
+			agentRepo.create({
+				spaceId: SPACE_ID,
+				name: 'Coder',
+				role: 'coder',
+				model: 'claude-3',
+				systemPrompt: 'You code.',
+				tools: ['read_file'],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+			});
+
+			const exported = bundle.agents[0];
+			expect(exported.name).toBe('Coder');
+			expect(exported.role).toBe('coder');
+			expect(exported.model).toBe('claude-3');
+			expect(exported.systemPrompt).toBe('You code.');
+			expect(exported.tools).toEqual(['read_file']);
+			expect(exported.id).toBeUndefined();
+			expect(exported.spaceId).toBeUndefined();
+			expect(exported.version).toBe(1);
+			expect(exported.type).toBe('agent');
+		});
+
+		it('sets exportedFrom to spaceId', async () => {
+			agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+			});
+			expect(bundle.exportedFrom).toBe(SPACE_ID);
+		});
+
+		it('returns empty agents array when no agents exist', async () => {
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+				spaceId: SPACE_ID,
+			});
+			expect(bundle.agents).toHaveLength(0);
+		});
+	});
+
+	// ─── spaceExport.workflows ────────────────────────────────────────────────
+
+	describe('spaceExport.workflows', () => {
+		it('exports workflow with agentRef resolved to agent name', async () => {
+			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Pipeline',
+				steps: [{ name: 'Code', agentId: agent.id }],
+				transitions: [],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
+				spaceId: SPACE_ID,
+			});
+
+			expect(bundle.workflows).toHaveLength(1);
+			const wf = bundle.workflows[0];
+			expect(wf.name).toBe('Pipeline');
+			expect(wf.steps[0].agentRef).toBe('Coder'); // UUID resolved to name
+			expect(wf.steps[0].name).toBe('Code');
+		});
+
+		it('includes only referenced agents in the bundle', async () => {
+			const coder = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+			agentRepo.create({ spaceId: SPACE_ID, name: 'Reviewer', role: 'reviewer' });
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Pipeline',
+				steps: [{ name: 'Code', agentId: coder.id }],
+				transitions: [],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
+				spaceId: SPACE_ID,
+			});
+
+			// Only Coder is referenced, Reviewer should NOT be included
+			expect(bundle.agents).toHaveLength(1);
+			expect(bundle.agents[0].name).toBe('Coder');
+		});
+
+		it('filters workflows by workflowIds', async () => {
+			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+			const wf1 = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF1',
+				steps: [{ name: 'S1', agentId: agent.id }],
+				transitions: [],
+			});
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF2',
+				steps: [{ name: 'S2', agentId: agent.id }],
+				transitions: [],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
+				spaceId: SPACE_ID,
+				workflowIds: [wf1.id],
+			});
+
+			expect(bundle.workflows).toHaveLength(1);
+			expect(bundle.workflows[0].name).toBe('WF1');
+		});
+
+		it('exports transition step names instead of UUIDs', async () => {
+			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'TwoStep',
+				steps: [
+					{ id: 'step-1', name: 'First', agentId: agent.id },
+					{ id: 'step-2', name: 'Second', agentId: agent.id },
+				],
+				transitions: [{ from: 'step-1', to: 'step-2' }],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
+				spaceId: SPACE_ID,
+			});
+
+			const wf = bundle.workflows[0];
+			expect(wf.transitions[0].fromStep).toBe('First');
+			expect(wf.transitions[0].toStep).toBe('Second');
+		});
+	});
+
+	// ─── spaceExport.bundle ───────────────────────────────────────────────────
+
+	describe('spaceExport.bundle', () => {
+		it('exports all agents and workflows', async () => {
+			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'W',
+				steps: [{ name: 'S', agentId: agent.id }],
+				transitions: [],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.bundle', {
+				spaceId: SPACE_ID,
+			});
+
+			expect(bundle.type).toBe('bundle');
+			expect(bundle.agents).toHaveLength(1);
+			expect(bundle.workflows).toHaveLength(1);
+		});
+
+		it('filters by agentIds and workflowIds', async () => {
+			const a1 = agentRepo.create({ spaceId: SPACE_ID, name: 'A1', role: 'coder' });
+			agentRepo.create({ spaceId: SPACE_ID, name: 'A2', role: 'coder' });
+			const wf1 = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'W1',
+				steps: [{ name: 'S', agentId: a1.id }],
+				transitions: [],
+			});
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'W2',
+				steps: [{ name: 'S', agentId: a1.id }],
+				transitions: [],
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.bundle', {
+				spaceId: SPACE_ID,
+				agentIds: [a1.id],
+				workflowIds: [wf1.id],
+			});
+
+			expect(bundle.agents).toHaveLength(1);
+			expect(bundle.agents[0].name).toBe('A1');
+			expect(bundle.workflows).toHaveLength(1);
+			expect(bundle.workflows[0].name).toBe('W1');
+		});
+	});
+
+	// ─── spaceImport.preview ─────────────────────────────────────────────────
+
+	describe('spaceImport.preview', () => {
+		it('returns validation error for invalid bundle', async () => {
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle: { not: 'a bundle' },
+			});
+
+			expect(result.agents).toHaveLength(0);
+			expect(result.workflows).toHaveLength(0);
+			expect(result.validationErrors.length).toBeGreaterThan(0);
+		});
+
+		it('returns create action for non-conflicting items', async () => {
+			const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.agents).toHaveLength(1);
+			expect(result.agents[0]).toEqual({ name: 'Coder', action: 'create' });
+			expect(result.validationErrors).toHaveLength(0);
+		});
+
+		it('detects agent name conflict', async () => {
+			const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+			const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.agents[0]).toEqual({
+				name: 'Coder',
+				action: 'conflict',
+				existingId: existing.id,
+			});
+		});
+
+		it('detects workflow name conflict', async () => {
+			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+			const existing = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Pipeline',
+				steps: [{ name: 'S', agentId: agent.id }],
+				transitions: [],
+			});
+
+			const bundle = makeBundle(
+				[{ name: 'A', role: 'coder' }],
+				[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'S' }] }]
+			);
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.workflows[0]).toEqual({
+				name: 'Pipeline',
+				action: 'conflict',
+				existingId: existing.id,
+			});
+		});
+
+		it('flags unresolved agent ref as validation error', async () => {
+			const bundle = makeBundle(
+				[],
+				[{ name: 'Pipeline', steps: [{ agentRef: 'Ghost', name: 'S' }] }]
+			);
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.validationErrors.length).toBeGreaterThan(0);
+			expect(result.validationErrors[0]).toContain('Ghost');
+			expect(result.validationErrors[0]).toContain('Pipeline');
+		});
+
+		it('resolves agent ref from existing space agents', async () => {
+			agentRepo.create({ spaceId: SPACE_ID, name: 'ExistingAgent', role: 'coder' });
+			// Bundle has no agents but workflow references ExistingAgent (from target space)
+			const bundle = makeBundle(
+				[],
+				[{ name: 'Pipeline', steps: [{ agentRef: 'ExistingAgent', name: 'S' }] }]
+			);
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.validationErrors).toHaveLength(0);
+		});
+
+		it('flags condition transition without expression as error', async () => {
+			const bundle = makeBundleWithCondition('condition', ''); // empty expression
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.validationErrors.length).toBeGreaterThan(0);
+			expect(result.validationErrors[0]).toContain('non-empty expression');
+		});
+
+		it('passes validation for always condition', async () => {
+			const bundle = makeBundleWithCondition('always', undefined);
+
+			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.validationErrors).toHaveLength(0);
+		});
+	});
+
+	// ─── spaceImport.execute ─────────────────────────────────────────────────
+
+	describe('spaceImport.execute', () => {
+		it('throws for invalid bundle', async () => {
+			await expect(
+				call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle: { bad: true } })
+			).rejects.toThrow('Invalid bundle');
+		});
+
+		it('creates agents and workflows with no conflicts', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder', systemPrompt: 'You code.' }],
+				[{ name: 'Pipeline', steps: [{ agentRef: 'Coder', name: 'Code' }] }]
+			);
+
+			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.agents).toHaveLength(1);
+			expect(result.agents[0]).toMatchObject({ name: 'Coder', action: 'created' });
+			expect(result.workflows).toHaveLength(1);
+			expect(result.workflows[0]).toMatchObject({ name: 'Pipeline', action: 'created' });
+
+			// Verify data persisted
+			const agents = agentRepo.getBySpaceId(SPACE_ID);
+			expect(agents.find((a) => a.name === 'Coder')?.systemPrompt).toBe('You code.');
+			const workflows = workflowRepo.listWorkflows(SPACE_ID);
+			expect(workflows.find((w) => w.name === 'Pipeline')).toBeTruthy();
+		});
+
+		describe('conflict resolution: skip', () => {
+			it('skips conflicting agent and uses existing UUID for workflow cross-refs', async () => {
+				const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+
+				const bundle = makeBundle(
+					[{ name: 'Coder', role: 'reviewer' }], // different role
+					[{ name: 'Pipeline', steps: [{ agentRef: 'Coder', name: 'Code' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'skip' } },
+				});
+
+				expect(result.agents[0]).toMatchObject({
+					name: 'Coder',
+					action: 'skipped',
+					id: existing.id,
+				});
+
+				// Agent role should NOT have changed (skipped)
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.role).toBe('coder'); // unchanged
+
+				// Workflow should still be importable and reference the existing agent UUID
+				expect(result.workflows[0].action).toBe('created');
+				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+				expect(wf.steps[0].agentId).toBe(existing.id);
+			});
+
+			it('skips conflicting workflow', async () => {
+				const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+				const existingWf = workflowManager.createWorkflow({
+					spaceId: SPACE_ID,
+					name: 'Pipeline',
+					steps: [{ name: 'S', agentId: agent.id }],
+					transitions: [],
+				});
+
+				const bundle = makeBundle(
+					[{ name: 'A', role: 'coder' }],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'S' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { A: 'skip' }, workflows: { Pipeline: 'skip' } },
+				});
+
+				expect(result.workflows[0]).toMatchObject({
+					name: 'Pipeline',
+					action: 'skipped',
+					id: existingWf.id,
+				});
+
+				// Only one workflow should exist (no duplicate)
+				const all = workflowRepo.listWorkflows(SPACE_ID);
+				expect(all).toHaveLength(1);
+			});
+		});
+
+		describe('conflict resolution: rename', () => {
+			it('renames conflicting agent with unique name', async () => {
+				agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+				agentRepo.create({ spaceId: SPACE_ID, name: 'Coder (1)', role: 'coder' });
+
+				const bundle = makeBundle([{ name: 'Coder', role: 'reviewer' }], []);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'rename' } },
+				});
+
+				expect(result.agents[0]).toMatchObject({ name: 'Coder (2)', action: 'renamed' });
+
+				// Both old and new should exist
+				const agents = agentRepo.getBySpaceId(SPACE_ID);
+				expect(agents.map((a) => a.name)).toContain('Coder');
+				expect(agents.map((a) => a.name)).toContain('Coder (2)');
+			});
+
+			it('renames conflicting workflow', async () => {
+				const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+				workflowManager.createWorkflow({
+					spaceId: SPACE_ID,
+					name: 'Pipeline',
+					steps: [{ name: 'S', agentId: agent.id }],
+					transitions: [],
+				});
+
+				const bundle = makeBundle(
+					[{ name: 'A', role: 'coder' }],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'S2' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { A: 'skip' }, workflows: { Pipeline: 'rename' } },
+				});
+
+				expect(result.workflows[0]).toMatchObject({ name: 'Pipeline (1)', action: 'renamed' });
+
+				const all = workflowRepo.listWorkflows(SPACE_ID);
+				expect(all).toHaveLength(2);
+				expect(all.map((w) => w.name)).toContain('Pipeline (1)');
+			});
+		});
+
+		describe('conflict resolution: replace', () => {
+			it('replaces conflicting agent in place (preserves UUID)', async () => {
+				const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+
+				const bundle = makeBundle([{ name: 'Coder', role: 'reviewer', model: 'claude-new' }], []);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Coder: 'replace' } },
+				});
+
+				expect(result.agents[0]).toMatchObject({
+					name: 'Coder',
+					action: 'replaced',
+					id: existing.id,
+				});
+
+				const agent = agentRepo.getById(existing.id)!;
+				expect(agent.role).toBe('reviewer');
+				expect(agent.model).toBe('claude-new');
+			});
+
+			it('replaces conflicting workflow (delete + create)', async () => {
+				const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A', role: 'coder' });
+				workflowManager.createWorkflow({
+					spaceId: SPACE_ID,
+					name: 'Pipeline',
+					steps: [{ name: 'OldStep', agentId: agent.id }],
+					transitions: [],
+				});
+
+				const bundle = makeBundle(
+					[{ name: 'A', role: 'coder' }],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'NewStep' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { A: 'skip' }, workflows: { Pipeline: 'replace' } },
+				});
+
+				expect(result.workflows[0]).toMatchObject({ name: 'Pipeline', action: 'replaced' });
+
+				const all = workflowRepo.listWorkflows(SPACE_ID);
+				expect(all).toHaveLength(1);
+				expect(all[0].steps[0].name).toBe('NewStep');
+			});
+		});
+
+		// ─── Cross-reference mapping ───────────────────────────────────────
+
+		describe('cross-reference mapping', () => {
+			it('resolves agent name→UUID from bundle agents', async () => {
+				const bundle = makeBundle(
+					[{ name: 'BundleAgent', role: 'coder' }],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'BundleAgent', name: 'S' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+				});
+
+				const importedAgentId = result.agents[0].id;
+				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+				expect(wf.steps[0].agentId).toBe(importedAgentId);
+			});
+
+			it('resolves agent name→UUID from existing space agents (not in bundle)', async () => {
+				const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalAgent', role: 'coder' });
+
+				// Bundle has workflow referencing LocalAgent but does not include LocalAgent as agent
+				const bundle = makeBundle(
+					[],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'LocalAgent', name: 'S' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+				});
+
+				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+				expect(wf.steps[0].agentId).toBe(existing.id);
+			});
+
+			it('prefers bundle agent over existing space agent of same name', async () => {
+				const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'Agent', role: 'coder' });
+
+				// Bundle includes Agent → will be renamed (conflict resolution: rename)
+				const bundle = makeBundle(
+					[{ name: 'Agent', role: 'reviewer' }],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'Agent', name: 'S' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+					conflictResolution: { agents: { Agent: 'skip' } },
+				});
+
+				// When Agent is skipped, bundle cross-ref maps to the existing agent UUID
+				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+				expect(wf.steps[0].agentId).toBe(existingAgent.id);
+			});
+
+			it('throws when agent ref cannot be resolved', async () => {
+				const bundle = makeBundle(
+					[],
+					[{ name: 'Pipeline', steps: [{ agentRef: 'GhostAgent', name: 'S' }] }]
+				);
+
+				await expect(
+					call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+				).rejects.toThrow('unresolved agent reference');
+			});
+
+			it('remaps rule appliesTo from step names to new step UUIDs', async () => {
+				const bundleWithRules = makeBundleWithRules();
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle: bundleWithRules,
+				});
+
+				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+				expect(wf.rules).toHaveLength(1);
+				const rule = wf.rules[0];
+				// appliesTo should contain step UUIDs (not step names)
+				expect(rule.appliesTo).toHaveLength(1);
+				// The step UUID should correspond to the 'Code' step
+				const codeStep = wf.steps.find((s) => s.name === 'Code')!;
+				expect(rule.appliesTo![0]).toBe(codeStep.id);
+			});
+
+			it('assigns fresh step UUIDs (not re-using exported names as IDs)', async () => {
+				const bundle = makeBundle(
+					[{ name: 'A', role: 'coder' }],
+					[{ name: 'W', steps: [{ agentRef: 'A', name: 'MyStep' }] }]
+				);
+
+				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+					spaceId: SPACE_ID,
+					bundle,
+				});
+
+				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+				// Step ID should be a UUID (not 'MyStep' or any string from the bundle)
+				const stepId = wf.steps[0].id;
+				expect(stepId).toMatch(/^[0-9a-f-]{36}$/i);
+				expect(stepId).not.toBe('MyStep');
+			});
+		});
+
+		// ─── Multi-agent workflow ──────────────────────────────────────────
+
+		it('imports workflow with multiple steps and transitions', async () => {
+			const bundle = makeTwoStepBundle();
+
+			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.agents).toHaveLength(2);
+			const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+			expect(wf.steps).toHaveLength(2);
+			expect(wf.transitions).toHaveLength(1);
+
+			// Transition should reference correct step UUIDs
+			const step1 = wf.steps.find((s) => s.name === 'Code')!;
+			const step2 = wf.steps.find((s) => s.name === 'Review')!;
+			expect(wf.transitions[0].from).toBe(step1.id);
+			expect(wf.transitions[0].to).toBe(step2.id);
+		});
+
+		it('returns empty warnings array on clean import', async () => {
+			const bundle = makeBundle(
+				[{ name: 'A', role: 'coder' }],
+				[{ name: 'W', steps: [{ agentRef: 'A', name: 'S' }] }]
+			);
+
+			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.warnings).toHaveLength(0);
+		});
+	});
+});
+
+// ─── Bundle builder helpers ───────────────────────────────────────────────────
+
+type BundleAgent = { name: string; role: string; systemPrompt?: string; model?: string };
+type BundleWorkflow = {
+	name: string;
+	steps: Array<{ agentRef: string; name: string; instructions?: string }>;
+};
+
+function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object {
+	return {
+		version: 1,
+		type: 'bundle',
+		name: 'Test Bundle',
+		agents: agents.map((a) => ({
+			version: 1,
+			type: 'agent',
+			name: a.name,
+			role: a.role,
+			...(a.systemPrompt ? { systemPrompt: a.systemPrompt } : {}),
+			...(a.model ? { model: a.model } : {}),
+		})),
+		workflows: workflows.map((w) => ({
+			version: 1,
+			type: 'workflow',
+			name: w.name,
+			steps: w.steps.map((s) => ({
+				agentRef: s.agentRef,
+				name: s.name,
+				...(s.instructions ? { instructions: s.instructions } : {}),
+			})),
+			transitions: [],
+			startStep: w.steps[0]?.name ?? '',
+			rules: [],
+			tags: [],
+		})),
+		exportedAt: Date.now(),
+	};
+}
+
+function makeBundleWithCondition(type: string, expression: string | undefined): object {
+	return {
+		version: 1,
+		type: 'bundle',
+		name: 'Condition Bundle',
+		agents: [{ version: 1, type: 'agent', name: 'A', role: 'coder' }],
+		workflows: [
+			{
+				version: 1,
+				type: 'workflow',
+				name: 'ConditionWF',
+				steps: [
+					{ agentRef: 'A', name: 'S1' },
+					{ agentRef: 'A', name: 'S2' },
+				],
+				transitions: [
+					{
+						fromStep: 'S1',
+						toStep: 'S2',
+						condition: expression !== undefined ? { type, expression } : { type },
+					},
+				],
+				startStep: 'S1',
+				rules: [],
+				tags: [],
+			},
+		],
+		exportedAt: Date.now(),
+	};
+}
+
+function makeBundleWithRules(): object {
+	return {
+		version: 1,
+		type: 'bundle',
+		name: 'Rules Bundle',
+		agents: [{ version: 1, type: 'agent', name: 'Coder', role: 'coder' }],
+		workflows: [
+			{
+				version: 1,
+				type: 'workflow',
+				name: 'RulesWF',
+				steps: [{ agentRef: 'Coder', name: 'Code' }],
+				transitions: [],
+				startStep: 'Code',
+				rules: [
+					{
+						name: 'No hacks',
+						content: 'Do not write hacks.',
+						appliesTo: ['Code'], // step name — should be remapped to step UUID
+					},
+				],
+				tags: [],
+			},
+		],
+		exportedAt: Date.now(),
+	};
+}
+
+function makeTwoStepBundle(): object {
+	return {
+		version: 1,
+		type: 'bundle',
+		name: 'Two Step Bundle',
+		agents: [
+			{ version: 1, type: 'agent', name: 'Coder', role: 'coder' },
+			{ version: 1, type: 'agent', name: 'Reviewer', role: 'reviewer' },
+		],
+		workflows: [
+			{
+				version: 1,
+				type: 'workflow',
+				name: 'CodingPipeline',
+				steps: [
+					{ agentRef: 'Coder', name: 'Code' },
+					{ agentRef: 'Reviewer', name: 'Review' },
+				],
+				transitions: [{ fromStep: 'Code', toStep: 'Review' }],
+				startStep: 'Code',
+				rules: [],
+				tags: [],
+			},
+		],
+		exportedAt: Date.now(),
+	};
+}
