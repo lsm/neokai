@@ -50,8 +50,8 @@ function seedSpace(db: BunDatabase, spaceId = 'space-1'): void {
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
 		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt,
-     config, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', null, ?, ?)`
+     config, created_at, updated_at, role)
+     VALUES (?, ?, ?, '', null, '[]', '', null, ?, ?, 'coder')`
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 

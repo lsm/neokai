@@ -1,17 +1,19 @@
 /**
  * Migration 29 Tests
  *
- * Tests for Migration 29: Space system tables.
+ * Tests for Migration 29: Space system tables (consolidated from former migrations 29–32).
  *
  * Covers:
- * - All Space tables created correctly on a fresh DB
+ * - All Space tables created correctly on a fresh DB (including space_workflow_transitions)
+ * - space_agents has role/provider columns from the start (no CHECK constraint on role)
+ * - space_workflows has start_step_id column from the start
+ * - space_workflow_runs has current_step_id column from the start
  * - Migration is idempotent (runs twice without error)
  * - No existing tables are affected
  * - space_tasks has custom_agent_id, workflow_run_id, workflow_step_id columns from the start
- * - space_workflow_runs tracks workflow execution state
  * - FK CASCADE deletes work: delete space → all child rows deleted
  * - space_tasks.workflow_run_id SET NULL on workflow run delete
- * - CHECK constraints are enforced (status, priority, role, etc.)
+ * - CHECK constraints are enforced (status, priority, etc.)
  * - Indexes are created
  */
 
@@ -80,6 +82,7 @@ describe('Migration 29: Space system tables', () => {
 			'space_agents',
 			'space_workflows',
 			'space_workflow_steps',
+			'space_workflow_transitions',
 			'space_workflow_runs',
 			'space_tasks',
 			'space_session_groups',
@@ -129,6 +132,7 @@ describe('Migration 29: Space system tables', () => {
 			'title',
 			'description',
 			'current_step_index',
+			'current_step_id',
 			'status',
 			'config',
 			'created_at',
@@ -139,6 +143,33 @@ describe('Migration 29: Space system tables', () => {
 		for (const col of requiredCols) {
 			expect(columnExists(db, 'space_workflow_runs', col)).toBe(true);
 		}
+	});
+
+	test('space_agents has role and provider columns with no CHECK constraint on role', () => {
+		runMigrations(db, () => {});
+
+		expect(columnExists(db, 'space_agents', 'role')).toBe(true);
+		expect(columnExists(db, 'space_agents', 'provider')).toBe(true);
+
+		// role accepts any string — no fixed enum
+		const now = Date.now();
+		db.exec(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-role', '/workspace/role', 'Role Space', ${now}, ${now})`
+		);
+		for (const role of ['custom-role', 'admin', 'leader', 'any-string']) {
+			expect(() => {
+				db.exec(
+					`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at)
+					 VALUES ('agent-${role}', 'sp-role', 'Agent', '${role}', ${now}, ${now})`
+				);
+			}).not.toThrow();
+		}
+	});
+
+	test('space_workflows has start_step_id column', () => {
+		runMigrations(db, () => {});
+		expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(true);
 	});
 
 	test('space_workflow_runs status CHECK constraint is enforced', () => {
@@ -187,6 +218,8 @@ describe('Migration 29: Space system tables', () => {
 			'idx_space_workflows_space_id',
 			'idx_space_workflow_steps_workflow_id',
 			'idx_space_workflow_steps_order',
+			'idx_space_workflow_transitions_workflow_id',
+			'idx_space_workflow_transitions_from_step',
 			'idx_space_workflow_runs_space_id',
 			'idx_space_workflow_runs_workflow_id',
 			'idx_space_workflow_runs_status',
@@ -222,8 +255,8 @@ describe('Migration 29: Space system tables', () => {
 
 		// Insert a space agent
 		db.exec(
-			`INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
-			 VALUES ('agent-1', 'sp-1', 'Agent 1', ${now}, ${now})`
+			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at)
+			 VALUES ('agent-1', 'sp-1', 'Agent 1', 'coder', ${now}, ${now})`
 		);
 
 		// Insert a workflow

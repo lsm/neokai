@@ -3,6 +3,9 @@
  *
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
+ *
+ * Keep in sync with runMigration29 in packages/daemon/src/storage/schema/migrations.ts
+ * and space-agent-schema.ts.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -34,13 +37,15 @@ export function createSpaceTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
-			role TEXT NOT NULL,
-			provider TEXT,
+			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
-			instructions TEXT,
+			tools TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT '',
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);

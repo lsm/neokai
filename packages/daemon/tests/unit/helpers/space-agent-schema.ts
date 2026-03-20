@@ -27,6 +27,7 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
+	// Keep in sync with runMigration29 in migrations.ts and space-test-db.ts.
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -34,13 +35,13 @@ export function createSpaceAgentSchema(db: Database): void {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
-			provider TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
-			role TEXT NOT NULL DEFAULT 'coder',
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -52,6 +53,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
+			start_step_id TEXT,
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
