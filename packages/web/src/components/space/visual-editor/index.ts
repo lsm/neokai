@@ -17,3 +17,11 @@ export { GateConfig, CONDITION_LABELS } from './GateConfig';
 export type { ConditionDraft } from './GateConfig';
 export { NodeConfigPanel } from './NodeConfigPanel';
 export type { NodeConfigPanelProps } from './NodeConfigPanel';
+export {
+	EdgeRenderer,
+	computeEdgePoints,
+	buildPathD,
+	CONTROL_OFFSET,
+	EDGE_COLORS,
+} from './EdgeRenderer';
+export type { EdgeRendererProps, EdgePoints } from './EdgeRenderer';

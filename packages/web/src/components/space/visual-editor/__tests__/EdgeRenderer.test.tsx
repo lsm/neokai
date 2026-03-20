@@ -1,0 +1,319 @@
+/**
+ * Unit tests for EdgeRenderer
+ *
+ * Tests:
+ * - Correct number of paths rendered per transition
+ * - Missing node position skips that edge
+ * - computeEdgePoints bezier control point math
+ * - buildPathD produces correct SVG path string
+ * - Edge color matches condition type (always/human/condition)
+ * - Selected edge gets thicker stroke and white color
+ * - Clicking an edge calls onEdgeSelect with transitionId
+ * - Delete key on selected edge calls onEdgeDelete
+ * - Backspace key on selected edge calls onEdgeDelete
+ * - Delete key without selection does not call onEdgeDelete
+ * - Delete inside input does not trigger onEdgeDelete
+ * - Arrowhead markers are rendered in defs
+ */
+
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, fireEvent, cleanup } from '@testing-library/preact';
+import type { WorkflowTransition } from '@neokai/shared';
+import {
+	EdgeRenderer,
+	computeEdgePoints,
+	buildPathD,
+	CONTROL_OFFSET,
+	EDGE_COLORS,
+} from '../EdgeRenderer';
+import type { EdgeRendererProps } from '../EdgeRenderer';
+import type { NodePosition } from '../types';
+
+afterEach(() => cleanup());
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+const NODE_POSITIONS: NodePosition = {
+	'step-1': { x: 50, y: 50, width: 160, height: 80 },
+	'step-2': { x: 300, y: 250, width: 160, height: 80 },
+	'step-3': { x: 50, y: 450, width: 160, height: 80 },
+};
+
+function makeTransition(
+	id: string,
+	from: string,
+	to: string,
+	conditionType?: 'always' | 'human' | 'condition'
+): WorkflowTransition {
+	return {
+		id,
+		from,
+		to,
+		condition: conditionType ? { type: conditionType } : undefined,
+	};
+}
+
+const T1 = makeTransition('t1', 'step-1', 'step-2'); // always (no condition)
+const T2 = makeTransition('t2', 'step-2', 'step-3', 'human');
+const T3 = makeTransition('t3', 'step-1', 'step-3', 'condition');
+
+function renderEdges(props: Partial<EdgeRendererProps> = {}) {
+	const onEdgeSelect = vi.fn();
+	const onEdgeDelete = vi.fn();
+	const result = render(
+		<svg>
+			<EdgeRenderer
+				transitions={[T1, T2, T3]}
+				nodePositions={NODE_POSITIONS}
+				onEdgeSelect={onEdgeSelect}
+				onEdgeDelete={onEdgeDelete}
+				{...props}
+			/>
+		</svg>
+	);
+	return { ...result, onEdgeSelect, onEdgeDelete };
+}
+
+// ---------------------------------------------------------------------------
+// computeEdgePoints
+// ---------------------------------------------------------------------------
+
+describe('computeEdgePoints', () => {
+	it('returns null when from-node is missing', () => {
+		const t = makeTransition('t', 'missing', 'step-2');
+		expect(computeEdgePoints(t, NODE_POSITIONS)).toBeNull();
+	});
+
+	it('returns null when to-node is missing', () => {
+		const t = makeTransition('t', 'step-1', 'missing');
+		expect(computeEdgePoints(t, NODE_POSITIONS)).toBeNull();
+	});
+
+	it('source x is horizontal center of from-node', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		// step-1: x=50, width=160 → center x = 50 + 80 = 130
+		expect(pts!.sx).toBe(50 + 160 / 2);
+	});
+
+	it('source y is bottom edge of from-node', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS);
+		// step-1: y=50, height=80 → bottom = 130
+		expect(pts!.sy).toBe(50 + 80);
+	});
+
+	it('target x is horizontal center of to-node', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS);
+		// step-2: x=300, width=160 → center x = 380
+		expect(pts!.tx).toBe(300 + 160 / 2);
+	});
+
+	it('target y is top edge of to-node', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS);
+		// step-2: y=250
+		expect(pts!.ty).toBe(250);
+	});
+
+	it('control point 1 is directly below source by CONTROL_OFFSET', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS);
+		expect(pts!.cp1x).toBe(pts!.sx);
+		expect(pts!.cp1y).toBe(pts!.sy + CONTROL_OFFSET);
+	});
+
+	it('control point 2 is directly above target by CONTROL_OFFSET', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS);
+		expect(pts!.cp2x).toBe(pts!.tx);
+		expect(pts!.cp2y).toBe(pts!.ty - CONTROL_OFFSET);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildPathD
+// ---------------------------------------------------------------------------
+
+describe('buildPathD', () => {
+	it('produces a valid SVG cubic bezier path string', () => {
+		const pts = computeEdgePoints(T1, NODE_POSITIONS)!;
+		const d = buildPathD(pts);
+		// Format: M sx sy C cp1x cp1y, cp2x cp2y, tx ty
+		expect(d).toBe(
+			`M ${pts.sx} ${pts.sy} C ${pts.cp1x} ${pts.cp1y}, ${pts.cp2x} ${pts.cp2y}, ${pts.tx} ${pts.ty}`
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+describe('EdgeRenderer — rendering', () => {
+	it('renders a <g> element for each transition', () => {
+		const { container } = renderEdges();
+		const groups = container.querySelectorAll('g[data-edge-id]');
+		expect(groups).toHaveLength(3);
+	});
+
+	it('renders two paths per edge (hitbox + visible)', () => {
+		const { container } = renderEdges();
+		// Each <g> should have 2 paths
+		const groups = container.querySelectorAll('g[data-edge-id]');
+		for (const g of groups) {
+			expect(g.querySelectorAll('path')).toHaveLength(2);
+		}
+	});
+
+	it('skips edges where node positions are missing', () => {
+		const missingEdge = makeTransition('tmissing', 'step-1', 'missing-node');
+		const { container } = renderEdges({ transitions: [T1, missingEdge] });
+		// Only t1 should render (missingEdge skipped)
+		const groups = container.querySelectorAll('g[data-edge-id]');
+		expect(groups).toHaveLength(1);
+		expect(groups[0].getAttribute('data-edge-id')).toBe('t1');
+	});
+
+	it('renders arrowhead marker definitions', () => {
+		const { container } = renderEdges();
+		// Should have markers for always, human, condition, and selected
+		expect(container.querySelector('#edge-arrow-always')).not.toBeNull();
+		expect(container.querySelector('#edge-arrow-human')).not.toBeNull();
+		expect(container.querySelector('#edge-arrow-condition')).not.toBeNull();
+		expect(container.querySelector('#edge-arrow-selected')).not.toBeNull();
+	});
+
+	it('uses testid data-testid="edge-{id}" on each group', () => {
+		const { getByTestId } = renderEdges();
+		expect(getByTestId('edge-t1')).toBeTruthy();
+		expect(getByTestId('edge-t2')).toBeTruthy();
+		expect(getByTestId('edge-t3')).toBeTruthy();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Edge colors
+// ---------------------------------------------------------------------------
+
+describe('EdgeRenderer — edge colors', () => {
+	it('always transition (no condition) has data-condition-type="always"', () => {
+		const { getByTestId } = renderEdges();
+		expect(getByTestId('edge-t1').getAttribute('data-condition-type')).toBe('always');
+	});
+
+	it('human transition has data-condition-type="human"', () => {
+		const { getByTestId } = renderEdges();
+		expect(getByTestId('edge-t2').getAttribute('data-condition-type')).toBe('human');
+	});
+
+	it('condition transition has data-condition-type="condition"', () => {
+		const { getByTestId } = renderEdges();
+		expect(getByTestId('edge-t3').getAttribute('data-condition-type')).toBe('condition');
+	});
+
+	it('EDGE_COLORS has entries for all condition types', () => {
+		expect(EDGE_COLORS.always).toBe('#3b82f6');
+		expect(EDGE_COLORS.human).toBe('#facc15');
+		expect(EDGE_COLORS.condition).toBe('#c084fc');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Selected edge
+// ---------------------------------------------------------------------------
+
+describe('EdgeRenderer — selected state', () => {
+	it('selected edge uses white stroke color', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		const group = getByTestId('edge-t1');
+		const visiblePath = group.querySelectorAll('path')[1];
+		expect(visiblePath.getAttribute('stroke')).toBe('white');
+	});
+
+	it('selected edge has data-selected="true"', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		expect(getByTestId('edge-t1').getAttribute('data-selected')).toBe('true');
+		expect(getByTestId('edge-t2').getAttribute('data-selected')).toBe('false');
+	});
+
+	it('non-selected edges retain their condition type attribute', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		expect(getByTestId('edge-t2').getAttribute('data-condition-type')).toBe('human');
+	});
+
+	it('non-selected edges have data-selected="false"', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		expect(getByTestId('edge-t2').getAttribute('data-selected')).toBe('false');
+		expect(getByTestId('edge-t3').getAttribute('data-selected')).toBe('false');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Click selection
+// ---------------------------------------------------------------------------
+
+describe('EdgeRenderer — click selection', () => {
+	it('clicking an edge calls onEdgeSelect with the transitionId', () => {
+		const { getByTestId, onEdgeSelect } = renderEdges();
+		const group = getByTestId('edge-t1');
+		const hitboxPath = group.querySelectorAll('path')[0];
+		fireEvent.click(hitboxPath);
+		expect(onEdgeSelect).toHaveBeenCalledWith('t1');
+	});
+
+	it('clicking a different edge calls onEdgeSelect with its id', () => {
+		const { getByTestId, onEdgeSelect } = renderEdges();
+		const group = getByTestId('edge-t2');
+		const hitboxPath = group.querySelectorAll('path')[0];
+		fireEvent.click(hitboxPath);
+		expect(onEdgeSelect).toHaveBeenCalledWith('t2');
+	});
+
+	it('hitbox path uses transparent stroke', () => {
+		const { getByTestId } = renderEdges();
+		const group = getByTestId('edge-t1');
+		const hitboxPath = group.querySelectorAll('path')[0];
+		expect(hitboxPath.getAttribute('stroke')).toBe('transparent');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Keyboard delete
+// ---------------------------------------------------------------------------
+
+describe('EdgeRenderer — keyboard delete', () => {
+	it('Delete key calls onEdgeDelete with selected edgeId', () => {
+		const { onEdgeDelete } = renderEdges({ selectedEdgeId: 't1' });
+		fireEvent.keyDown(document.body, { key: 'Delete' });
+		expect(onEdgeDelete).toHaveBeenCalledWith('t1');
+	});
+
+	it('Backspace key calls onEdgeDelete with selected edgeId', () => {
+		const { onEdgeDelete } = renderEdges({ selectedEdgeId: 't2' });
+		fireEvent.keyDown(document.body, { key: 'Backspace' });
+		expect(onEdgeDelete).toHaveBeenCalledWith('t2');
+	});
+
+	it('Delete without selection does not call onEdgeDelete', () => {
+		const { onEdgeDelete } = renderEdges({ selectedEdgeId: null });
+		fireEvent.keyDown(document.body, { key: 'Delete' });
+		expect(onEdgeDelete).not.toHaveBeenCalled();
+	});
+
+	it('Delete inside an input does not trigger onEdgeDelete', () => {
+		const { onEdgeDelete, container } = renderEdges({ selectedEdgeId: 't1' });
+		const input = document.createElement('input');
+		container.appendChild(input);
+		input.focus();
+		fireEvent.keyDown(input, { key: 'Delete', target: input });
+		expect(onEdgeDelete).not.toHaveBeenCalled();
+	});
+
+	it('Delete inside a textarea does not trigger onEdgeDelete', () => {
+		const { onEdgeDelete, container } = renderEdges({ selectedEdgeId: 't1' });
+		const textarea = document.createElement('textarea');
+		container.appendChild(textarea);
+		textarea.focus();
+		fireEvent.keyDown(textarea, { key: 'Delete', target: textarea });
+		expect(onEdgeDelete).not.toHaveBeenCalled();
+	});
+});
