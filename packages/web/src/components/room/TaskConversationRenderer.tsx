@@ -23,6 +23,7 @@ import {
 } from '../../hooks/useSessionQuestionState';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
+import MarkdownRenderer from '../chat/MarkdownRenderer';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -411,9 +412,9 @@ export function TaskConversationRenderer({
 							key={key}
 							class="my-1.5 rounded border border-purple-800/40 bg-purple-950/20 px-3 py-2"
 						>
-							<div class="flex items-center gap-1.5 mb-1">
+							<div class="flex items-center gap-1.5 mb-2">
 								<svg
-									class="w-3 h-3 text-purple-400 flex-shrink-0"
+									class="w-3.5 h-3.5 text-purple-400 flex-shrink-0"
 									fill="none"
 									stroke="currentColor"
 									viewBox="0 0 24 24"
@@ -425,9 +426,9 @@ export function TaskConversationRenderer({
 										d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
 									/>
 								</svg>
-								<span class="text-xs font-medium text-purple-400">Turn Summary</span>
+								<span class="text-sm font-semibold text-purple-400">Turn Summary</span>
 							</div>
-							<p class="text-xs text-gray-300 leading-relaxed">{summaryText}</p>
+							<MarkdownRenderer content={summaryText} class="text-sm text-gray-300" />
 						</div>
 					);
 				}
