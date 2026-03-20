@@ -348,6 +348,47 @@ describe('SpaceRuntime', () => {
 			);
 		});
 
+		test('cancels DB run record when task creation fails (prevents silent rehydration loop)', async () => {
+			// Create a workflow where the startStepId references a valid step but the
+			// agentId references an agent that is then deleted, causing createTask to fail
+			// due to the foreign key constraint on space_tasks.agent_id.
+			// Instead, use FK-bypass to create a workflow with a bogus startStepId to
+			// trigger the "Start step not found" path which also exercises the cleanup.
+			db.exec('PRAGMA foreign_keys = OFF');
+			let workflow: SpaceWorkflow;
+			try {
+				const repo = new SpaceWorkflowRepository(db);
+				workflow = repo.createWorkflow({
+					spaceId: SPACE_ID,
+					name: `Broken Start ${Date.now()}`,
+					description: '',
+					steps: [{ id: 'step-bad', name: 'Step', agentId: AGENT_PLANNER }],
+					transitions: [],
+					startStepId: 'nonexistent-start-step-id',
+					rules: [],
+					tags: [],
+				});
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+
+			// Count runs before
+			const runsBefore = workflowRunRepo.listBySpace(SPACE_ID);
+
+			await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad Run')).rejects.toThrow(
+				'Start step'
+			);
+
+			// The newly created run should be cancelled, not left as in_progress
+			const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
+			const newRun = runsAfter.find((r) => !runsBefore.some((b) => b.id === r.id));
+			expect(newRun).toBeDefined();
+			expect(newRun!.status).toBe('cancelled');
+
+			// Executor map should not retain the failed run
+			expect(runtime.executorCount).toBe(0);
+		});
+
 		test('throws for unknown space', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },

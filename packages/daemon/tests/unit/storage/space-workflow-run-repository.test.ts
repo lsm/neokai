@@ -106,6 +106,34 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
+	describe('getRehydratableRuns', () => {
+		it('returns in_progress and needs_attention runs; excludes pending, completed, cancelled', () => {
+			// 'pending' — excluded (transient creation state)
+			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
+
+			// 'in_progress' — included
+			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'InProgress' });
+			repo.updateStatus(r2.id, 'in_progress');
+
+			// 'needs_attention' (human gate blocked) — included so gate can be resolved after restart
+			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'NeedsAttention' });
+			repo.updateStatus(r3.id, 'needs_attention');
+
+			// 'completed' — excluded
+			const r4 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
+			repo.updateStatus(r4.id, 'completed');
+
+			// 'cancelled' — excluded
+			const r5 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Cancelled' });
+			repo.updateStatus(r5.id, 'cancelled');
+
+			const rehydratable = repo.getRehydratableRuns(spaceId);
+			expect(rehydratable).toHaveLength(2);
+			const titles = rehydratable.map((r) => r.title).sort();
+			expect(titles).toEqual(['InProgress', 'NeedsAttention']);
+		});
+	});
+
 	describe('updateRun', () => {
 		it('updates title and description', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });

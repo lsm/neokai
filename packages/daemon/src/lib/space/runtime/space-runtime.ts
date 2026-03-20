@@ -34,6 +34,9 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowGateError } from './workflow-executor';
+import { Logger } from '../../logger';
+
+const log = new Logger('space-runtime');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -134,13 +137,13 @@ export class SpaceRuntime {
 		const interval = this.config.tickIntervalMs ?? 5_000;
 
 		// Kick off the first tick immediately, then schedule the loop.
-		this.executeTick().catch(() => {
-			// Swallow initial tick error — the loop will retry on the next interval.
+		this.executeTick().catch((err: unknown) => {
+			log.error('SpaceRuntime: initial tick failed:', err);
 		});
 
 		this.tickTimer = setInterval(() => {
-			this.executeTick().catch(() => {
-				// Swallow per-tick errors so the loop stays alive.
+			this.executeTick().catch((err: unknown) => {
+				log.error('SpaceRuntime: tick failed:', err);
 			});
 		}, interval);
 	}
@@ -231,6 +234,7 @@ export class SpaceRuntime {
 		if (!startStep) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
+			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
 			throw new Error(`Start step "${workflow.startStepId}" not found in workflow "${workflowId}"`);
 		}
 
@@ -251,6 +255,10 @@ export class SpaceRuntime {
 			// Clean up the executor/meta entries so the run is not orphaned in the map.
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
+			// Cancel the DB run record so rehydrateExecutors() does not silently loop
+			// over it on next server restart (an in_progress run with no tasks would
+			// sit in the executor map indefinitely, never advancing and never erroring).
+			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
 			throw err;
 		}
 
@@ -441,7 +449,10 @@ export class SpaceRuntime {
 			.listByWorkflowRun(runId)
 			.filter((t) => t.workflowStepId === currentStep.id);
 
-		// Only advance when there is at least one task and ALL are completed
+		// Only advance when there is at least one task and ALL are completed.
+		// stepTasks.length === 0 is the normal "waiting" state — the task for this
+		// step has not been spawned yet (session group creation is async and handled
+		// by a separate layer). Silently returning here is intentional.
 		if (stepTasks.length === 0) return;
 		if (!stepTasks.every((t) => t.status === 'completed')) return;
 
