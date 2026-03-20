@@ -526,32 +526,42 @@ describe('resolveAgentInit', () => {
 		expect(() => resolveAgentInit(config)).not.toThrow();
 	});
 
-	it('planner resolved via resolveAgentInit produces workflow structure in task message', () => {
+	it('workflow field from ResolveAgentInitConfig flows into task message for planner', () => {
+		// Model the SpaceRuntime M4 contract:
+		//   1. Caller builds a ResolveAgentInitConfig with workflow + workflowRun
+		//   2. resolveAgentInit() produces the session AgentSessionInit
+		//   3. SpaceRuntime then calls buildCustomAgentTaskMessage using the same
+		//      fields from the resolve config (task, customAgent, workflowRun, workflow, space)
+		//
+		// This test asserts that the same workflow passed into resolveAgentInit is
+		// usable for buildCustomAgentTaskMessage and produces the Workflow Structure
+		// section — verifying the field is correctly accepted and that the M4 wiring
+		// pattern works end-to-end.
 		const plannerAgent = makeAgent({ id: 'planner-1', role: 'planner', name: 'Planner' });
 		const manager = makeMockAgentManager(plannerAgent);
 		const run = makeWorkflowRun({ currentStepId: 'step-plan' });
 		const wf = makeWorkflow();
 
-		// Simulate what SpaceRuntime does: resolveAgentInit for session init,
-		// then buildCustomAgentTaskMessage for the initial user message.
-		resolveAgentInit(
-			makeResolveConfig({
-				task: makeTask({ customAgentId: 'planner-1' }),
-				agentManager: manager,
-				workflowRun: run,
-				workflow: wf,
-			})
-		);
-
-		// buildCustomAgentTaskMessage uses the same config data — verify workflow flows through
-		const msg = buildCustomAgentTaskMessage({
-			customAgent: plannerAgent,
-			task: makeTask(),
+		// Step 1+2: resolve session init — workflow is now a field on ResolveAgentInitConfig
+		const resolveConfig = makeResolveConfig({
+			task: makeTask({ customAgentId: 'planner-1' }),
+			agentManager: manager,
 			workflowRun: run,
 			workflow: wf,
 			space: makeSpace(),
-			sessionId: 'session-resolve',
-			workspacePath: '/workspace',
+		});
+		const sessionInit = resolveAgentInit(resolveConfig);
+
+		// Step 3: build the task message from the SAME config fields, as SpaceRuntime M4 would.
+		// The resolved agent is the one the agentManager returned for 'planner-1'.
+		const msg = buildCustomAgentTaskMessage({
+			customAgent: plannerAgent, // agent resolved by resolveAgentInit internally
+			task: resolveConfig.task,
+			workflowRun: resolveConfig.workflowRun ?? null,
+			workflow: resolveConfig.workflow ?? null, // ← same workflow from resolve config
+			space: resolveConfig.space,
+			sessionId: sessionInit.sessionId,
+			workspacePath: resolveConfig.workspacePath,
 		});
 
 		expect(msg).toContain('Workflow Structure');
