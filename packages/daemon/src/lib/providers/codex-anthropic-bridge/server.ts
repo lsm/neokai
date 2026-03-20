@@ -272,6 +272,12 @@ export async function drainToSSE(
 			session.kill();
 			return;
 		}
+		// Ensure cleanup runs for any error that escapes the drain loop.
+		// This is critical when startTurn throws due to subprocess crash —
+		// without calling onError, turnInProgress stays true and the session
+		// is never deleted, causing subsequent requests to get 409 conflicts.
+		onError?.();
+		session.kill();
 		throw error;
 	}
 }
