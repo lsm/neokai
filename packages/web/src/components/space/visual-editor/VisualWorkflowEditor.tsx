@@ -14,6 +14,10 @@
  *  - Designating the start node
  *  - Persisting layout positions on save
  *  - Tags and WorkflowRulesEditor (collapsible)
+ *
+ * NOTE: This component is designed for mount-only initialisation. If `workflow`
+ * changes after mount, the component will NOT re-initialise — callers should
+ * provide a stable `key` prop to force remount when switching between workflows.
  */
 
 import { useState, useMemo, useCallback } from 'preact/hooks';
@@ -54,14 +58,6 @@ export interface VisualWorkflowEditorProps {
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
-
-function makeEmptyStep(): StepDraft {
-	return { localId: crypto.randomUUID(), name: '', agentId: '', instructions: '' };
-}
-
-// ============================================================================
 // Component
 // ============================================================================
 
@@ -69,13 +65,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const isEditing = !!workflow;
 
 	// ------------------------------------------------------------------
-	// Initialize from existing workflow (on mount only)
+	// Initialize from existing workflow (on mount only).
+	// See file-level NOTE: callers must key this component to force remount
+	// when switching between workflows.
 	// ------------------------------------------------------------------
-	const initState: VisualEditorState | null = useMemo(() => {
-		if (!workflow) return null;
-		return workflowToVisualState(workflow);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []); // intentionally only on mount
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	const initState: VisualEditorState | null = useMemo(
+		() => (workflow ? workflowToVisualState(workflow) : null),
+		[]
+	);
 
 	// ------------------------------------------------------------------
 	// State
@@ -96,7 +94,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	// Selection state — lifted so config panels can render from the editor
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null); // step.localId
-	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null); // "fromLocalId:toLocalId"
+	// Edge IDs have the format "fromLocalId:toLocalId". This is safe because
+	// crypto.randomUUID() produces hyphenated hex strings that never contain
+	// colons, so the first ':' unambiguously splits from/to.
+	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -227,19 +228,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	function addStep() {
 		const newLocalId = crypto.randomUUID();
-		const newStep = makeEmptyStep();
-		(newStep as StepDraft & { localId: string }).localId = newLocalId;
+		const newStep: StepDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
-		// Stagger new nodes so they don't stack exactly
-		const position: Point = { x: 120 + nodes.length * 20, y: 80 + nodes.length * 20 };
-		const newNode: VisualNode = { step: newStep, position };
-
-		setNodes((prev) => [...prev, newNode]);
-
-		// First node automatically becomes the start node
-		if (nodes.length === 0) {
-			setStartStepId(newLocalId);
-		}
+		setNodes((prev) => {
+			// Stagger new nodes so they don't stack exactly
+			const position: Point = { x: 120 + prev.length * 20, y: 80 + prev.length * 20 };
+			// First node automatically becomes the start node — checked inside the
+			// functional updater so it reflects the actual state at execution time.
+			if (prev.length === 0) setStartStepId(newLocalId);
+			return [...prev, { step: newStep, position }];
+		});
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {
@@ -255,44 +253,43 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleDeleteNode = useCallback(
 		(localId: string) => {
-			setNodes((prev) => {
-				const nodeToDelete = prev.find((n) => n.step.localId === localId);
-				if (!nodeToDelete) return prev;
-				const key = nodeToDelete.step.id ?? nodeToDelete.step.localId;
-				const remaining = prev.filter((n) => n.step.localId !== localId);
+			// Read current state from closure (nodes + startStepId are deps).
+			const nodeToDelete = nodes.find((n) => n.step.localId === localId);
+			if (!nodeToDelete) return;
 
-				// Re-assign start to first remaining node if the deleted node was start
-				const wasStart =
-					nodeToDelete.step.localId === startStepId || nodeToDelete.step.id === startStepId;
-				if (wasStart && remaining.length > 0) {
-					const next = remaining[0];
-					setStartStepId(next.step.id ?? next.step.localId);
-				} else if (wasStart) {
-					setStartStepId('');
-				}
+			const key = nodeToDelete.step.id ?? nodeToDelete.step.localId;
+			const remaining = nodes.filter((n) => n.step.localId !== localId);
+			const wasStart =
+				nodeToDelete.step.localId === startStepId || nodeToDelete.step.id === startStepId;
 
-				// Drop edges touching the deleted node
-				setEdges((prevEdges) =>
-					prevEdges.filter((e) => e.fromStepKey !== key && e.toStepKey !== key)
-				);
+			// Update all state in flat calls — no nested setter inside another updater.
+			setNodes(remaining);
+			setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
 
-				return remaining;
-			});
+			if (wasStart && remaining.length > 0) {
+				const next = remaining[0];
+				setStartStepId(next.step.id ?? next.step.localId);
+			} else if (wasStart) {
+				setStartStepId('');
+			}
+
 			setSelectedNodeId(null);
 		},
-		[startStepId]
+		[nodes, startStepId]
 	);
 
 	const handleUpdateNode = useCallback((step: StepDraft) => {
 		setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
 	}, []);
 
+	/**
+	 * Set this node as the start node. Stores step.localId so that both the
+	 * nodeIsStart helper and the serializer can resolve it (the serializer checks
+	 * both localIdMap and nodeMap, so localId always works regardless of whether
+	 * the step has a persisted step.id).
+	 */
 	const handleSetAsStart = useCallback((localId: string) => {
-		setNodes((prev) => {
-			const node = prev.find((n) => n.step.localId === localId);
-			if (node) setStartStepId(node.step.id ?? node.step.localId);
-			return prev;
-		});
+		setStartStepId(localId);
 	}, []);
 
 	const handleUpdateEntryCondition = useCallback((node: VisualNode, cond: ConditionDraft) => {
@@ -418,6 +415,26 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			setError('Workflow name is required.');
 			return;
 		}
+		if (nodes.length === 0) {
+			setError('A workflow must have at least one step.');
+			return;
+		}
+
+		// Validate each step has an agent assigned
+		for (let i = 0; i < nodes.length; i++) {
+			if (!nodes[i].step.agentId) {
+				setError(`Step ${i + 1} requires an agent.`);
+				return;
+			}
+		}
+
+		// Validate condition-type edges have a non-empty expression
+		for (const edge of edges) {
+			if (edge.condition?.type === 'condition' && !edge.condition.expression?.trim()) {
+				setError('A transition using "Expression" condition requires a non-empty expression.');
+				return;
+			}
+		}
 
 		const visualState: VisualEditorState = { nodes, edges, startStepId, rules, tags };
 
@@ -432,11 +449,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				});
 				await spaceStore.updateWorkflow(workflow.id, params);
 			} else {
-				// visualStateToCreateParams generates full CreateSpaceWorkflowParams (including spaceId).
-				// spaceStore.createWorkflow adds spaceId internally, so strip it.
+				// visualStateToCreateParams requires a spaceId argument, but
+				// spaceStore.createWorkflow already injects the active spaceId itself.
+				// We pass an empty string as a placeholder and strip it before calling
+				// the store so the call signature stays consistent.
 				const fullParams = visualStateToCreateParams(
 					visualState,
-					'', // placeholder — spaceStore injects the real value
+					'', // stripped below — store provides the real spaceId
 					name.trim(),
 					description.trim() || undefined
 				);
@@ -566,7 +585,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					onDeleteEdge={handleDeleteEdge}
 				/>
 
-				{/* NodeConfigPanel — anchored to the right of the canvas */}
+				{/* NodeConfigPanel — anchored to the right of the canvas.
+				    isFirstStep/isLastStep indicate whether the node has no incoming/outgoing
+				    edges respectively. In a DAG this means every source node shows "Workflow
+				    starts here" and every sink node shows "Workflow ends here", which is the
+				    correct terminal-message semantic for a non-linear workflow. */}
 				{selectedNode && (
 					<NodeConfigPanel
 						step={selectedNode.step}
