@@ -175,10 +175,18 @@ export class ConversationManager {
 				onPreToolUse: () => Promise.resolve({ permissionDecision: 'allow' as const }),
 				onPostToolUse: () => {},
 				onErrorOccurred: (input) => {
+					const errorMsg = typeof input.error === 'string' ? input.error : String(input.error);
 					logger.warn(
-						`SDK error (${input.errorContext}, recoverable=${String(input.recoverable)}): ${String(input.error)}`
+						`SDK error (${input.errorContext}, recoverable=${String(input.recoverable)}): ${errorMsg}`
 					);
+					// Do not retry quota/payment errors — they will not resolve with retries.
+					const isQuotaError =
+						errorMsg.includes('402') ||
+						errorMsg.toLowerCase().includes('no quota') ||
+						errorMsg.toLowerCase().includes('quota exceeded') ||
+						errorMsg.toLowerCase().includes('insufficient_quota');
 					if (
+						!isQuotaError &&
 						input.recoverable &&
 						(input.errorContext === 'model_call' || input.errorContext === 'tool_execution')
 					) {

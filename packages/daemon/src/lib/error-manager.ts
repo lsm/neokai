@@ -151,7 +151,12 @@ export class ErrorManager {
 		if (message.includes('ENOTFOUND') || message.includes('EHOSTUNREACH')) {
 			return 'HOST_UNREACHABLE';
 		}
-		if (message.includes('insufficient_quota') || message.includes('quota exceeded')) {
+		if (
+			message.includes('insufficient_quota') ||
+			message.includes('quota exceeded') ||
+			message.includes('no quota') ||
+			message.includes('402')
+		) {
 			return 'QUOTA_EXCEEDED';
 		}
 		if (message.includes('invalid_api_key')) {
