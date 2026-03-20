@@ -6,21 +6,36 @@
  *  - Renders WorkflowNode components with correct isSelected prop
  *  - Handles Delete/Backspace keyboard shortcut to delete selected node
  *  - Emits onNodeSelect(stepId | null) so parent components can react
+ *  - Manages connection drag via useConnectionDrag hook
+ *    - Shows ghost edge (dashed SVG path) during drag
+ *    - Highlights valid input ports as drop targets
+ *    - Creates transitions on valid drop
  */
 
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
+import type { ComponentChildren, RefObject } from 'preact';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
-import type { WorkflowNodeProps } from './WorkflowNode';
+import type { WorkflowNodeProps, PortType } from './WorkflowNode';
 import type { ViewportState, Point } from './types';
+import { useConnectionDrag } from './useConnectionDrag';
+import type { TransitionLike } from './useConnectionDrag';
 
 /**
  * Per-node data passed to WorkflowCanvas.
- * WorkflowCanvas injects: isSelected, onClick, scale, onPositionChange.
+ * WorkflowCanvas injects: isSelected, isDropTarget, onClick, scale, onPositionChange,
+ * onPortMouseDown, onPortMouseEnter, onPortMouseLeave.
  */
 export type WorkflowNodeData = Omit<
 	WorkflowNodeProps,
-	'isSelected' | 'onClick' | 'scale' | 'onPositionChange'
+	| 'isSelected'
+	| 'isDropTarget'
+	| 'onClick'
+	| 'scale'
+	| 'onPositionChange'
+	| 'onPortMouseDown'
+	| 'onPortMouseEnter'
+	| 'onPortMouseLeave'
 >;
 
 export interface WorkflowCanvasProps {
@@ -33,7 +48,50 @@ export interface WorkflowCanvasProps {
 	onDeleteNode?: (stepId: string) => void;
 	/** Called when a node is dragged to a new position. */
 	onNodePositionChange?: (stepId: string, position: Point) => void;
+	/** Existing transitions — used for duplicate detection during connection drag. */
+	transitions?: TransitionLike[];
+	/** Called when a new connection is created by dragging from an output to an input port. */
+	onCreateTransition?: (fromStepId: string, toStepId: string) => void;
 }
+
+// ---- Ghost edge rendering ----
+
+/** Render a dashed bezier ghost edge from `from` to `to` in canvas-space SVG coordinates. */
+function GhostEdge({ from, to }: { from: Point; to: Point }): ComponentChildren {
+	// Control points: vertical bezier (source goes down, target comes from above)
+	const dy = Math.abs(to.y - from.y);
+	const cpOffset = Math.max(50, dy * 0.5);
+	const d = `M ${from.x} ${from.y} C ${from.x} ${from.y + cpOffset}, ${to.x} ${to.y - cpOffset}, ${to.x} ${to.y}`;
+
+	return (
+		<>
+			{/* Shadow for contrast */}
+			<path
+				d={d}
+				fill="none"
+				stroke="rgba(0,0,0,0.3)"
+				strokeWidth={5}
+				strokeDasharray="8 4"
+				strokeLinecap="round"
+			/>
+			{/* Visible ghost stroke */}
+			<path
+				data-testid="ghost-edge"
+				d={d}
+				fill="none"
+				stroke="#60a5fa"
+				strokeWidth={2.5}
+				strokeDasharray="8 4"
+				strokeLinecap="round"
+				opacity={0.9}
+			/>
+		</>
+	);
+}
+
+// ============================================================================
+// WorkflowCanvas
+// ============================================================================
 
 export function WorkflowCanvas({
 	nodes,
@@ -42,6 +100,8 @@ export function WorkflowCanvas({
 	onNodeSelect,
 	onDeleteNode,
 	onNodePositionChange,
+	transitions = [],
+	onCreateTransition,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -54,6 +114,17 @@ export function WorkflowCanvas({
 
 	const onDeleteNodeRef = useRef(onDeleteNode);
 	onDeleteNodeRef.current = onDeleteNode;
+
+	// Ref to the VisualCanvas container (for coordinate conversion in connection drag)
+	const containerRef = useRef<HTMLDivElement>(null);
+
+	// ---- Connection drag ----
+	const { dragState, startDrag, setHoverTarget } = useConnectionDrag({
+		viewportState,
+		containerRef: containerRef as RefObject<HTMLElement>,
+		transitions,
+		onCreateTransition: onCreateTransition ?? (() => {}),
+	});
 
 	// Clear selection if the selected node is removed externally (e.g. parent deletes it
 	// from the nodes array). Without this, a node re-added with the same stepId would
@@ -78,6 +149,34 @@ export function WorkflowCanvas({
 		onNodeSelect?.(null);
 	}, [onNodeSelect]);
 
+	// ---- Port event handlers ----
+	const handlePortMouseDown = useCallback(
+		(stepId: string, portType: PortType, e: MouseEvent, portEl: Element) => {
+			if (portType === 'output') {
+				startDrag(stepId, portEl, e);
+			}
+		},
+		[startDrag]
+	);
+
+	const handlePortMouseEnter = useCallback(
+		(stepId: string, portType: PortType) => {
+			if (portType === 'input' && dragState.active) {
+				setHoverTarget(stepId);
+			}
+		},
+		[dragState.active, setHoverTarget]
+	);
+
+	const handlePortMouseLeave = useCallback(
+		(_stepId: string, portType: PortType) => {
+			if (portType === 'input') {
+				setHoverTarget(null);
+			}
+		},
+		[setHoverTarget]
+	);
+
 	// ---- Keyboard: Delete / Backspace removes the selected node ----
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -98,22 +197,45 @@ export function WorkflowCanvas({
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
+	// ---- Ghost edge (rendered in SVG edge layer) ----
+	const edgeLayer = useCallback(
+		(_vp: ViewportState): ComponentChildren => {
+			if (!dragState.active || !dragState.fromPos || !dragState.currentPos) return null;
+			return <GhostEdge from={dragState.fromPos} to={dragState.currentPos} />;
+		},
+		[dragState]
+	);
+
 	return (
-		<VisualCanvas
-			viewportState={viewportState}
-			onViewportChange={onViewportChange}
-			onBackgroundClick={handleBackgroundClick}
-		>
-			{nodes.map((node) => (
-				<WorkflowNode
-					key={node.step.localId}
-					{...node}
-					scale={viewportState.scale}
-					onPositionChange={onNodePositionChange ?? (() => {})}
-					isSelected={selectedNodeId === node.step.localId}
-					onClick={handleNodeSelect}
-				/>
-			))}
-		</VisualCanvas>
+		<div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+			<VisualCanvas
+				viewportState={viewportState}
+				onViewportChange={onViewportChange}
+				onBackgroundClick={handleBackgroundClick}
+				edgeLayer={edgeLayer}
+			>
+				{nodes.map((node) => {
+					const stepId = node.step.localId;
+					// A node is a valid drop target if: drag is active, not the source, not start node
+					const isDropTarget =
+						dragState.active && dragState.fromStepId !== stepId && !node.isStartNode;
+
+					return (
+						<WorkflowNode
+							key={stepId}
+							{...node}
+							scale={viewportState.scale}
+							onPositionChange={onNodePositionChange ?? (() => {})}
+							isSelected={selectedNodeId === stepId}
+							isDropTarget={isDropTarget}
+							onClick={handleNodeSelect}
+							onPortMouseDown={handlePortMouseDown}
+							onPortMouseEnter={handlePortMouseEnter}
+							onPortMouseLeave={handlePortMouseLeave}
+						/>
+					);
+				})}
+			</VisualCanvas>
+		</div>
 	);
 }
