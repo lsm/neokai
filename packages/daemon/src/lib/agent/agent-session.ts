@@ -783,6 +783,12 @@ export class AgentSession
 		this.errorManager.markApiSuccess();
 	}
 
+	async onStartupTimeoutAutoRecover(): Promise<void> {
+		if (this.isCleaningUp()) return;
+		this.logger.warn('Auto-recovering after SDK startup timeout — starting fresh without resume.');
+		await this.startStreamingQuery();
+	}
+
 	// ============================================================================
 	// QueryLifecycleManagerContext methods
 	// ============================================================================
