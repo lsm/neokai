@@ -19,7 +19,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, WorkflowTransition } from '@neokai/shared';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
 import type { StepDraft } from '../../WorkflowStepCard';
@@ -268,5 +268,196 @@ describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
 		expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
 		expect(getByTestId('workflow-node-step-1').className).toContain('ring-blue-500');
 		expect(getByTestId('workflow-node-step-2').className).not.toContain('ring-2');
+	});
+});
+
+// ---- Transitions / edge integration ----
+
+const TRANSITIONS: WorkflowTransition[] = [
+	{ id: 'tr1', from: 'step-1', to: 'step-2' },
+	{ id: 'tr2', from: 'step-2', to: 'step-1', condition: { type: 'human' } },
+];
+
+function renderCanvasWithEdges(extra: Partial<WorkflowCanvasProps> = {}) {
+	const onEdgeSelect = vi.fn();
+	const onDeleteEdge = vi.fn();
+
+	function Wrapper() {
+		const [vp, setVp] = useState<ViewportState>(VP);
+		return (
+			<WorkflowCanvas
+				nodes={NODES}
+				viewportState={vp}
+				onViewportChange={setVp}
+				transitions={TRANSITIONS}
+				onEdgeSelect={onEdgeSelect}
+				onDeleteEdge={onDeleteEdge}
+				{...extra}
+			/>
+		);
+	}
+
+	const result = render(<Wrapper />);
+	return { ...result, onEdgeSelect, onDeleteEdge };
+}
+
+describe('WorkflowCanvas — edge rendering', () => {
+	it('renders SVG edges for each transition', () => {
+		const { getByTestId } = renderCanvasWithEdges();
+		expect(getByTestId('edge-tr1')).toBeTruthy();
+		expect(getByTestId('edge-tr2')).toBeTruthy();
+	});
+
+	it('renders SVG overlay layer', () => {
+		const { getByTestId } = renderCanvasWithEdges();
+		expect(getByTestId('visual-canvas-svg')).toBeTruthy();
+	});
+});
+
+describe('WorkflowCanvas — edge selection mutual exclusivity', () => {
+	it('clicking an edge calls onEdgeSelect', () => {
+		const { getByTestId, onEdgeSelect } = renderCanvasWithEdges();
+		const group = getByTestId('edge-tr1');
+		const hitbox = group.querySelectorAll('path')[0];
+		fireEvent.click(hitbox);
+		expect(onEdgeSelect).toHaveBeenCalledWith('tr1');
+	});
+
+	it('selecting a node clears edge selection and calls onEdgeSelect(null)', () => {
+		const onEdgeSelect = vi.fn();
+		const onNodeSelect = vi.fn();
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={NODES}
+					viewportState={vp}
+					onViewportChange={setVp}
+					transitions={TRANSITIONS}
+					onEdgeSelect={onEdgeSelect}
+					onNodeSelect={onNodeSelect}
+				/>
+			);
+		}
+		const { getByTestId } = render(<Wrapper />);
+
+		// Select an edge first
+		const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
+		fireEvent.click(hitbox);
+		expect(onEdgeSelect).toHaveBeenCalledWith('tr1');
+		expect(getByTestId('edge-tr1').getAttribute('data-selected')).toBe('true');
+		onEdgeSelect.mockClear();
+
+		// Now select a node — edge should be cleared
+		fireEvent.click(getByTestId('workflow-node-step-1'));
+		expect(onEdgeSelect).toHaveBeenCalledWith(null);
+		expect(getByTestId('edge-tr1').getAttribute('data-selected')).toBe('false');
+		cleanup();
+	});
+
+	it('selecting an edge clears node selection and calls onNodeSelect(null)', () => {
+		const onEdgeSelect = vi.fn();
+		const onNodeSelect = vi.fn();
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={NODES}
+					viewportState={vp}
+					onViewportChange={setVp}
+					transitions={TRANSITIONS}
+					onEdgeSelect={onEdgeSelect}
+					onNodeSelect={onNodeSelect}
+				/>
+			);
+		}
+		const { getByTestId } = render(<Wrapper />);
+
+		// Select a node first
+		fireEvent.click(getByTestId('workflow-node-step-1'));
+		expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
+		onNodeSelect.mockClear();
+
+		// Now select an edge — node should be cleared
+		const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
+		fireEvent.click(hitbox);
+		expect(onNodeSelect).toHaveBeenCalledWith(null);
+		expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
+		cleanup();
+	});
+
+	it('background click clears both node and edge selection', () => {
+		const onEdgeSelect = vi.fn();
+		const onNodeSelect = vi.fn();
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={NODES}
+					viewportState={vp}
+					onViewportChange={setVp}
+					transitions={TRANSITIONS}
+					onEdgeSelect={onEdgeSelect}
+					onNodeSelect={onNodeSelect}
+				/>
+			);
+		}
+		const { getByTestId } = render(<Wrapper />);
+
+		const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
+		fireEvent.click(hitbox);
+		expect(getByTestId('edge-tr1').getAttribute('data-selected')).toBe('true');
+		onEdgeSelect.mockClear();
+
+		fireEvent.click(getByTestId('visual-canvas-transform'));
+		expect(onEdgeSelect).toHaveBeenCalledWith(null);
+		expect(getByTestId('edge-tr1').getAttribute('data-selected')).toBe('false');
+		cleanup();
+	});
+});
+
+describe('WorkflowCanvas — edge delete', () => {
+	it('Delete key on selected edge calls onDeleteEdge', () => {
+		const { getByTestId, onDeleteEdge } = renderCanvasWithEdges();
+		const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
+		fireEvent.click(hitbox);
+		fireEvent.keyDown(document.body, { key: 'Delete' });
+		expect(onDeleteEdge).toHaveBeenCalledWith('tr1');
+	});
+
+	it('Delete on selected edge does not call onDeleteNode', () => {
+		const onDeleteNode = vi.fn();
+
+		function Wrapper() {
+			const [vp, setVp] = useState<ViewportState>(VP);
+			return (
+				<WorkflowCanvas
+					nodes={NODES}
+					viewportState={vp}
+					onViewportChange={setVp}
+					transitions={TRANSITIONS}
+					onDeleteNode={onDeleteNode}
+				/>
+			);
+		}
+		const { getByTestId } = render(<Wrapper />);
+
+		// Select edge (clears node selection)
+		const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
+		fireEvent.click(hitbox);
+		fireEvent.keyDown(document.body, { key: 'Delete' });
+		expect(onDeleteNode).not.toHaveBeenCalled();
+		cleanup();
+	});
+
+	it('Delete on selected node does not call onDeleteEdge when edge not selected', () => {
+		const { getByTestId, onDeleteEdge } = renderCanvasWithEdges();
+		// Select a node (mutually exclusive — no edge selected)
+		fireEvent.click(getByTestId('workflow-node-step-1'));
+		fireEvent.keyDown(document.body, { key: 'Delete' });
+		expect(onDeleteEdge).not.toHaveBeenCalled();
 	});
 });

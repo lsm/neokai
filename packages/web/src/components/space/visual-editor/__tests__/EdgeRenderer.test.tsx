@@ -6,14 +6,15 @@
  * - Missing node position skips that edge
  * - computeEdgePoints bezier control point math
  * - buildPathD produces correct SVG path string
- * - Edge color matches condition type (always/human/condition)
- * - Selected edge gets thicker stroke and white color
+ * - Edge color matches condition type (always/human/condition) via data-stroke-color
+ * - Selected edge gets thicker stroke (data-stroke-width) and white color
  * - Clicking an edge calls onEdgeSelect with transitionId
  * - Delete key on selected edge calls onEdgeDelete
  * - Backspace key on selected edge calls onEdgeDelete
  * - Delete key without selection does not call onEdgeDelete
- * - Delete inside input does not trigger onEdgeDelete
+ * - Delete inside input/textarea/contenteditable does not trigger onEdgeDelete
  * - Arrowhead markers are rendered in defs
+ * - Multiple instances have non-colliding marker IDs
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -25,6 +26,8 @@ import {
 	buildPathD,
 	CONTROL_OFFSET,
 	EDGE_COLORS,
+	NORMAL_STROKE_WIDTH,
+	SELECTED_STROKE_WIDTH,
 } from '../EdgeRenderer';
 import type { EdgeRendererProps } from '../EdgeRenderer';
 import type { NodePosition } from '../types';
@@ -74,6 +77,11 @@ function renderEdges(props: Partial<EdgeRendererProps> = {}) {
 		</svg>
 	);
 	return { ...result, onEdgeSelect, onEdgeDelete };
+}
+
+// Helper to get the visible path (second <path> in the group)
+function getVisiblePath(group: Element): Element {
+	return group.querySelectorAll('path')[1];
 }
 
 // ---------------------------------------------------------------------------
@@ -173,13 +181,12 @@ describe('EdgeRenderer — rendering', () => {
 		expect(groups[0].getAttribute('data-edge-id')).toBe('t1');
 	});
 
-	it('renders arrowhead marker definitions', () => {
+	it('renders arrowhead marker <defs>', () => {
 		const { container } = renderEdges();
-		// Should have markers for always, human, condition, and selected
-		expect(container.querySelector('#edge-arrow-always')).not.toBeNull();
-		expect(container.querySelector('#edge-arrow-human')).not.toBeNull();
-		expect(container.querySelector('#edge-arrow-condition')).not.toBeNull();
-		expect(container.querySelector('#edge-arrow-selected')).not.toBeNull();
+		const defs = container.querySelector('defs');
+		expect(defs).not.toBeNull();
+		// Should have 4 markers: always, human, condition, selected
+		expect(defs!.querySelectorAll('marker')).toHaveLength(4);
 	});
 
 	it('uses testid data-testid="edge-{id}" on each group', () => {
@@ -188,6 +195,26 @@ describe('EdgeRenderer — rendering', () => {
 		expect(getByTestId('edge-t2')).toBeTruthy();
 		expect(getByTestId('edge-t3')).toBeTruthy();
 	});
+
+	it('multiple instances have non-colliding marker IDs', () => {
+		// Render two EdgeRenderer instances and check their marker IDs differ
+		const { container: c1 } = render(
+			<svg>
+				<EdgeRenderer transitions={[T1]} nodePositions={NODE_POSITIONS} />
+			</svg>
+		);
+		const { container: c2 } = render(
+			<svg>
+				<EdgeRenderer transitions={[T1]} nodePositions={NODE_POSITIONS} />
+			</svg>
+		);
+		const markers1 = Array.from(c1.querySelectorAll('marker')).map((m) => m.id);
+		const markers2 = Array.from(c2.querySelectorAll('marker')).map((m) => m.id);
+		// No overlap between the two instances' marker IDs
+		const overlap = markers1.filter((id) => markers2.includes(id));
+		expect(overlap).toHaveLength(0);
+		cleanup();
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -195,6 +222,12 @@ describe('EdgeRenderer — rendering', () => {
 // ---------------------------------------------------------------------------
 
 describe('EdgeRenderer — edge colors', () => {
+	it('EDGE_COLORS has correct hex values for all condition types', () => {
+		expect(EDGE_COLORS.always).toBe('#3b82f6');
+		expect(EDGE_COLORS.human).toBe('#facc15');
+		expect(EDGE_COLORS.condition).toBe('#c084fc');
+	});
+
 	it('always transition (no condition) has data-condition-type="always"', () => {
 		const { getByTestId } = renderEdges();
 		expect(getByTestId('edge-t1').getAttribute('data-condition-type')).toBe('always');
@@ -210,10 +243,22 @@ describe('EdgeRenderer — edge colors', () => {
 		expect(getByTestId('edge-t3').getAttribute('data-condition-type')).toBe('condition');
 	});
 
-	it('EDGE_COLORS has entries for all condition types', () => {
-		expect(EDGE_COLORS.always).toBe('#3b82f6');
-		expect(EDGE_COLORS.human).toBe('#facc15');
-		expect(EDGE_COLORS.condition).toBe('#c084fc');
+	it('always transition visible path has correct stroke color', () => {
+		const { getByTestId } = renderEdges();
+		const visible = getVisiblePath(getByTestId('edge-t1'));
+		expect(visible.getAttribute('data-stroke-color')).toBe(EDGE_COLORS.always);
+	});
+
+	it('human transition visible path has correct stroke color', () => {
+		const { getByTestId } = renderEdges();
+		const visible = getVisiblePath(getByTestId('edge-t2'));
+		expect(visible.getAttribute('data-stroke-color')).toBe(EDGE_COLORS.human);
+	});
+
+	it('condition transition visible path has correct stroke color', () => {
+		const { getByTestId } = renderEdges();
+		const visible = getVisiblePath(getByTestId('edge-t3'));
+		expect(visible.getAttribute('data-stroke-color')).toBe(EDGE_COLORS.condition);
 	});
 });
 
@@ -222,28 +267,39 @@ describe('EdgeRenderer — edge colors', () => {
 // ---------------------------------------------------------------------------
 
 describe('EdgeRenderer — selected state', () => {
-	it('selected edge uses white stroke color', () => {
-		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
-		const group = getByTestId('edge-t1');
-		const visiblePath = group.querySelectorAll('path')[1];
-		expect(visiblePath.getAttribute('stroke')).toBe('white');
-	});
-
 	it('selected edge has data-selected="true"', () => {
 		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
 		expect(getByTestId('edge-t1').getAttribute('data-selected')).toBe('true');
-		expect(getByTestId('edge-t2').getAttribute('data-selected')).toBe('false');
-	});
-
-	it('non-selected edges retain their condition type attribute', () => {
-		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
-		expect(getByTestId('edge-t2').getAttribute('data-condition-type')).toBe('human');
 	});
 
 	it('non-selected edges have data-selected="false"', () => {
 		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
 		expect(getByTestId('edge-t2').getAttribute('data-selected')).toBe('false');
 		expect(getByTestId('edge-t3').getAttribute('data-selected')).toBe('false');
+	});
+
+	it('selected edge visible path has white stroke color', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		const visible = getVisiblePath(getByTestId('edge-t1'));
+		expect(visible.getAttribute('data-stroke-color')).toBe('white');
+	});
+
+	it('selected edge visible path has thicker stroke-width than normal', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		const selectedVisible = getVisiblePath(getByTestId('edge-t1'));
+		const normalVisible = getVisiblePath(getByTestId('edge-t2'));
+		const selectedWidth = parseFloat(selectedVisible.getAttribute('data-stroke-width') ?? '0');
+		const normalWidth = parseFloat(normalVisible.getAttribute('data-stroke-width') ?? '0');
+		expect(selectedWidth).toBe(SELECTED_STROKE_WIDTH);
+		expect(normalWidth).toBe(NORMAL_STROKE_WIDTH);
+		expect(selectedWidth).toBeGreaterThan(normalWidth);
+	});
+
+	it('non-selected edges retain their condition color when one is selected', () => {
+		const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
+		expect(getVisiblePath(getByTestId('edge-t2')).getAttribute('data-stroke-color')).toBe(
+			EDGE_COLORS.human
+		);
 	});
 });
 
@@ -314,6 +370,16 @@ describe('EdgeRenderer — keyboard delete', () => {
 		container.appendChild(textarea);
 		textarea.focus();
 		fireEvent.keyDown(textarea, { key: 'Delete', target: textarea });
+		expect(onEdgeDelete).not.toHaveBeenCalled();
+	});
+
+	it('Delete inside a contenteditable element does not trigger onEdgeDelete', () => {
+		const { onEdgeDelete, container } = renderEdges({ selectedEdgeId: 't1' });
+		const div = document.createElement('div');
+		div.contentEditable = 'true';
+		container.appendChild(div);
+		div.focus();
+		fireEvent.keyDown(div, { key: 'Delete', target: div });
 		expect(onEdgeDelete).not.toHaveBeenCalled();
 	});
 });

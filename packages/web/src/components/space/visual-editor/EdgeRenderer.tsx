@@ -16,11 +16,19 @@
  * visible edge to make clicking easier. An arrowhead marker indicates direction.
  *
  * Delete/Backspace while an edge is selected calls onEdgeDelete.
+ *
+ * Marker IDs are prefixed with a stable per-instance ID (via useId) to prevent
+ * collisions when multiple EdgeRenderer instances are mounted simultaneously.
  */
 
 import { useEffect, useRef } from 'preact/hooks';
 import type { WorkflowTransition, WorkflowConditionType } from '@neokai/shared';
 import type { NodePosition } from './types';
+
+// Module-level counter — increments on each EdgeRenderer mount, giving every
+// instance a unique marker ID prefix even when multiple instances are on the
+// same page (e.g. split-view or comparison mode).
+let _instanceCounter = 0;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,8 +44,8 @@ export const EDGE_COLORS: Record<WorkflowConditionType, string> = {
 	condition: '#c084fc', // purple-400
 };
 
-const NORMAL_STROKE_WIDTH = 1.5;
-const SELECTED_STROKE_WIDTH = 3;
+export const NORMAL_STROKE_WIDTH = 1.5;
+export const SELECTED_STROKE_WIDTH = 3;
 const HITBOX_STROKE_WIDTH = 12;
 
 // ---------------------------------------------------------------------------
@@ -112,6 +120,13 @@ export function EdgeRenderer({
 	onEdgeSelect,
 	onEdgeDelete,
 }: EdgeRendererProps) {
+	// Stable per-instance prefix to prevent marker ID collisions across instances
+	const markerPrefixRef = useRef<string | null>(null);
+	if (markerPrefixRef.current === null) {
+		markerPrefixRef.current = `edge-arrow-${_instanceCounter++}`;
+	}
+	const markerPrefix = markerPrefixRef.current;
+
 	// Keep refs so the keyboard handler always sees the latest values
 	const selectedEdgeIdRef = useRef(selectedEdgeId);
 	selectedEdgeIdRef.current = selectedEdgeId;
@@ -123,8 +138,9 @@ export function EdgeRenderer({
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-			const tag = (e.target as HTMLElement)?.tagName;
-			if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+			const target = e.target as HTMLElement;
+			const tag = target?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
 
 			const current = selectedEdgeIdRef.current;
 			if (!current || !onEdgeDeleteRef.current) return;
@@ -139,12 +155,13 @@ export function EdgeRenderer({
 
 	return (
 		<>
-			{/* Arrowhead marker definitions — one per condition type + one for selected state */}
+			{/* Arrowhead marker definitions — one per condition type + one for selected state.
+			    IDs are prefixed with instanceId to prevent collisions between multiple instances. */}
 			<defs>
 				{(Object.entries(EDGE_COLORS) as [WorkflowConditionType, string][]).map(([type, color]) => (
 					<marker
-						key={`arrow-${type}`}
-						id={`edge-arrow-${type}`}
+						key={`${markerPrefix}-${type}`}
+						id={`${markerPrefix}-${type}`}
 						viewBox="0 0 10 10"
 						refX="10"
 						refY="5"
@@ -156,7 +173,7 @@ export function EdgeRenderer({
 					</marker>
 				))}
 				<marker
-					id="edge-arrow-selected"
+					id={`${markerPrefix}-selected`}
 					viewBox="0 0 10 10"
 					refX="10"
 					refY="5"
@@ -178,7 +195,9 @@ export function EdgeRenderer({
 				const isSelected = transition.id === selectedEdgeId;
 				const strokeColor = isSelected ? 'white' : color;
 				const strokeWidth = isSelected ? SELECTED_STROKE_WIDTH : NORMAL_STROKE_WIDTH;
-				const markerId = isSelected ? 'edge-arrow-selected' : `edge-arrow-${conditionType}`;
+				const markerId = isSelected
+					? `${markerPrefix}-selected`
+					: `${markerPrefix}-${conditionType}`;
 
 				return (
 					<g
@@ -209,6 +228,8 @@ export function EdgeRenderer({
 							strokeOpacity={isSelected ? 1 : 0.85}
 							fill="none"
 							markerEnd={`url(#${markerId})`}
+							data-stroke-color={strokeColor}
+							data-stroke-width={String(strokeWidth)}
 							style={{ pointerEvents: 'none' }}
 						/>
 					</g>
