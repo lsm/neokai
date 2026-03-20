@@ -83,6 +83,7 @@ import type {
 	SelectiveRewindResult,
 	SystemPromptConfig,
 	McpServerConfig,
+	Provider,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
@@ -122,6 +123,9 @@ export interface AgentSessionInit {
 
 	/** Model ID - defaults to default model */
 	model?: string;
+
+	/** Provider ID for this session — if omitted, auto-detected from model or falls back to Anthropic */
+	provider?: string;
 
 	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
 	coordinatorMode?: boolean;
@@ -470,6 +474,7 @@ export class AgentSession
 
 		const config: SessionConfig = {
 			model: init.model ?? defaultModel,
+			provider: init.provider as Provider | undefined,
 			maxTokens: 4096,
 			temperature: 1.0,
 			// Pass through system prompt from init

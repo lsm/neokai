@@ -10,6 +10,7 @@ import { initializeProviders, resetProviderFactory } from '../../../src/lib/prov
 import {
 	ProviderRegistry,
 	getProviderRegistry,
+	inferProviderForModel,
 	resetProviderRegistry,
 } from '../../../src/lib/providers/registry';
 
@@ -454,5 +455,39 @@ describe('ProviderRegistry', () => {
 		it('should throw when no providers registered', async () => {
 			await expect(registry.getDefaultProvider()).rejects.toThrow('No providers registered');
 		});
+	});
+});
+
+describe('inferProviderForModel', () => {
+	it('maps glm- prefix to glm', () => {
+		expect(inferProviderForModel('glm-5-turbo')).toBe('glm');
+		expect(inferProviderForModel('glm-4')).toBe('glm');
+	});
+
+	it('maps bare glm to glm', () => {
+		expect(inferProviderForModel('glm')).toBe('glm');
+	});
+
+	it('maps minimax- prefix to minimax', () => {
+		expect(inferProviderForModel('minimax-m2.5')).toBe('minimax');
+	});
+
+	it('maps bare minimax to minimax', () => {
+		expect(inferProviderForModel('minimax')).toBe('minimax');
+	});
+
+	it('maps gpt- prefix to anthropic-codex', () => {
+		expect(inferProviderForModel('gpt-5.3-codex')).toBe('anthropic-codex');
+		expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+	});
+
+	it('defaults claude- models to anthropic', () => {
+		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
+		expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
+	});
+
+	it('defaults unknown models to anthropic', () => {
+		expect(inferProviderForModel('sonnet')).toBe('anthropic');
+		expect(inferProviderForModel('unknown-model')).toBe('anthropic');
 	});
 });
