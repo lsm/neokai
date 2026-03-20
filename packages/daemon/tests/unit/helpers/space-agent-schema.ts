@@ -56,6 +56,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			description TEXT NOT NULL DEFAULT '',
 			start_step_id TEXT,
 			config TEXT,
+			layout TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
