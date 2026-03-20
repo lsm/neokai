@@ -100,6 +100,7 @@ export function VisualCanvas({ children, viewportState, onViewportChange }: Visu
 				// Don't capture space when focused on an input/textarea
 				const tag = (e.target as HTMLElement)?.tagName;
 				if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+				e.preventDefault(); // prevent browser "scroll down" default
 				spacebarDown.current = true;
 				if (containerRef.current) {
 					containerRef.current.style.cursor = 'grab';

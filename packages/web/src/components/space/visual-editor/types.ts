@@ -26,9 +26,10 @@ export type NodePosition = Record<string, { x: number; y: number; width: number;
  * Inverse of canvasToScreen.
  */
 export function screenToCanvas(point: Point, viewport: ViewportState): Point {
+	const scale = viewport.scale || 1;
 	return {
-		x: (point.x - viewport.offsetX) / viewport.scale,
-		y: (point.y - viewport.offsetY) / viewport.scale,
+		x: (point.x - viewport.offsetX) / scale,
+		y: (point.y - viewport.offsetY) / scale,
 	};
 }
 
