@@ -841,13 +841,33 @@ ${messageText.slice(0, 2000)}`;
 
 			for await (const message of agentQuery) {
 				if (isSDKAssistantMessage(message)) {
-					const textBlocks = message.message.content.filter(
-						(b: { type: string }) => b.type === 'text'
-					) as Array<{ text?: string }>;
+					const content = message.message.content as Array<{
+						type: string;
+						text?: string;
+						thinking?: string;
+					}>;
+
+					// First, try to extract from text blocks
+					const textBlocks = content.filter((b) => b.type === 'text') as Array<{
+						type: 'text';
+						text: string;
+					}>;
 					title = textBlocks
-						.map((b) => b.text ?? '')
+						.map((b) => b.text)
 						.join(' ')
 						.trim();
+
+					// If no text blocks, try thinking blocks as fallback
+					if (!title) {
+						const thinkingBlocks = content.filter(
+							(b): b is { type: 'thinking'; thinking: string } =>
+								b.type === 'thinking' && 'thinking' in b
+						);
+						title = thinkingBlocks
+							.map((b) => b.thinking)
+							.join(' ')
+							.trim();
+					}
 
 					if (title) {
 						break; // Got the title, exit early
