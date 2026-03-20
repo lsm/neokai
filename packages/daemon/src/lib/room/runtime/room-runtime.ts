@@ -376,7 +376,13 @@ export class RoomRuntime {
 		// Model not found in cache — fall back to registry's heuristic detectProvider().
 		// This covers: cache not yet warmed, or the Anthropic provider deduplicated the
 		// dot-notation ID behind its canonical short alias (e.g. 'claude-opus-4.6' → 'opus').
-		// detectProvider returns Anthropic first for any 'claude-*' model ID.
+		//
+		// Limitation: detectProvider iterates providers in registration order (Anthropic
+		// first) and returns the first owner. For 'claude-*' IDs this resolves to Anthropic,
+		// which is correct in the common case. However, if a room explicitly configured a
+		// Copilot-hosted claude-* model AND the cache is unavailable (e.g. cleared mid-run),
+		// this fallback will misroute that session to Anthropic. Cache misses at runtime are
+		// expected to be transient — models are pre-warmed at startup via initializeModels().
 		const detectedProvider = getProviderRegistry().detectProvider(modelId);
 		return { model: modelId, provider: detectedProvider?.id as Provider | undefined };
 	}

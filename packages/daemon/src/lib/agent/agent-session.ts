@@ -417,6 +417,18 @@ export class AgentSession
 				hasUpdates = true;
 			}
 
+			// Update config.provider if it changed since the session was first persisted.
+			// Room-spawned agent sessions use per-UUID IDs so this path is not reached for
+			// them today. Long-lived sessions (room chat, lobby) set their provider through
+			// the UI model picker, not init.provider. The update is included defensively so
+			// that if stable IDs are ever used for agent sessions the provider stays current.
+			if (init.provider !== undefined && session.config.provider !== init.provider) {
+				const nextConfig = { ...session.config, provider: init.provider };
+				updates.config = nextConfig;
+				session = { ...session, config: nextConfig };
+				hasUpdates = true;
+			}
+
 			if (hasUpdates) {
 				db.updateSession(init.sessionId, updates);
 			}
