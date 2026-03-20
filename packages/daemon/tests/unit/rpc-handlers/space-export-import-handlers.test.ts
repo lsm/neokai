@@ -1157,6 +1157,41 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect((wfCreated[0].data as { workflow: { name: string } }).workflow.name).toBe('Pipe');
 		});
 
+		it('emits spaceWorkflow.deleted (old id) + spaceWorkflow.created (new id) for replaced workflow', async () => {
+			// Create an agent and workflow that will be replaced
+			const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder', role: 'coder' });
+			const existingAgentId = existingAgent.id;
+			const existingWf = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Pipe',
+				steps: [{ name: 's1', agentId: existingAgentId }],
+				transitions: [],
+			});
+			const oldWorkflowId = existingWf.id;
+
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[{ name: 'Pipe', steps: [{ agentRef: 'Coder', name: 's1' }] }]
+			);
+
+			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+				conflictResolution: { workflows: { Pipe: 'replace' } },
+			});
+
+			await Promise.resolve();
+
+			const deletedEvents = emittedEvents.filter((e) => e.name === 'spaceWorkflow.deleted');
+			expect(deletedEvents).toHaveLength(1);
+			expect((deletedEvents[0].data as { workflowId: string }).workflowId).toBe(oldWorkflowId);
+
+			const createdEvents = emittedEvents.filter((e) => e.name === 'spaceWorkflow.created');
+			expect(createdEvents).toHaveLength(1);
+			const newId = (createdEvents[0].data as { workflow: { id: string } }).workflow.id;
+			expect(newId).not.toBe(oldWorkflowId);
+		});
+
 		it('emits spaceAgent.created and spaceWorkflow.created for bundle with both', async () => {
 			const bundle = makeBundle(
 				[{ name: 'AgentA', role: 'coder' }],
