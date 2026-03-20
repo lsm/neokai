@@ -575,6 +575,8 @@ export interface SpaceWorkflow {
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
+	/** Visual editor node positions: maps step ID to {x, y} canvas coordinates */
+	layout?: Record<string, { x: number; y: number }>;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -614,6 +616,8 @@ export interface CreateSpaceWorkflowParams {
 	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
 	config?: Record<string, unknown>;
+	/** Visual editor node positions: maps step ID to {x, y} canvas coordinates */
+	layout?: Record<string, { x: number; y: number }>;
 }
 
 /**
@@ -654,6 +658,8 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;
+	/** Visual editor node positions. Pass `null` to clear. */
+	layout?: Record<string, { x: number; y: number }> | null;
 }
 
 // ============================================================================

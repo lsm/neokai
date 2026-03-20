@@ -117,6 +117,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// start_step_id, current_step_id, and space_workflow_transitions — are created here
 	// in a single idempotent migration.
 	runMigration29(db);
+
+	// Migration 30: Add layout column to space_workflows for visual editor node positions.
+	runMigration30(db);
 }
 
 /**
@@ -1800,5 +1803,19 @@ function runMigration29(db: BunDatabase): void {
 			db.exec(`ALTER TABLE space_agents_new RENAME TO space_agents`);
 			db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
 		})();
+	}
+}
+
+/**
+ * Migration 30: Add `layout` column to `space_workflows` for visual editor node positions.
+ *
+ * Stores node positions as JSON (`Record<stepId, {x, y}>`). Nullable — existing
+ * workflows without layout data return NULL from the DB (mapped to undefined in code).
+ */
+function runMigration30(db: BunDatabase): void {
+	try {
+		db.prepare(`SELECT layout FROM space_workflows LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN layout TEXT`);
 	}
 }

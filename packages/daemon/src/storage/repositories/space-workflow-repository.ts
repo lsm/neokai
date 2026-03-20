@@ -4,7 +4,7 @@
  * Data access layer for SpaceWorkflow, SpaceWorkflowStep, and SpaceWorkflowTransition records.
  *
  * Storage layout:
- *   space_workflows             — id, space_id, name, description, start_step_id, config (JSON), created_at, updated_at
+ *   space_workflows             — id, space_id, name, description, start_step_id, config (JSON), layout (JSON), created_at, updated_at
  *   space_workflow_steps        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
  *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, created_at, updated_at
  *
@@ -39,6 +39,7 @@ interface WorkflowRow {
 	description: string;
 	start_step_id: string | null;
 	config: string | null;
+	layout: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -122,6 +123,7 @@ function rowToWorkflow(
 	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
 	// Derive startStepId: use explicit column, fall back to first step
 	const startStepId = row.start_step_id ?? steps[0]?.id ?? '';
+	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
 	return {
 		id: row.id,
 		spaceId: row.space_id,
@@ -133,6 +135,7 @@ function rowToWorkflow(
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
 		config: cfg.extra,
+		layout: layout ?? undefined,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
@@ -171,10 +174,12 @@ export class SpaceWorkflowRepository {
 			extra: params.config,
 		};
 
+		const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
+
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -183,6 +188,7 @@ export class SpaceWorkflowRepository {
 				params.description ?? '',
 				startStepId,
 				JSON.stringify(cfg),
+				layoutJson,
 				now,
 				now
 			);
@@ -271,6 +277,11 @@ export class SpaceWorkflowRepository {
 		if (cfgChanged) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(newCfg));
+		}
+
+		if (params.layout !== undefined) {
+			fields.push('layout = ?');
+			values.push(params.layout ? JSON.stringify(params.layout) : null);
 		}
 
 		const hasStepReplacement = params.steps !== undefined;

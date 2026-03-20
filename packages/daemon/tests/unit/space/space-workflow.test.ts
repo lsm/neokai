@@ -412,6 +412,83 @@ describe('SpaceWorkflowRepository', () => {
 			.get(wf.id) as { agent_id: string };
 		expect(row.agent_id).toBe('agent-99');
 	});
+
+	// -------------------------------------------------------------------------
+	// Layout field
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow stores layout and round-trips it', () => {
+		const layout = {
+			[coderStep.id!]: { x: 100, y: 200 },
+			[plannerStep.id!]: { x: 300, y: 400 },
+		};
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Layout WF',
+			steps: [coderStep, plannerStep],
+			layout,
+		});
+		expect(wf.layout).toEqual(layout);
+
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.layout).toEqual(layout);
+	});
+
+	test('createWorkflow without layout returns undefined layout', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'No Layout WF',
+			steps: [coderStep],
+		});
+		expect(wf.layout).toBeUndefined();
+
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.layout).toBeUndefined();
+	});
+
+	test('updateWorkflow sets layout on an existing workflow', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			steps: [coderStep],
+		});
+		expect(wf.layout).toBeUndefined();
+
+		const layout = { [coderStep.id!]: { x: 50, y: 75 } };
+		const updated = repo.updateWorkflow(wf.id, { layout });
+		expect(updated?.layout).toEqual(layout);
+
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.layout).toEqual(layout);
+	});
+
+	test('updateWorkflow clears layout when null is passed', () => {
+		const layout = { [coderStep.id!]: { x: 10, y: 20 } };
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			steps: [coderStep],
+			layout,
+		});
+		expect(wf.layout).toEqual(layout);
+
+		const updated = repo.updateWorkflow(wf.id, { layout: null });
+		expect(updated?.layout).toBeUndefined();
+	});
+
+	test('layout column contains raw JSON in the DB', () => {
+		const layout = { [coderStep.id!]: { x: 1, y: 2 } };
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF Raw',
+			steps: [coderStep],
+			layout,
+		});
+		const row = db.prepare('SELECT layout FROM space_workflows WHERE id = ?').get(wf.id) as {
+			layout: string;
+		};
+		expect(JSON.parse(row.layout)).toEqual(layout);
+	});
 });
 
 // ---------------------------------------------------------------------------
