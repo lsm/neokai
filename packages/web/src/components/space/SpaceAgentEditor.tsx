@@ -65,6 +65,21 @@ const SYSTEM_PROMPT_TEMPLATES: Record<string, string> = {
 };
 
 // ============================================================================
+// Pure helpers (module-level to avoid re-creation on each render)
+// ============================================================================
+
+/** Detect which preset name matches a given tool list, or 'Custom' if no match */
+function detectPreset(toolList: string[] | undefined): string {
+	if (!toolList) return 'Full Coding';
+	for (const [preset, presetTools] of Object.entries(TOOL_PRESETS)) {
+		if (toolList.length === presetTools.length && presetTools.every((t) => toolList.includes(t))) {
+			return preset;
+		}
+	}
+	return 'Custom';
+}
+
+// ============================================================================
 // Sub-components
 // ============================================================================
 
@@ -145,7 +160,6 @@ function LineNumberedTextarea({
 // ============================================================================
 
 export interface SpaceAgentEditorProps {
-	spaceId: string;
 	/** Existing agent to edit. Null = create mode. */
 	agent: SpaceAgent | null;
 	/** Names of other agents in this space (for uniqueness validation) */
@@ -157,7 +171,6 @@ export interface SpaceAgentEditorProps {
 }
 
 export function SpaceAgentEditor({
-	spaceId: _spaceId,
 	agent,
 	existingAgentNames,
 	onSave,
@@ -179,20 +192,6 @@ export function SpaceAgentEditor({
 	const [saving, setSaving] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [saveError, setSaveError] = useState<string | null>(null);
-
-	/** Detect which preset matches a tool list (or 'Custom' if none match) */
-	function detectPreset(toolList: string[] | undefined): string {
-		if (!toolList) return 'Full Coding';
-		for (const [preset, presetTools] of Object.entries(TOOL_PRESETS)) {
-			if (
-				toolList.length === presetTools.length &&
-				presetTools.every((t) => toolList.includes(t))
-			) {
-				return preset;
-			}
-		}
-		return 'Custom';
-	}
 
 	const applyPreset = (presetName: string) => {
 		setActivePreset(presetName);

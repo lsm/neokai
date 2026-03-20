@@ -9,11 +9,11 @@
  * - Tool tags shown (up to 4, then +N more)
  * - Create Agent button opens editor
  * - Edit button opens editor for that agent
- * - Delete button opens confirmation modal
- * - Delete confirmation shows workflow reference warning when agent is in use
- * - Delete confirmation shows simple message when agent is not in use
+ * - Delete button behavior:
+ *   - When agent IS referenced by a workflow: shows blocking modal (no delete button)
+ *   - When agent is NOT referenced: shows standard confirm dialog
  * - Successful delete calls spaceStore.deleteAgent
- * - Delete error is shown in modal
+ * - Delete error is shown in confirm modal
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -126,6 +126,30 @@ vi.mock('../../ui/ConfirmModal', () => ({
 				<button onClick={onConfirm} disabled={isLoading} data-testid="confirm-delete">
 					{confirmText ?? 'Confirm'}
 				</button>
+			</div>
+		);
+	},
+}));
+
+vi.mock('../../ui/Modal', () => ({
+	Modal: ({
+		isOpen,
+		children,
+		title,
+		onClose,
+	}: {
+		isOpen: boolean;
+		children: unknown;
+		title: string;
+		onClose: () => void;
+	}) => {
+		if (!isOpen) return null;
+		return (
+			<div data-testid="block-modal" role="dialog" aria-label={title}>
+				<button onClick={onClose} data-testid="block-modal-close">
+					X
+				</button>
+				{children}
 			</div>
 		);
 	},
@@ -310,17 +334,18 @@ describe('SpaceAgentList', () => {
 		expect(queryByTestId('agent-editor')).toBeNull();
 	});
 
-	// ── Delete flow ────────────────────────────────────────────────────────────
+	// ── Delete flow — unreferenced agent ─────────────────────────────────────
 
-	it('opens delete confirmation when delete button is clicked', () => {
+	it('opens standard confirm dialog when agent is not referenced by any workflow', () => {
 		const agent = makeAgent({ name: 'Coder' });
 		mockAgents.value = [agent];
+		mockWorkflows.value = [];
 		const { getByLabelText, getByTestId } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		fireEvent.click(getByLabelText('Delete Coder'));
 		expect(getByTestId('confirm-modal')).toBeTruthy();
 	});
 
-	it('shows simple delete message when agent is not referenced by any workflow', () => {
+	it('shows simple cannot-be-undone message for unreferenced agent', () => {
 		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
 		mockAgents.value = [agent];
 		mockWorkflows.value = [];
@@ -328,21 +353,9 @@ describe('SpaceAgentList', () => {
 		fireEvent.click(getByLabelText('Delete Coder'));
 		const msg = getByTestId('confirm-message').textContent ?? '';
 		expect(msg).toContain('cannot be undone');
-		expect(msg).not.toContain('workflows');
 	});
 
-	it('shows workflow reference warning when agent is used in a workflow', () => {
-		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
-		mockAgents.value = [agent];
-		mockWorkflows.value = [makeWorkflow('agent-1')];
-		const { getByLabelText, getByTestId } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		fireEvent.click(getByLabelText('Delete Coder'));
-		const msg = getByTestId('confirm-message').textContent ?? '';
-		expect(msg).toContain('Coding Workflow');
-		expect(msg).toContain('may break those workflows');
-	});
-
-	it('calls spaceStore.deleteAgent on confirm', async () => {
+	it('calls spaceStore.deleteAgent on confirm for unreferenced agent', async () => {
 		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
 		mockAgents.value = [agent];
 		mockDeleteAgent.mockResolvedValue(undefined);
@@ -399,11 +412,67 @@ describe('SpaceAgentList', () => {
 		expect(queryByTestId('confirm-modal')).toBeNull();
 	});
 
+	// ── Delete flow — workflow-referenced agent (BLOCKED) ─────────────────────
+
+	it('shows blocking modal (not confirm) when agent is used in a workflow', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByTestId, queryByTestId } = render(
+			<SpaceAgentList {...DEFAULT_PROPS} />
+		);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		// Should show the blocking modal, NOT the confirm modal
+		expect(getByTestId('block-modal')).toBeTruthy();
+		expect(queryByTestId('confirm-modal')).toBeNull();
+	});
+
+	it('blocking modal shows the referencing workflow name', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		expect(getByText('Coding Workflow')).toBeTruthy();
+	});
+
+	it('blocking modal title is "Cannot Delete Agent"', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByRole } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		expect(getByRole('dialog', { name: 'Cannot Delete Agent' })).toBeTruthy();
+	});
+
+	it('does not call deleteAgent when blocking modal is shown', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByTestId } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		// Close the blocking modal
+		fireEvent.click(getByTestId('block-modal-close'));
+		expect(mockDeleteAgent).not.toHaveBeenCalled();
+	});
+
+	it('closing blocking modal removes it from view', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
+		mockAgents.value = [agent];
+		mockWorkflows.value = [makeWorkflow('agent-1')];
+		const { getByLabelText, getByTestId, queryByTestId } = render(
+			<SpaceAgentList {...DEFAULT_PROPS} />
+		);
+		fireEvent.click(getByLabelText('Delete Coder'));
+		expect(getByTestId('block-modal')).toBeTruthy();
+		fireEvent.click(getByTestId('block-modal-close'));
+		expect(queryByTestId('block-modal')).toBeNull();
+	});
+
 	// ── Existing agent names passed to editor ──────────────────────────────────
 
 	it('excludes editing agent from existingAgentNames passed to editor', () => {
-		// This test verifies the component logic: when editing agent-1,
-		// agent-1's name should not count as a conflict.
+		// When editing agent-1, its own name should not count as a conflict in the editor.
 		// We verify indirectly by ensuring the editor opens in edit mode with the correct agent.
 		const agents = [
 			makeAgent({ id: 'a1', name: 'Coder' }),

@@ -95,7 +95,6 @@ import { SpaceAgentEditor } from '../SpaceAgentEditor';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const DEFAULT_PROPS = {
-	spaceId: 'space-1',
 	agent: null,
 	existingAgentNames: [],
 	onSave: vi.fn(),
@@ -286,9 +285,6 @@ describe('SpaceAgentEditor', () => {
 			'WebSearch',
 		];
 		const toolCheckboxes = container.querySelectorAll('input[type="checkbox"]');
-		const checkedTools = Array.from(toolCheckboxes)
-			.filter((cb) => (cb as HTMLInputElement).checked)
-			.map((cb) => (cb as HTMLInputElement).closest('label')?.textContent?.trim());
 
 		for (const tool of expectedTools) {
 			const found = Array.from(toolCheckboxes).some((cb) => {

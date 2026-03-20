@@ -6,13 +6,16 @@
  * - "Create Agent" button to open the editor
  * - Empty state: "No custom agents yet. Create one to get started."
  * - Subscribes to spaceAgent.* events via SpaceStore
- * - Delete confirmation with workflow reference warning
+ * - Delete confirmation with workflow reference blocking:
+ *   When an agent is referenced by workflow steps, deletion is blocked
+ *   with a clear message. When unreferenced, a standard confirm dialog is shown.
  */
 
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { Modal } from '../ui/Modal';
 import type { SpaceAgent } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 
@@ -126,7 +129,7 @@ function AgentIcon() {
 	);
 }
 
-export function SpaceAgentList({ spaceId }: SpaceAgentListProps) {
+export function SpaceAgentList({ spaceId: _spaceId }: SpaceAgentListProps) {
 	const agents = spaceStore.agents.value;
 	const loading = spaceStore.loading.value;
 	const workflows = spaceStore.workflows.value;
@@ -181,12 +184,6 @@ export function SpaceAgentList({ spaceId }: SpaceAgentListProps) {
 		? getWorkflowNamesReferencingAgent(deletingAgent.id)
 		: [];
 
-	const deleteMessage = deletingAgent
-		? referencedWorkflows.length > 0
-			? `"${deletingAgent.name}" is used in the following workflows: ${referencedWorkflows.join(', ')}. Deleting this agent may break those workflows. Are you sure you want to delete it?`
-			: `Are you sure you want to delete "${deletingAgent.name}"? This action cannot be undone.`
-		: '';
-
 	const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
 
 	if (loading) {
@@ -237,7 +234,6 @@ export function SpaceAgentList({ spaceId }: SpaceAgentListProps) {
 			{/* Editor Modal */}
 			{editorOpen && (
 				<SpaceAgentEditor
-					spaceId={spaceId}
 					agent={editingAgent}
 					existingAgentNames={existingAgentNames}
 					onSave={handleEditorClose}
@@ -245,21 +241,54 @@ export function SpaceAgentList({ spaceId }: SpaceAgentListProps) {
 				/>
 			)}
 
-			{/* Delete Confirmation */}
-			<ConfirmModal
-				isOpen={!!deletingAgent}
-				onClose={() => {
-					setDeletingAgent(null);
-					setDeleteError(null);
-				}}
-				onConfirm={handleDeleteConfirm}
-				title="Delete Agent"
-				message={deleteMessage}
-				confirmText="Delete"
-				confirmButtonVariant={referencedWorkflows.length > 0 ? 'warning' : 'danger'}
-				isLoading={deleting}
-				error={deleteError}
-			/>
+			{/* Blocked delete: agent is still referenced by one or more workflows */}
+			{deletingAgent && referencedWorkflows.length > 0 && (
+				<Modal isOpen onClose={() => setDeletingAgent(null)} title="Cannot Delete Agent" size="sm">
+					<div class="space-y-4">
+						<p class="text-sm text-gray-300 leading-relaxed">
+							<span class="font-medium text-gray-100">"{deletingAgent.name}"</span> is currently
+							used in the following {referencedWorkflows.length === 1 ? 'workflow' : 'workflows'}:
+						</p>
+						<ul class="list-disc list-inside space-y-1">
+							{referencedWorkflows.map((name) => (
+								<li key={name} class="text-sm text-amber-300">
+									{name}
+								</li>
+							))}
+						</ul>
+						<p class="text-xs text-gray-500">
+							Remove this agent from all workflow steps first, then delete it.
+						</p>
+						<div class="flex justify-end pt-1">
+							<button
+								type="button"
+								onClick={() => setDeletingAgent(null)}
+								class="px-4 py-2 text-sm font-medium text-gray-200 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors"
+							>
+								Understood
+							</button>
+						</div>
+					</div>
+				</Modal>
+			)}
+
+			{/* Standard delete confirmation: agent is not referenced by any workflow */}
+			{deletingAgent && referencedWorkflows.length === 0 && (
+				<ConfirmModal
+					isOpen
+					onClose={() => {
+						setDeletingAgent(null);
+						setDeleteError(null);
+					}}
+					onConfirm={handleDeleteConfirm}
+					title="Delete Agent"
+					message={`Are you sure you want to delete "${deletingAgent.name}"? This action cannot be undone.`}
+					confirmText="Delete"
+					confirmButtonVariant="danger"
+					isLoading={deleting}
+					error={deleteError}
+				/>
+			)}
 		</div>
 	);
 }
