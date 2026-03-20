@@ -832,6 +832,10 @@ ${messageText.slice(0, 2000)}`;
 					pathToClaudeCodeExecutable: cliPath,
 					executable: isRunningUnderBun() ? 'bun' : undefined,
 					env: mergedEnv,
+					// Disable thinking for title generation — we only need a short text response.
+					// Without this, models with adaptive thinking (e.g. Opus 4.6) may return
+					// only thinking blocks with no text block, causing an empty-response error.
+					thinking: { type: 'disabled' },
 				},
 			});
 
@@ -841,33 +845,13 @@ ${messageText.slice(0, 2000)}`;
 
 			for await (const message of agentQuery) {
 				if (isSDKAssistantMessage(message)) {
-					const content = message.message.content as Array<{
-						type: string;
-						text?: string;
-						thinking?: string;
-					}>;
-
-					// First, try to extract from text blocks
-					const textBlocks = content.filter((b) => b.type === 'text') as Array<{
-						type: 'text';
-						text: string;
-					}>;
+					const textBlocks = message.message.content.filter(
+						(b: { type: string }) => b.type === 'text'
+					) as Array<{ text?: string }>;
 					title = textBlocks
-						.map((b) => b.text)
+						.map((b) => b.text ?? '')
 						.join(' ')
 						.trim();
-
-					// If no text blocks, try thinking blocks as fallback
-					if (!title) {
-						const thinkingBlocks = content.filter(
-							(b): b is { type: 'thinking'; thinking: string } =>
-								b.type === 'thinking' && 'thinking' in b
-						);
-						title = thinkingBlocks
-							.map((b) => b.thinking)
-							.join(' ')
-							.trim();
-					}
 
 					if (title) {
 						break; // Got the title, exit early
