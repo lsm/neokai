@@ -8,7 +8,7 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
+import type { Room, McpServerConfig, RuntimeState, Provider } from '@neokai/shared';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -432,6 +432,16 @@ export class RoomRuntimeService {
 		return runtime;
 	}
 
+	/**
+	 * Infer the provider for a given model ID based on known naming conventions.
+	 * This avoids loading the full provider registry (which requires optional SDK deps).
+	 */
+	private resolveProviderForModel(modelId: string): Provider {
+		if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
+		if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+		return 'anthropic';
+	}
+
 	private setupRoomAgentSession(
 		room: Room,
 		groupRepo: SessionGroupRepository,
@@ -452,11 +462,32 @@ export class RoomRuntimeService {
 		// DaemonHub subscriptions and duplicate query execution.
 		void this.ctx.sessionManager
 			.getSessionAsync(roomChatSessionId)
-			.then((roomChatSession) => {
+			.then(async (roomChatSession) => {
 				if (!roomChatSession) {
 					log.warn(`Room chat session not found for room ${room.id}`);
 					return;
 				}
+
+				// Sync room chat session model with the room's current defaultModel.
+				// This fixes stale sessions created when the room had a different model
+				// (e.g., glm-5-turbo) that is no longer configured or accessible.
+				const currentModel = room.defaultModel ?? this.ctx.defaultModel;
+				const sessionData = roomChatSession.getSessionData();
+				const sessionModel = sessionData.config.model;
+				if (currentModel && sessionModel !== currentModel) {
+					try {
+						const newProvider = this.resolveProviderForModel(currentModel);
+						await this.ctx.sessionManager.updateSession(roomChatSessionId, {
+							config: { ...sessionData.config, model: currentModel, provider: newProvider },
+						});
+						log.info(
+							`Synced room chat session ${roomChatSessionId}: model ${sessionModel} → ${currentModel} (${newProvider})`
+						);
+					} catch (err) {
+						log.warn(`Failed to sync room chat session model for room ${room.id}:`, err);
+					}
+				}
+
 				roomChatSession.setRuntimeMcpServers({
 					'room-agent-tools': roomAgentMcpServer,
 				});

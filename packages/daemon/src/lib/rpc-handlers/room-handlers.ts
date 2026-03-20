@@ -13,7 +13,17 @@
  * - agents.cli.list - List detected CLI agents
  */
 
-import type { MessageHub, WorkspacePath } from '@neokai/shared';
+import type { MessageHub, WorkspacePath, Provider } from '@neokai/shared';
+
+/**
+ * Infer the provider for a given model ID based on known naming conventions.
+ * This avoids loading the full provider registry (which requires optional SDK deps).
+ */
+function inferProviderForModel(modelId: string): Provider {
+	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
+	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+	return 'anthropic';
+}
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
@@ -145,6 +155,28 @@ export function setupRoomHandlers(
 
 		if (!room) {
 			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		// When defaultModel changes, sync the room chat session's model so it uses
+		// the new model on the next query. This prevents stale sessions from running
+		// with a model that is no longer configured (e.g., after switching from GLM to Anthropic).
+		if (params.defaultModel && sessionManager) {
+			const roomChatSessionId = `room:chat:${room.id}`;
+			try {
+				const existingSession = sessionManager.getSessionFromDB(roomChatSessionId);
+				if (existingSession) {
+					const newProvider = inferProviderForModel(params.defaultModel);
+					await sessionManager.updateSession(roomChatSessionId, {
+						config: {
+							...existingSession.config,
+							model: params.defaultModel,
+							provider: newProvider,
+						},
+					});
+				}
+			} catch (err) {
+				log.warn(`Could not sync room chat session model for room ${room.id}:`, err);
+			}
 		}
 
 		// Broadcast room update event
