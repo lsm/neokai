@@ -40,9 +40,8 @@ export interface CustomAgentConfig {
 	/** The workflow run context (null when running outside a workflow) */
 	workflowRun: SpaceWorkflowRun | null;
 	/**
-	 * Full workflow definition — used to inject workflow structure into the
-	 * planner's context so it can create tasks aligned with the current step.
-	 * Only relevant when the agent role is 'planner' and a workflow run is active.
+	 * Full workflow definition — used to inject workflow structure into the task message.
+	 * Relevant when `agent.injectWorkflowContext` is true and a workflow run is active.
 	 */
 	workflow?: SpaceWorkflow | null;
 	/** The Space this agent belongs to */
@@ -377,10 +376,9 @@ export interface ResolveAgentInitConfig {
 	/** Workflow run context (null when outside a workflow) */
 	workflowRun?: SpaceWorkflowRun | null;
 	/**
-	 * Full workflow definition — forwarded to `buildCustomAgentTaskMessage` so
-	 * planner agents receive the "Workflow Structure" context section.
-	 * Required when the agent role is 'planner' and a workflow run is active;
-	 * ignored for all other agent roles.
+	 * Full workflow definition — forwarded to `buildCustomAgentTaskMessage` so agents
+	 * with `injectWorkflowContext: true` receive the "Workflow Structure" context section.
+	 * Relevant when the agent's `injectWorkflowContext` flag is set and a workflow run is active.
 	 */
 	workflow?: SpaceWorkflow | null;
 	/** Summaries of previously completed tasks */

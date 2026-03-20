@@ -752,6 +752,11 @@ export interface ExportedSpaceAgent {
 	 */
 	tools?: string[];
 	/**
+	 * When true, the agent receives full workflow structure in its task message when
+	 * running inside an active workflow run. Mirrors `SpaceAgent.injectWorkflowContext`.
+	 */
+	injectWorkflowContext?: boolean;
+	/**
 	 * Additional agent configuration.
 	 *
 	 * Forward-compatibility stub: `SpaceAgent` does not currently expose a `config`
