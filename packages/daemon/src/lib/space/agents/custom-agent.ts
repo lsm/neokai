@@ -10,6 +10,7 @@ import type { AgentSessionInit } from '../../agent/agent-session';
 import type {
 	SpaceAgent,
 	SpaceTask,
+	SpaceWorkflow,
 	SpaceWorkflowRun,
 	Space,
 	SessionFeatures,
@@ -38,6 +39,12 @@ export interface CustomAgentConfig {
 	task: SpaceTask;
 	/** The workflow run context (null when running outside a workflow) */
 	workflowRun: SpaceWorkflowRun | null;
+	/**
+	 * Full workflow definition — used to inject workflow structure into the
+	 * planner's context so it can create tasks aligned with the current step.
+	 * Only relevant when the agent role is 'planner' and a workflow run is active.
+	 */
+	workflow?: SpaceWorkflow | null;
 	/** The Space this agent belongs to */
 	space: Space;
 	/** Session ID for the new session */
@@ -174,9 +181,12 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
  * Contains task-specific context: task title/description, workflow run context,
  * space background/instructions, review-specific guidance (if applicable),
  * and previous task summaries.
+ *
+ * Planner agents receive additional workflow structure when a workflow run is
+ * active, so they can create tasks aligned with the current workflow step.
  */
 export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
-	const { task, workflowRun, space, previousTaskSummaries } = config;
+	const { customAgent, task, workflowRun, workflow, space, previousTaskSummaries } = config;
 
 	const sections: string[] = [];
 
@@ -198,6 +208,46 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		if (workflowRun.description) {
 			sections.push(`**Description:** ${workflowRun.description}`);
 		}
+		if (workflowRun.currentStepId) {
+			sections.push(`**Current Step ID:** ${workflowRun.currentStepId}`);
+		}
+	}
+
+	// Planner-specific: inject full workflow structure so the planner can
+	// create tasks aligned with the workflow's steps and rules.
+	if (customAgent.role === 'planner' && workflow && workflowRun) {
+		sections.push(`\n## Workflow Structure\n`);
+		sections.push(
+			`You are planning work within the **${workflow.name}** workflow. ` +
+				`Your plan should produce tasks that align with the workflow's steps.`
+		);
+		if (workflow.description) {
+			sections.push(`\n**Workflow description:** ${workflow.description}`);
+		}
+
+		if (workflow.steps.length > 0) {
+			sections.push(`\n**Steps:**`);
+			for (const step of workflow.steps) {
+				const isCurrent = step.id === workflowRun.currentStepId;
+				const marker = isCurrent ? ' ← current step' : '';
+				sections.push(`- **${step.name}** (id: \`${step.id}\`)${marker}`);
+				if (step.instructions) {
+					sections.push(`  Instructions: ${step.instructions}`);
+				}
+			}
+		}
+
+		if (workflow.rules.length > 0) {
+			sections.push(`\n**Workflow rules:**`);
+			for (const rule of workflow.rules) {
+				sections.push(`- **${rule.name}:** ${rule.content}`);
+			}
+		}
+
+		sections.push(
+			`\nCreate tasks that correspond to the steps above. ` +
+				`Focus on the current step first; subsequent steps will be handled after the current one completes.`
+		);
 	}
 
 	// Space context

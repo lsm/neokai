@@ -14,7 +14,7 @@ import {
 	type CustomAgentConfig,
 	type ResolveAgentInitConfig,
 } from '../../../src/lib/space/agents/custom-agent';
-import type { SpaceAgent, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
+import type { SpaceAgent, SpaceTask, SpaceWorkflow, SpaceWorkflowRun, Space } from '@neokai/shared';
 import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
 
 // ============================================================================
@@ -578,5 +578,176 @@ describe('sanitizeAgentKey (via init.agent)', () => {
 
 	it('handles Unicode/emoji gracefully (strips to fallback)', () => {
 		expect(initWithName('🤖🔥').agent).toBe('custom-agent');
+	});
+});
+
+// ============================================================================
+// buildCustomAgentTaskMessage — planner workflow context
+// ============================================================================
+
+function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
+	return {
+		id: 'wf-1',
+		spaceId: 'space-1',
+		name: 'Coding Workflow',
+		description: 'Plan, implement, and review code',
+		steps: [
+			{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner', instructions: 'Create a plan' },
+			{ id: 'step-code', name: 'Code', agentId: 'agent-coder', instructions: 'Write code' },
+		],
+		transitions: [],
+		startStepId: 'step-plan',
+		rules: [{ id: 'rule-1', name: 'No direct commits', content: 'Always use a PR' }],
+		tags: ['coding'],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+describe('buildCustomAgentTaskMessage — planner workflow context', () => {
+	it('includes workflow structure when agent role is planner and workflow is provided', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('Workflow Structure');
+		expect(msg).toContain('Coding Workflow');
+		expect(msg).toContain('Plan, implement, and review code');
+	});
+
+	it('includes step names in workflow structure', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('Plan');
+		expect(msg).toContain('Code');
+	});
+
+	it('marks the current step', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('current step');
+		expect(msg).toContain('step-plan');
+	});
+
+	it('includes workflow rules', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('No direct commits');
+		expect(msg).toContain('Always use a PR');
+	});
+
+	it('does NOT include workflow structure for non-planner agents', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'coder' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-code' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('does NOT include workflow structure when workflow is null', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun(),
+			workflow: null,
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('does NOT include workflow structure when workflowRun is null', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: null,
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).not.toContain('Workflow Structure');
+	});
+
+	it('includes planner guidance to focus on current step first', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('current step first');
+	});
+
+	it('includes currentStepId from workflowRun when available', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-code' }),
+			workflow: makeWorkflow(),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+
+		expect(msg).toContain('step-code');
+	});
+
+	it('handles workflow with no description gracefully', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow({ description: undefined }),
+		});
+
+		expect(() => buildCustomAgentTaskMessage(config)).not.toThrow();
+	});
+
+	it('handles workflow with no rules gracefully', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: 'step-plan' }),
+			workflow: makeWorkflow({ rules: [] }),
+		});
+
+		const msg = buildCustomAgentTaskMessage(config);
+		expect(msg).toContain('Workflow Structure');
+		expect(msg).not.toContain('Workflow rules:');
+	});
+
+	it('handles workflow with no steps gracefully', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ role: 'planner' }),
+			workflowRun: makeWorkflowRun({ currentStepId: undefined }),
+			workflow: makeWorkflow({ steps: [] }),
+		});
+
+		expect(() => buildCustomAgentTaskMessage(config)).not.toThrow();
 	});
 });
