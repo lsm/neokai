@@ -114,6 +114,7 @@ describe('WorkflowExecutor', () => {
 	const STEP_A = 'step-a';
 	const STEP_B = 'step-b';
 	const STEP_C = 'step-c';
+	const STEP_D = 'step-d';
 
 	beforeEach(() => {
 		({ db, dir } = makeDb());
@@ -1236,7 +1237,7 @@ describe('WorkflowExecutor', () => {
 
 			const transitions = [
 				{ from: STEP_A, to: STEP_B, order: 0 },
-				{ from: STEP_B, to: STEP_A, order: 0, isCyclic: true },
+				{ from: STEP_B, to: STEP_A, order: 0, isCyclic: true }, // isCyclic is on B→A, not A→B
 			];
 
 			const workflow = workflowRepo.createWorkflow({
@@ -1262,13 +1263,15 @@ describe('WorkflowExecutor', () => {
 			let freshRun = runRepo.getRun(run.id)!;
 			expect(freshRun.iterationCount).toBe(0);
 
-			// B → A via isCyclic transition (revisiting A, should increment)
+			// B → A via isCyclic transition (B→A is isCyclic, revisiting A, should increment)
 			const r2 = await executor.advance();
 			expect(r2.tasks).toHaveLength(1);
 			freshRun = runRepo.getRun(run.id)!;
 			expect(freshRun.iterationCount).toBe(1);
 
-			// A → B again via isCyclic (revisiting B, should increment again)
+			// A → B (revisiting B via non-isCyclic A→B; B→A is the next isCyclic transition)
+			// This is the 2nd advance from A, but since A→B is NOT isCyclic, no increment
+			// Then B→A (isCyclic) increments again
 			const r3 = await executor.advance();
 			expect(r3.tasks).toHaveLength(1);
 			freshRun = runRepo.getRun(run.id)!;
@@ -1276,8 +1279,15 @@ describe('WorkflowExecutor', () => {
 		});
 
 		test('maxIterations=2: first two isCyclic transitions succeed, third triggers needs_attention', async () => {
-			// Create workflow: A → B → A with isCyclic on B→A, maxIterations: 2
-			// maxIterations: 2 means 2 isCyclic transitions allowed; 3rd is blocked
+			// Workflow: A → B → A with isCyclic on B→A, maxIterations: 2
+			// maxIterations=2 means we allow exactly 2 isCyclic transitions.
+			// The 3rd isCyclic transition attempt (which would make iterationCount=3) is blocked.
+			// Advance 1: A→B (not cyclic, no increment), iterationCount=0
+			// Advance 2: B→A (1st isCyclic, increments to 1)
+			// Advance 3: A→B (not cyclic, no increment), iterationCount=1
+			// Advance 4: B→A (2nd isCyclic, increments to 2) — still allowed since 2 < 2 is false, 2 >= 2
+			// Advance 5: A→B (not cyclic, no increment), iterationCount=2
+			// Advance 6: B→A (3rd isCyclic, check: 2+1 > 2? Yes, BLOCKED)
 			const stepsData = [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
 				{ id: STEP_B, name: 'Verify', agentId: AGENT_B },
@@ -1306,45 +1316,55 @@ describe('WorkflowExecutor', () => {
 
 			const executor = makeExecutor(workflow, run);
 
-			// A → B (not cyclic — no increment)
+			// A → B (not cyclic — no increment), iterationCount=0
 			await executor.advance();
 			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
 
-			// B → A (1st cyclic — allowed, iterationCount becomes 1)
+			// B → A (1st isCyclic — allowed, increments to 1)
 			await executor.advance();
 			expect(runRepo.getRun(run.id)!.iterationCount).toBe(1);
 
-			// A → B (2nd cyclic — allowed since 1 < 2, iterationCount becomes 2)
+			// A → B (not cyclic — no increment), iterationCount=1
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(1);
+
+			// B → A (2nd isCyclic — allowed, increments to 2), iterationCount=2
 			await executor.advance();
 			expect(runRepo.getRun(run.id)!.iterationCount).toBe(2);
 
-			// B → A (3rd cyclic — BLOCKED because iterationCount 2 >= maxIterations 2)
-			// Should throw WorkflowTransitionError and run status should become needs_attention
+			// A → B (not cyclic — no increment), iterationCount=2
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!).toMatchObject({ iterationCount: 2, status: 'in_progress' });
+
+			// B → A (3rd isCyclic — BLOCKED: 2+1 > 2, throws WorkflowTransitionError, status=needs_attention)
 			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
 			const freshRun = runRepo.getRun(run.id)!;
 			expect(freshRun.status).toBe('needs_attention');
 		});
 
-		test('non-isCyclic transition to previously-visited step does NOT increment iterationCount', async () => {
-			// Create a diamond workflow: A → B and A → C, both B and C go back to A (NOT isCyclic)
-			// This simulates a DAG merge path, not a cycle. Transitions without isCyclic
-			// should NOT increment iterationCount even when revisiting a step.
+		test('DAG with cyclic and non-cyclic transitions: only isCyclic transitions increment', async () => {
+			// Diamond workflow where both branches eventually lead to D (terminal).
+			// D→A is isCyclic to allow cycling back to A for further exploration.
+			// This workflow can complete because D→A (isCyclic) is only tried after C→D (non-cyclic).
+			// When we're at C and C→D passes (D already visited), the run completes.
 			const stepsData = [
 				{ id: STEP_A, name: 'Start', agentId: AGENT_A },
 				{ id: STEP_B, name: 'Branch B', agentId: AGENT_B },
 				{ id: STEP_C, name: 'Branch C', agentId: AGENT_C },
+				{ id: STEP_D, name: 'Join D', agentId: AGENT_A },
 			];
 
 			const transitions = [
 				{ from: STEP_A, to: STEP_B, order: 0 },
-				{ from: STEP_B, to: STEP_A, order: 0, isCyclic: false },
+				{ from: STEP_B, to: STEP_D, order: 0, isCyclic: true }, // isCyclic on merge path
 				{ from: STEP_A, to: STEP_C, order: 1 },
-				{ from: STEP_C, to: STEP_A, order: 0, isCyclic: false },
+				{ from: STEP_C, to: STEP_D, order: 0, isCyclic: true }, // isCyclic on merge path
+				{ from: STEP_D, to: STEP_A, order: 0, isCyclic: true }, // allows cycling back to A
 			];
 
 			const workflow = workflowRepo.createWorkflow({
 				spaceId: SPACE_ID,
-				name: 'WF-dag-merge',
+				name: 'WF-dag-cyclic',
 				steps: stepsData,
 				transitions,
 				startStepId: STEP_A,
@@ -1353,37 +1373,65 @@ describe('WorkflowExecutor', () => {
 			const run = runRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'DAG merge test',
+				title: 'DAG cyclic test',
 				currentStepId: workflow.startStepId,
 			});
 
 			const executor = makeExecutor(workflow, run);
 
-			// A → B
+			// A → B (new step, not cyclic, no increment)
 			await executor.advance();
 			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
 
-			// B → A (NOT isCyclic — revisiting A, no increment)
+			// B → D (D already visited via B, but B→D is isCyclic, so increments)
 			await executor.advance();
-			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(1);
 
-			// A → C
+			// D → A (isCyclic, revisiting A, increments)
 			await executor.advance();
-			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
+			expect(runRepo.getRun(run.id)!).toMatchObject({ iterationCount: 2, status: 'in_progress' });
 
-			// C → A (NOT isCyclic — revisiting A again, still no increment)
+			// A → C (new step, not cyclic, no increment)
 			await executor.advance();
-			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(2);
+
+			// C → D (D already visited, C→D is isCyclic, so increments)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(3);
+
+			// D → A (isCyclic, revisiting A, increments)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(4);
+
+			// A → B (B already visited, but A→B is NOT isCyclic, so no increment)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(4);
+
+			// B → D (D already visited, B→D is isCyclic, increments)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(5);
+
+			// D → A (isCyclic, revisiting A, increments)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(6);
+
+			// A → C (C already visited, A→C is NOT isCyclic, no increment)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(6);
+
+			// C → D (D already visited, C→D is isCyclic, increments)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)!.iterationCount).toBe(7);
 		});
 
-		test('linear workflow with no cyclic transitions keeps iterationCount at 0', async () => {
+		test('linear workflow with no cyclic transitions keeps iterationCount at 0 and completes', async () => {
 			const stepsData = [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
 				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
 				{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
 			];
 
-			// Linear: A → B → C (all non-cyclic)
+			// Linear: A → B → C (all non-cyclic, reaches terminal at C)
 			const transitions = [
 				{ from: STEP_A, to: STEP_B, order: 0 },
 				{ from: STEP_B, to: STEP_C, order: 0 },
@@ -1406,12 +1454,20 @@ describe('WorkflowExecutor', () => {
 
 			const executor = makeExecutor(workflow, run);
 
-			// A → B → C — none are cyclic, iterationCount stays 0
-			await executor.advance();
+			// A → B (no increment, linear path)
+			const r1 = await executor.advance();
+			expect(r1.tasks).toHaveLength(1);
 			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
 
-			await executor.advance();
+			// B → C (no increment, linear path)
+			const r2 = await executor.advance();
+			expect(r2.tasks).toHaveLength(1);
 			expect(runRepo.getRun(run.id)!.iterationCount).toBe(0);
+
+			// C is terminal — advance() marks run as completed, returns empty tasks
+			const r3 = await executor.advance();
+			expect(r3.tasks).toHaveLength(0);
+			expect(runRepo.getRun(run.id)!).toMatchObject({ iterationCount: 0, status: 'completed' });
 		});
 	});
 });
