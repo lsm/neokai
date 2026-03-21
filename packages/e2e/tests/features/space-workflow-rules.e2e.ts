@@ -32,15 +32,17 @@ async function createTestSpace(page: Page): Promise<string> {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Clean up any leftover spaces (path comparison may differ due to macOS
-			// symlink resolution: /var/folders/ vs /private/var/folders/)
+			// Clean up any leftover space at this workspace path.
+			// Normalize paths to handle macOS symlink resolution (/var/ vs /private/var/).
+			const norm = (p: string) => p.replace(/^\/private/, '');
 			try {
 				const list = (await hub.request('space.list', {})) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;
-				for (const s of list) {
-					await hub.request('space.delete', { id: s.id });
+				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
+				if (existing) {
+					await hub.request('space.delete', { id: existing.id });
 				}
 			} catch {
 				// Ignore cleanup errors
