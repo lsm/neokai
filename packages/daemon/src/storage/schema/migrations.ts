@@ -138,6 +138,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 36: Add max_iterations column to space_workflows.
 	runMigration36(db);
+
+	// Migration 37: Add goal_id column to space_workflow_runs for goal/mission association.
+	runMigration37(db);
 }
 
 /**
@@ -2066,4 +2069,19 @@ function runMigration36(db: BunDatabase): void {
 	} catch {
 		db.exec(`ALTER TABLE space_workflows ADD COLUMN max_iterations INTEGER`);
 	}
+}
+
+/**
+ * Migration 37: Add goal_id column to space_workflow_runs for goal/mission association.
+ */
+function runMigration37(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_runs')) return;
+	try {
+		db.prepare(`SELECT goal_id FROM space_workflow_runs LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN goal_id TEXT`);
+	}
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_goal_id ON space_workflow_runs(goal_id)`
+	);
 }

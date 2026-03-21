@@ -284,7 +284,8 @@ export class SpaceRuntime {
 		spaceId: string,
 		workflowId: string,
 		title: string,
-		description?: string
+		description?: string,
+		goalId?: string
 	): Promise<{ run: SpaceWorkflowRun; tasks: SpaceTask[] }> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
 		if (!workflow) {
@@ -303,6 +304,7 @@ export class SpaceRuntime {
 			title,
 			description,
 			currentStepId: workflow.startStepId,
+			goalId,
 		});
 
 		const run = this.config.workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;
@@ -334,6 +336,7 @@ export class SpaceRuntime {
 				taskType: resolved.taskType,
 				customAgentId: resolved.customAgentId,
 				status: 'pending',
+				goalId: run.goalId,
 			});
 		} catch (err) {
 			// Clean up the executor/meta entries so the run is not orphaned in the map.
