@@ -487,14 +487,23 @@ describe('task.sendHumanMessage RPC Handler', () => {
 	});
 
 	describe('archived task messaging — archived is truly terminal', () => {
-		it('throws when task is archived — messaging is not allowed', async () => {
+		it('throws when task is archived — messaging is not allowed (with runtime)', async () => {
 			const archivedTask = { ...mockTask, status: 'archived' as const };
 			const { service } = makeRuntimeService(true, true, true);
 			setup({ task: archivedTask, runtimeService: service });
 
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'can you still work?' }, {})
-			).rejects.toThrow('archived');
+			).rejects.toThrow('is archived and cannot receive messages');
+		});
+
+		it('throws when task is archived — messaging is not allowed (without runtime)', async () => {
+			const archivedTask = { ...mockTask, status: 'archived' as const };
+			setup({ task: archivedTask, runtimeService: makeNullRuntimeService() });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'can you still work?' }, {})
+			).rejects.toThrow('is archived and cannot receive messages');
 		});
 	});
 });
