@@ -639,6 +639,8 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -654,6 +656,8 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -679,6 +683,8 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -694,6 +700,8 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -719,6 +727,8 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentSpaceSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -734,6 +744,8 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentSpaceSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {

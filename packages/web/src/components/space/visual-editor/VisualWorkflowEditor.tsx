@@ -248,8 +248,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// updaters to catch exactly this pattern).
 		const isFirstNode = nodes.length === 0;
 		setNodes((prev) => {
-			// Stagger new nodes so they don't stack exactly
-			const position: Point = { x: 120 + prev.length * 20, y: 80 + prev.length * 20 };
+			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px)
+			const position: Point = { x: 120, y: 80 + prev.length * 100 };
 			return [...prev, { step: newStep, position }];
 		});
 		if (isFirstNode) setStartStepId(newLocalId);
