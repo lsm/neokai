@@ -1671,6 +1671,9 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
 	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+	);
 
 	// -------------------------------------------------------------------------
 	// space_session_groups
@@ -1977,4 +1980,7 @@ function runMigration32(db: BunDatabase): void {
 	} catch {
 		db.exec(`ALTER TABLE space_tasks ADD COLUMN task_agent_session_id TEXT`);
 	}
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+	);
 }
