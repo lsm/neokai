@@ -31,6 +31,13 @@ function tableExists(db: BunDatabase, table: string): boolean {
 	return getTableSql(db, table) !== null;
 }
 
+function getIndexNames(db: BunDatabase, table: string): string[] {
+	const rows = db
+		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? ORDER BY name`)
+		.all(table) as { name: string }[];
+	return rows.map((r) => r.name).filter((n) => !n.startsWith('sqlite_'));
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -301,6 +308,82 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 			status: string;
 		};
 		expect(st2.status).toBe('in_progress');
+	});
+
+	// -------------------------------------------------------------------------
+	// Index preservation after table rebuild
+	// -------------------------------------------------------------------------
+
+	test('tasks indexes are recreated after table rebuild', () => {
+		// Use createTables to get the full schema, then downgrade the CHECK constraint
+		// to simulate a pre-migration-34 state that migration 34 will rebuild
+		createTables(db);
+
+		// Downgrade tasks table: rebuild without 'archived' in CHECK
+		db.exec('PRAGMA foreign_keys = OFF');
+		const tasksSql = getTableSql(db, 'tasks')!;
+		const downgradedSql = tasksSql.replace(", 'archived'", '');
+		db.exec(`DROP TABLE tasks`);
+		db.exec(downgradedSql);
+		db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)');
+		db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)');
+		db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)');
+		db.exec('PRAGMA foreign_keys = ON');
+
+		// Verify CHECK doesn't include 'archived' yet
+		expect(getTableSql(db, 'tasks')!).not.toContain("'archived'");
+
+		// Run migrations — migration 34 should rebuild and recreate all indexes
+		runMigrations(db, () => {});
+
+		const indexes = getIndexNames(db, 'tasks');
+		expect(indexes).toContain('idx_tasks_room');
+		expect(indexes).toContain('idx_tasks_status');
+		expect(indexes).toContain('idx_tasks_room_updated');
+	});
+
+	test('space_tasks indexes are recreated after table rebuild', () => {
+		// createTables + runMigrations creates space_tasks via migration 27-29
+		// Then we downgrade it to trigger migration 34's rebuild
+		createTables(db);
+		runMigrations(db, () => {});
+
+		expect(tableExists(db, 'space_tasks')).toBe(true);
+
+		// Downgrade space_tasks: remove 'archived' from CHECK to trigger rebuild
+		db.exec('PRAGMA foreign_keys = OFF');
+		const spaceSql = getTableSql(db, 'space_tasks')!;
+		const downgradedSql = spaceSql.replace(", 'archived'", '');
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(downgradedSql);
+		db.exec('CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)');
+		db.exec('CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)');
+		db.exec(
+			'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)'
+		);
+		db.exec(
+			'CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)'
+		);
+		db.exec(
+			'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)'
+		);
+		db.exec(
+			'CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)'
+		);
+		db.exec('PRAGMA foreign_keys = ON');
+
+		expect(getTableSql(db, 'space_tasks')!).not.toContain("'archived'");
+
+		// Run migrations again — migration 34 detects missing 'archived' and rebuilds
+		runMigrations(db, () => {});
+
+		const indexes = getIndexNames(db, 'space_tasks');
+		expect(indexes).toContain('idx_space_tasks_space_id');
+		expect(indexes).toContain('idx_space_tasks_status');
+		expect(indexes).toContain('idx_space_tasks_workflow_run_id');
+		expect(indexes).toContain('idx_space_tasks_custom_agent_id');
+		expect(indexes).toContain('idx_space_tasks_workflow_step_id');
+		expect(indexes).toContain('idx_space_tasks_task_agent_session_id');
 	});
 
 	// -------------------------------------------------------------------------

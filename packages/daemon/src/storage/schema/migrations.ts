@@ -2201,6 +2201,9 @@ function runMigration39(db: BunDatabase): void {
 				db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
 				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
 				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`
+				);
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
 			}
@@ -2302,6 +2305,18 @@ function runMigration39(db: BunDatabase): void {
 				db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
 				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
 				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+				);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+				);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
+				);
+				db.exec(
+					`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+				);
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
 			}

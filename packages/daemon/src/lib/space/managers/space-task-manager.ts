@@ -358,8 +358,8 @@ export class SpaceTaskManager {
 
 	/**
 	 * Reassign a task to a different agent.
-	 * Only allowed for tasks in 'pending', 'needs_attention', or 'cancelled' status.
-	 * Tasks in 'in_progress', 'review', 'completed', or 'draft' cannot be reassigned.
+	 * Only allowed for tasks in 'pending', 'needs_attention', 'cancelled', or 'completed' status.
+	 * Tasks in 'in_progress', 'review', or 'draft' cannot be reassigned.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
 	 */
