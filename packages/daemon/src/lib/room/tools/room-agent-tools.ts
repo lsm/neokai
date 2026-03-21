@@ -399,8 +399,8 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						group.completedAt !== null
 					) {
 						// Lightweight revive: clear completedAt without resetting metadata.
-						// Supported for needs_attention → review only. Cancelled and completed
-						// tasks use resetGroupForRestart() above for a clean slate.
+						// Supported for needs_attention (failed) → review only. Cancelled and
+						// completed tasks use resetGroupForRestart() above for a clean slate.
 						const revived = groupRepo.reviveGroup(group.id);
 						if (!revived) {
 							return jsonResult({

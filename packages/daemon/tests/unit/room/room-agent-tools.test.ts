@@ -1023,7 +1023,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should return error for cancelled task (worktree is gone, restart required)', async () => {
+		it('should return error for cancelled task (worktree is preserved, explicit reactivation required)', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
@@ -1046,7 +1046,7 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(
 				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
 			);
-			// Cancelled tasks cannot receive messages — workspace is cleaned up
+			// Cancelled tasks cannot receive agent-tool messages — explicit reactivation required
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('cancelled');
 			expect(result.error).toContain('set_task_status');
@@ -1272,6 +1272,35 @@ describe('Room Agent Tools', () => {
 			expect(groupAfter).not.toBeNull();
 			expect(groupAfter!.completedAt).toBeNull();
 			expect(groupAfter!.submittedForReview).toBe(false);
+		});
+
+		it('should reset old completed group when restarting task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress and complete the task
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			await taskManager.completeTask(taskId, 'Done');
+
+			// Verify the group exists
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.taskId).toBe(taskId);
+
+			// Reactivate the completed task
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+
+			// The old completed group should be reset and active again
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
+			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
 		it('should succeed when group is already gone', async () => {
