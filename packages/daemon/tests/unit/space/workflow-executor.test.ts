@@ -1306,6 +1306,58 @@ describe('WorkflowExecutor', () => {
 			expect(result.reason).toContain('non-empty expression');
 		});
 
+		test('task_result retries are short-circuited (maxRetries has no effect)', async () => {
+			// task_result context doesn't change between retries, so maxRetries should be ignored.
+			// Verify that advance() only evaluates the condition once even with maxRetries set.
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+						maxRetries: 5,
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-retry-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Retry Test',
+				currentStepId: workflow.startStepId,
+			});
+
+			// Complete a task with 'failed' — won't match 'passed'
+			const verifyStepId = workflow.steps.find((s) => s.name === 'Verify')!.id;
+			const task = await taskManager.createTask({
+				title: 'Verify',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task.id, 'in_progress');
+			await taskManager.completeTask(task.id, 'failed');
+
+			const executor = makeExecutor(workflow, run);
+			// Should fail immediately (not retry 5 times) since taskResult won't change
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+		});
+
 		test('evaluateCondition: fails when taskResult is undefined', async () => {
 			const { workflow, run } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
@@ -1544,9 +1596,8 @@ describe('WorkflowExecutor', () => {
 			});
 			await taskManager.setTaskStatus(task1.id, 'in_progress');
 			await taskManager.completeTask(task1.id, 'failed: first attempt');
-
-			// Small delay to ensure different completedAt timestamps
-			await new Promise((r) => setTimeout(r, 10));
+			// Force a deterministic earlier completedAt via direct DB update
+			db.prepare('UPDATE space_tasks SET completed_at = ? WHERE id = ?').run(1000, task1.id);
 
 			// Create second task, complete with 'passed'
 			const task2 = await taskManager.createTask({
@@ -1558,6 +1609,8 @@ describe('WorkflowExecutor', () => {
 			});
 			await taskManager.setTaskStatus(task2.id, 'in_progress');
 			await taskManager.completeTask(task2.id, 'passed');
+			// Force a deterministic later completedAt via direct DB update
+			db.prepare('UPDATE space_tasks SET completed_at = ? WHERE id = ?').run(2000, task2.id);
 
 			const executor = makeExecutor(workflow, run);
 			// Should use 'passed' from the most recently completed task
