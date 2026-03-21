@@ -820,16 +820,22 @@ export function setupTaskHandlers(
 		}
 
 		// needs_attention, completed, and cancelled tasks: auto-reactivate via reviveTaskForMessage.
-		// reviveTaskForMessage is a lightweight revive (preserves conversation history) that
-		// restores sessions and injects the message without wiping the group state.
-		// This mirrors the agent-tool path in room-agent-tools.ts send_message_to_task.
+		// reviveTaskForMessage is a lightweight revive that restores sessions and injects the
+		// message WITHOUT wiping the group metadata or conversation history.
+		//
+		// Note — deliberate asymmetry with task.setStatus:
+		//   task.setStatus(cancelled → in_progress)  → resetGroupForRestart (clean slate)
+		//   task.sendHumanMessage(cancelled task)     → reviveTaskForMessage  (keep history)
+		// Sending a message to a cancelled task is a "continue this conversation" action, so
+		// we preserve context. Explicitly restarting via setStatus is a "start over" action.
 		if (
 			task.status === 'needs_attention' ||
 			task.status === 'completed' ||
 			task.status === 'cancelled'
 		) {
 			// needs_attention transitions through 'review' (its prior working state);
-			// completed/cancelled transition directly to 'in_progress'.
+			// completed/cancelled transition directly to 'in_progress' as the pre-revival
+			// intermediate status before reviveTaskForMessage restores sessions.
 			const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 			try {
 				await taskManager.setTaskStatus(params.taskId, intermediateStatus);

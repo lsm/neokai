@@ -1049,6 +1049,30 @@ describe('task.setStatus RPC Handler', () => {
 			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
 		});
 
+		it('emits task update and room overview after archiving via runtime', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			const { service } = makeRuntimeService();
+
+			const mh = createMockMessageHub();
+			const daemonHub = createMockDaemonHub();
+			setupTaskHandlers(
+				mh.hub,
+				mockRoomManager,
+				daemonHub,
+				makeDb(makeGroupRow()),
+				makeSetStatusWithArchiveFactory(completedTask),
+				service
+			);
+
+			const handler = mh.handlers.get('task.setStatus')!;
+			await handler({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {});
+
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'room.task.update',
+				expect.objectContaining({ roomId: 'room-1' })
+			);
+		});
+
 		it('calls taskManager.archiveTask when no runtime is available', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			const factory = makeSetStatusWithArchiveFactory(completedTask);

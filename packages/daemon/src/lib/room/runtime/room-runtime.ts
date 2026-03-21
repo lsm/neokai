@@ -1549,7 +1549,12 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 
 		if (group) {
-			// Terminate active sessions if group is still active
+			// Terminate active sessions if group is still active.
+			// If terminateGroup() fails (e.g., concurrent version conflict), we log and
+			// continue rather than aborting — archive is destructive and non-reversible,
+			// so the worktree and task must still be cleaned up regardless of group state.
+			// This is a deliberate best-effort approach (distinct from terminateTaskGroup
+			// which returns false on failure and lets the caller decide).
 			const isActiveGroup = group.completedAt === null;
 			if (isActiveGroup) {
 				const terminated = await this.taskGroupManager.terminateGroup(group.id);
