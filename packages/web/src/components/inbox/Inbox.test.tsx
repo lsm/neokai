@@ -36,14 +36,6 @@ vi.mock('../../lib/inbox-store.ts', () => ({
 	},
 }));
 
-// Mock signals
-vi.mock('../../lib/signals.ts', async (importOriginal) => {
-	const actual = await importOriginal();
-	return {
-		...actual,
-	};
-});
-
 import { Inbox } from './Inbox.tsx';
 import {
 	currentRoomIdSignal,

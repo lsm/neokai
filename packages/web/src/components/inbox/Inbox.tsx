@@ -61,8 +61,7 @@ export function Inbox() {
 					</div>
 				)}
 				{!isLoading && items.length === 0 && <EmptyState />}
-				{!isLoading &&
-					items.map((item) => <InboxTaskCard key={item.task.id} item={item} />)}
+				{!isLoading && items.map((item) => <InboxTaskCard key={item.task.id} item={item} />)}
 			</div>
 		</div>
 	);

@@ -177,7 +177,10 @@ describe('InboxStore', () => {
 
 		it('should ignore archived rooms', async () => {
 			const activeRoom = makeRoom('active', 'Active Room');
-			const archivedRoom = { ...makeRoom('archived', 'Archived Room'), status: 'archived' as const };
+			const archivedRoom = {
+				...makeRoom('archived', 'Archived Room'),
+				status: 'archived' as const,
+			};
 			mockRoomsSignal.value = [activeRoom, archivedRoom];
 
 			const mockHub = {
