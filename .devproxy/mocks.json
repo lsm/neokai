@@ -131,15 +131,11 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches structurally on the tool_result with tool_use_id 'toolu_get_detail_probe_001')",
+			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; bodyFragment does substring matching on the serialized request body; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches on tool_use_id 'toolu_get_detail_probe_001')",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
-				"body": {
-					"matcher": ".JsonContains",
-					"key": "messages",
-					"value": "probe_semi_autonomous_get_detail"
-				}
+				"bodyFragment": "probe_semi_autonomous_get_detail"
 			},
 			"response": {
 				"statusCode": 200,
@@ -185,15 +181,11 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches structurally on the tool_result with tool_use_id 'toolu_retry_probe_001')",
+			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; bodyFragment does substring matching on the serialized request body; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches on tool_use_id 'toolu_retry_probe_001')",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
-				"body": {
-					"matcher": ".JsonContains",
-					"key": "messages",
-					"value": "probe_semi_autonomous_retry"
-				}
+				"bodyFragment": "probe_semi_autonomous_retry"
 			},
 			"response": {
 				"statusCode": 200,
