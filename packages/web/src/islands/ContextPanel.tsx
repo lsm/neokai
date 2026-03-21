@@ -406,7 +406,10 @@ export function ContextPanel() {
 				</div>
 
 				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
-				<div key={navSection + (isRoomDetail ? '-detail' : '')} class="flex-1 overflow-hidden flex flex-col animate-fadeIn">
+				<div
+					key={navSection + (isRoomDetail ? '-detail' : '')}
+					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
+				>
 					{navSection === 'home' && (
 						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
