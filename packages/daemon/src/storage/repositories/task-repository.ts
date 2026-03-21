@@ -126,6 +126,9 @@ export class TaskRepository {
 			) {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
+			} else if (params.status === 'archived') {
+				fields.push('archived_at = ?');
+				values.push(Date.now());
 			}
 		}
 		if (params.priority !== undefined) {

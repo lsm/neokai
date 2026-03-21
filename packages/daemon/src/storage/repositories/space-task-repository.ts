@@ -159,6 +159,9 @@ export class SpaceTaskRepository {
 			) {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
+			} else if (params.status === 'archived') {
+				fields.push('archived_at = ?');
+				values.push(Date.now());
 			}
 		}
 		if (params.priority !== undefined) {
@@ -214,7 +217,8 @@ export class SpaceTaskRepository {
 			params.activeSession === undefined &&
 			(params.status === 'completed' ||
 				params.status === 'needs_attention' ||
-				params.status === 'cancelled')
+				params.status === 'cancelled' ||
+				params.status === 'archived')
 		) {
 			fields.push('active_session = ?');
 			values.push(null);
