@@ -274,6 +274,139 @@ describe('SpaceTaskManager', () => {
 		});
 	});
 
+	describe('retryTask', () => {
+		it('retries a needs_attention task -> pending', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.failTask(task.id, 'Something went wrong');
+
+			const retried = await manager.retryTask(task.id);
+			expect(retried.status).toBe('pending');
+			expect(retried.error).toBeUndefined();
+			expect(retried.result).toBeUndefined();
+			expect(retried.progress).toBeUndefined();
+		});
+
+		it('retries a cancelled task -> pending', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.cancelTask(task.id);
+
+			const retried = await manager.retryTask(task.id);
+			expect(retried.status).toBe('pending');
+			expect(retried.error).toBeUndefined();
+		});
+
+		it('updates description when provided', async () => {
+			const task = await manager.createTask({ title: 'T', description: 'original' });
+			await manager.startTask(task.id);
+			await manager.failTask(task.id, 'error');
+
+			const retried = await manager.retryTask(task.id, { description: 'updated description' });
+			expect(retried.status).toBe('pending');
+			expect(retried.description).toBe('updated description');
+		});
+
+		it('throws when task is in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			await expect(manager.retryTask(task.id)).rejects.toThrow(
+				"Cannot retry task in 'in_progress'"
+			);
+		});
+
+		it('throws when task is pending', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+
+			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'pending'");
+		});
+
+		it('throws when task is completed', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'done');
+
+			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'completed'");
+		});
+
+		it('throws for unknown task', async () => {
+			await expect(manager.retryTask('nonexistent')).rejects.toThrow('Task not found');
+		});
+	});
+
+	describe('reassignTask', () => {
+		it('reassigns a pending task to a custom agent', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+
+			const reassigned = await manager.reassignTask(task.id, 'custom-agent-123');
+			expect(reassigned.customAgentId).toBe('custom-agent-123');
+		});
+
+		it('reassigns with assignedAgent type', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+
+			const reassigned = await manager.reassignTask(task.id, 'custom-agent-456', 'general');
+			expect(reassigned.customAgentId).toBe('custom-agent-456');
+			expect(reassigned.assignedAgent).toBe('general');
+		});
+
+		it('clears customAgentId when null is provided', async () => {
+			const task = await manager.createTask({
+				title: 'T',
+				description: '',
+				customAgentId: 'old-agent',
+			});
+
+			const reassigned = await manager.reassignTask(task.id, null);
+			expect(reassigned.customAgentId).toBeUndefined();
+		});
+
+		it('reassigns a needs_attention task', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.failTask(task.id, 'error');
+
+			const reassigned = await manager.reassignTask(task.id, 'new-agent', 'coder');
+			expect(reassigned.customAgentId).toBe('new-agent');
+			expect(reassigned.status).toBe('needs_attention');
+		});
+
+		it('reassigns a cancelled task', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.cancelTask(task.id);
+
+			const reassigned = await manager.reassignTask(task.id, 'another-agent');
+			expect(reassigned.customAgentId).toBe('another-agent');
+			expect(reassigned.status).toBe('cancelled');
+		});
+
+		it('throws when task is in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+
+			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
+				"Cannot reassign task in 'in_progress'"
+			);
+		});
+
+		it('throws when task is completed', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'done');
+
+			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
+				"Cannot reassign task in 'completed'"
+			);
+		});
+
+		it('throws for unknown task', async () => {
+			await expect(manager.reassignTask('nonexistent', 'agent-id')).rejects.toThrow(
+				'Task not found'
+			);
+		});
+	});
+
 	describe('VALID_SPACE_TASK_TRANSITIONS', () => {
 		it('completed is a terminal state with no transitions', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.completed).toEqual([]);

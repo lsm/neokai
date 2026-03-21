@@ -314,6 +314,63 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * Retry a failed or cancelled task by resetting it to pending.
+	 * Optionally updates the description before retrying.
+	 */
+	async retryTask(taskId: string, options?: { description?: string }): Promise<SpaceTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		if (task.status !== 'needs_attention' && task.status !== 'cancelled') {
+			throw new Error(
+				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention' or 'cancelled' status.`
+			);
+		}
+
+		// Update description before status transition if provided
+		if (options?.description !== undefined) {
+			const descUpdated = this.taskRepo.updateTask(taskId, { description: options.description });
+			if (!descUpdated) {
+				throw new Error(`Failed to update task description: ${taskId}`);
+			}
+		}
+
+		// setTaskStatus handles clearing error/result/progress on transition from needs_attention/cancelled -> pending
+		return this.setTaskStatus(taskId, 'pending');
+	}
+
+	/**
+	 * Reassign a task to a different agent.
+	 * Only allowed for tasks that are not actively running (not in_progress or completed).
+	 */
+	async reassignTask(
+		taskId: string,
+		customAgentId: string | null,
+		assignedAgent?: 'coder' | 'general'
+	): Promise<SpaceTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		const blockedStatuses: SpaceTaskStatus[] = ['in_progress', 'completed'];
+		if (blockedStatuses.includes(task.status)) {
+			throw new Error(
+				`Cannot reassign task in '${task.status}' status. Task must not be in_progress or completed.`
+			);
+		}
+
+		const updates: UpdateSpaceTaskParams = { customAgentId };
+		if (assignedAgent !== undefined) {
+			updates.assignedAgent = assignedAgent;
+		}
+
+		return this.updateTask(taskId, updates);
+	}
+
+	/**
 	 * Check if all dependencies for a task are met (completed)
 	 */
 	async areDependenciesMet(task: SpaceTask): Promise<boolean> {
