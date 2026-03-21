@@ -16,11 +16,21 @@
  *    - `probe_supervised_escalation`  → escalation text (supervised mode)
  *    - `probe_semi_autonomous_get_detail` → tool_use: get_task_detail
  *    - `probe_semi_autonomous_retry`  → tool_use: retry_task
- * 5. Tool-use mocks use `stop_reason: "tool_use"` so the SDK executes the tool
- *    and makes a follow-up API call. A "tool_result" body-matcher mock (ordered
- *    first in mocks.json) intercepts the follow-up and returns `end_turn` text,
- *    preventing an infinite loop. Tool_use blocks are recorded in SDK messages
- *    so tests can assert on them.
+ * 5. Semi-autonomous tool-use mocks use `stop_reason: "tool_use"` so the SDK
+ *    dispatches the tool call and records the tool_use block in SDK messages.
+ *    A "tool_result" body-matcher mock (ordered first in mocks.json) intercepts
+ *    the follow-up API call and returns `end_turn` text, preventing an infinite
+ *    loop. Tests then assert on the recorded tool_use blocks.
+ *
+ * ## What these tests verify
+ *
+ * These tests verify **mock routing correctness** — that the probe phrase
+ * embedded in the [TASK_EVENT] reason field causes the dev proxy to return the
+ * expected mock for that scenario. They also verify that the SDK correctly
+ * records the mocked tool_use blocks in the session's SDK messages.
+ *
+ * What they do NOT verify: that a real LLM would make the same tool choice.
+ * That requires live API testing (NEOKAI_USE_DEV_PROXY unset).
  *
  * ## Running
  *
@@ -257,9 +267,8 @@ describe('Space Agent Coordination — Online Tests', () => {
 			const toolUses = extractToolUses(assistantMsgs);
 			const getDetailUses = toolUses.filter((t) => t.name === 'get_task_detail');
 
-			// The mocked LLM response includes a get_task_detail tool_use block
+			// The mocked response routes to get_task_detail; SDK records the tool_use block
 			expect(getDetailUses.length).toBeGreaterThan(0);
-			expect(getDetailUses[0].name).toBe('get_task_detail');
 		},
 		TEST_TIMEOUT
 	);
@@ -309,10 +318,9 @@ describe('Space Agent Coordination — Online Tests', () => {
 			const toolUses = extractToolUses(assistantMsgs);
 			const retryUses = toolUses.filter((t) => t.name === 'retry_task');
 
-			// The mocked LLM response includes a retry_task tool_use block — representing
-			// the semi_autonomous agent attempting to retry without human approval
+			// The mocked response routes to retry_task; SDK records the tool_use block —
+			// representing the semi_autonomous agent attempting to retry autonomously
 			expect(retryUses.length).toBeGreaterThan(0);
-			expect(retryUses[0].name).toBe('retry_task');
 
 			// Also verify the agent's text explains its autonomous reasoning
 			const responseText = extractAssistantText(assistantMsgs);
