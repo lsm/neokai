@@ -1538,21 +1538,35 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Archive a task group - cleanup worktree regardless of state.
+	 * Archive a task group - terminate active sessions, cleanup worktree, and set archived status.
 	 *
-	 * Called when user archives a task via UI. This cleans up the worktree
-	 * to free disk space even for failed tasks (kept for debugging initially).
-	 * Also sets the archivedAt timestamp on the task.
+	 * Called when user archives a task via UI. This:
+	 * 1. Terminates any active sessions and mirroring (if group is still active).
+	 * 2. Cleans up the worktree to free disk space.
+	 * 3. Sets the task status to 'archived' with archivedAt timestamp.
 	 */
 	async archiveTaskGroup(taskId: string): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 
-		// Cleanup worktree via TaskGroupManager (handles both active and completed groups)
 		if (group) {
+			// Terminate active sessions if group is still active
+			const isActiveGroup = group.completedAt === null;
+			if (isActiveGroup) {
+				const terminated = await this.taskGroupManager.terminateGroup(group.id);
+				if (!terminated) {
+					log.warn(
+						`archiveTaskGroup: failed to terminate active group ${group.id} for task ${taskId}`
+					);
+				}
+			}
+			await this.terminateGroupSessions(group);
+			this.cleanupMirroring(group.id, isActiveGroup ? 'Task archived by user.' : undefined);
+
+			// Cleanup worktree via TaskGroupManager
 			await this.taskGroupManager.archiveGroup(group.id);
 		}
 
-		// Set archivedAt timestamp on task
+		// Set archivedAt timestamp on task (transitions to 'archived' status)
 		await this.taskManager.archiveTask(taskId);
 
 		return true;
