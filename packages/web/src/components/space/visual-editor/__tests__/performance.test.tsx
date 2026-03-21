@@ -5,28 +5,31 @@
  * is to document performance baselines and catch severe regressions in CI.
  *
  * Baselines (recorded 2026-03-20, Bun + Vitest + jsdom):
- *   - autoLayout for 25 nodes / 35 edges: < 100ms
- *   - VisualWorkflowEditor render for 25 nodes / 35 edges: < 500ms
+ *   - autoLayout for 25 nodes / 35 edges: < 100ms  (typical: ~3ms)
+ *   - VisualWorkflowEditor fully settled for 25 nodes / 35 edges: < 500ms
+ *     (typical: ~65-70ms; "fully settled" means act() has flushed all effects,
+ *      state updates and microtasks triggered by useMemo / useState initializers)
  *
- * Topology of the large test workflow:
- *   - 25 nodes: node-0 through node-24
- *   - Linear backbone: node-0 → node-1 → … → node-24  (24 edges)
- *   - Parallel branches (11 extra edges):
- *       node-0  → node-2   (skip 1)
- *       node-0  → node-4   (skip 3)
- *       node-2  → node-5   (cross)
- *       node-4  → node-7   (cross)
- *       node-5  → node-10  (cross)
- *       node-7  → node-12  (cross)
- *       node-10 → node-15  (cross)
- *       node-12 → node-17  (cross)
- *       node-15 → node-20  (cross)
- *       node-17 → node-22  (cross)
- *       node-20 → node-24  (skip to end)
- *   Total: 24 + 11 = 35 edges
+ * Topology of the large test workflow — genuine fan-out / fan-in DAG:
+ *
+ *   Layer 0 (1 node):   n0
+ *   Layer 1 (5 nodes):  n1, n2, n3, n4, n5         ← fan-out from n0
+ *   Layer 2 (5 nodes):  n6, n7, n8, n9, n10        ← fan-out from layer 1
+ *   Layer 3 (5 nodes):  n11, n12, n13, n14, n15    ← fan-out from layer 2
+ *   Layer 4 (5 nodes):  n16, n17, n18, n19, n20    ← fan-out from layer 3
+ *   Layer 5 (4 nodes):  n21, n22, n23, n24         ← converge
+ *
+ * Multiple nodes share every interior layer, so the horizontal-separation logic
+ * inside autoLayout is meaningfully exercised (unlike a purely linear chain where
+ * every node would land in its own unique layer).
+ *
+ * Edge count breakdown:
+ *   Main fan-out chains:              5 + 5 + 5 + 5 + 5 = 25 edges
+ *   Cross-layer forward edges:        2 + 3 + 3 + 2     = 10 edges
+ *   Total:                                                 35 edges
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow, WorkflowStep, WorkflowTransition } from '@neokai/shared';
@@ -80,37 +83,69 @@ function makeTransition(from: number, to: number): WorkflowTransition {
 /**
  * Build a large workflow with 25 nodes and 35 edges.
  *
- * Topology (see file-level comment for details):
- *   - 24-edge linear backbone
- *   - 11 additional cross/skip edges
+ * The topology uses genuine fan-out layers so that multiple nodes share the same
+ * y-coordinate and the horizontal-separation logic inside autoLayout is exercised.
+ * See the file-level comment for the full layer breakdown and edge-count proof.
  */
 function buildLargeWorkflow(): SpaceWorkflow {
-	// 25 nodes: indices 0–24
+	// 25 nodes: n0 through n24
 	const steps: WorkflowStep[] = Array.from({ length: 25 }, (_, i) => makeStep(i));
 
-	// Linear backbone: 24 edges
-	const transitions: WorkflowTransition[] = [];
-	for (let i = 0; i < 24; i++) {
-		transitions.push(makeTransition(i, i + 1));
-	}
-
-	// 11 additional cross edges (makes total = 35)
-	const crossEdges: [number, number][] = [
+	// Main fan-out chains (25 edges):
+	//   n0 → n1…n5 (layer 0 → layer 1)
+	//   n1→n6, n2→n7, n3→n8, n4→n9, n5→n10 (layer 1 → layer 2)
+	//   n6→n11, n7→n12, n8→n13, n9→n14, n10→n15 (layer 2 → layer 3)
+	//   n11→n16, n12→n17, n13→n18, n14→n19, n15→n20 (layer 3 → layer 4)
+	//   n16→n21, n17→n21, n18→n22, n19→n23, n20→n24 (layer 4 → layer 5)
+	const mainEdges: [number, number][] = [
+		[0, 1],
 		[0, 2],
+		[0, 3],
 		[0, 4],
-		[2, 5],
-		[4, 7],
+		[0, 5],
+		[1, 6],
+		[2, 7],
+		[3, 8],
+		[4, 9],
 		[5, 10],
+		[6, 11],
 		[7, 12],
+		[8, 13],
+		[9, 14],
 		[10, 15],
+		[11, 16],
 		[12, 17],
+		[13, 18],
+		[14, 19],
 		[15, 20],
-		[17, 22],
+		[16, 21],
+		[17, 21],
+		[18, 22],
+		[19, 23],
 		[20, 24],
 	];
-	for (const [from, to] of crossEdges) {
-		transitions.push(makeTransition(from, to));
-	}
+
+	// Cross-layer forward edges (10 edges):
+	//   These add additional arcs between parallel branches within the same
+	//   fan-out level; all target nodes already have a longer incoming path,
+	//   so their layer assignments are unchanged (verified by tracing the
+	//   longest-path algorithm in layout.ts).
+	const crossEdges: [number, number][] = [
+		[1, 7],
+		[2, 8], // layer 1 → layer 2
+		[6, 12],
+		[7, 13],
+		[8, 14], // layer 2 → layer 3
+		[11, 17],
+		[12, 18],
+		[13, 19], // layer 3 → layer 4
+		[16, 22],
+		[17, 23], // layer 4 → layer 5
+	];
+
+	const transitions: WorkflowTransition[] = [...mainEdges, ...crossEdges].map(([f, t]) =>
+		makeTransition(f, t)
+	);
 
 	return {
 		id: 'large-wf',
@@ -130,10 +165,6 @@ function buildLargeWorkflow(): SpaceWorkflow {
 // ============================================================================
 // Setup / Teardown
 // ============================================================================
-
-beforeEach(() => {
-	cleanup();
-});
 
 afterEach(() => {
 	cleanup();
@@ -160,7 +191,9 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		expect(elapsed).toBeLessThan(100);
 	});
 
-	// Verify that all 25 positions are distinct and within a reasonable canvas area.
+	// Verify that all 25 positions are distinct — exercises the horizontal-separation
+	// logic inside autoLayout since layers 1–5 each contain multiple nodes that must
+	// be assigned different x-coordinates.
 	it('autoLayout assigns unique positions to all 25 nodes', () => {
 		const workflow = buildLargeWorkflow();
 		const positions = autoLayout(workflow.steps, workflow.transitions, workflow.startStepId!);
@@ -168,7 +201,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		// All nodes should have a position entry.
 		expect(positions.size).toBe(25);
 
-		// Positions must not be the exact same point (no stacking).
+		// No two nodes may share the exact same canvas point.
 		const positionStrings = new Set<string>();
 		for (const [, pos] of positions) {
 			positionStrings.add(`${pos.x},${pos.y}`);
@@ -176,11 +209,15 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		expect(positionStrings.size).toBe(25);
 	});
 
-	// Baseline: VisualWorkflowEditor should render 25 nodes + 35 edges in < 500ms.
+	// Baseline: VisualWorkflowEditor should be fully settled for 25 nodes + 35 edges
+	// within 500ms. "Fully settled" means act() has flushed all pending effects, state
+	// updates, and microtasks (useMemo/useState initialisers, signal subscriptions,
+	// post-render async work). This is broader than raw DOM-paint time but is the
+	// meaningful threshold for interactive readiness.
 	it('VisualWorkflowEditor renders 25 nodes + 35 edges without errors in < 500ms', async () => {
 		const workflow = buildLargeWorkflow();
 
-		let container!: Element;
+		let container: Element | null = null;
 		const start = performance.now();
 
 		await act(async () => {
@@ -193,9 +230,10 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		const elapsed = performance.now() - start;
 
 		// Component must mount successfully and render the editor root.
-		expect(container.querySelector('[data-testid="visual-workflow-editor"]')).toBeTruthy();
+		expect(container).not.toBeNull();
+		expect(container!.querySelector('[data-testid="visual-workflow-editor"]')).toBeTruthy();
 
-		// Performance gate: initial render must complete in under 500ms.
+		// Performance gate: fully settled in under 500ms.
 		expect(elapsed).toBeLessThan(500);
 	});
 
