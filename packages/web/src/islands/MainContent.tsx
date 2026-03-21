@@ -20,6 +20,7 @@ import { McpServersSettings } from '../components/settings/McpServersSettings.ts
 import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import { Inbox } from '../components/inbox/Inbox.tsx';
 
 export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
@@ -90,9 +91,7 @@ export default function MainContent() {
 
 	// Inbox route
 	if (navSection === 'inbox') {
-		return (
-			<div class="flex-1 flex items-center justify-center text-gray-500">Inbox coming soon...</div>
-		);
+		return <Inbox />;
 	}
 
 	// Default: Show Lobby (home page)

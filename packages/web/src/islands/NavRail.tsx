@@ -11,12 +11,11 @@ import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
-
-// Static badge count for inbox — Task 3.2 will provide dynamic data
-const inboxBadgeCount = 0;
+import { inboxStore } from '../lib/inbox-store.ts';
 
 export function NavRail() {
 	const navSection = navSectionSignal.value;
+	const inboxBadgeCount = inboxStore.reviewCount.value;
 
 	const handleNavClick = (section: NavSection) => {
 		switch (section) {
