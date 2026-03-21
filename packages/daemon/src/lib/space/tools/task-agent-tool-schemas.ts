@@ -12,9 +12,9 @@
  * This file is consumed by the MCP server factory (Milestone 3). It intentionally
  * contains only schema definitions — no runtime logic or side effects.
  *
- * Follow the same style as space-agent-tools.ts:
- *   - z.string().describe() on every field
- *   - optional fields use .optional()
+ * Style conventions (matching space-agent-tools.ts):
+ *   - z.string().describe() on every field — .describe() before .optional()
+ *   - optional fields use .optional() after .describe()
  *   - enum fields use z.enum([...])
  */
 
@@ -34,10 +34,8 @@ export const SpawnStepAgentSchema = z.object({
 	/** Optional override instructions to pass to the step agent. */
 	instructions: z
 		.string()
-		.optional()
-		.describe(
-			'Optional instructions to pass to the step agent, overriding the default step prompt'
-		),
+		.describe('Optional instructions to pass to the step agent, overriding the default step prompt')
+		.optional(),
 });
 
 export type SpawnStepAgentInput = z.infer<typeof SpawnStepAgentSchema>;
@@ -55,8 +53,8 @@ export const CheckStepStatusSchema = z.object({
 	/** Optional step ID to check. Omit to check the current active step. */
 	step_id: z
 		.string()
-		.optional()
-		.describe('ID of the workflow step to check. Omit to check the currently active step.'),
+		.describe('ID of the workflow step to check. Omit to check the currently active step.')
+		.optional(),
 });
 
 export type CheckStepStatusInput = z.infer<typeof CheckStepStatusSchema>;
@@ -73,10 +71,10 @@ export const AdvanceWorkflowSchema = z.object({
 	/** Optional result summary from the completed step, used for transition condition evaluation. */
 	step_result: z
 		.string()
-		.optional()
 		.describe(
 			'Optional result or output summary from the completed step, used when evaluating transition conditions'
-		),
+		)
+		.optional(),
 });
 
 export type AdvanceWorkflowInput = z.infer<typeof AdvanceWorkflowSchema>;
@@ -106,8 +104,8 @@ export const ReportResultSchema = z.object({
 	/** Optional error message when status is needs_attention or cancelled. */
 	error: z
 		.string()
-		.optional()
-		.describe('Error details when the task ended in needs_attention or was cancelled'),
+		.describe('Error details when the task ended in needs_attention or was cancelled')
+		.optional(),
 });
 
 export type ReportResultInput = z.infer<typeof ReportResultSchema>;
@@ -126,8 +124,8 @@ export const RequestHumanInputSchema = z.object({
 	/** Optional context to help the human understand why the question is being asked. */
 	context: z
 		.string()
-		.optional()
-		.describe('Optional context explaining why this question is being asked'),
+		.describe('Optional context explaining why this question is being asked')
+		.optional(),
 });
 
 export type RequestHumanInputInput = z.infer<typeof RequestHumanInputSchema>;

@@ -59,6 +59,25 @@ export {
 export type { SpaceAgentToolsConfig, SpaceAgentMcpServer } from './tools/space-agent-tools';
 
 export {
+	TASK_AGENT_TOOL_SCHEMAS,
+	SpawnStepAgentSchema,
+	CheckStepStatusSchema,
+	AdvanceWorkflowSchema,
+	ReportResultSchema,
+	RequestHumanInputSchema,
+	TaskResultStatusSchema,
+} from './tools/task-agent-tool-schemas';
+export type {
+	SpawnStepAgentInput,
+	CheckStepStatusInput,
+	AdvanceWorkflowInput,
+	ReportResultInput,
+	RequestHumanInputInput,
+	TaskResultStatus,
+	TaskAgentToolName,
+} from './tools/task-agent-tool-schemas';
+
+export {
 	exportAgent,
 	exportWorkflow,
 	exportBundle,

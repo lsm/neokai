@@ -13,6 +13,7 @@ import {
 	AdvanceWorkflowSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
+	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
 } from '../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
@@ -117,6 +118,37 @@ describe('AdvanceWorkflowSchema', () => {
 
 	test('rejects non-string step_result', () => {
 		const result = AdvanceWorkflowSchema.safeParse({ step_result: 42 });
+		expect(result.success).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// TaskResultStatusSchema
+// ---------------------------------------------------------------------------
+
+describe('TaskResultStatusSchema', () => {
+	test('accepts completed', () => {
+		const result = TaskResultStatusSchema.safeParse('completed');
+		expect(result.success).toBe(true);
+	});
+
+	test('accepts needs_attention', () => {
+		const result = TaskResultStatusSchema.safeParse('needs_attention');
+		expect(result.success).toBe(true);
+	});
+
+	test('accepts cancelled', () => {
+		const result = TaskResultStatusSchema.safeParse('cancelled');
+		expect(result.success).toBe(true);
+	});
+
+	test('rejects unknown status', () => {
+		const result = TaskResultStatusSchema.safeParse('failed');
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects empty string', () => {
+		const result = TaskResultStatusSchema.safeParse('');
 		expect(result.success).toBe(false);
 	});
 });
