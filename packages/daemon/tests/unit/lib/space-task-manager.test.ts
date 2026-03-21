@@ -546,10 +546,11 @@ describe('SpaceTaskManager', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.completed).toEqual(['in_progress', 'archived']);
 		});
 
-		it('cancelled allows restart and archival', () => {
+		it('cancelled allows restart, completion, and archival', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.cancelled).toEqual([
 				'pending',
 				'in_progress',
+				'completed',
 				'archived',
 			]);
 		});
@@ -587,6 +588,14 @@ describe('SpaceTaskManager', () => {
 			await manager.cancelTask(task.id);
 			const archived = await manager.setTaskStatus(task.id, 'archived');
 			expect(archived.status).toBe('archived');
+		});
+
+		it('transitions cancelled -> completed (e.g. PR merged after cancellation)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.cancelTask(task.id);
+			const completed = await manager.setTaskStatus(task.id, 'completed');
+			expect(completed.status).toBe('completed');
 		});
 
 		it('transitions needs_attention -> archived', async () => {
