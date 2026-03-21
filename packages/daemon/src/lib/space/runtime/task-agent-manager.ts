@@ -598,10 +598,15 @@ export class TaskAgentManager {
 			`TaskAgentManager: sub-session complete — task ${taskId}, step ${stepId}, session ${subSessionId}`
 		);
 
-		// Find the step task in the DB and mark it completed
-		const stepTasks = this.config.taskRepo
-			.listByWorkflowRun(this.getWorkflowRunId(taskId) ?? '')
-			.filter((t) => t.workflowStepId === stepId && t.taskAgentSessionId === subSessionId);
+		// Find the step task in the DB and mark it completed.
+		// Short-circuit when there is no workflow run to avoid a spurious
+		// listByWorkflowRun('') that would match tasks with a null run ID.
+		const workflowRunId = this.getWorkflowRunId(taskId);
+		const stepTasks = workflowRunId
+			? this.config.taskRepo
+					.listByWorkflowRun(workflowRunId)
+					.filter((t) => t.workflowStepId === stepId && t.taskAgentSessionId === subSessionId)
+			: [];
 
 		if (stepTasks.length > 0) {
 			const stepTask = stepTasks[stepTasks.length - 1];
@@ -679,7 +684,13 @@ export class TaskAgentManager {
 	): Promise<void> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
-		const isBusy = state.status === 'processing' || state.status === 'queued';
+		// 'processing'/'queued' = actively running; 'waiting_for_input' = human gate open.
+		// All three states mean the session cannot safely receive a next_turn message
+		// right now — defer it for replay after the current interaction completes.
+		const isBusy =
+			state.status === 'processing' ||
+			state.status === 'queued' ||
+			state.status === 'waiting_for_input';
 
 		const messageId = generateUUID();
 		const sdkUserMessage: SDKUserMessage = {
@@ -693,7 +704,7 @@ export class TaskAgentManager {
 			},
 		};
 
-		// next_turn + busy → save for replay after current turn
+		// next_turn + busy → save for replay after current turn completes
 		if (deliveryMode === 'next_turn' && isBusy) {
 			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
 			return;

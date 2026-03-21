@@ -468,6 +468,22 @@ describe('TaskAgentManager', () => {
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			expect(ctx.manager.isSpawning(task.id)).toBe(false);
 		});
+
+		test('concurrent spawns return the same session ID and create only one session', async () => {
+			// Two concurrent calls for the same task — the second should wait for the
+			// first to finish (via the setInterval polling loop) and return the same ID.
+			const task = await makeTask(ctx.taskManager);
+			const sessionsBefore = ctx.createdSessions.size;
+
+			const [id1, id2] = await Promise.all([
+				ctx.manager.spawnTaskAgent(task, ctx.space, null, null),
+				ctx.manager.spawnTaskAgent(task, ctx.space, null, null),
+			]);
+
+			expect(id1).toBe(id2);
+			// Only one AgentSession should have been created
+			expect(ctx.createdSessions.size).toBe(sessionsBefore + 1);
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -928,6 +944,99 @@ describe('TaskAgentManager', () => {
 			expect(session._enqueuedMessages.length).toBeGreaterThan(messagesBefore);
 			const lastMsg = session._enqueuedMessages[session._enqueuedMessages.length - 1];
 			expect(lastMsg.msg).toBe('Hello Task Agent!');
+		});
+	});
+
+	describe('injectMessageIntoSession — next_turn delivery', () => {
+		/** Helper to call the private method directly */
+		function callInjectMessage(
+			manager: TaskAgentManager,
+			session: unknown,
+			message: string,
+			deliveryMode?: string
+		): Promise<void> {
+			return (
+				manager as unknown as {
+					injectMessageIntoSession: (
+						session: unknown,
+						message: string,
+						deliveryMode?: string
+					) => Promise<void>;
+				}
+			).injectMessageIntoSession(session, message, deliveryMode);
+		}
+
+		test('saves with "saved" status and does not enqueue when session is processing', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const session = ctx.createdSessions.get(sessionId)!;
+
+			// Put session into busy state
+			session._processingState = { status: 'processing' } as AgentProcessingState;
+
+			const savedStatuses: string[] = [];
+			const enqueuedBefore = session._enqueuedMessages.length;
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				_msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedStatuses.push(status);
+				return 'msg-id';
+			};
+
+			await callInjectMessage(ctx.manager, session, 'step done', 'next_turn');
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			expect(savedStatuses).toEqual(['saved']);
+			// No additional enqueue should have happened
+			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
+		});
+
+		test('saves with "saved" status when session is waiting_for_input', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const session = ctx.createdSessions.get(sessionId)!;
+
+			// Session is blocked on a human-input gate
+			session._processingState = {
+				status: 'waiting_for_input',
+			} as AgentProcessingState;
+
+			const savedStatuses: string[] = [];
+			const enqueuedBefore = session._enqueuedMessages.length;
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				_msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedStatuses.push(status);
+				return 'msg-id';
+			};
+
+			await callInjectMessage(ctx.manager, session, 'step done', 'next_turn');
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			expect(savedStatuses).toEqual(['saved']);
+			// No additional enqueue should have happened
+			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
+		});
+
+		test('enqueues immediately for next_turn when session is idle', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const session = ctx.createdSessions.get(sessionId)!;
+			// session is idle by default
+
+			const msgsBefore = session._enqueuedMessages.length;
+
+			await callInjectMessage(ctx.manager, session, 'idle delivery', 'next_turn');
+
+			expect(session._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
 		});
 	});
 
