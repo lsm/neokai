@@ -26,6 +26,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { deleteRoom } from '../helpers/room-helpers';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -188,19 +189,6 @@ async function setupRoomWithData(page: Page): Promise<SetupResult> {
 	await setTaskStatus(page, ids.roomId, ids.orphanDoneId, 'completed');
 
 	return ids;
-}
-
-async function deleteRoom(page: Page, roomId: string): Promise<void> {
-	if (!roomId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('room.delete', { roomId: id });
-		}, roomId);
-	} catch {
-		// Best-effort cleanup
-	}
 }
 
 /**

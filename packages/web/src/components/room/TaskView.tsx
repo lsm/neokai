@@ -930,7 +930,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2 flex-wrap">
 						<h2 class="text-base font-semibold text-gray-100 truncate">{task.title}</h2>
-						<span class={`text-xs font-medium ${statusColor}`}>
+						<span class={`text-xs font-medium ${statusColor}`} data-testid="task-status-badge">
 							{task.status.replace('_', ' ')}
 						</span>
 						{task.taskType && (

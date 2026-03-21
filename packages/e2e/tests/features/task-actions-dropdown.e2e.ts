@@ -13,6 +13,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { deleteRoom } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -62,22 +63,6 @@ async function createRoomAndTask(
 
 		return { roomId, taskId };
 	}, taskStatus);
-}
-
-async function deleteRoom(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	roomId: string
-): Promise<void> {
-	if (!roomId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('room.delete', { roomId: id });
-		}, roomId);
-	} catch {
-		// Best-effort cleanup
-	}
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
