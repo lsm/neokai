@@ -217,6 +217,13 @@ export function RoomDashboard() {
 							// Error handled by store
 						}
 					}}
+					onReactivate={async (taskId) => {
+						try {
+							await roomStore.setTaskStatus(taskId, 'in_progress');
+						} catch {
+							// Error handled by store
+						}
+					}}
 				/>
 			</div>
 
