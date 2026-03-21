@@ -495,6 +495,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('ID of the workflow to run (required — choose from list_workflows)'),
 				title: z.string().describe('Short title for this workflow run'),
 				description: z.string().optional().describe('Detailed description of the work to be done'),
+				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
 			},
 			(args) => handlers.start_workflow_run(args)
 		),

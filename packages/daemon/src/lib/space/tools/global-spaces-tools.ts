@@ -587,6 +587,7 @@ export function createGlobalSpacesMcpServer(
 				workflow_id: z.string().describe('ID of the workflow to run'),
 				title: z.string().describe('Short title for this workflow run'),
 				description: z.string().optional().describe('Description of the work'),
+				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
 			},
 			(args) => handlers.start_workflow_run(args)
 		),
