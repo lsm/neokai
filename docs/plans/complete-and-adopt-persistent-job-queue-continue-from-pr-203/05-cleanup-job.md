@@ -25,8 +25,9 @@ Add a self-scheduling `job_queue.cleanup` job that runs daily to remove old comp
    - In `finally` block: dedup-check then enqueue next cleanup job with `runAt: Date.now() + 24 * 60 * 60 * 1000` (24 hours)
    - Return `{ deletedJobs, nextRunAt }`
 3. In `packages/daemon/src/app.ts` (or a new init function):
-   - After `jobProcessor.start()`, register the cleanup handler
-   - Check if a pending `job_queue.cleanup` job already exists; if not, enqueue one with `runAt: Date.now()` (run immediately on first boot, then daily)
+   - **BEFORE `jobProcessor.start()`** (step 4 in the startup ordering table — see `00-overview.md`), register the `job_queue.cleanup` handler on `jobProcessor`
+   - Then check if a pending `job_queue.cleanup` job already exists; if not, enqueue one with `runAt: Date.now()` (run immediately on first boot, then daily)
+   - This ordering is critical: if a cleanup job is pending from a previous run and the processor starts before the handler is registered, the job will fail with "No handler registered" and consume retry attempts
 4. Create unit test `packages/daemon/tests/unit/job-handlers/cleanup-handler.test.ts`:
    - Test cleanup deletes old jobs
    - Test self-scheduling

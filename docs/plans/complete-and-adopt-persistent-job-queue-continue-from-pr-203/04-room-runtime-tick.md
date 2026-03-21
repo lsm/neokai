@@ -60,9 +60,9 @@ This in-memory state is lost when migrating to the job queue and must be replace
 ### Job-queue-level dedup
 
 The `enqueueRoomTick()` helper handles dedup:
-- Before enqueuing, check `jobQueue.listJobs({ queue: QUEUES.ROOM_TICK, status: ['pending'], limit: 100 })` and filter by `payload.roomId`
+- Before enqueuing, check `jobQueue.listJobs({ queue: QUEUES.ROOM_TICK, status: ['pending'], limit: 100 })` and filter by `payload.roomId`. The limit of 100 is sufficient because this is a per-room dedup check (at most one pending tick per room), not a global scan.
 - If **any** pending job exists for this roomId, skip enqueuing (regardless of `runAt`)
-- Jobs currently in `processing` status are fine — they're already executing and will self-schedule on completion
+- Only `pending` status is checked, not `processing`. This is safe because: (a) a `processing` job is already executing and its handler's `finally` block will either re-schedule (if runtime is still `running`) or not (if `paused`/`stopped`); (b) if `pause()` is called while a job is `processing`, the handler detects the paused state and skips without re-scheduling — leaving zero pending ticks, which is correct; (c) checking `processing` would cause `enqueueRoomTick` to skip when a tick is actively running, but the running tick's `finally` block handles the successor.
 - This replaces the `tickQueued` semantic: at most one pending tick exists per room
 
 ### Pause/resume interaction

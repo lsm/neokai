@@ -66,8 +66,9 @@ Replace the `setInterval`-based polling loop in `GitHubPollingService` with self
 **Subtasks:**
 1. In `packages/daemon/src/lib/github/polling-service.ts`:
    - Remove `setInterval` from `start()` -- `start()` becomes a state flag setter only
-   - Remove `clearInterval` from `stop()` -- `stop()` becomes a state flag setter
-   - Keep the `pollingInterval` field removal or rename to clarify it's no longer used
+   - Remove `clearInterval(this.pollingInterval)` from `stop()` — `stop()` becomes a state flag setter only
+   - Remove the `pollingInterval` field declaration and its type (`ReturnType<typeof setInterval> | null`)
+   - Remove any initialization of `pollingInterval` (e.g., `this.pollingInterval = null` in constructor)
 2. In `packages/daemon/src/lib/github/github-service.ts`:
    - Accept `jobQueue` and `jobProcessor` in `GitHubServiceOptions`
    - In `start()`: register the `github.poll` handler on `jobProcessor`, then enqueue the initial `github.poll` job with `runAt: Date.now()` (immediate first poll)

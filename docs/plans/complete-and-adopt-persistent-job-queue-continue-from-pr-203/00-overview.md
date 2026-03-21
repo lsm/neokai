@@ -113,4 +113,4 @@ Milestones 2, 3, 4, and 5 can proceed in parallel after Milestone 1 is complete.
 
 ## Total Estimated Task Count
 
-19 tasks across 6 milestones.
+18 tasks across 6 milestones (3 + 3 + 3 + 4 + 2 + 3).
