@@ -27,8 +27,8 @@ function makeSpace(overrides?: Partial<Space>): Space {
 		workspacePath: '/workspace',
 		name: 'Test Space',
 		description: 'A test space',
-		backgroundContext: null,
-		instructions: null,
+		backgroundContext: '',
+		instructions: '',
 		sessionIds: [],
 		status: 'active',
 		createdAt: 1000,
@@ -120,6 +120,11 @@ describe('createTaskAgentInit', () => {
 			expect(init.features?.coordinator).toBe(false);
 		});
 
+		test('disables archive', () => {
+			const init = createTaskAgentInit(makeConfig());
+			expect(init.features?.archive).toBe(false);
+		});
+
 		test('enables sessionInfo', () => {
 			const init = createTaskAgentInit(makeConfig());
 			expect(init.features?.sessionInfo).toBe(true);
@@ -202,12 +207,12 @@ describe('createTaskAgentInit', () => {
 			expect(init.systemPrompt as string).toContain('Task Agent');
 		});
 
-		test('systemPrompt includes workflow info when workflow is provided', () => {
+		test('systemPrompt contains task details even when workflow is provided', () => {
 			const config = makeConfig({
 				workflow: makeWorkflow({ name: 'My Workflow' }),
 			});
 			const init = createTaskAgentInit(config);
-			// The system prompt itself doesn't embed workflow steps, but task details are present
+			// Workflow steps appear only in buildTaskAgentInitialMessage(), not the system prompt
 			expect(init.systemPrompt as string).toContain('Implement feature X');
 		});
 	});

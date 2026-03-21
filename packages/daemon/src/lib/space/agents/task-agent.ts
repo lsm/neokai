@@ -467,6 +467,11 @@ export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessio
 		space,
 		workflow: workflow ?? undefined,
 		workflowRun: workflowRun ?? undefined,
+		// availableAgents is required by TaskAgentContext but buildTaskAgentSystemPrompt()
+		// does not render an "Available Agents" section — that section only appears in
+		// buildTaskAgentInitialMessage(). The factory does not have agent data at init time,
+		// and passing an empty array here has no effect on the system prompt content.
+		// The caller must provide agent context via buildTaskAgentInitialMessage() instead.
 		availableAgents: [],
 	});
 
