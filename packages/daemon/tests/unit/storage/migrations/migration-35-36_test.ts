@@ -173,9 +173,7 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 
 		// Verify existing rows got correct defaults
 		const rows = db
-			.prepare(
-				`SELECT id, iteration_count, max_iterations FROM space_workflow_runs ORDER BY id`
-			)
+			.prepare(`SELECT id, iteration_count, max_iterations FROM space_workflow_runs ORDER BY id`)
 			.all() as Array<{ id: string; iteration_count: number; max_iterations: number }>;
 		expect(rows).toHaveLength(2);
 		expect(rows[0]).toMatchObject({ id: 'run-1', iteration_count: 0, max_iterations: 5 });
