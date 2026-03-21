@@ -137,7 +137,7 @@ Comprehensive test coverage for all new functionality: `task_result` condition e
 3. Test scenario:
    - Start the workflow run. Verify initial task is for Plan step.
    - Simulate Plan task completion (update status to 'completed').
-   - Advance with human approval for the Plan -> Code gate (this is the only `human` gate in the workflow — Code -> Verify and Verify transitions do not have human gates). Verify task for Code step is created.
+   - Advance with human approval for the Plan -> Code gate. Note: the Plan -> Code transition has a `human` condition, so **each time** Plan→Code is traversed (including after loop-backs), human approval is required. Code -> Verify and Verify transitions do not have human gates. Verify task for Code step is created.
    - Simulate Code task completion.
    - Advance. Verify task for Verify step is created.
    - Simulate Verify task completion with result `'failed: tests are broken'`.

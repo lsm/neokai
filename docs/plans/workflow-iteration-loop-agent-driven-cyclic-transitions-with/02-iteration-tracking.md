@@ -6,8 +6,8 @@ Add iteration counting to workflow runs so that cyclic transitions (where a step
 
 ## Scope
 
-- Add `iteration_count` and `max_iterations` columns to `space_workflow_runs` via migration 34
-- Add `max_iterations` column to `space_workflows` via migration 35
+- Add `iteration_count` and `max_iterations` columns to `space_workflow_runs` via migration 35
+- Add `max_iterations` column to `space_workflows` via migration 36
 - Update `SpaceWorkflowRun` type and repository `rowToRun()`/`createRun()` to include the new fields
 - Add `maxIterations` as a first-class typed field on `SpaceWorkflow` (not in `config`) with DB persistence
 - Detect revisited steps in `followTransition()` and increment/cap accordingly
@@ -29,28 +29,28 @@ Add iteration counting to workflow runs so that cyclic transitions (where a step
    - `maxIterations?: number` (first-class typed field, NOT stored in `config`)
 3. Add `maxIterations?: number` to `CreateWorkflowRunParams`.
 4. Add `maxIterations?: number` to `CreateSpaceWorkflowParams` and `UpdateSpaceWorkflowParams`. Without this, `seedBuiltInWorkflows` in Task 4.1 will silently fail to persist `maxIterations: 3` because the INSERT in `createWorkflow()` won't include the column.
-4. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 34** (follows existing pattern of migrations 30–33 which add columns to Space tables via ALTER TABLE):
+5. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 35** (follows existing pattern of migrations 30–33 which add columns to Space tables via ALTER TABLE):
    - `ALTER TABLE space_workflow_runs ADD COLUMN iteration_count INTEGER NOT NULL DEFAULT 0`
    - `ALTER TABLE space_workflow_runs ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 5`
    - Use the try/catch + SELECT probe pattern consistent with migrations 30, 32, 33.
    - Register the migration call in `runMigrations()`.
-5. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 35** for `SpaceWorkflow.maxIterations`:
+6. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 36** for `SpaceWorkflow.maxIterations`:
    - `ALTER TABLE space_workflows ADD COLUMN max_iterations INTEGER`
    - Use the same try/catch probe pattern.
    - Register in `runMigrations()`.
-6. In `packages/daemon/src/storage/repositories/space-workflow-run-repository.ts`:
+7. In `packages/daemon/src/storage/repositories/space-workflow-run-repository.ts`:
    - Update `createRun()` to include `iteration_count` (default 0) and `max_iterations` (from params or default 5) in the INSERT statement.
    - Update `rowToRun()` to read `iteration_count` and `max_iterations` from the DB row.
    - Add `iteration_count` and `max_iterations` to `UpdateWorkflowRunParams` interface.
    - Update `updateRun()` to handle the new fields. Note: the existing `updateCurrentStep()` and `updateStatus()` convenience wrappers delegate to `updateRun()` and will continue to work as-is.
-7. In `packages/daemon/src/storage/repositories/space-workflow-repository.ts` (or wherever workflows are persisted):
+8. In `packages/daemon/src/storage/repositories/space-workflow-repository.ts` (or wherever workflows are persisted):
    - Update `createWorkflow()` / `updateWorkflow()` to handle `max_iterations`.
    - Update `rowToWorkflow()` to read `max_iterations` from the DB row.
-8. Run `bun run typecheck` to verify compilation.
+9. Run `bun run typecheck` to verify compilation.
 
 **Acceptance criteria:**
-- Migration 34 adds `iteration_count` and `max_iterations` columns to `space_workflow_runs`.
-- Migration 35 adds `max_iterations` column to `space_workflows`.
+- Migration 35 adds `iteration_count` and `max_iterations` columns to `space_workflow_runs`.
+- Migration 36 adds `max_iterations` column to `space_workflows`.
 - `SpaceWorkflowRun` type includes `iterationCount` and `maxIterations`.
 - `SpaceWorkflow` type includes `maxIterations` as a first-class typed field (not in `config`).
 - Repository correctly persists and reads all new fields.
@@ -75,7 +75,8 @@ Add iteration counting to workflow runs so that cyclic transitions (where a step
 2. After incrementing, check if `iterationCount >= maxIterations`:
    - If so, set the run status to `needs_attention` instead of following the transition.
    - Return early or throw a `WorkflowTransitionError` with a descriptive message about hitting the iteration cap.
-   - **Reset behavior:** When a run hits `needs_attention` due to iteration cap and a human resets it to `in_progress`, the `iterationCount` is NOT reset — it preserves the history of how many cycles have occurred. The human may increase `maxIterations` on the run to allow more cycles.
+   - **Reset behavior:** When a run hits `needs_attention` due to iteration cap and a human resets it to `in_progress`, the `iterationCount` is NOT reset — it preserves the history of how many cycles have occurred. The human may increase `maxIterations` on the run via `updateRun()` to allow more cycles.
+   - **Executor lifecycle:** When `needs_attention` is set, the executor remains in the `SpaceRuntime.executors` map (it is not a terminal state). When the human resets the run to `in_progress` (and optionally increases `maxIterations`), the executor must re-read `maxIterations` from the DB before the next `advance()` call. Implementation: either (a) have `advance()` always read the current `maxIterations` from the run record in DB (not from a cached value), or (b) have the `SpaceRuntime` status-update handler refresh the executor's run snapshot when status changes. Option (a) is simpler and recommended.
 3. Persist the updated `iterationCount` to the DB via `workflowRunRepo.updateRun({ iterationCount: newCount })`.
 4. Update the `SpaceRuntime.startWorkflowRun()` method to pass `maxIterations` from the workflow template when creating the run (if `workflow.maxIterations` is set, use it; otherwise use the default 5).
 5. Run `bun run typecheck`.

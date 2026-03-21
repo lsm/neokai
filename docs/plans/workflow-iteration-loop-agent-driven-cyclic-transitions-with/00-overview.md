@@ -61,10 +61,11 @@ Each iteration creates new tasks under the same workflow run, producing a clear 
 
 ## Migration Number Assignment
 
-Contiguous numbers per milestone. Milestone 2 merges first (34–35), then Milestone 3 (36–37):
-- **Migration 34:** `iteration_count` + `max_iterations` on `space_workflow_runs` (Milestone 2, Task 2.1)
-- **Migration 35:** `max_iterations` on `space_workflows` (Milestone 2, Task 2.1)
-- **Migration 36:** `goal_id` on `space_tasks` (Milestone 3, Task 3.1)
-- **Migration 37:** `goal_id` on `space_workflow_runs` (Milestone 3, Task 3.2)
+Contiguous numbers per milestone. Milestone 1 gets 34 (isCyclic), Milestone 2 gets 35–36, Milestone 3 gets 37–38:
+- **Migration 34:** `is_cyclic` on `space_workflow_transitions` (Milestone 1, Task 1.1)
+- **Migration 35:** `iteration_count` + `max_iterations` on `space_workflow_runs` (Milestone 2, Task 2.1)
+- **Migration 36:** `max_iterations` on `space_workflows` (Milestone 2, Task 2.1)
+- **Migration 37:** `goal_id` on `space_tasks` (Milestone 3, Task 3.1)
+- **Migration 38:** `goal_id` on `space_workflow_runs` (Milestone 3, Task 3.2)
 
 If milestones merge in a different order, renumber migrations so `runMigrations()` calls them in ascending sequence. The registration order in `runMigrations()` must always be numerically ascending.
