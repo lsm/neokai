@@ -1880,4 +1880,77 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			});
 		});
 	});
+
+	it('shows Archive button for needs_attention task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'needs_attention') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-archive-button"]')).not.toBeNull();
+	});
+
+	it('calls task.setStatus with archived when Archive dialog is confirmed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return {};
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open the archive dialog
+		const archiveButton = container.querySelector(
+			'[data-testid="task-archive-button"]'
+		) as HTMLElement;
+		expect(archiveButton).not.toBeNull();
+		fireEvent.click(archiveButton);
+
+		// The Modal renders into body via a portal, so query from document
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="archive-task-confirm"]')).not.toBeNull();
+		});
+
+		await act(async () => {
+			fireEvent.click(
+				document.querySelector('[data-testid="archive-task-confirm"]') as HTMLElement
+			);
+		});
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				status: 'archived',
+			});
+		});
+	});
+
+	it('does NOT show reactivation hint when completed task has an active group', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.textContent).not.toContain('Sending a message will reactivate this task.');
+	});
 });

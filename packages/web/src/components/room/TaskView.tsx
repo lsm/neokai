@@ -287,7 +287,7 @@ function HumanInputArea({
 					</div>
 				}
 			/>
-			{canReactivateWithMessage && (
+			{canReactivateWithMessage && !hasGroup && (
 				<p class="text-xs text-amber-500/80">Sending a message will reactivate this task.</p>
 			)}
 			{!canSend && !canReactivateWithMessage && (
@@ -1036,9 +1036,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				)}
 				{canArchive && (
 					<button
-						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors"
 						onClick={archiveModal.open}
-						disabled={reactivating}
 						data-testid="task-archive-button"
 						title="Archive task (permanent)"
 					>
