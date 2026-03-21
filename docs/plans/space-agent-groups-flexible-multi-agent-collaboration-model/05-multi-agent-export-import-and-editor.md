@@ -18,7 +18,7 @@ Update the workflow export/import format to support multi-agent steps and update
 **Description:** Extend `ExportedWorkflowStep` to support an `agents` array alongside the existing `agentRef` field, and update export/import logic for backward compatibility.
 
 **Subtasks:**
-1. Add `agents?: Array<{ agentRef: string; count?: number; instructions?: string }>` to `ExportedWorkflowStep` type in `packages/shared/src/types/space.ts`
+1. Add `agents?: Array<{ agentRef: string; instructions?: string }>` to `ExportedWorkflowStep` type in `packages/shared/src/types/space.ts`
 2. Make `agentRef` optional on `ExportedWorkflowStep` (it becomes shorthand for single-agent)
 3. In `packages/daemon/src/lib/space/export-format.ts`, update the export function:
    - If step has `agents` array, export each entry with `agentRef` resolved from agent name
@@ -51,7 +51,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. In the step edit panel/modal, add an "Agents" section that:
    - Shows the current list of agents for the step
    - Allows adding an agent from the space's agent list (dropdown/select)
-   - Allows setting `count` per agent (number input, default 1)
    - Allows setting per-agent instructions (text area)
    - Allows removing an agent from the step
 3. When editing, switching between single-agent mode (just `agentId`) and multi-agent mode (the `agents` array) should be seamless -- UI auto-upgrades to multi-agent when a second agent is added
@@ -61,7 +60,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Acceptance Criteria:**
 - Steps with multiple agents render clearly in the visual editor
 - Users can add/remove agents from steps via the UI
-- Count and per-agent instructions are editable
+- Per-agent instructions are editable
 - Single-agent steps continue to display and edit correctly
 - No visual regressions in the workflow editor
 
@@ -84,7 +83,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 4. Test backward compatibility: old format with single `agentRef` imports correctly
 5. Test round-trip: export then import produces equivalent workflow definition
 6. Test error handling: import with unknown `agentRef` name
-7. Test `count` preservation through export/import
+7. Test per-agent instructions preservation through export/import
 
 **Acceptance Criteria:**
 - All tests pass
@@ -92,6 +91,32 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Error cases produce clear error messages
 
 **Dependencies:** Task 5.1
+
+**Agent Type:** coder
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+### Task 5.4: E2E Test for Multi-Agent Step Editor
+
+**Description:** Write a Playwright E2E test verifying the multi-agent step editing interaction in the visual workflow editor.
+
+**Subtasks:**
+1. Create test file `packages/e2e/tests/features/space-multi-agent-editor.e2e.ts`
+2. Set up a Space with multiple agents via the UI
+3. Create a workflow and add a step with a single agent
+4. Edit the step to add a second agent — verify both agents appear as badges/chips
+5. Remove one agent — verify only one remains
+6. Save the workflow and re-open — verify multi-agent configuration persists
+7. Follow all E2E test rules from CLAUDE.md
+
+**Acceptance Criteria:**
+- Test passes with `make run-e2e TEST=tests/features/space-multi-agent-editor.e2e.ts`
+- Test creates and cleans up its own test data
+- Verifies the full add/remove/persist lifecycle through the UI
+
+**Dependencies:** Task 5.2
 
 **Agent Type:** coder
 

@@ -24,16 +24,16 @@ Allow workflow steps to specify multiple agents that execute in parallel. When a
    ```ts
    interface WorkflowStepAgent {
      agentId: string;
-     count?: number;        // spawn N instances (default: 1)
      instructions?: string; // per-agent instructions override
    }
    ```
+   Note: The `count` field is **deferred** to a future milestone (see overview for rationale). To spawn multiple instances of the same agent, list the same `agentId` multiple times in the `agents` array.
 2. Add `agents?: WorkflowStepAgent[]` to `WorkflowStep` interface
 3. Make `agentId` optional on `WorkflowStep` (it becomes a shorthand for single-agent steps)
-4. Add validation: either `agentId` or `agents` must be provided (not both absent)
+4. Add validation: either `agentId` or `agents` must be provided (not both absent). If both are provided, `agents` takes precedence and a warning is logged.
 5. Add `agents?: WorkflowStepAgent[]` to `WorkflowStepInput` interface
 6. Make `agentId` optional on `WorkflowStepInput`
-7. Add a utility function `resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[]` that normalizes the two formats into a single `agents` array (for use by executor and other consumers)
+7. Add a utility function `resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[]` that normalizes the two formats into a single `agents` array (for use by executor and other consumers). Document precedence rules clearly in JSDoc.
 
 **Acceptance Criteria:**
 - `bun run typecheck` passes
@@ -54,19 +54,22 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks:**
 1. In `followTransition()`, use `resolveStepAgents()` to get the list of agents for the target step
-2. For each agent entry (respecting `count` for multiple instances), create a separate `SpaceTask` via `taskManager.createTask()`, each with the correct `customAgentId` and per-agent instructions
+2. For each agent entry in the resolved array, create a separate `SpaceTask` via `taskManager.createTask()`, each with the correct `customAgentId` and per-agent instructions
 3. All tasks share the same `workflowRunId` and `workflowStepId`
 4. Return all created tasks in the `tasks` array of the advance result
 5. Update `resolveTaskResult()` to handle multiple completed tasks on the same step -- use the latest completed task's result, or aggregate results
-6. In `SpaceRuntime.processCompletedTasks()`, update the logic that decides when to advance: a step should only advance when ALL tasks for that step are completed (not just one)
-7. Add a helper method `areAllStepTasksComplete(runId: string, stepId: string): Promise<boolean>` to check completion status of all parallel tasks
+6. **Update `SpaceRuntime.startWorkflowRun()`**: The current code at line ~328 calls `resolveTaskTypeForStep(startStep)` and creates a single task. With multi-agent start steps, this must also create multiple tasks. Use the same `resolveStepAgents()` utility to create one task per agent entry. This is a separate code path from `WorkflowExecutor.advance()` and must be updated independently.
+7. **Fix `SpaceRuntime.processCompletedTasks()` for partial failure**: The existing code (lines 564-573) already filters tasks by `workflowStepId` and waits for all to complete before advancing — this logic is correct and should NOT be rewritten. What needs updating is the **partial failure case**: when one parallel task fails while others are still active, the step should wait for all tasks to reach a terminal state (completed or failed), then mark the step as `failed` if any task failed. Also update the `needs_attention` dedup logic to handle multiple tasks per step.
+8. Add a helper method `areAllStepTasksTerminal(runId: string, stepId: string): Promise<{allTerminal: boolean, anyFailed: boolean}>` to check whether all parallel tasks have reached a terminal state (completed or failed)
 
 **Acceptance Criteria:**
 - Steps with `agents: [{agentId: 'a'}, {agentId: 'b'}]` create two tasks
-- Steps with `agents: [{agentId: 'a', count: 3}]` create three tasks
-- Step does not advance until all parallel tasks complete
+- Step does not advance until all parallel tasks reach terminal state (completed or failed)
+- If any parallel task fails, the step is marked `failed` (after all tasks are terminal)
+- If all parallel tasks complete, the step advances normally
 - Single-agent steps (using `agentId` shorthand) continue to work identically
 - `advance()` return value includes all created tasks
+- `startWorkflowRun()` creates multiple tasks for multi-agent start steps
 
 **Dependencies:** Task 4.1
 
@@ -99,15 +102,14 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 4.4: Add Migration and Persistence for Multi-Agent Steps
+### Task 4.4: Validate Persistence for Multi-Agent Steps
 
 **Description:** Add persistence support for the `agents` array on workflow steps. Since steps are stored as JSON within the `space_workflows` table (in the `steps` column), no schema migration is needed -- but the serialization/deserialization in the workflow repository must handle the new field.
 
 **Subtasks:**
 1. Verify that `SpaceWorkflowRepository` serializes/deserializes `WorkflowStep` correctly with the new `agents` field (it should, since steps are stored as JSON)
 2. Add validation in the workflow create/update handlers: if `agents` is provided on a step, each entry must have a valid `agentId`
-3. Add validation: `count` must be >= 1 if provided
-4. Add validation: either `agentId` or `agents` must be present on each step
+3. Add validation: either `agentId` or `agents` must be present on each step
 5. Update any workflow CRUD tests to cover multi-agent step persistence
 
 **Acceptance Criteria:**
@@ -130,17 +132,18 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Subtasks:**
 1. Create or extend test file `packages/daemon/tests/unit/workflow-executor-multi-agent.test.ts`
 2. Test `advance()` with a multi-agent step: verify multiple tasks are created
-3. Test `advance()` with `count > 1`: verify correct number of task instances
+3. Test `startWorkflowRun()` with a multi-agent start step: verify multiple tasks are created
 4. Test step completion logic: step does not advance when only some tasks are complete
-5. Test step completion logic: step advances when all tasks are complete
-6. Test backward compatibility: single `agentId` steps work identically
-7. Test `resolveStepAgents()` utility with various input combinations
-8. Test error handling: what happens when one of the parallel tasks fails
-9. Test mixed workflows: some steps single-agent, some multi-agent
+5. Test step completion logic: step advances when all tasks complete successfully
+6. **Test parallel failure semantics**: one task fails, others still active → step waits; all terminal with one failed → step marked `failed`
+7. **Test partial failure with all terminal**: two tasks complete, one fails → step marked `failed` after all reach terminal state
+8. Test backward compatibility: single `agentId` steps work identically
+9. Test `resolveStepAgents()` utility with various input combinations (agentId only, agents only, both present → agents wins)
+10. Test mixed workflows: some steps single-agent, some multi-agent
 
 **Acceptance Criteria:**
 - All tests pass with `cd packages/daemon && bun test tests/unit/workflow-executor-multi-agent.test.ts`
-- Edge cases are covered (empty agents array, count=0, missing agentId)
+- Edge cases are covered (empty agents array, missing agentId, both agentId and agents present)
 - Tests follow existing workflow executor test patterns
 
 **Dependencies:** Task 4.2, Task 4.3

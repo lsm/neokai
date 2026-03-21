@@ -9,7 +9,8 @@ Wire `TaskAgentManager` to persist session groups in the database instead of man
 - Inject `SpaceSessionGroupRepository` into `TaskAgentManager`
 - Create groups on `spawnTaskAgent()`, add members on sub-session creation
 - Update member status on completion/failure
-- Emit `space.sessionGroup.*` events via DaemonHub
+- Emit `spaceSessionGroup.*` events via DaemonHub
+- Rehydrate `taskId -> groupId` map on daemon restart
 - Unit tests for group persistence and event emission
 
 ---
@@ -24,6 +25,7 @@ Wire `TaskAgentManager` to persist session groups in the database instead of man
 3. Add the Task Agent session as the first group member with role matching the task's agent role (or `'task-agent'` for the coordinator) and `status: 'active'`
 4. Store the `groupId` in an in-memory map (`taskId -> groupId`) for fast lookup when adding sub-session members
 5. Update `TaskAgentManagerConfig` interface and construction site in `space-runtime-service.ts` (or wherever TaskAgentManager is instantiated) to pass the repository
+6. **Wire `SpaceSessionGroupRepository` into the DaemonApp construction graph**: The repository needs the `db` handle. Trace the injection through `DaemonApp` → `SpaceRuntimeService` → `TaskAgentManager` and ensure `SpaceSessionGroupRepository` is constructed once and injected (not double-instantiated). Add it as a parameter alongside existing repositories.
 
 **Acceptance Criteria:**
 - After `spawnTaskAgent()`, a `SpaceSessionGroup` record exists in DB with the Task Agent as a member
@@ -67,10 +69,10 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description:** Emit structured events when session groups are created, members are added, and member status changes. These events will drive frontend reactivity.
 
 **Subtasks:**
-1. Define event types: `space.sessionGroup.created`, `space.sessionGroup.memberAdded`, `space.sessionGroup.memberUpdated`
-2. In `spawnTaskAgent()`, after creating the group, emit `space.sessionGroup.created` with `{ spaceId, taskId, group: SpaceSessionGroup }`
-3. In the sub-session factory, after adding a member, emit `space.sessionGroup.memberAdded` with `{ spaceId, groupId, member: SpaceSessionGroupMember }`
-4. In completion/failure handlers, after updating member status, emit `space.sessionGroup.memberUpdated` with `{ spaceId, groupId, memberId, member: SpaceSessionGroupMember }`
+1. Define event types: `spaceSessionGroup.created`, `spaceSessionGroup.memberAdded`, `spaceSessionGroup.memberUpdated`
+2. In `spawnTaskAgent()`, after creating the group, emit `spaceSessionGroup.created` with `{ spaceId, taskId, group: SpaceSessionGroup }`
+3. In the sub-session factory, after adding a member, emit `spaceSessionGroup.memberAdded` with `{ spaceId, groupId, member: SpaceSessionGroupMember }`
+4. In completion/failure handlers, after updating member status, emit `spaceSessionGroup.memberUpdated` with `{ spaceId, groupId, memberId, member: SpaceSessionGroupMember }`
 5. Emit events on the space-specific channel (`space:${spaceId}`) so only clients subscribed to that space receive them
 
 **Acceptance Criteria:**
@@ -93,9 +95,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Subtasks:**
 1. Create test file `packages/daemon/tests/unit/task-agent-manager-groups.test.ts`
 2. Mock `SpaceSessionGroupRepository` and `DaemonHub` to verify calls
-3. Test that `spawnTaskAgent()` creates a group and emits `space.sessionGroup.created`
-4. Test that sub-session creation adds a member and emits `space.sessionGroup.memberAdded`
-5. Test that sub-session completion updates member status and emits `space.sessionGroup.memberUpdated`
+3. Test that `spawnTaskAgent()` creates a group and emits `spaceSessionGroup.created`
+4. Test that sub-session creation adds a member and emits `spaceSessionGroup.memberAdded`
+5. Test that sub-session completion updates member status and emits `spaceSessionGroup.memberUpdated`
 6. Test that sub-session failure sets member status to `'failed'`
 7. Test idempotency: spawning the same task agent twice does not create duplicate groups
 8. Test cleanup: verify group state is consistent after task agent cleanup
@@ -106,6 +108,30 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Event emission is verified with correct payloads
 
 **Dependencies:** Task 2.3
+
+**Agent Type:** coder
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+### Task 2.5: Rehydrate Group Map on Daemon Restart
+
+**Description:** The in-memory `taskId -> groupId` map stored in `TaskAgentManager` is lost on daemon restart. The existing `rehydrateTaskAgent()` path does NOT rebuild this map. This task ensures the map is rebuilt from DB on startup so that event emission and Phase 3 group-scoped security checks work correctly after restarts.
+
+**Subtasks:**
+1. Add a `rehydrateGroupMaps()` method to `TaskAgentManager` that queries `SpaceSessionGroupRepository` for all active groups (where group status is `'active'`) and rebuilds the `taskId -> groupId` in-memory map
+2. Call `rehydrateGroupMaps()` from the existing `rehydrateTaskAgent()` path (or from wherever TaskAgentManager is initialized on startup)
+3. Ensure the rehydration handles edge cases: groups without a `taskId` (standalone groups), groups with no active members
+4. Add a unit test that verifies the map is correctly rebuilt after simulated restart
+
+**Acceptance Criteria:**
+- After daemon restart, `taskId -> groupId` lookups return correct values for all active groups
+- Event emission (Task 2.3) continues to work correctly after restart
+- Phase 3 group-scoped security checks (Task 6.1) will have valid group lookups after restart
+- No performance regression on startup (query is indexed on `task_id`)
+
+**Dependencies:** Task 2.1
 
 **Agent Type:** coder
 

@@ -6,7 +6,7 @@ Redesign the `space_session_groups` and `space_session_group_members` DB tables 
 
 ## Scope
 
-- New DB migration (migration 40) adding columns to session group tables
+- New DB migration (the next available migration number (determined at implementation time)) adding columns to session group tables
 - Updated shared types in `packages/shared/src/types/space.ts`
 - Updated repository CRUD in `SpaceSessionGroupRepository`
 - Unit tests for all repository operations with new fields
@@ -15,15 +15,16 @@ Redesign the `space_session_groups` and `space_session_group_members` DB tables 
 
 ### Task 1.1: Add DB Migration for Flexible Session Groups
 
-**Description:** Create migration 40 that adds new columns to `space_session_groups` and `space_session_group_members` tables. Since Space is pre-production, this migration modifies the existing tables with ALTER TABLE ADD COLUMN statements (idempotent pattern matching existing migrations).
+**Description:** Create the next available migration number (determined at implementation time) that adds new columns to `space_session_groups` and `space_session_group_members` tables. Since Space is pre-production, this migration modifies the existing tables with ALTER TABLE ADD COLUMN statements (idempotent pattern matching existing migrations).
 
 **Subtasks:**
 1. Add `task_id TEXT` column to `space_session_groups` (nullable, links group to SpaceTask)
 2. Add `agent_id TEXT` column to `space_session_group_members` (nullable, references SpaceAgent config)
 3. Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed'))` column to `space_session_group_members`
-4. Drop the CHECK constraint on `role` in `space_session_group_members` so it accepts any string (not just 'worker'/'leader'). Use the recreate-table pattern already used in other migrations (e.g., migration 16) since SQLite cannot drop CHECK constraints via ALTER TABLE.
-5. Add index on `space_session_groups(task_id)` for fast lookup by task
-6. Register `runMigration40(db)` in the `runMigrations()` function in `migrations.ts`
+4. Drop the CHECK constraint on `role` in `space_session_group_members` so it accepts any string (not just 'worker'/'leader'). Use the recreate-table pattern from migration 39 (the most recent, well-tested example) since SQLite cannot drop CHECK constraints via ALTER TABLE. Pay careful attention to column ordering, index recreation, and foreign keys.
+5. Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed'))` column to `space_session_groups` (group-level status)
+6. Add index on `space_session_groups(task_id)` for fast lookup by task
+7. Register the migration function in the `runMigrations()` function in `migrations.ts`
 
 **Acceptance Criteria:**
 - Migration is idempotent (safe to run multiple times)

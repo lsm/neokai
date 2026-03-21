@@ -28,14 +28,47 @@ Three phases, each building on the previous:
 - Milestone 4 depends on Milestone 1 (needs freeform types and updated repository).
 - Milestone 5 depends on Milestone 4 (export/import and editor need the `agents` array type).
 - Milestone 6 depends on Milestones 2 and 4 (needs group persistence and multi-agent steps).
-- Milestones 3 and 4 can proceed in parallel after Milestone 2 and 1 respectively.
+- Milestone 3 and Milestone 4 can proceed in parallel once their respective dependencies (2 and 1) are complete.
 
 ## Key Sequencing Decisions
 
-- All schema changes (Phase 1 + Phase 2) go in a single new migration (migration 40) since Space is pre-production and consolidation avoids unnecessary ALTER TABLEs.
-- Backward compatibility: `WorkflowStep.agentId` is kept; `agents` array is additive. Resolution: if `agents` is provided, use it; else fall back to `agentId`.
+- All schema changes (Phase 1 + Phase 2) go in a single new migration (next available migration number, determined at implementation time) since Space is pre-production and consolidation avoids unnecessary ALTER TABLEs.
+- Backward compatibility: `WorkflowStep.agentId` is kept; `agents` array is additive. Resolution: if `agents` is provided, use it; else fall back to `agentId`. If both are provided, `agents` takes precedence (and a warning is logged).
 - Cross-agent messaging starts with Task Agent mediated (Option C) as it leverages existing coordinator architecture, then adds direct peer tools.
+- Event names follow existing codebase convention: `spaceSessionGroup.created`, `spaceSessionGroup.memberAdded`, `spaceSessionGroup.memberUpdated` (camelCase without domain separator dots, matching `spaceAgent.created`, `spaceWorkflow.created`).
+
+## Key Design Decisions
+
+### Parallel Task Failure Semantics (Phase 2)
+When one parallel task in a multi-agent step fails while others are still running:
+- **Fail-fast**: Remaining active tasks are NOT cancelled automatically — they continue running to completion (cancellation is complex and may waste useful partial work).
+- **Step status**: The step is marked `failed` if ANY parallel task fails, once all tasks reach a terminal state (completed or failed).
+- **Result aggregation**: The Task Agent receives completion/failure callbacks for each task individually and can decide whether to retry failed tasks or advance with partial results.
+- **Retry**: Retry is per-task, not per-step. The Task Agent can re-spawn a failed agent without re-running successful ones.
+
+### `request_peer_input` Response Mechanism (Phase 3)
+The `request_peer_input` tool uses an **async injection pattern**, NOT a blocking request/response:
+1. Step agent calls `request_peer_input(targetRole, question)` → returns immediately with an acknowledgment.
+2. The Task Agent receives the request and routes it to the appropriate peer.
+3. The peer's response is injected back into the requesting agent's session as a new **user turn** (via `messageInjector`), prefixed with context like `[Peer response from {role}]: ...`.
+4. The requesting agent processes the injected response on its next conversation turn.
+This avoids blocking and leverages the existing `messageInjector` pattern already used for Task Agent → step agent communication.
+
+### Cross-Agent Message Concurrency (Phase 3)
+- `messageInjector` serializes writes per-session (messages are queued and injected sequentially).
+- If a target session is mid-conversation with the LLM, injected messages queue behind the current turn.
+- Two agents injecting into the same target will have their messages serialized — no interleaving within a single injection.
+- The plan includes an integration test verifying concurrent injection ordering.
+
+### Session Group Lifecycle
+- Groups are **retained as historical records** when a task completes (not deleted).
+- Member status (`active` → `completed`/`failed`) provides the filtering mechanism.
+- A `status` field on `SpaceSessionGroup` itself (not just members) tracks the overall group state: `active`, `completed`, `failed`.
+- Frontend queries filter by status when showing "active" vs "historical" groups.
+
+### `count` Field Deferral
+The `WorkflowStepAgent.count` field (spawn N instances of same agent) is **deferred to a future milestone**. It introduces session ID disambiguation complexity and unclear work-division semantics without a concrete use case. The `agents` array already supports explicit multi-agent by listing the same agentId multiple times if needed.
 
 ## Estimated Task Count
 
-22 tasks across 6 milestones.
+26 tasks across 6 milestones.
