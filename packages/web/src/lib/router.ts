@@ -4,6 +4,7 @@
  * Handles URL-based routing for sessions and rooms with patterns:
  * - Sessions: /session/:sessionId
  * - Rooms: /room/:roomId
+ * - Room Agent: /room/:roomId/agent
  *
  * Features:
  * - URL sync: Updates URL when session/room changes
@@ -842,6 +843,9 @@ function handlePopState(_event: PopStateEvent): void {
 
 	// Update the signals to match the URL
 	// Space routes take priority over room routes
+	// IMPORTANT: Order is load-bearing — roomAgent must be checked before roomTask/roomSession/roomId
+	// because getRoomIdFromPath also matches agent paths. If reordered, agent routes silently
+	// fall through to the plain room handler, losing the synthetic session ID.
 	if (spaceTask) {
 		currentSpaceIdSignal.value = spaceTask.spaceId;
 		currentSpaceTaskIdSignal.value = spaceTask.taskId;
@@ -976,6 +980,7 @@ export function initializeRouter(): string | null {
 	const initialSpaceId = getSpaceIdFromPath(initialPath);
 
 	// Set initial signals — space routes take priority, then room routes
+	// IMPORTANT: Order is load-bearing — see comment in handlePopState
 	if (initialSpaceTask) {
 		currentSpaceIdSignal.value = initialSpaceTask.spaceId;
 		currentSpaceTaskIdSignal.value = initialSpaceTask.taskId;

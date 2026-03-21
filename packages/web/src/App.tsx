@@ -24,6 +24,7 @@ import {
 	initializeRouter,
 	navigateToSession,
 	navigateToRoom,
+	navigateToRoomAgent,
 	navigateToRoomSession,
 	navigateToRoomTask,
 	navigateToHome,
@@ -33,6 +34,7 @@ import {
 	navigateToSpaceTask,
 	createSessionPath,
 	createRoomPath,
+	createRoomAgentPath,
 	createRoomSessionPath,
 	createRoomTaskPath,
 	createSpacePath,
@@ -97,6 +99,8 @@ export function App() {
 			const spaceTaskId = currentSpaceTaskIdSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
+			// Detect agent route: synthetic session ID follows the pattern room:chat:<roomId>
+			const isAgentRoute = !!(roomSessionId && roomId && roomSessionId === `room:chat:${roomId}`);
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
 				: spaceTaskId && spaceId
@@ -107,15 +111,17 @@ export function App() {
 							? createSpacePath(spaceId)
 							: roomTaskId && roomId
 								? createRoomTaskPath(roomId, roomTaskId)
-								: roomSessionId && roomId
-									? createRoomSessionPath(roomId, roomSessionId)
-									: roomId
-										? createRoomPath(roomId)
-										: navSection === 'spaces'
-											? '/spaces'
-											: navSection === 'chats'
-												? '/sessions'
-												: '/';
+								: isAgentRoute
+									? createRoomAgentPath(roomId)
+									: roomSessionId && roomId
+										? createRoomSessionPath(roomId, roomSessionId)
+										: roomId
+											? createRoomPath(roomId)
+											: navSection === 'spaces'
+												? '/spaces'
+												: navSection === 'chats'
+													? '/sessions'
+													: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -130,6 +136,8 @@ export function App() {
 					navigateToSpace(spaceId, true);
 				} else if (roomTaskId && roomId) {
 					navigateToRoomTask(roomId, roomTaskId, true);
+				} else if (isAgentRoute) {
+					navigateToRoomAgent(roomId, true);
 				} else if (roomSessionId && roomId) {
 					navigateToRoomSession(roomId, roomSessionId, true);
 				} else if (roomId) {
