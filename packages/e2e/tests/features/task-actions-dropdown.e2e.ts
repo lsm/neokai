@@ -105,10 +105,10 @@ test.describe('Task Action Buttons', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Pending task: cancel button visible, complete button not in DOM
-		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
-			timeout: 5000,
-		});
+		// Pending task: cancel button visible with correct text, complete button not in DOM
+		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
+		await expect(cancelBtn).toBeVisible({ timeout: 5000 });
+		await expect(cancelBtn).toHaveText(/Cancel/);
 		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
 	});
 
@@ -148,31 +148,17 @@ test.describe('Task Action Buttons', () => {
 		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
 	});
 
-	test('cancel button is visible for pending task', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
+	test('shows cancel but NOT complete for review task', async ({ page }) => {
+		({ roomId, taskId } = await createRoomAndTask(page, 'review'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Cancel button should be directly visible (inline, not in a dropdown)
-		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
-		await expect(cancelBtn).toBeVisible({ timeout: 5000 });
-		await expect(cancelBtn).toHaveText(/Cancel/);
-	});
-
-	test('complete button is visible for in_progress task', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
-
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
-
-		// Both action buttons should be visible
-		await expect(page.locator('[data-testid="task-complete-button"]')).toBeVisible({
-			timeout: 5000,
-		});
+		// Review task: cancel visible, complete hidden despite canComplete being true
 		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
 			timeout: 5000,
 		});
+		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
 	});
 
 	test('opens cancel confirmation dialog on cancel button click', async ({ page }) => {
@@ -186,7 +172,7 @@ test.describe('Task Action Buttons', () => {
 
 		// Cancel dialog should appear with the task name
 		const cancelDialog = page.locator('[role="dialog"]');
-		await expect(page.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
+		await expect(cancelDialog.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(cancelDialog.getByText(/E2E Test Task/)).toBeVisible();
@@ -204,7 +190,7 @@ test.describe('Task Action Buttons', () => {
 
 		// Complete dialog should appear with the task name
 		const completeDialog = page.locator('[role="dialog"]');
-		await expect(page.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
+		await expect(completeDialog.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(completeDialog.getByText(/E2E Test Task/)).toBeVisible();
@@ -223,8 +209,8 @@ test.describe('Task Action Buttons', () => {
 		// Dismiss with Keep Task button
 		await page.getByRole('button', { name: /Keep Task/ }).click();
 
-		// Dialog should close; task page should still be visible
-		await expect(page.locator('[data-testid="cancel-task-confirm"]')).not.toBeVisible();
+		// Dialog should close (modal unmounts entirely); task page should still be visible
+		await expect(page.locator('[data-testid="cancel-task-confirm"]')).not.toBeAttached();
 		await expect(page.locator('text=E2E Test Task')).toBeVisible();
 	});
 
