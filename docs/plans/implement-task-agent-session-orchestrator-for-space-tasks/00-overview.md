@@ -39,41 +39,43 @@ Tasks are organized into waves that maximize parallel execution:
 ### Wave 2 (depends on Wave 1 — fully parallel)
 - **Task 1.2**: Update SpaceTask DB schema and repository (needs 1.1)
 - **Task 2.1**: Build Task Agent system prompt (needs 1.1)
-- **Task 3.1**: Implement Task Agent tool handlers (needs 1.3 only — uses callback patterns, no dependency on session init)
 
-### Wave 3 (depends on Wave 2 — fully parallel)
+### Wave 3 (depends on Waves 1-2 — fully parallel)
+- **Task 3.1**: Implement Task Agent tool handlers (needs 1.2 for `getTaskBySessionId`, 1.3 for schemas — uses callback patterns, no dependency on session init)
+
+### Wave 4 (depends on Waves 2-3 — fully parallel)
 - **Task 2.2**: Create Task Agent session init factory (needs 2.1)
 - **Task 3.2**: Create Task Agent MCP server factory (needs 3.1)
 
-### Wave 4 (convergence point)
+### Wave 5 (convergence point)
 - **Task 4.1**: Implement TaskAgentManager core (needs 2.2 + 3.2)
 
-### Wave 5 (depends on 4.1 — fully parallel)
+### Wave 6 (depends on 4.1 — fully parallel)
 - **Task 4.2**: Add human message routing to Task Agent (needs 4.1)
 - **Task 4.3**: Wire TaskAgentManager into DaemonApp (needs 4.1)
 - **Task 5.1**: Add Task Agent spawning to SpaceRuntime tick loop (needs 4.1)
 - **Task 6.1**: Add `send_message_to_task` tool to Space Agent (needs 4.1)
 
-### Wave 6 (depends on Wave 5 — fully parallel)
+### Wave 7 (depends on Wave 6 — fully parallel)
 - **Task 5.2**: Update SpaceRuntimeService to pass TaskAgentManager (needs 5.1 + 4.3)
 - **Task 5.3**: Task Agent session rehydration on restart (needs 5.1)
 - **Task 6.2**: Add task completion notification to Space Agent (needs 3.1 + 6.1)
 
-### Wave 7 (final integration)
+### Wave 8 (final integration)
 - **Task 6.3**: End-to-end online test (needs all previous tasks)
 
 ## Dependency Graph
 
 ```
-1.1 ──┬── 1.2
-      ├── 2.1 ── 2.2 ──┐
-      │                 ├── 4.1 ──┬── 4.2
-1.3 ──┴── 3.1 ── 3.2 ──┘         ├── 4.3 ──┬── 5.2
-                                  ├── 5.1 ──┼── 5.3
-                                  └── 6.1 ──┴── 6.2
-                                                 └── 6.3
+1.1 ──┬── 1.2 ──┐
+      │         ├── 3.1 ── 3.2 ──┐
+1.3 ──┘         │                ├── 4.1 ──┬── 4.2
+      2.1 ── 2.2 ────────────────┘         ├── 4.3 ──┬── 5.2
+                                           ├── 5.1 ──┼── 5.3
+                                           └── 6.1 ──┴── 6.2
+                                                          └── 6.3
 ```
 
 ## Estimated Task Count
 
-~18 tasks across 6 milestones, organized into 7 execution waves with maximum parallelism (up to 4 tasks running concurrently in Waves 2 and 5).
+~18 tasks across 6 milestones, organized into 8 execution waves with maximum parallelism (up to 4 tasks running concurrently in Waves 6).

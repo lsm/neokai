@@ -56,7 +56,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. In the Space Agent provisioning (`provision-global-agent.ts` or the per-space agent setup), subscribe to `space.task.completed` and `space.task.failed` events:
    - When received, inject a notification message into the Space Agent session informing it that a task has completed or failed
    - Message format: "Task '{title}' has {completed|failed}. Summary: {summary}"
-3. Define the event types in `packages/daemon/src/lib/daemon-hub.ts` or the appropriate event types file
+3. **Extend `DaemonEventMap`** in `packages/daemon/src/lib/daemon-hub.ts`: add `'space.task.completed'` and `'space.task.failed'` event types with payload interface `{ taskId: string, spaceId: string, status: string, summary: string, workflowRunId: string, taskTitle: string }`. This is a separate, explicit deliverable — not just a side effect of the handler work.
 4. Write unit tests verifying:
    - `report_result` emits the correct event
    - Space Agent session receives the notification message

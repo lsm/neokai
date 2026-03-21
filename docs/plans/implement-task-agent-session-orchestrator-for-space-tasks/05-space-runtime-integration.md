@@ -83,23 +83,30 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Subtasks:**
 1. In `TaskAgentManager`, add `async rehydrate(): Promise<void>` that:
-   - Queries `space_tasks` for tasks with status `in_progress` or `needs_attention` that have a non-null `taskAgentSessionId`
-   - For each such task, loads the associated Space, Workflow, and WorkflowRun
-   - Recreates the Task Agent session (AgentSession, MCP server, etc.)
+   - Queries `space_tasks` for tasks with status `in_progress` or `needs_attention` that have a non-null `taskAgentSessionId` (DB query: `SELECT * FROM space_tasks WHERE status IN ('in_progress', 'needs_attention') AND task_agent_session_id IS NOT NULL`)
+   - For each such task, loads the associated Space, Workflow, and WorkflowRun via their respective repositories
+   - Recreates the Task Agent session using `createTaskAgentInit()` and `AgentSession.fromInit()`
+   - Re-attaches the MCP server via `setRuntimeMcpServers()` and system prompt via `setRuntimeSystemPrompt()`
+   - **Restarts the streaming query** by calling the session's `startStreamingQuery()` (or equivalent). The conversation history is already in the DB from the previous run — the SDK will resume from the last message.
+   - **Injects a re-orientation message** into the Task Agent session: "You are resuming after a daemon restart. Your previous conversation state has been restored. Please use `check_step_status` to determine the current state of your workflow and continue from where you left off." This re-engages the LLM to take action rather than waiting passively.
    - Restores it to the `taskAgentSessions` map
-   - Note: sub-sessions do NOT need rehydration -- the Task Agent will re-spawn them via its MCP tools if needed
+   - Note: sub-sessions do NOT need rehydration — the Task Agent will re-spawn them via its MCP tools after receiving the re-orientation message and checking step status
 2. Call `taskAgentManager.rehydrate()` in `SpaceRuntime.rehydrateExecutors()` after executor rehydration (so executors are ready when Task Agents try to use them)
 3. Write unit tests verifying:
    - Rehydration restores Task Agent sessions for in_progress tasks
+   - Rehydrated sessions have their streaming query restarted
+   - Re-orientation message is injected after rehydration
    - Tasks without `taskAgentSessionId` are skipped
    - Completed/cancelled tasks are not rehydrated
+   - Tasks with `needs_attention` status are rehydrated (they may resume after human input)
 4. Run `bun run typecheck` and `make test-daemon`
 
 **Acceptance Criteria:**
 - Active Task Agent sessions are restored on daemon restart
-- Rehydrated sessions have MCP tools and system prompts re-attached
-- Sub-sessions are not rehydrated (Task Agent re-spawns them as needed)
-- Tests verify rehydration behavior
+- Rehydrated sessions have MCP tools, system prompts, and streaming queries re-attached
+- A re-orientation message is injected to re-engage the Task Agent after restart
+- Sub-sessions are not rehydrated (Task Agent re-spawns them as needed via MCP tools)
+- Tests verify rehydration behavior including streaming query restart and re-orientation
 
 **Dependencies:** Task 5.1 (needs SpaceRuntime integration), Task 4.1 (needs TaskAgentManager)
 

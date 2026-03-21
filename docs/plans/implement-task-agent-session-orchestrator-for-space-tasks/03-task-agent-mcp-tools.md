@@ -18,7 +18,7 @@ Implement the 5 MCP tools that give the Task Agent the ability to orchestrate wo
    - `check_step_status`: Queries the processing state of the current step's sub-session via `sessionFactory.getProcessingState()`, checks if the step's task is completed, returns status summary. This is the primary mechanism for the Task Agent to detect sub-session completion — it polls this tool. The completion callback (from `spawn_step_agent`) ensures the SpaceTask status is updated in the DB even if the Task Agent hasn't polled yet.
    - `advance_workflow`: Gets the WorkflowExecutor for the current run, verifies current step tasks are completed in the DB (status set by the completion callback), calls `executor.advance()` to transition to the next step, creates the new SpaceTask for the next step, returns the new step info. Handles `WorkflowGateError` by returning a gate-blocked status instead of throwing.
    - `report_result`: Updates the SpaceTask status (completed/needs_attention/cancelled) via SpaceTaskManager, sets result/error fields, returns confirmation
-   - `request_human_input`: Updates the SpaceTask status to `needs_attention` with the question in the `currentStep` field, returns a message instructing the Task Agent to wait for human input
+   - `request_human_input`: Updates the SpaceTask status to `needs_attention` with the question in the `currentStep` field, returns a message instructing the Task Agent to wait for human input. **Gate re-engagement**: When the human responds (via `space.task.sendMessage` from Task 4.2), the message is injected into the Task Agent session. The Task Agent receives it as a normal conversation message, sees the human's response, and can then call `advance_workflow` to proceed. No special SpaceRuntime tick involvement is needed — the Task Agent session stays alive during the wait (streaming query is active, just idle), and the human message re-engages it directly.
 4. Write comprehensive unit tests for each handler covering success paths, error paths, and edge cases (step not found, session not started, workflow already complete, etc.)
 5. Run `bun run typecheck` and `make test-daemon`
 
@@ -31,7 +31,7 @@ Implement the 5 MCP tools that give the Task Agent the ability to orchestrate wo
 - `request_human_input` pauses execution and surfaces the question
 - Unit tests cover success, error, and edge cases for each handler, including sub-session completion propagation
 
-**Dependencies:** Task 1.3 (tool schemas). Note: This task does NOT depend on Task 2.2 — tool handlers use callback patterns (`sessionFactory`, `messageInjector`) and do not directly reference the session init factory.
+**Dependencies:** Task 1.2 (needs `getTaskBySessionId` repository method for step lookup), Task 1.3 (tool schemas). Note: This task does NOT depend on Task 2.2 — tool handlers use callback patterns (`sessionFactory`, `messageInjector`) and do not directly reference the session init factory.
 
 **Agent Type:** coder
 
