@@ -7,8 +7,7 @@
  * - Workspace path field is required
  * - Name auto-suggests from workspace path
  * - Creating a space navigates to it
- * - Space 3-column layout renders (nav panel, dashboard, no task pane initially)
- * - Nav panel shows "No runs or tasks yet" for a fresh space
+ * - Space tabbed dashboard layout renders (Dashboard tab active with quick actions)
  *
  * Setup: creates a space via dialog (UI-only)
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
@@ -61,8 +60,11 @@ test.describe('Space Creation UX', () => {
 		await expect(spacesButton).toBeVisible({ timeout: 5000 });
 		await spacesButton.click();
 
-		// ContextPanel should show "Spaces" header
-		await expect(page.locator('h2:has-text("Spaces")')).toBeVisible({ timeout: 5000 });
+		// ContextPanel should show the Spaces home view with "Home" header and "Create Space" button
+		await expect(page.locator('text=Home')).toBeVisible({ timeout: 5000 });
+		await expect(
+			page.getByRole('button', { name: 'Create Space', exact: true }).first()
+		).toBeVisible({ timeout: 5000 });
 	});
 
 	test('shows "Create Space" button in Spaces section', async ({ page }) => {
@@ -119,7 +121,7 @@ test.describe('Space Creation UX', () => {
 		await expect(nameInput).toHaveValue('my-cool-project', { timeout: 2000 });
 	});
 
-	test('creates space and shows 3-column layout', async ({ page }) => {
+	test('creates space and shows tabbed dashboard layout', async ({ page }) => {
 		const workspaceRoot = await getWorkspaceRoot(page);
 
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
@@ -149,10 +151,8 @@ test.describe('Space Creation UX', () => {
 			createdSpaceId = match[1];
 		}
 
-		// Space layout should be visible
-		// Left column: nav panel
-		await expect(page.locator('text=No runs or tasks yet')).toBeVisible({ timeout: 5000 });
-		// Middle column: dashboard (quick actions)
+		// Tabbed dashboard should be visible with Dashboard tab active
+		await expect(page.locator('text=Dashboard')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=Quick Actions')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=Start Workflow Run')).toBeVisible({ timeout: 3000 });
 		await expect(page.locator('text=Create Task')).toBeVisible({ timeout: 3000 });
