@@ -141,8 +141,6 @@ function makeHandlers(ctx: TestCtx) {
 	});
 }
 
-const TIMESTAMP = '2026-03-20T10:00:00.000Z';
-
 // ---------------------------------------------------------------------------
 // 1. Prompt — supervised mode
 // ---------------------------------------------------------------------------
@@ -218,8 +216,8 @@ describe('buildSpaceChatSystemPrompt — semi_autonomous autonomy level', () => 
 
 	test('does NOT include the supervised "wait for human approval" restriction for all events', () => {
 		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
-		// In supervised mode, this line is present — in semi_autonomous it should not be
-		expect(prompt).not.toContain('wait for human approval before acting');
+		// In supervised mode this restriction is present — in semi_autonomous it should not be
+		expect(prompt).not.toContain('wait for human approval');
 	});
 });
 
@@ -261,6 +259,7 @@ describe('buildSpaceChatSystemPrompt — default autonomy level (supervised fall
 
 describe('formatEventMessage — autonomy level in message', () => {
 	const spaceId = 'space-notify-test';
+	const TIMESTAMP = '2026-03-20T10:00:00.000Z';
 
 	test('task_needs_attention message includes supervised autonomy level', () => {
 		const event: SpaceNotificationEvent = {
@@ -386,7 +385,7 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	async function createNeedsAttentionTask(ctx: TestCtx): Promise<string> {
+	function createNeedsAttentionTask(ctx: TestCtx): string {
 		// Create a task directly in needs_attention status by inserting it via the DB
 		// (createStandaloneTask creates in draft→pending; we need needs_attention for retry_task)
 		const taskId = `task-retry-${Math.random().toString(36).slice(2)}`;
@@ -407,20 +406,11 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		return taskId;
 	}
 
-	test('retry_task succeeds for a supervised space (tool has no autonomy gate)', async () => {
-		const taskId = await createNeedsAttentionTask(ctx);
-		const handlers = makeHandlers(ctx);
-
-		const result = await handlers.retry_task({ task_id: taskId });
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.task.id).toBe(taskId);
-		expect(parsed.task.status).toBe('pending');
-	});
-
-	test('retry_task succeeds for a semi_autonomous space (same tool, no autonomy check)', async () => {
-		const taskId = await createNeedsAttentionTask(ctx);
+	test('retry_task tool resets needs_attention task to pending — no autonomy gate in tool code', async () => {
+		// The SpaceAgentToolsConfig has no autonomyLevel field. The tool always succeeds when the
+		// task is retryable. The autonomy gate lives in the prompt (supervised: requires human
+		// approval; semi_autonomous: may retry once without human input).
+		const taskId = createNeedsAttentionTask(ctx);
 		const handlers = makeHandlers(ctx);
 
 		const result = await handlers.retry_task({ task_id: taskId });
@@ -432,7 +422,7 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 	});
 
 	test('retry_task with description update succeeds regardless of autonomy level', async () => {
-		const taskId = await createNeedsAttentionTask(ctx);
+		const taskId = createNeedsAttentionTask(ctx);
 		const handlers = makeHandlers(ctx);
 
 		const result = await handlers.retry_task({
@@ -446,7 +436,7 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		expect(parsed.task.description).toBe('Updated description with root cause fix');
 	});
 
-	test('retry_task returns error for non-existent task at both autonomy levels', async () => {
+	test('retry_task returns error for non-existent task', async () => {
 		const handlers = makeHandlers(ctx);
 
 		const result = await handlers.retry_task({ task_id: 'non-existent-task' });
@@ -456,24 +446,24 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		expect(typeof parsed.error).toBe('string');
 	});
 
-	test('retry_task resets task to pending — the autonomy gate is only in the prompt', () => {
-		// This test documents the architectural contract:
-		// - The TOOL always works if the task is in a retryable status
-		// - The PROMPT tells the agent WHEN it may call this tool (supervised: never without permission,
-		//   semi_autonomous: can call once after needs_attention)
-		// This separation keeps tool logic simple and autonomy policy in the prompt.
+	test('tool succeeds but prompts differ — supervised restricts, semi_autonomous permits autonomous retry', async () => {
+		// Architectural contract: the TOOL is autonomy-level-agnostic; the PROMPT encodes policy.
+		// This test verifies both sides: the tool call succeeds AND the prompts differ on retry_task.
+		const taskId = createNeedsAttentionTask(ctx);
+		const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
 
 		const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
 		const semiPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
 
-		// Both prompts mention retry_task — supervised warns not to call it, semi_autonomous allows it
+		// Both prompts reference retry_task
 		expect(supervisedPrompt).toContain('retry_task');
 		expect(semiPrompt).toContain('retry_task');
 
-		// Supervised restricts usage
+		// Supervised: must not call without explicit human instruction
 		expect(supervisedPrompt).toContain('without explicit human instruction');
-
-		// Semi-autonomous allows autonomous retry
+		// Semi-autonomous: may retry once without human input
 		expect(semiPrompt).toContain('Retry a failed task once');
 	});
 });
