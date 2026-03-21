@@ -44,7 +44,10 @@ import type {
 	WorkflowStep,
 	WorkflowTransition,
 	WorkflowRule,
+	SessionFeatures,
 } from '@neokai/shared';
+import type { AgentSessionInit } from '../../agent/agent-session';
+import { inferProviderForModel } from '../../providers/registry';
 
 // ---------------------------------------------------------------------------
 // Context types
@@ -405,4 +408,77 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 	}
 
 	return parts.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Session init factory
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TASK_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
+
+const TASK_AGENT_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: true,
+};
+
+/**
+ * Configuration for creating a Task Agent session.
+ *
+ * NOTE: MCP servers are intentionally NOT included here — they are attached at
+ * runtime by the TaskAgentManager after the session is created. This allows the
+ * manager to compose the MCP server with live runtime dependencies (session manager,
+ * task manager, workflow executor) that are unavailable at init time.
+ */
+export interface TaskAgentSessionConfig {
+	/** The task this agent will orchestrate */
+	task: SpaceTask;
+	/** The Space this task belongs to */
+	space: Space;
+	/** The workflow definition to execute (optional) */
+	workflow?: SpaceWorkflow | null;
+	/** The active workflow run for this task (optional) */
+	workflowRun?: SpaceWorkflowRun | null;
+	/** Session ID for the new session */
+	sessionId: string;
+	/** Workspace path (typically space.workspacePath) */
+	workspacePath: string;
+}
+
+/**
+ * Create an AgentSessionInit for a Task Agent session.
+ *
+ * The Task Agent is a built-in orchestrator session type (`space_task_agent`) that
+ * manages a single SpaceTask's workflow. It uses the task agent system prompt and
+ * does NOT include MCP servers — those are attached at runtime by the TaskAgentManager.
+ *
+ * Model resolution: Space.defaultModel → hardcoded default.
+ */
+export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessionInit {
+	const { task, space, workflow, workflowRun, sessionId, workspacePath } = config;
+
+	const model = space.defaultModel ?? DEFAULT_TASK_AGENT_MODEL;
+	const provider = inferProviderForModel(model);
+
+	const systemPromptText = buildTaskAgentSystemPrompt({
+		task,
+		space,
+		workflow: workflow ?? undefined,
+		workflowRun: workflowRun ?? undefined,
+		availableAgents: [],
+	});
+
+	return {
+		sessionId,
+		workspacePath,
+		systemPrompt: systemPromptText,
+		features: TASK_AGENT_FEATURES,
+		context: { spaceId: space.id, taskId: task.id },
+		type: 'space_task_agent',
+		model,
+		provider,
+		contextAutoQueue: false,
+	};
 }

@@ -77,6 +77,8 @@ export interface SessionContext {
 	lobbyId?: string;
 	/** Space ID for Space system sessions */
 	spaceId?: string;
+	/** Task ID for Space Task Agent sessions */
+	taskId?: string;
 }
 
 /**

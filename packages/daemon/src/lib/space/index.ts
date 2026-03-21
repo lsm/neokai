@@ -45,6 +45,17 @@ export {
 } from './agents/custom-agent';
 export type { CustomAgentConfig, ResolveAgentInitConfig } from './agents/custom-agent';
 
+export {
+	buildTaskAgentSystemPrompt,
+	buildTaskAgentInitialMessage,
+	createTaskAgentInit,
+} from './agents/task-agent';
+export type {
+	TaskAgentContext,
+	PreviousTaskSummary,
+	TaskAgentSessionConfig,
+} from './agents/task-agent';
+
 export { buildSpaceChatSystemPrompt } from './agents/space-chat-agent';
 export type {
 	SpaceChatAgentContext,
