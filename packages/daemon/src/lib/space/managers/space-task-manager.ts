@@ -314,6 +314,68 @@ export class SpaceTaskManager {
 	}
 
 	/**
+	 * Retry a failed or cancelled task by resetting it to pending.
+	 * Optionally updates the description on retry.
+	 *
+	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
+	 */
+	async retryTask(taskId: string, options?: { description?: string }): Promise<SpaceTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		if (task.status !== 'needs_attention' && task.status !== 'cancelled') {
+			throw new Error(
+				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention' or 'cancelled' status.`
+			);
+		}
+
+		// Transition first — if this fails, the description is untouched (no partial state)
+		// setTaskStatus handles clearing error/result/progress on transition from needs_attention/cancelled -> pending
+		const retried = await this.setTaskStatus(taskId, 'pending');
+
+		// Apply optional description update after successful status transition
+		if (options?.description !== undefined) {
+			return this.updateTask(taskId, { description: options.description });
+		}
+
+		return retried;
+	}
+
+	/**
+	 * Reassign a task to a different agent.
+	 * Only allowed for tasks in 'pending', 'needs_attention', or 'cancelled' status.
+	 * Tasks in 'in_progress', 'review', 'completed', or 'draft' cannot be reassigned.
+	 *
+	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
+	 */
+	async reassignTask(
+		taskId: string,
+		customAgentId: string | null,
+		assignedAgent?: 'coder' | 'general'
+	): Promise<SpaceTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		const allowedStatuses: SpaceTaskStatus[] = ['pending', 'needs_attention', 'cancelled'];
+		if (!allowedStatuses.includes(task.status)) {
+			throw new Error(
+				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', or 'cancelled' status.`
+			);
+		}
+
+		const updates: UpdateSpaceTaskParams = { customAgentId };
+		if (assignedAgent !== undefined) {
+			updates.assignedAgent = assignedAgent;
+		}
+
+		return this.updateTask(taskId, updates);
+	}
+
+	/**
 	 * Check if all dependencies for a task are met (completed)
 	 */
 	async areDependenciesMet(task: SpaceTask): Promise<boolean> {
