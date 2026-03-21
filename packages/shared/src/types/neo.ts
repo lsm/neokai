@@ -434,6 +434,8 @@ export interface TaskSummary {
 	status: TaskStatus;
 	priority: TaskPriority;
 	progress?: number | null;
+	/** Description of current step (for worker summary in review cards) */
+	currentStep?: string | null;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
 	/** Error message for failed tasks */

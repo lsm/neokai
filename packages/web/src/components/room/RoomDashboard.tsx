@@ -211,6 +211,13 @@ export function RoomDashboard() {
 							// Error handled by store
 						}
 					}}
+					onApprove={async (taskId) => {
+						try {
+							await roomStore.approveTask(taskId);
+						} catch {
+							// Error handled by store
+						}
+					}}
 				/>
 			</div>
 
