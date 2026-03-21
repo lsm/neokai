@@ -652,4 +652,228 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('PR #30');
 		});
 	});
+
+	describe('Semantic Status Border', () => {
+		it('should apply blue left border to in_progress tasks', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-blue-500');
+			expect(item).toBeTruthy();
+		});
+
+		it('should apply gray left border to pending tasks', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-gray-500');
+			expect(item).toBeTruthy();
+		});
+
+		it('should apply amber left border to review tasks', () => {
+			selectedTabSignal.value = 'review';
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-amber-500');
+			expect(item).toBeTruthy();
+		});
+
+		it('should apply green left border to completed tasks', () => {
+			selectedTabSignal.value = 'done';
+			const tasks = [createTask('t1', 'completed')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-green-500');
+			expect(item).toBeTruthy();
+		});
+
+		it('should apply red left border to needs_attention tasks', () => {
+			selectedTabSignal.value = 'needs_attention';
+			const tasks = [createTask('t1', 'needs_attention')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-red-500');
+			expect(item).toBeTruthy();
+		});
+
+		it('should apply dark gray left border to cancelled tasks', () => {
+			selectedTabSignal.value = 'needs_attention';
+			const tasks = [createTask('t1', 'cancelled')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-gray-700');
+			expect(item).toBeTruthy();
+		});
+	});
+
+	describe('Inline Reject Form', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'review';
+		});
+
+		it('should show Reject button for review tasks when onReject is provided', () => {
+			const onReject = vi.fn();
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			);
+			expect(rejectBtn).toBeTruthy();
+		});
+
+		it('should NOT show Reject button when onReject is not provided', () => {
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			);
+			expect(rejectBtn).toBeFalsy();
+		});
+
+		it('should NOT show Reject button for non-review tasks', () => {
+			selectedTabSignal.value = 'active';
+			const onReject = vi.fn();
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			);
+			expect(rejectBtn).toBeFalsy();
+		});
+
+		it('should expand inline form when Reject button is clicked', () => {
+			const onReject = vi.fn();
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(rejectBtn);
+
+			expect(container.querySelector('textarea')).toBeTruthy();
+			expect(container.textContent).toContain('Confirm Reject');
+			expect(container.textContent).toContain('Cancel');
+		});
+
+		it('should hide inline form when Cancel is clicked', () => {
+			const onReject = vi.fn();
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			// Open form
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(rejectBtn);
+			expect(container.querySelector('textarea')).toBeTruthy();
+
+			// Cancel
+			const cancelBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Cancel'
+			) as HTMLButtonElement;
+			fireEvent.click(cancelBtn);
+
+			expect(container.querySelector('textarea')).toBeFalsy();
+		});
+
+		it('Confirm Reject button should be disabled when feedback is empty', () => {
+			const onReject = vi.fn();
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(rejectBtn);
+
+			const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Confirm Reject'
+			) as HTMLButtonElement;
+			expect(confirmBtn.disabled).toBe(true);
+		});
+
+		it('should call onReject with taskId and feedback when Confirm Reject is clicked', () => {
+			const onReject = vi.fn();
+			const tasks = [createTask('task-99', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			// Open form
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(rejectBtn);
+
+			// Type feedback
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			fireEvent.input(textarea, { target: { value: 'Needs more work' } });
+
+			// Confirm
+			const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Confirm Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(confirmBtn);
+
+			expect(onReject).toHaveBeenCalledWith('task-99', 'Needs more work');
+		});
+
+		it('should close form after Confirm Reject is clicked', () => {
+			const onReject = vi.fn();
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
+
+			// Open form
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(rejectBtn);
+
+			// Type feedback and confirm
+			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+			fireEvent.input(textarea, { target: { value: 'Feedback here' } });
+			const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Confirm Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(confirmBtn);
+
+			expect(container.querySelector('textarea')).toBeFalsy();
+		});
+
+		it('should NOT call onTaskClick when Reject button is clicked', () => {
+			const onReject = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-42', 'review')];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onReject={onReject} onTaskClick={onTaskClick} />
+			);
+
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.trim() === 'Reject'
+			) as HTMLButtonElement;
+			fireEvent.click(rejectBtn);
+
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+	});
 });
