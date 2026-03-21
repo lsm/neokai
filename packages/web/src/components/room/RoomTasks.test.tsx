@@ -887,8 +887,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
 
-			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Approve'
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
 			);
 			expect(approveBtn).toBeTruthy();
 		});
@@ -898,8 +898,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Approve'
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
 			);
 			expect(approveBtn).toBeFalsy();
 		});
@@ -910,8 +910,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
 
-			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Approve'
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
 			) as HTMLButtonElement;
 			fireEvent.click(approveBtn);
 
@@ -925,8 +925,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
 
-			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Approve'
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
 			);
 			expect(approveBtn).toBeFalsy();
 		});
@@ -940,8 +940,8 @@ describe('RoomTasks', () => {
 				<RoomTasks tasks={tasks} onApprove={onApprove} onTaskClick={onTaskClick} />
 			);
 
-			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Approve'
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
 			) as HTMLButtonElement;
 			fireEvent.click(approveBtn);
 
@@ -977,9 +977,7 @@ describe('RoomTasks', () => {
 
 		it('should NOT show worker summary for non-review tasks with currentStep', () => {
 			selectedTabSignal.value = 'active';
-			const tasks = [
-				createTask('t1', 'in_progress', { currentStep: 'Should not appear' }),
-			];
+			const tasks = [createTask('t1', 'in_progress', { currentStep: 'Should not appear' })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
@@ -988,5 +986,4 @@ describe('RoomTasks', () => {
 			expect(summaryEl).toBeFalsy();
 		});
 	});
-
 });
