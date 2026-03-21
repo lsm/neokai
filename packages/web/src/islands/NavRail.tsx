@@ -73,9 +73,7 @@ export function NavRail() {
 								{badge > 0 && (
 									<div class="w-2 h-2 rounded-full bg-red-500 absolute top-1 right-1 flex items-center justify-center">
 										{badge <= 9 ? (
-											<span class="text-white text-[8px] font-bold leading-none">
-												{badge}
-											</span>
+											<span class="text-white text-[8px] font-bold leading-none">{badge}</span>
 										) : (
 											<span class="text-white text-[8px] font-bold leading-none">9+</span>
 										)}
