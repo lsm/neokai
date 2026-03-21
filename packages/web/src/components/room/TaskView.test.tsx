@@ -1007,7 +1007,7 @@ describe('TaskView — Task options dropdown menu', () => {
 		cleanup();
 	});
 
-	it('shows task options menu for pending tasks (cancel only)', async () => {
+	it('shows cancel button for pending tasks (cancel only)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1020,11 +1020,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
-	it('shows task options menu for in_progress tasks (complete + cancel)', async () => {
+	it('shows cancel and complete buttons for in_progress tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1037,11 +1037,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).not.toBeNull();
 	});
 
-	it('shows task options menu for review tasks (complete + cancel)', async () => {
+	it('shows cancel button for review tasks (no complete button — review status)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
@@ -1054,11 +1054,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
-	it('does NOT show task options menu for completed tasks', async () => {
+	it('does NOT show action buttons for completed tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1071,8 +1071,8 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).toBeNull();
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
 	it('does NOT show cancel button for needs_attention tasks', async () => {
@@ -1088,11 +1088,10 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).toBeNull();
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
 	});
 
-	it('does NOT show task options menu for cancelled tasks', async () => {
+	it('does NOT show action buttons for cancelled tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1105,11 +1104,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).toBeNull();
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
-	it('opens dropdown and shows Cancel Task item for in_progress task', async () => {
+	it('shows both cancel and complete buttons for in_progress task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1122,18 +1121,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const labels = items.map((el) => el.textContent);
-			expect(labels.some((l) => l?.includes('Cancel Task'))).toBe(true);
-			expect(labels.some((l) => l?.includes('Mark as Complete'))).toBe(true);
-		});
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).not.toBeNull();
 	});
 
-	it('opens dropdown and shows only Cancel Task for pending task', async () => {
+	it('shows only cancel button (no complete) for pending task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1146,18 +1138,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const labels = items.map((el) => el.textContent);
-			expect(labels.some((l) => l?.includes('Cancel Task'))).toBe(true);
-			expect(labels.some((l) => l?.includes('Mark as Complete'))).toBe(false);
-		});
+		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
-	it('opens cancel dialog when Cancel Task menu item is clicked', async () => {
+	it('opens cancel dialog when cancel button is clicked', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1170,17 +1155,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		// Click Cancel Task item
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const cancelItem = items.find((el) => el.textContent?.includes('Cancel Task')) as HTMLElement;
-			expect(cancelItem).not.toBeUndefined();
-			fireEvent.click(cancelItem);
-		});
+		const cancelButton = container.querySelector(
+			'[data-testid="task-cancel-button"]'
+		) as HTMLElement;
+		expect(cancelButton).not.toBeNull();
+		fireEvent.click(cancelButton);
 
 		// Cancel dialog should open
 		await waitFor(() => {
@@ -1188,7 +1167,7 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 	});
 
-	it('opens complete dialog when Mark as Complete menu item is clicked', async () => {
+	it('opens complete dialog when complete button is clicked', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1201,19 +1180,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		// Click Mark as Complete item
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const completeItem = items.find((el) =>
-				el.textContent?.includes('Mark as Complete')
-			) as HTMLElement;
-			expect(completeItem).not.toBeUndefined();
-			fireEvent.click(completeItem);
-		});
+		const completeButton = container.querySelector(
+			'[data-testid="task-complete-button"]'
+		) as HTMLElement;
+		expect(completeButton).not.toBeNull();
+		fireEvent.click(completeButton);
 
 		// Complete dialog should open
 		await waitFor(() => {
@@ -1235,15 +1206,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown and click cancel
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const cancelItem = items.find((el) => el.textContent?.includes('Cancel Task')) as HTMLElement;
-			fireEvent.click(cancelItem);
-		});
+		// Click cancel button directly
+		const cancelButton = container.querySelector(
+			'[data-testid="task-cancel-button"]'
+		) as HTMLElement;
+		fireEvent.click(cancelButton);
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-testid="cancel-task-confirm"]')).not.toBeNull();
@@ -1280,17 +1247,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown and click Mark as Complete
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const completeItem = items.find((el) =>
-				el.textContent?.includes('Mark as Complete')
-			) as HTMLElement;
-			fireEvent.click(completeItem);
-		});
+		// Click complete button directly
+		const completeButton = container.querySelector(
+			'[data-testid="task-complete-button"]'
+		) as HTMLElement;
+		fireEvent.click(completeButton);
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-testid="complete-task-confirm"]')).not.toBeNull();
