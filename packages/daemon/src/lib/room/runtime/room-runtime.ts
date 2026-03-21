@@ -649,7 +649,7 @@ export class RoomRuntime {
 		//
 		// terminal    → fail task immediately (4xx — unrecoverable, no point bouncing)
 		// rate_limit  → set initial backoff and pause (only on first detection; re-triggers fall through)
-		// usage_limit → immediately try fallback model; if none available, fall through to fail
+		// usage_limit → immediately try fallback model; if none available, fall through to rate_limit behavior (backoff + pause)
 		// recoverable / null → fall through to worktree check and exit gate
 		{
 			const errorClass = classifyError(workerOutputText);
@@ -703,7 +703,7 @@ export class RoomRuntime {
 			}
 			if (errorClass?.class === 'usage_limit') {
 				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-				// If no fallback is configured or switch fails, fail the task so the user knows.
+				// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
 				log.info(
 					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
 				);
@@ -713,15 +713,23 @@ export class RoomRuntime {
 					'worker'
 				);
 				if (!switched) {
-					// No fallback available — fail so the user sees a clear message
-					this.appendGroupEvent(groupId, 'status', {
-						text: `Usage limit reached and no fallback model configured. ${errorClass.reason}`,
+					// No fallback available — fall through to rate_limit behavior (backoff + pause)
+					// Parse reset time from the usage limit message, or use 1-minute default
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(workerOutputText, 'worker')
+						: null;
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'worker',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'worker',
 					});
-					await this.taskGroupManager.fail(groupId, errorClass.reason);
-					this.cleanupMirroring(groupId, `Usage limit: ${errorClass.reason}`);
-					await this.emitTaskUpdateById(group.taskId);
-					await this.emitGoalProgressForTask(group.taskId);
-					this.scheduleTick();
+					this.scheduleTickAfterRateLimitReset(groupId);
 					return;
 				}
 				// Fall through to normal routing — fallback model switch event was already appended
@@ -983,7 +991,7 @@ export class RoomRuntime {
 		// rate_limit  → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
 		//               (no parseable reset time) mirroring skips setRateLimit, so we must apply a
 		//               minimum backoff here to prevent the task stalling indefinitely.
-		// usage_limit → immediately try fallback model; if none available, fall through to fail
+		// usage_limit → immediately try fallback model; if none available, fall through to rate_limit behavior (backoff + pause)
 		// recoverable / null → fall through (leader finished without calling a tool — that's fine)
 		//
 		// Note: fetching with afterMessageId=null returns all leader messages since session start.
@@ -1048,6 +1056,7 @@ export class RoomRuntime {
 				}
 				if (errorClass?.class === 'usage_limit') {
 					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
 					log.info(
 						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
 					);
@@ -1057,15 +1066,22 @@ export class RoomRuntime {
 						'leader'
 					);
 					if (!switched) {
-						// No fallback available — fail so the user sees a clear message
-						this.appendGroupEvent(groupId, 'status', {
-							text: `Usage limit reached in leader and no fallback model configured. ${errorClass.reason}`,
+						// No fallback available — fall through to rate_limit behavior (backoff + pause)
+						const rateLimitBackoff = errorClass.resetsAt
+							? createRateLimitBackoff(leaderOutputText, 'leader')
+							: null;
+						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+							detectedAt: Date.now(),
+							resetsAt: Date.now() + 60 * 1000,
+							sessionRole: 'leader',
+						};
+						this.groupRepo.setRateLimit(groupId, backoff);
+						this.appendGroupEvent(groupId, 'rate_limited', {
+							text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+							resetsAt: backoff.resetsAt,
+							sessionRole: 'leader',
 						});
-						await this.taskGroupManager.fail(groupId, errorClass.reason);
-						this.cleanupMirroring(groupId, `Usage limit in leader: ${errorClass.reason}`);
-						await this.emitTaskUpdateById(group.taskId);
-						await this.emitGoalProgressForTask(group.taskId);
-						this.scheduleTick();
+						this.scheduleTickAfterRateLimitReset(groupId);
 						return;
 					}
 					// Fall through to normal completion — fallback model switch event was already appended
