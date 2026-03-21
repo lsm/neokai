@@ -1,22 +1,11 @@
 {
 	"mocks": [
 		{
-			"comment": "Space agent - follow-up after get_task_detail tool execution. Uses bodyFragment (structural JSON subset matching) to match when messages contain a tool_result with the specific tool_use_id returned by the get_task_detail probe mock. bodyFragment is more precise than .JsonContains: it matches structurally, so it only fires when the messages array actually contains a tool_result block with this ID — not on the initial probe call. ORDERING: must appear before the probe_semi_autonomous_get_detail mock.",
+			"comment": "Space agent - follow-up after get_task_detail tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_get_detail_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) — not in the initial probe call — so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_get_detail mock.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": [
-								{
-									"type": "tool_result",
-									"tool_use_id": "toolu_get_detail_probe_001"
-								}
-							]
-						}
-					]
-				}
+				"bodyFragment": "toolu_get_detail_probe_001"
 			},
 			"response": {
 				"statusCode": 200,
@@ -54,22 +43,11 @@
 			}
 		},
 		{
-			"comment": "Space agent - follow-up after retry_task tool execution. Uses bodyFragment to match when messages contain a tool_result with the specific tool_use_id returned by the retry_task probe mock. ORDERING: must appear before the probe_semi_autonomous_retry mock.",
+			"comment": "Space agent - follow-up after retry_task tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_retry_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) — not in the initial probe call — so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_retry mock.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": [
-								{
-									"type": "tool_result",
-									"tool_use_id": "toolu_retry_probe_001"
-								}
-							]
-						}
-					]
-				}
+				"bodyFragment": "toolu_retry_probe_001"
 			},
 			"response": {
 				"statusCode": 200,

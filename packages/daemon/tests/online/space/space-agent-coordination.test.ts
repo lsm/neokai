@@ -20,12 +20,12 @@
  *    dispatches the tool call and records the tool_use block in SDK messages.
  *    Follow-up API calls (which include a `tool_result` message in history) are
  *    intercepted by `bodyFragment`-based mocks listed BEFORE the probe mocks.
- *    `bodyFragment` performs structural JSON subset matching on the parsed body,
- *    so it only fires when the messages array actually contains a `tool_result`
- *    block with the specific `tool_use_id` — not on the initial probe call.
- *    (Note: `.JsonContains` substring matching was not usable here because the
- *    dev proxy serializes the entire request body, causing accidental matches on
- *    the initial probe call as well.)
+ *    `bodyFragment` (as a string in mocks.json format) performs substring
+ *    matching on the serialized request body. The tool_use_id strings like
+ *    `"toolu_get_detail_probe_001"` are unique and only appear in the follow-up
+ *    call (as the `tool_use_id` inside a `tool_result` block sent by the SDK
+ *    after executing the tool) — not in the initial probe call body — so these
+ *    mocks fire exclusively for follow-ups and not on the initial probe call.
  *
  * ## What these tests verify
  *
