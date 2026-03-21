@@ -315,7 +315,9 @@ export class SpaceTaskManager {
 
 	/**
 	 * Retry a failed or cancelled task by resetting it to pending.
-	 * Optionally updates the description before retrying.
+	 * Optionally updates the description on retry.
+	 *
+	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
 	 */
 	async retryTask(taskId: string, options?: { description?: string }): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
@@ -329,21 +331,24 @@ export class SpaceTaskManager {
 			);
 		}
 
-		// Update description before status transition if provided
+		// Transition first — if this fails, the description is untouched (no partial state)
+		// setTaskStatus handles clearing error/result/progress on transition from needs_attention/cancelled -> pending
+		const retried = await this.setTaskStatus(taskId, 'pending');
+
+		// Apply optional description update after successful status transition
 		if (options?.description !== undefined) {
-			const descUpdated = this.taskRepo.updateTask(taskId, { description: options.description });
-			if (!descUpdated) {
-				throw new Error(`Failed to update task description: ${taskId}`);
-			}
+			return this.updateTask(taskId, { description: options.description });
 		}
 
-		// setTaskStatus handles clearing error/result/progress on transition from needs_attention/cancelled -> pending
-		return this.setTaskStatus(taskId, 'pending');
+		return retried;
 	}
 
 	/**
 	 * Reassign a task to a different agent.
-	 * Only allowed for tasks that are not actively running (not in_progress or completed).
+	 * Only allowed for tasks in 'pending', 'needs_attention', or 'cancelled' status.
+	 * Tasks in 'in_progress', 'review', 'completed', or 'draft' cannot be reassigned.
+	 *
+	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
 	 */
 	async reassignTask(
 		taskId: string,
@@ -355,10 +360,10 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const blockedStatuses: SpaceTaskStatus[] = ['in_progress', 'completed'];
-		if (blockedStatuses.includes(task.status)) {
+		const allowedStatuses: SpaceTaskStatus[] = ['pending', 'needs_attention', 'cancelled'];
+		if (!allowedStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot reassign task in '${task.status}' status. Task must not be in_progress or completed.`
+				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', or 'cancelled' status.`
 			);
 		}
 

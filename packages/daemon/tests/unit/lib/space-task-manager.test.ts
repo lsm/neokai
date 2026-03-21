@@ -330,6 +330,14 @@ describe('SpaceTaskManager', () => {
 			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'completed'");
 		});
 
+		it('throws when task is in review', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
+
+			await expect(manager.retryTask(task.id)).rejects.toThrow("Cannot retry task in 'review'");
+		});
+
 		it('throws for unknown task', async () => {
 			await expect(manager.retryTask('nonexistent')).rejects.toThrow('Task not found');
 		});
@@ -397,6 +405,24 @@ describe('SpaceTaskManager', () => {
 
 			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
 				"Cannot reassign task in 'completed'"
+			);
+		});
+
+		it('throws when task is in review (has open PR)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/5');
+
+			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
+				"Cannot reassign task in 'review'"
+			);
+		});
+
+		it('throws when task is in draft', async () => {
+			const task = await manager.createTask({ title: 'T', description: '', status: 'draft' });
+
+			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
+				"Cannot reassign task in 'draft'"
 			);
 		});
 
