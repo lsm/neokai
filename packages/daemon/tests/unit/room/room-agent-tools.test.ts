@@ -1023,7 +1023,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should auto-reactivate cancelled task and deliver message', async () => {
+		it('should auto-reactivate cancelled task and deliver message (preserving group history)', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
@@ -1039,7 +1039,7 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to cancelled state with a group
+			// Move to cancelled state with a group that has completedAt set
 			await taskManager.startTask(taskId);
 			const groupId = insertGroup(taskId, 'awaiting_human');
 			const groupInserted = groupRepo.getGroup(groupId);
@@ -1055,19 +1055,19 @@ describe('Room Agent Tools', () => {
 			);
 			// Cancelled task should be auto-reactivated and message delivered
 			expect(result.success).toBe(true);
-			expect(result.message).toContain('reactivated');
+			expect(result.message).toContain('cancelled');
 			expect(result.message).toContain('in_progress');
 
 			// Task should now be in_progress
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('in_progress');
 
-			// Group should have been reset (completedAt cleared)
+			// Group history is PRESERVED — no resetGroupForRestart, reviveTaskForMessage keeps context
 			const groupAfter = groupRepo.getGroup(groupId);
-			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.completedAt).not.toBeNull();
 		});
 
-		it('should roll back cancelled task when reviveTaskForMessage fails', async () => {
+		it('should roll back cancelled task when reviveTaskForMessage fails (group state preserved)', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => false,
 				injectMessageToWorker: async () => true,
@@ -1083,7 +1083,11 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
+			// Move to cancelled state with a group that has completedAt set
 			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
 			await taskManager.cancelTask(taskId);
 
 			const result = parseResult(
@@ -1095,6 +1099,10 @@ describe('Room Agent Tools', () => {
 			// Task status should be rolled back to cancelled
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('cancelled');
+
+			// Group state should be untouched — no metadata was wiped during the failed attempt
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
 		});
 
 		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {

@@ -512,57 +512,20 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
 
-			// Auto-reactivate: if the task is cancelled, reset the group and transition to
-			// in_progress so the message can be delivered without manual intervention.
-			// Worktrees are preserved on cancel (only archiveGroup cleans them up), so
-			// session restoration is safe.
-			if (task.status === 'cancelled') {
-				const group = groupRepo.getGroupByTaskId(args.task_id);
-				if (group) {
-					const reset = groupRepo.resetGroupForRestart(group.id);
-					if (!reset) {
-						return jsonResult({
-							success: false,
-							error: `Failed to reactivate task ${args.task_id} — group may have been modified concurrently`,
-						});
-					}
-				}
+			// Auto-revive: needs_attention and cancelled tasks auto-reactivate so the message
+			// can be delivered without manual intervention. Worktrees are preserved for both
+			// statuses (only archiveGroup cleans them up), so session restoration is safe.
+			//
+			// Deliberate asymmetry with set_task_status:
+			//   set_task_status(cancelled → in_progress) → resetGroupForRestart (clean slate)
+			//   send_message_to_task(cancelled task)    → reviveTaskForMessage  (keep history)
+			// Sending a message is a "continue this conversation" action; history is preserved.
+			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+				// needs_attention transitions through 'review' (its prior working state);
+				// cancelled transitions directly to 'in_progress'.
+				const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 				try {
-					await taskManager.setTaskStatus(args.task_id, 'in_progress');
-				} catch (err) {
-					return jsonResult({
-						success: false,
-						error: `Failed to reactivate task ${args.task_id}: ${String(err)}`,
-					});
-				}
-
-				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
-				if (!revived) {
-					// Roll back the task status; in_progress → cancelled is a valid transition.
-					try {
-						await taskManager.setTaskStatus(args.task_id, 'cancelled');
-					} catch {
-						// Rollback is best-effort; swallow to avoid masking the original error
-					}
-					return jsonResult({
-						success: false,
-						error:
-							`Failed to reactivate task ${args.task_id}: agent sessions could not be restored. ` +
-							'Task status has been reset to cancelled.',
-					});
-				}
-				return jsonResult({
-					success: true,
-					message: `Task ${args.task_id} reactivated from cancelled to in_progress and message delivered to agent`,
-				});
-			}
-
-			// Auto-revive: if the task needs attention, transition it to 'review' and
-			// restore the agent sessions so the message can be delivered. Needs_attention
-			// tasks preserve their worktree, so session restoration is safe.
-			if (task.status === 'needs_attention') {
-				try {
-					await taskManager.setTaskStatus(args.task_id, 'review');
+					await taskManager.setTaskStatus(args.task_id, intermediateStatus);
 				} catch (err) {
 					return jsonResult({
 						success: false,
@@ -572,9 +535,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
 				if (!revived) {
-					// Roll back the task status; review → needs_attention is a valid transition.
+					// Roll back the task status to its original state.
 					try {
-						await taskManager.setTaskStatus(args.task_id, 'needs_attention');
+						await taskManager.setTaskStatus(args.task_id, task.status);
 					} catch {
 						// Rollback is best-effort; swallow to avoid masking the original error
 					}
@@ -582,12 +545,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						success: false,
 						error:
 							`Failed to revive task ${args.task_id}: agent sessions could not be restored. ` +
-							'Task status has been reset to needs_attention.',
+							`Task status has been reset to ${task.status}.`,
 					});
 				}
+				const fromTo = `${task.status} to ${intermediateStatus}`;
 				return jsonResult({
 					success: true,
-					message: `Task ${args.task_id} revived from needs_attention to review and message delivered to agent`,
+					message: `Task ${args.task_id} revived from ${fromTo} and message delivered to agent`,
 				});
 			}
 
