@@ -16,10 +16,13 @@
  *    - `probe_supervised_escalation`  → escalation text (supervised mode)
  *    - `probe_semi_autonomous_get_detail` → tool_use: get_task_detail
  *    - `probe_semi_autonomous_retry`  → tool_use: retry_task
- * 5. Semi-autonomous mocks use `stop_reason: "end_turn"` with a `tool_use`
- *    block in the response content. The SDK records the tool_use block in the
- *    assistant message without dispatching a follow-up API call. Tests assert
- *    on the recorded tool_use blocks.
+ * 5. Semi-autonomous tool-use mocks use `stop_reason: "tool_use"` so the SDK
+ *    dispatches the tool call and records the tool_use block in SDK messages.
+ *    Follow-up API calls are intercepted by tool-ID-specific mocks
+ *    (matching "toolu_get_detail_001" / "toolu_retry_001") that are listed
+ *    BEFORE the probe mocks in mocks.json. These tool IDs appear only in the
+ *    follow-up call's messages history, never in the initial probe call, so
+ *    there is no ambiguity. Tests then assert on the recorded tool_use blocks.
  *
  * ## What these tests verify
  *
