@@ -435,7 +435,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			const task = taskRepo.getTask(args.task_id);
+			// Use taskManager.getTask() (not taskRepo) to enforce space ownership — ensures
+			// Space Agent A cannot inject messages into Space B's Task Agent sessions.
+			const task = await taskManager.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
@@ -454,7 +456,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					success: true,
 					taskId: task.id,
 					taskStatus: task.status,
-					taskAgentSessionId: task.taskAgentSessionId,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

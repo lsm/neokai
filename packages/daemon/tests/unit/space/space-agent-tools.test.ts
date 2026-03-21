@@ -1266,15 +1266,13 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			},
 		};
 
-		// Create a task and manually set taskAgentSessionId to simulate an active agent
+		// Create a task and set taskAgentSessionId to simulate an active agent
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Active task',
 			description: 'In progress with agent',
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
-		const sessionId = 'space:test:task:active-task:agent';
-		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: sessionId });
-		await ctx.taskManager.startTask(taskId);
+		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: 'space:test:task:active-task:agent' });
 
 		const handlers = createSpaceAgentToolHandlers({
 			spaceId: ctx.spaceId,
@@ -1294,10 +1292,53 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.taskId).toBe(taskId);
-		expect(parsed.taskAgentSessionId).toBe(sessionId);
+		// taskAgentSessionId is intentionally omitted from the response to avoid leaking internals
+		expect(parsed.taskAgentSessionId).toBeUndefined();
 		expect(injected).toHaveLength(1);
 		expect(injected[0].taskId).toBe(taskId);
 		expect(injected[0].message).toBe('Please prioritize the auth module.');
+	});
+
+	test('returns error when task belongs to a different space (cross-space ownership check)', async () => {
+		const injected: Array<{ taskId: string; message: string }> = [];
+		const fakeTaskAgentManager = {
+			injectTaskAgentMessage: async (taskId: string, message: string) => {
+				injected.push({ taskId, message });
+			},
+		};
+
+		// Seed a second space and create a task in it
+		const otherSpaceId = 'space-other';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
+		const otherTask = await otherTaskManager.createTask({
+			title: 'Other space task',
+			description: 'Belongs to another space',
+		});
+		ctx.taskRepo.updateTask(otherTask.id, {
+			taskAgentSessionId: 'space:other:task:other-task',
+		});
+
+		// Space Agent for ctx.spaceId tries to message a task in otherSpaceId
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			taskAgentManager: fakeTaskAgentManager as never,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: otherTask.id,
+			message: 'Infiltration attempt',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(otherTask.id);
+		expect(injected).toHaveLength(0);
 	});
 
 	test('propagates error from injectTaskAgentMessage', async () => {
@@ -1313,7 +1354,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		});
 		const taskId = JSON.parse(createResult.content[0].text).task.id;
 		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: 'space:test:task:active-task' });
-		await ctx.taskManager.startTask(taskId);
 
 		const handlers = createSpaceAgentToolHandlers({
 			spaceId: ctx.spaceId,

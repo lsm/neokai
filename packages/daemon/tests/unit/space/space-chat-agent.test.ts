@@ -441,6 +441,11 @@ describe('buildSpaceChatSystemPrompt — coordination tools', () => {
 		expect(prompt).toContain('reassign_task');
 	});
 
+	test('documents send_message_to_task tool', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('send_message_to_task');
+	});
+
 	test('coordination tools section present for all autonomy levels', () => {
 		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
 		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
