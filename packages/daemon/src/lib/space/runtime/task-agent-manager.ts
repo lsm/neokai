@@ -427,6 +427,16 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * Stop and clean up all active Task Agent sessions and their sub-sessions.
+	 * Called on daemon shutdown to release all resources.
+	 */
+	async cleanupAll(): Promise<void> {
+		const taskIds = Array.from(this.taskAgentSessions.keys());
+		await Promise.allSettled(taskIds.map((taskId) => this.cleanup(taskId)));
+		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks cleaned up)`);
+	}
+
+	/**
 	 * Stop and clean up all sessions for a task.
 	 *
 	 * Stops the Task Agent session and all sub-sessions, removes DB records

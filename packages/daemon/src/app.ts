@@ -19,6 +19,7 @@ import { SpaceAgentRepository } from './storage/repositories/space-agent-reposit
 import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
+import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -60,6 +61,8 @@ export interface DaemonAppContext {
 	spaceManager: SpaceManager;
 	/** Space runtime service for workflow run lifecycle management */
 	spaceRuntimeService: SpaceRuntimeService;
+	/** Task Agent Manager — manages Task Agent session lifecycle for space tasks */
+	taskAgentManager: TaskAgentManager;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -210,7 +213,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	}
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
-	const { cleanup: rpcHandlerCleanup, spaceRuntimeService } = setupRPCHandlers({
+	const {
+		cleanup: rpcHandlerCleanup,
+		spaceRuntimeService,
+		taskAgentManager,
+	} = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
@@ -399,6 +406,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				logInfo('[Daemon] GitHub service stopped');
 			}
 
+			// Stop all Task Agent sessions before sessionManager.cleanup() so that
+			// Task Agent sessions are interrupted cleanly before the session pool drains.
+			await taskAgentManager.cleanupAll();
+
 			// Stop all agent sessions first — this closes any open SSE connections
 			// that are held by providers (e.g. AnthropicToCopilotBridgeProvider's embedded
 			// HTTP server). Provider shutdown must follow so server.close() is not
@@ -439,6 +450,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		spaceAgentManager,
 		spaceManager,
 		spaceRuntimeService,
+		taskAgentManager,
 		cleanup,
 	};
 }

@@ -1144,6 +1144,26 @@ describe('TaskAgentManager', () => {
 			expect(ctx.manager.isSpawning(task.id)).toBe(false);
 		});
 
+		test('cleanupAll stops all active task agent sessions', async () => {
+			const task1 = await makeTask(ctx.taskManager);
+			const task2 = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task1, ctx.space, null, null);
+			await ctx.manager.spawnTaskAgent(task2, ctx.space, null, null);
+
+			expect(ctx.manager.isTaskAgentAlive(task1.id)).toBe(true);
+			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(true);
+
+			await ctx.manager.cleanupAll();
+
+			expect(ctx.manager.isTaskAgentAlive(task1.id)).toBe(false);
+			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(false);
+		});
+
+		test('cleanupAll is a no-op when no sessions are active', async () => {
+			// Should not throw
+			await expect(ctx.manager.cleanupAll()).resolves.toBeUndefined();
+		});
+
 		test('can retry spawn after error', async () => {
 			// First call throws
 			const fromInitSpy = spyOn(AgentSession, 'fromInit')
