@@ -59,6 +59,8 @@ interface GoalEventPayload {
 
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
+import { navigateToRoom } from './router';
+import { currentRoomSessionIdSignal } from './signals';
 import { toast } from './toast';
 
 const logger = new Logger('kai:web:roomstore');
@@ -361,33 +363,32 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Session lifecycle events (delete / update / archive)
-			// Re-fetch the authoritative session list from the server on any session change.
-			// This avoids manual array splicing and self-heals any events missed during
-			// WebSocket reconnect gaps.
+			// 5. Session lifecycle events (delete)
+			// Re-fetch the authoritative session list from the server when a session is
+			// deleted. This avoids manual array splicing and self-heals any events missed
+			// during WebSocket reconnect gaps.
+			// Note: session.updated is intentionally NOT subscribed here — draft saves via
+			// useInputDraft call session.update every ~250 ms and would trigger a 4-RPC
+			// storm (room.get + goal.list + runtime.state + runtime.models) on every keystroke.
 			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
 				'session.deleted',
 				(event) => {
-					if (event.roomId === roomId) {
-						this.refresh().catch((err) => {
+					if (event.roomId !== roomId) return;
+					this.refresh()
+						.then(() => {
+							// If the user is currently viewing the deleted session, navigate
+							// back to the room dashboard so they don't land on a dead view.
+							const activeSessionId = currentRoomSessionIdSignal.value;
+							if (activeSessionId && !this.sessions.value.some((s) => s.id === activeSessionId)) {
+								navigateToRoom(roomId);
+							}
+						})
+						.catch((err) => {
 							logger.error('Failed to refresh after session.deleted:', err);
 						});
-					}
 				}
 			);
 			this.cleanupFunctions.push(unsubSessionDeleted);
-
-			const unsubSessionUpdated = hub.onEvent<{ sessionId: string; roomId?: string }>(
-				'session.updated',
-				(event) => {
-					if (event.roomId === roomId) {
-						this.refresh().catch((err) => {
-							logger.error('Failed to refresh after session.updated:', err);
-						});
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubSessionUpdated);
 
 			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
