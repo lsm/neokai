@@ -85,15 +85,11 @@
 			}
 		},
 		{
-			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason)",
+			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason). Uses bodyFragment substring matching — .JsonContains was found to match ALL requests that have a 'messages' key, not just those containing the specified value.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
-				"body": {
-					"matcher": ".JsonContains",
-					"key": "messages",
-					"value": "probe_supervised_escalation"
-				}
+				"bodyFragment": "probe_supervised_escalation"
 			},
 			"response": {
 				"statusCode": 200,
