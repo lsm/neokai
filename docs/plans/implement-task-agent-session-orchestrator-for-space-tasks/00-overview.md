@@ -17,6 +17,8 @@ The Task Agent is a new session type (`space_task_agent`) that:
 
 Key architectural decision: The Task Agent replaces SpaceRuntime's direct `advance()` calls for workflow-driven tasks. SpaceRuntime's tick loop detects pending tasks and spawns Task Agent sessions, then Task Agent takes over the full workflow lifecycle internally.
 
+**Scope note:** This plan is purely backend-focused. Frontend UI for displaying Task Agent conversations, step progress, and `request_human_input` prompts is intentionally out of scope — Task Agent conversations use the existing chat UI via standard session routing. A separate plan will address any Task Agent-specific UI enhancements if needed.
+
 ## Milestones
 
 1. **Types and Data Model** -- Add `space_task_agent` session type, extend SpaceTask with `taskAgentSessionId` field, define Task Agent MCP tool schemas

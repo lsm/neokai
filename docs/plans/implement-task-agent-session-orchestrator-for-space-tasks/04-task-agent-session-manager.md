@@ -16,36 +16,49 @@ Create the `TaskAgentManager` class that handles the full lifecycle of Task Agen
 3. Implement `TaskAgentManager` class with:
    - `private taskAgentSessions: Map<string, AgentSession>` -- maps taskId to the Task Agent's AgentSession
    - `private subSessions: Map<string, Map<string, AgentSession>>` -- maps taskId to a map of stepId to sub-session AgentSession
+   - `private spawningTasks: Set<string>` -- tracks taskIds currently being spawned (concurrency guard to prevent duplicate Task Agent sessions when the tick loop fires while `spawnTaskAgent` is in progress)
    - `async spawnTaskAgent(task: SpaceTask, space: Space, workflow: SpaceWorkflow, workflowRun: SpaceWorkflowRun): Promise<string>` -- creates the Task Agent session:
-     a. Generate session ID: `space:${spaceId}:task:${taskId}`
-     b. Call `createTaskAgentInit()` to get the session init
-     c. Create `AgentSession.fromInit()` with the init
-     d. Create the Task Agent MCP server with a `sessionFactory` that delegates to `this.createSubSession()` and a `messageInjector` that delegates to `this.injectSubSessionMessage()`
-     e. Attach the MCP server to the session via `setRuntimeMcpServers()`
-     f. Update the SpaceTask with `taskAgentSessionId`
-     g. Start the streaming query
-     h. Inject the initial task message via `buildTaskAgentInitialMessage()`
-     i. Store the session in `taskAgentSessions`
-     j. Return the session ID
-   - `async createSubSession(taskId: string, stepId: string, init: AgentSessionInit): Promise<string>` -- creates a sub-session for a workflow step agent, stores it in `subSessions`, starts its streaming query, returns the session ID
+     a. **Concurrency guard**: Check if `taskId` is in `spawningTasks` or `taskAgentSessions` — if so, return the existing session ID (idempotent)
+     b. Add `taskId` to `spawningTasks`
+     c. Generate session ID: `space:${spaceId}:task:${taskId}` (uniqueness guaranteed by taskId being a UUID)
+     d. Call `createTaskAgentInit()` to get the session init
+     e. Create `AgentSession.fromInit()` with the init
+     f. Create the Task Agent MCP server with a `sessionFactory` that delegates to `this.createSubSession()`, a `messageInjector` that delegates to `this.injectSubSessionMessage()`, and an `onSubSessionComplete` callback that updates the step's SpaceTask status to `completed` in the DB
+     g. Attach the MCP server to the session via `setRuntimeMcpServers()`
+     h. Update the SpaceTask with `taskAgentSessionId`
+     i. Start the streaming query
+     j. Inject the initial task message via `buildTaskAgentInitialMessage()`
+     k. Store the session in `taskAgentSessions`, remove from `spawningTasks`
+     l. Return the session ID
+   - `async createSubSession(taskId: string, stepId: string, init: AgentSessionInit): Promise<string>` -- creates a sub-session for a workflow step agent, stores it in `subSessions`, registers a completion listener on the sub-session (using DaemonHub events or AgentSession's `onComplete` callback) that calls the `onSubSessionComplete` callback to update the step's SpaceTask status in the DB and inject a completion message into the Task Agent session (e.g., "Step '{stepId}' sub-session completed"), starts its streaming query, returns the session ID
    - `async injectSubSessionMessage(sessionId: string, message: string): Promise<void>` -- injects a message into a sub-session using the message queue pattern from `room-runtime-service.ts`
+   - `isSpawning(taskId: string): boolean` -- returns true if a Task Agent is currently being spawned for this task (used by SpaceRuntime tick loop guard)
+   - `isTaskAgentAlive(taskId: string): boolean` -- checks if the Task Agent session exists and is still active (not completed/errored). Used by SpaceRuntime to detect crashed Task Agents.
    - `getTaskAgent(taskId: string): AgentSession | undefined` -- returns the Task Agent session for a task
    - `getSubSession(taskId: string, stepId: string): AgentSession | undefined` -- returns a sub-session
-   - `async cleanup(taskId: string): Promise<void>` -- stops and removes all sessions for a task
+   - `async cleanup(taskId: string): Promise<void>` -- stops and removes all sessions for a task, removes from `spawningTasks` if present
 4. Write unit tests covering:
    - Spawning a Task Agent session
-   - Creating sub-sessions
+   - Idempotent spawning (calling `spawnTaskAgent` twice for the same task returns same session)
+   - Concurrency guard (`isSpawning` returns true during spawn, false after)
+   - Creating sub-sessions with completion callback wiring
+   - Sub-session completion triggers SpaceTask status update and message injection into Task Agent
    - Injecting messages into sub-sessions
+   - `isTaskAgentAlive` correctly reports session liveness
    - Cleanup behavior
    - Error handling (missing space, missing workflow, etc.)
 5. Run `bun run typecheck` and `make test-daemon`
 
 **Acceptance Criteria:**
 - `spawnTaskAgent` creates a fully wired Task Agent session with MCP tools
+- `spawnTaskAgent` is idempotent — concurrent calls for the same task return the same session
+- `spawningTasks` guard prevents duplicate sessions from tick loop races
 - Sub-session creation follows the same pattern as `room-runtime-service.ts`
-- Task Agent session ID follows a predictable naming convention
+- Sub-session completion triggers automatic SpaceTask status update and notification to Task Agent
+- Task Agent session ID follows a predictable naming convention (uniqueness guaranteed by UUID taskId)
+- `isTaskAgentAlive` correctly detects crashed/completed sessions
 - Cleanup properly stops all sessions
-- Unit tests cover the core lifecycle
+- Unit tests cover the core lifecycle including concurrency and completion propagation
 
 **Dependencies:** Task 2.2 (session init factory), Task 3.2 (MCP server factory)
 

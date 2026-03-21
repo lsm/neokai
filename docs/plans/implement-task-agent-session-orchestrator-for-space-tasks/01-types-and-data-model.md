@@ -34,7 +34,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description:** Add the `task_agent_session_id` column to the `space_tasks` table and update the SpaceTaskRepository to handle the new field in CRUD operations.
 
 **Subtasks:**
-1. In `packages/daemon/src/storage/migrations/`, add a migration that adds `task_agent_session_id TEXT` column to the `space_tasks` table
+1. In `packages/daemon/src/storage/schema/migrations.ts`, add a new migration entry to the migrations array that adds `task_agent_session_id TEXT` column to the `space_tasks` table (follow the existing pattern of adding entries to the `migrations` array)
 2. In `packages/daemon/src/storage/repositories/space-task-repository.ts`, update the `createTask()` method to accept and persist `taskAgentSessionId`
 3. Update `updateTask()` to allow setting/clearing `taskAgentSessionId`
 4. Update `getTask()` and list methods to include `taskAgentSessionId` in the returned `SpaceTask` object
