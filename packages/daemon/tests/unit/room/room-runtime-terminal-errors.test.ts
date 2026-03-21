@@ -270,4 +270,38 @@ describe('RoomRuntime - terminal error detection', () => {
 			expect(updatedGroup!.feedbackIteration).toBe(1);
 		});
 	});
+
+	describe('usage_limit handling', () => {
+		it('fails task when usage_limit detected and no fallback model configured', async () => {
+			// No fallback models configured (default), so usage_limit should fail the task
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should be failed because no fallback model is available
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('needs_attention');
+		});
+
+		it('appends status event when usage_limit detected and no fallback model configured', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Check that a status event was appended with usage limit message
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const statusEvents = events.filter((e) => e.kind === 'status');
+			expect(statusEvents.length).toBeGreaterThan(0);
+			const payload = JSON.parse(statusEvents[0].payloadJson ?? '{}');
+			expect(payload.text).toContain('Usage limit');
+		});
+	});
 });

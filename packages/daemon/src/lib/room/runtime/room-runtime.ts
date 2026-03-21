@@ -707,9 +707,6 @@ export class RoomRuntime {
 				log.info(
 					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
 				);
-				this.appendGroupEvent(groupId, 'status', {
-					text: `Usage limit reached — switching to fallback model`,
-				});
 				const switched = await this.trySwitchToFallbackModel(
 					groupId,
 					group.workerSessionId,
@@ -1054,9 +1051,6 @@ export class RoomRuntime {
 					log.info(
 						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
 					);
-					this.appendGroupEvent(groupId, 'status', {
-						text: `Usage limit reached in leader — switching to fallback model`,
-					});
 					const switched = await this.trySwitchToFallbackModel(
 						groupId,
 						group.leaderSessionId,
