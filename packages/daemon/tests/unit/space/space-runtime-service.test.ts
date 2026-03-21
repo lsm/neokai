@@ -7,6 +7,7 @@
  * - createOrGetRuntime(): returns the same runtime on repeated calls
  * - stopRuntime(): is a no-op (doesn't throw)
  * - start() / stop() lifecycle: idempotent, starts/stops underlying runtime
+ * - setTaskAgentManager(): wires TaskAgentManager into the underlying SpaceRuntime
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
@@ -20,6 +21,7 @@ import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-ag
 import type { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import type { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
 import type {
 	NotificationSink,
 	SpaceNotificationEvent,
@@ -161,6 +163,43 @@ describe('SpaceRuntimeService', () => {
 		test('method exists and is callable', () => {
 			// Verify the delegation method is present on SpaceRuntimeService
 			expect(typeof service.setNotificationSink).toBe('function');
+		});
+	});
+
+	// ─── setTaskAgentManager ─────────────────────────────────────────────────
+
+	describe('setTaskAgentManager()', () => {
+		test('method exists and is callable', () => {
+			expect(typeof service.setTaskAgentManager).toBe('function');
+		});
+
+		test('accepts a TaskAgentManager without throwing', () => {
+			const mockManager = {} as TaskAgentManager;
+			expect(() => service.setTaskAgentManager(mockManager)).not.toThrow();
+		});
+
+		test('delegates to the underlying SpaceRuntime', () => {
+			const mockManager = {} as TaskAgentManager;
+			// Access the private runtime to verify propagation
+			const runtime = (
+				service as unknown as { runtime: { config: { taskAgentManager?: TaskAgentManager } } }
+			).runtime;
+			expect(runtime.config.taskAgentManager).toBeUndefined();
+			service.setTaskAgentManager(mockManager);
+			expect(runtime.config.taskAgentManager).toBe(mockManager);
+		});
+
+		test('config.taskAgentManager is passed to SpaceRuntime when provided at construction', () => {
+			const mockManager = {} as TaskAgentManager;
+			const config: SpaceRuntimeServiceConfig = {
+				...buildConfig(spaceManager),
+				taskAgentManager: mockManager,
+			};
+			const svc = new SpaceRuntimeService(config);
+			const runtime = (
+				svc as unknown as { runtime: { config: { taskAgentManager?: TaskAgentManager } } }
+			).runtime;
+			expect(runtime.config.taskAgentManager).toBe(mockManager);
 		});
 	});
 
