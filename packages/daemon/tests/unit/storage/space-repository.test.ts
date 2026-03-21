@@ -35,6 +35,7 @@ describe('SpaceRepository', () => {
 			expect(space.backgroundContext).toBe('');
 			expect(space.instructions).toBe('');
 			expect(space.status).toBe('active');
+			expect(space.autonomyLevel).toBe('supervised');
 			expect(space.sessionIds).toEqual([]);
 			expect(space.config).toBeUndefined();
 			expect(space.createdAt).toBeGreaterThan(0);
@@ -50,7 +51,8 @@ describe('SpaceRepository', () => {
 				instructions: 'Do this',
 				defaultModel: 'claude-opus',
 				allowedModels: ['claude-opus', 'claude-sonnet'],
-				config: { maxConcurrentTasks: 3 },
+				autonomyLevel: 'semi_autonomous',
+				config: { maxConcurrentTasks: 3, taskTimeoutMs: 60000 },
 			});
 
 			expect(space.description).toBe('A description');
@@ -58,7 +60,13 @@ describe('SpaceRepository', () => {
 			expect(space.instructions).toBe('Do this');
 			expect(space.defaultModel).toBe('claude-opus');
 			expect(space.allowedModels).toEqual(['claude-opus', 'claude-sonnet']);
-			expect(space.config).toEqual({ maxConcurrentTasks: 3 });
+			expect(space.autonomyLevel).toBe('semi_autonomous');
+			expect(space.config).toEqual({ maxConcurrentTasks: 3, taskTimeoutMs: 60000 });
+		});
+
+		it("defaults autonomyLevel to 'supervised' when not specified", () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/project', name: 'P' });
+			expect(space.autonomyLevel).toBe('supervised');
 		});
 
 		it('enforces unique workspace_path', () => {
@@ -134,6 +142,32 @@ describe('SpaceRepository', () => {
 			});
 			const updated = repo.updateSpace(space.id, { defaultModel: null });
 			expect(updated!.defaultModel).toBeUndefined();
+		});
+
+		it("updates autonomyLevel to 'semi_autonomous'", () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			expect(space.autonomyLevel).toBe('supervised');
+
+			const updated = repo.updateSpace(space.id, { autonomyLevel: 'semi_autonomous' });
+			expect(updated!.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it("updates autonomyLevel back to 'supervised'", () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/a',
+				name: 'A',
+				autonomyLevel: 'semi_autonomous',
+			});
+			const updated = repo.updateSpace(space.id, { autonomyLevel: 'supervised' });
+			expect(updated!.autonomyLevel).toBe('supervised');
+		});
+
+		it('updates typed config fields', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', name: 'A' });
+			const updated = repo.updateSpace(space.id, {
+				config: { maxConcurrentTasks: 5, taskTimeoutMs: 30000 },
+			});
+			expect(updated!.config).toEqual({ maxConcurrentTasks: 5, taskTimeoutMs: 30000 });
 		});
 
 		it('returns null for unknown ID', () => {

@@ -16,6 +16,26 @@
 export type SpaceStatus = 'active' | 'archived';
 
 /**
+ * Space autonomy level — controls how much the Space Agent can act without human approval.
+ *
+ * - `supervised` (default): Space Agent notifies human of all judgment-required events
+ *   and waits for approval before acting.
+ * - `semi_autonomous`: Space Agent can retry failed tasks and reassign them autonomously;
+ *   escalates to human after one failed retry or when uncertain.
+ */
+export type SpaceAutonomyLevel = 'supervised' | 'semi_autonomous';
+
+/**
+ * Typed runtime configuration for a Space.
+ */
+export interface SpaceConfig {
+	/** Maximum number of tasks that may run concurrently in this Space */
+	maxConcurrentTasks?: number;
+	/** Timeout for a single task in milliseconds */
+	taskTimeoutMs?: number;
+}
+
+/**
  * A Space — a workspace-first context for multi-agent workflows.
  * Unlike Rooms, a Space has a single required workspace path and is
  * designed around workflow execution with customizable agents.
@@ -41,8 +61,10 @@ export interface Space {
 	sessionIds: string[];
 	/** Current status of the Space */
 	status: SpaceStatus;
-	/** Runtime configuration (maxConcurrentTasks, taskTimeout, etc.) */
-	config?: Record<string, unknown>;
+	/** Autonomy level — controls how much the Space Agent can act without human approval */
+	autonomyLevel?: SpaceAutonomyLevel;
+	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */
+	config?: SpaceConfig;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -67,8 +89,10 @@ export interface CreateSpaceParams {
 	defaultModel?: string;
 	/** Allowed models for this Space */
 	allowedModels?: string[];
+	/** Autonomy level for the Space Agent */
+	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration */
-	config?: Record<string, unknown>;
+	config?: SpaceConfig;
 }
 
 /**
@@ -81,7 +105,8 @@ export interface UpdateSpaceParams {
 	instructions?: string;
 	defaultModel?: string | null;
 	allowedModels?: string[];
-	config?: Record<string, unknown>;
+	autonomyLevel?: SpaceAutonomyLevel;
+	config?: SpaceConfig;
 }
 
 // ============================================================================
