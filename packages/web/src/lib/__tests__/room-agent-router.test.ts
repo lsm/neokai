@@ -98,6 +98,12 @@ describe('Room Agent Router', () => {
 			expect(getRoomAgentFromPath('/room/abc-def-123/agent')).toBe('abc-def-123');
 		});
 
+		it('extracts roomId from full UUID agent route', () => {
+			expect(getRoomAgentFromPath('/room/550e8400-e29b-41d4-a716-446655440000/agent')).toBe(
+				'550e8400-e29b-41d4-a716-446655440000'
+			);
+		});
+
 		it('returns null for non-agent routes', () => {
 			expect(getRoomAgentFromPath('/room/abc-123')).toBeNull();
 			expect(getRoomAgentFromPath('/room/abc-123/session/xyz')).toBeNull();
@@ -109,11 +115,37 @@ describe('Room Agent Router', () => {
 		it('rejects paths with trailing content after agent', () => {
 			expect(getRoomAgentFromPath('/room/abc-123/agent/extra')).toBeNull();
 		});
+
+		it('returns null for empty and malformed paths', () => {
+			expect(getRoomAgentFromPath('')).toBeNull();
+			expect(getRoomAgentFromPath('/room//agent')).toBeNull();
+			expect(getRoomAgentFromPath('/room/agent')).toBeNull();
+		});
+
+		it('returns null for legacy chat path', () => {
+			expect(getRoomAgentFromPath('/room/abc-123/chat')).toBeNull();
+		});
 	});
 
 	describe('getRoomIdFromPath recognizes agent route', () => {
 		it('extracts roomId from agent path', () => {
 			expect(getRoomIdFromPath('/room/abc-def-123/agent')).toBe('abc-def-123');
+		});
+
+		it('extracts roomId from full UUID agent path', () => {
+			expect(getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/agent')).toBe(
+				'550e8400-e29b-41d4-a716-446655440000'
+			);
+		});
+
+		it('extracts roomId from plain room path (not just agent)', () => {
+			expect(getRoomIdFromPath('/room/abc-def-123')).toBe('abc-def-123');
+		});
+
+		it('returns null for non-room paths', () => {
+			expect(getRoomIdFromPath('/session/abc-123')).toBeNull();
+			expect(getRoomIdFromPath('/')).toBeNull();
+			expect(getRoomIdFromPath('')).toBeNull();
 		});
 	});
 
