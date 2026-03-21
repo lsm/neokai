@@ -52,7 +52,9 @@ export function NavRail() {
 		>
 			{/* Logo */}
 			<div class="w-12 h-12 flex items-center justify-center mb-2">
-				<span class="text-2xl font-bold text-indigo-500 select-none" aria-label="NeoKai">◈</span>
+				<span class="text-2xl font-bold text-indigo-500 select-none" aria-label="NeoKai">
+					◈
+				</span>
 			</div>
 
 			{/* Nav Items */}
