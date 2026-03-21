@@ -15,7 +15,7 @@
  *    17 tools (including the 5 coordination tools) to setRuntimeMcpServers()
  */
 
-import { describe, test, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
@@ -249,6 +249,7 @@ function buildDeps(
 		sessionFactory,
 		taskRepo,
 		workflowRunRepo,
+		db,
 		state,
 		spyService,
 	};
@@ -281,9 +282,7 @@ function makeMinimalToolConfig(db: BunDatabase): GlobalSpacesToolsConfig {
 }
 
 /** Extract registered tool names from an MCP server's internal registry. */
-function getRegisteredToolNames(
-	server: ReturnType<typeof createGlobalSpacesMcpServer>
-): string[] {
+function getRegisteredToolNames(server: ReturnType<typeof createGlobalSpacesMcpServer>): string[] {
 	const instance = server.instance as unknown as { _registeredTools: Record<string, unknown> };
 	return Object.keys(instance._registeredTools);
 }
@@ -387,6 +386,7 @@ describe('provisionGlobalSpacesAgent', () => {
 			sessionFactory: makeMockSessionFactory(),
 			taskRepo: new SpaceTaskRepository(db),
 			workflowRunRepo: new SpaceWorkflowRunRepository(db),
+			db,
 			state: { activeSpaceId: null },
 		};
 
@@ -400,7 +400,7 @@ describe('provisionGlobalSpacesAgent', () => {
 	test('throws and does NOT wire sink when session creation fails', async () => {
 		const sessionManager = {
 			createCalls: 0,
-			getSessionAsync: mock(async () => null), // always null triggers create
+			getSessionAsync: mock(async () => null), // always null → triggers create
 			createSession: mock(async () => {
 				throw new Error('DB write failed');
 			}),
@@ -409,7 +409,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		const deps = buildDeps(db, { sessionManager });
 
 		await expect(provisionGlobalSpacesAgent(deps)).rejects.toThrow('DB write failed');
-		// Sink must NOT be wired spaceRuntimeService keeps NullNotificationSink
+		// Sink must NOT be wired — spaceRuntimeService keeps NullNotificationSink
 		expect(deps.spyService.sinkCalls).toHaveLength(0);
 	});
 
@@ -435,7 +435,7 @@ describe('provisionGlobalSpacesAgent', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// End-to-end: tick notification injectMessage
+	// End-to-end: tick → notification → injectMessage
 	// -------------------------------------------------------------------------
 
 	test('end-to-end: a tick producing a task_needs_attention event injects a message into the global session', async () => {
@@ -467,11 +467,11 @@ describe('provisionGlobalSpacesAgent', () => {
 		});
 
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'E2E Run');
-		// Simulate task failure set to needs_attention
+		// Simulate task failure — set to needs_attention
 		const taskRepo = deps.taskRepo as SpaceTaskRepository;
 		taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Build failed' });
 
-		// Trigger a manual tick this should detect needs_attention tasks and emit notifications
+		// Trigger a manual tick — this should detect needs_attention tasks and emit notifications
 		await runtime.executeTick();
 
 		// The notification should have been injected into the spaces:global session
@@ -487,6 +487,10 @@ describe('provisionGlobalSpacesAgent', () => {
 	// -------------------------------------------------------------------------
 
 	test('startup race: tasks notified via NullNotificationSink before wiring are re-notified after setNotificationSink', async () => {
+		// This test guards against the startup race where:
+		// 1. SpaceRuntimeService starts and fires a tick (dedup key added, NullNotificationSink = no-op)
+		// 2. provisionGlobalSpacesAgent runs and wires the real sink
+		// 3. The task should still notify on the next tick (dedup set was cleared by setNotificationSink)
 		const SPACE_ID = 'space-race-fix';
 		const AGENT_ID = 'agent-race-fix';
 		const STEP_ID = 'step-race-fix';
@@ -515,15 +519,15 @@ describe('provisionGlobalSpacesAgent', () => {
 		const taskRepo = deps.taskRepo as SpaceTaskRepository;
 		taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Pre-wiring failure' });
 
-		// Simulate an early tick BEFORE provisioning fires on NullNotificationSink, dedup key added
+		// Simulate an early tick BEFORE provisioning — fires on NullNotificationSink, dedup key added
 		await runtime.executeTick();
 		// No real sink yet, so no injected calls
 		expect(sessionFactory.calls).toHaveLength(0);
 
-		// Now provision (wires the real sink clears notifiedTaskSet)
+		// Now provision (wires the real sink — clears notifiedTaskSet)
 		await provisionGlobalSpacesAgent(deps);
 
-		// Fire a tick AFTER provisioning task should re-notify because dedup was cleared
+		// Fire a tick AFTER provisioning — task should re-notify because dedup was cleared
 		await runtime.executeTick();
 		expect(sessionFactory.calls.length).toBeGreaterThanOrEqual(1);
 		expect(sessionFactory.calls[0].message).toContain('[TASK_EVENT]');
@@ -533,7 +537,7 @@ describe('provisionGlobalSpacesAgent', () => {
 	// Task 5.3: MCP tool registration at the provisioning layer
 	// -------------------------------------------------------------------------
 
-	it('passes a "global-spaces-tools" MCP server to setRuntimeMcpServers', async () => {
+	test('passes a "global-spaces-tools" MCP server to setRuntimeMcpServers', async () => {
 		const stub = makeAgentSessionStub();
 		const sessionManager = {
 			createCalls: 0,
@@ -548,7 +552,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		expect(Object.keys(mcpServersArg)).toContain('global-spaces-tools');
 	});
 
-	it('provisioned MCP server contains all 17 expected tools', async () => {
+	test('provisioned MCP server contains all 17 expected tools', async () => {
 		const stub = makeAgentSessionStub();
 		const sessionManager = {
 			createCalls: 0,
@@ -568,7 +572,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		expect(registeredNames).toEqual(expectedNames);
 	});
 
-	it('provisioned MCP server contains all five coordination tools', async () => {
+	test('provisioned MCP server contains all five coordination tools', async () => {
 		const stub = makeAgentSessionStub();
 		const sessionManager = {
 			createCalls: 0,
