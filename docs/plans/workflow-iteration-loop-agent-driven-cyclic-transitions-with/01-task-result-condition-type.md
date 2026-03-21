@@ -21,13 +21,15 @@ Add a `task_result` condition type to the workflow transition system. This condi
 
 **Subtasks:**
 1. In `packages/shared/src/types/space.ts`, add `'task_result'` to the `WorkflowConditionType` union type (line ~473).
-2. Update the `WorkflowCondition` interface JSDoc to document that `expression` is also used by `task_result` to hold the match value (e.g., `'passed'`, `'failed'`).
-3. Update the `WorkflowConditionType` type JSDoc to describe the `task_result` type: "fires when the most recently completed task's result starts with the expression value."
-4. Run `bun run typecheck` to verify no compilation errors from the exhaustive `never` check in `workflow-executor.ts` (it will fail -- that is expected and fixed in Task 1.2).
+2. Add `isCyclic?: boolean` to the `WorkflowTransition` interface. When `true`, following this transition increments `iterationCount` on the run. This flag is used by Milestone 2 for cycle detection — it avoids heuristic-based detection that would misfire on DAG merge paths.
+3. Update the `WorkflowCondition` interface JSDoc to document that `expression` is also used by `task_result` to hold the match value (e.g., `'passed'`, `'failed'`).
+4. Update the `WorkflowConditionType` type JSDoc to describe the `task_result` type: "fires when the most recently completed task's result starts with the expression value."
+5. Run `bun run typecheck` to verify no compilation errors from the exhaustive `never` check in `workflow-executor.ts` (it will fail -- that is expected and fixed in Task 1.2).
 
 **Acceptance criteria:**
 - `WorkflowConditionType` includes `'task_result'` as a valid value.
-- JSDoc accurately describes the new condition type and `expression` usage.
+- `WorkflowTransition` includes `isCyclic?: boolean`.
+- JSDoc accurately describes the new condition type, `expression` usage, and `isCyclic` flag.
 - No other type errors introduced (the executor exhaustive check error is expected).
 
 **Depends on:** (none)
@@ -81,9 +83,10 @@ Add a `task_result` condition type to the workflow transition system. This condi
    - Read `args.step_result` and pass it to `executor.advance({ stepResult: args.step_result })` using the options parameter added in Task 1.2.
    - Remove or update the comment block (lines 506–510) that describes `step_result` as a placeholder — it is now functional.
 2. Update the `AdvanceWorkflowSchema` JSDoc in `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts` to clarify that `step_result` is used for `task_result` condition evaluation and should always be provided after completing a verify/review step.
-3. In `packages/daemon/src/lib/space/agents/task-agent.ts`, update the Task Agent system prompt (`buildTaskAgentSystemPrompt`) to include an instruction like:
-   - "When calling `advance_workflow` after a step that evaluates results (e.g., verify, review, or test steps), always include the `step_result` field with a value starting with 'passed' if the work is acceptable, or 'failed: <reason>' if issues were found."
-   - This is essential for the `task_result` condition to work end-to-end — without it, the LLM will omit `step_result` and result-based transitions will silently fail.
+3. In `packages/daemon/src/lib/space/agents/task-agent.ts`, update the Task Agent system prompt (`buildTaskAgentSystemPrompt`):
+   - **Fix stale text at line ~175:** The existing prompt says `Pass the \`result\` of the completed step.` but the tool schema field is `step_result`, not `result`. Change this to `Pass the \`step_result\` of the completed step.`
+   - **Add new instruction:** "When calling `advance_workflow` after a step that evaluates results (e.g., verify, review, or test steps), always include the `step_result` field with a value starting with 'passed' if the work is acceptable, or 'failed: <reason>' if issues were found."
+   - Both changes are essential — fixing the stale field name prevents LLM confusion between `result` and `step_result`, and the new instruction ensures result-based transitions work end-to-end.
 4. Run `bun run typecheck`.
 
 **Acceptance criteria:**

@@ -24,7 +24,7 @@ Add a `goalId` field to `SpaceTask` so that tasks can be associated with a goal/
    - Add `goalId?: string` to `SpaceTask` interface.
    - Add `goalId?: string` to `CreateSpaceTaskParams` interface.
    - Add `goalId?: string | null` to `UpdateSpaceTaskParams` interface.
-2. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 35** (assigned in overview migration number plan):
+2. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 36** (assigned in overview migration number plan):
    - `ALTER TABLE space_tasks ADD COLUMN goal_id TEXT`
    - `CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)` for efficient lookups.
    - Use the try/catch + SELECT probe pattern consistent with migrations 30, 32, 33.
@@ -57,14 +57,13 @@ Add a `goalId` field to `SpaceTask` so that tasks can be associated with a goal/
 **Subtasks:**
 1. In `packages/shared/src/types/space.ts`, add `goalId?: string` to `SpaceWorkflowRun` type and `CreateWorkflowRunParams`.
 2. Update `SpaceWorkflowRunRepository`:
-   - Add **migration 36** for `goal_id` column on `space_workflow_runs` (assigned in overview migration number plan). Use the try/catch + SELECT probe pattern.
+   - Add **migration 37** for `goal_id` column on `space_workflow_runs` (assigned in overview migration number plan). Use the try/catch + SELECT probe pattern.
    - Update `createRun()` to persist `goal_id`.
    - Update `rowToRun()` to read `goal_id`.
 3. In `WorkflowExecutor`, accept a `goalId` from the run and pass it to `taskManager.createTask()` in `followTransition()`.
    - The executor already has access to `this.run` -- read `goalId` from the run record.
 4. In `SpaceRuntime.startWorkflowRun()`, accept an optional `goalId` parameter and pass it to `createRun()` and the initial task creation.
-5. Update the `advance_workflow` tool handler or `SpaceRuntime` to ensure `goalId` flows from the run to newly created tasks.
-6. Run `bun run typecheck`.
+5. Run `bun run typecheck`.
 
 **Acceptance criteria:**
 - Tasks created by workflow runs inherit `goalId` from the run.

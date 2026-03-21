@@ -23,8 +23,18 @@ Each iteration creates new tasks under the same workflow run, producing a clear 
 
 ## Key Design Decisions
 
-- **Migration strategy:** Migrations 30–33 already add columns to Space tables via `ALTER TABLE` after migration 29's consolidated schema. This plan follows the same pattern: migration 34 for iteration tracking, migration 35 for goalId on tasks, migration 36 for goalId on runs, migration 37 for maxIterations on workflows. Milestones 1/3 may run in parallel — the coder must use the next available migration number and reconcile if numbers collide during merge.
-- **Iteration counting semantics:** `iterationCount` counts **logical cycles**, not individual step revisits. A cycle is counted once when the transition targets a step that has already been visited — specifically, only the **first revisited step** in a loop-back increments the counter (i.e., the transition target that creates the cycle). Subsequent steps in the same iteration do not increment again because they are new visits from the perspective of the current iteration.
+- **Migration strategy:** Migrations 30–33 already add columns to Space tables via `ALTER TABLE` after migration 29's consolidated schema. This plan follows the same pattern with contiguous migration numbers per milestone. See "Migration Number Assignment" below for exact assignments. The `runMigrations()` call-site must register migrations in numerical order — reconcile at merge time if milestones merge out of sequence.
+- **Cycle detection mechanism:** Cyclic transitions are explicitly annotated with `isCyclic: true` on the `WorkflowTransition` type. This avoids heuristic-based detection (checking task history) which would misfire on DAG merge paths where two non-cyclic paths converge on the same step. Only transitions with `isCyclic: true` increment `iterationCount`.
+- **Iteration counting semantics:** `iterationCount` counts **logical cycles**, not individual step revisits. Only transitions marked `isCyclic: true` increment the counter. Example trace for a two-cycle scenario (Plan→Code→Verify→[fail]→Plan→Code→Verify→[fail]→Plan→Code→Verify→[pass]→Done):
+
+  ```
+  Plan(1): iterationCount=0  |  Code(1): iterationCount=0  |  Verify(1): iterationCount=0
+  → Verify→Plan (isCyclic=true): iterationCount increments to 1
+  Plan(2): iterationCount=1  |  Code(2): iterationCount=1  |  Verify(2): iterationCount=1
+  → Verify→Plan (isCyclic=true): iterationCount increments to 2
+  Plan(3): iterationCount=2  |  Code(3): iterationCount=2  |  Verify(3): iterationCount=2
+  → Verify→Done (isCyclic not set): no increment, run completes
+  ```
 - **`maxIterations` persistence:** `maxIterations` is a first-class typed field on both `SpaceWorkflow` (template, persisted in DB) and `SpaceWorkflowRun` (instance, copied from template at creation).
 - **Seeded workflow idempotency:** `seedBuiltInWorkflows` is a no-op when workflows already exist (`if (existing.length > 0) return`). Only newly created spaces will get the updated Coding Workflow with the Verify step. Updating existing spaces is explicitly out of scope — a future migration can handle that if needed.
 - **UI for iteration count:** Displaying `iterationCount` in the frontend is out of scope for this plan. The field is available via the existing `SpaceWorkflowRun` type and will be visible through RPC responses (`space.workflowRun.get`).
@@ -51,10 +61,10 @@ Each iteration creates new tasks under the same workflow run, producing a clear 
 
 ## Migration Number Assignment
 
-To avoid collisions when milestones are worked in parallel:
+Contiguous numbers per milestone. Milestone 2 merges first (34–35), then Milestone 3 (36–37):
 - **Migration 34:** `iteration_count` + `max_iterations` on `space_workflow_runs` (Milestone 2, Task 2.1)
-- **Migration 35:** `goal_id` on `space_tasks` (Milestone 3, Task 3.1)
-- **Migration 36:** `goal_id` on `space_workflow_runs` (Milestone 3, Task 3.2)
-- **Migration 37:** `max_iterations` on `space_workflows` (Milestone 2, Task 2.1)
+- **Migration 35:** `max_iterations` on `space_workflows` (Milestone 2, Task 2.1)
+- **Migration 36:** `goal_id` on `space_tasks` (Milestone 3, Task 3.1)
+- **Migration 37:** `goal_id` on `space_workflow_runs` (Milestone 3, Task 3.2)
 
-If milestones are merged in a different order, reconcile migration numbers before merging.
+If milestones merge in a different order, renumber migrations so `runMigrations()` calls them in ascending sequence. The registration order in `runMigrations()` must always be numerically ascending.

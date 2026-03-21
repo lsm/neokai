@@ -50,9 +50,9 @@ Comprehensive test coverage for all new functionality: `task_result` condition e
 **Subtasks:**
 1. In `packages/daemon/tests/unit/space/workflow-executor.test.ts`, add a `describe('iteration tracking')` block.
 2. Test cases:
-   - Create a cyclic workflow (A -> B -> A). Follow transition from B back to A. Verify `iterationCount` is incremented on the run.
-   - Create a workflow with `maxIterations: 2`. Execute two cycles. On the third cycle attempt, verify the run status becomes `needs_attention` and no new task is created.
-   - Non-cyclic transition (first visit to a step) does not increment `iterationCount`.
+   - Create a cyclic workflow (A -> B -> A with `isCyclic: true` on B->A transition). Follow transition from B back to A. Verify `iterationCount` is incremented on the run.
+   - Create a workflow with `maxIterations: 2`. Execute two cycles via `isCyclic` transitions. On the third cycle attempt, verify the run status becomes `needs_attention` and no new task is created.
+   - Transition without `isCyclic` flag to a previously-visited step does NOT increment `iterationCount` (verifies no heuristic-based detection).
 3. Test the repository: verify `iteration_count` and `max_iterations` are correctly persisted and read back.
 4. Run tests.
 
@@ -131,7 +131,7 @@ Comprehensive test coverage for all new functionality: `task_result` condition e
 2. Set up a 4-step cyclic workflow: Plan -> Code -> Verify -> Done, with:
    - Plan -> Code: `human` condition (requires approval)
    - Code -> Verify: `always` condition
-   - Verify -> Plan: `task_result` condition, expression `'failed'`, order 0
+   - Verify -> Plan: `task_result` condition, expression `'failed'`, order 0, **`isCyclic: true`**
    - Verify -> Done: `task_result` condition, expression `'passed'`, order 1
    - Set `maxIterations: 3`.
 3. Test scenario:
