@@ -1953,4 +1953,141 @@ describe('TaskView — Reactivate and Archive actions', () => {
 
 		expect(container.textContent).not.toContain('Sending a message will reactivate this task.');
 	});
+
+	it('shows Archive button for cancelled task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-archive-button"]')).not.toBeNull();
+	});
+
+	it('does NOT show Reactivate button for in_progress task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-reactivate-button"]')).toBeNull();
+	});
+
+	it('does NOT show Reactivate button for archived task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-reactivate-button"]')).toBeNull();
+	});
+
+	it('does NOT show Archive button for in_progress task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-archive-button"]')).toBeNull();
+	});
+
+	it('does NOT show Archive button for archived task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-archive-button"]')).toBeNull();
+	});
+
+	it('archived status badge has text-gray-600 class', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Verify the element containing "archived" text carries the text-gray-600 class
+		const allGraySpans = Array.from(container.querySelectorAll('.text-gray-600'));
+		const statusBadge = allGraySpans.find((el) => el.textContent?.includes('archived'));
+		expect(statusBadge).not.toBeNull();
+	});
+
+	it('input is enabled for completed task (no group)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.disabled).toBe(false);
+		const sendButton = getByTestId('input-textarea-send') as HTMLButtonElement;
+		expect(sendButton.disabled).toBe(false);
+	});
+
+	it('input is enabled for cancelled task (no group)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.disabled).toBe(false);
+		const sendButton = getByTestId('input-textarea-send') as HTMLButtonElement;
+		expect(sendButton.disabled).toBe(false);
+	});
 });
