@@ -355,8 +355,15 @@ export interface SpaceSessionGroupMember {
 	groupId: string;
 	/** ID of the session */
 	sessionId: string;
-	/** Role of this session within the group */
-	role: 'worker' | 'leader';
+	/**
+	 * Role of this session within the group — freeform string matching SpaceAgent.role
+	 * (e.g. 'coder', 'reviewer', 'security-auditor', or any user-defined role).
+	 */
+	role: string;
+	/** ID of the SpaceAgent config this session uses (nullable for system agents) */
+	agentId?: string;
+	/** Current state of this member's session */
+	status: 'active' | 'completed' | 'failed';
 	/** Display order within the group */
 	orderIndex: number;
 	/** Creation timestamp (milliseconds since epoch) */
@@ -366,7 +373,7 @@ export interface SpaceSessionGroupMember {
 /**
  * A named group of sessions within a Space.
  * Session groups allow organizing related sessions (e.g., a workflow run's
- * leader + workers) under a single logical unit for display and management.
+ * agents) under a single logical unit for display and management.
  */
 export interface SpaceSessionGroup {
 	/** Unique identifier */
@@ -381,6 +388,8 @@ export interface SpaceSessionGroup {
 	workflowRunId?: string;
 	/** ID of the current workflow step being executed by this group */
 	currentStepId?: string;
+	/** ID of the SpaceTask this group serves */
+	taskId?: string;
 	/** Members of this group */
 	members: SpaceSessionGroupMember[];
 	/** Creation timestamp (milliseconds since epoch) */

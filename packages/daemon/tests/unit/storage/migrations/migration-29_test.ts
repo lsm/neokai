@@ -437,25 +437,58 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('sg-5', 'sp-5', 'Group 5', ${now}, ${now})`
 		);
 
-		// Former enum values still work
-		for (const role of ['worker', 'leader']) {
+		// All role strings are valid — no CHECK constraint on role
+		for (const role of [
+			'worker',
+			'leader',
+			'coder',
+			'reviewer',
+			'security-auditor',
+			'any-custom-role',
+		]) {
 			expect(() => {
 				db.exec(
 					`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
 					 VALUES ('sgm-${role}', 'sg-5', 'sess-${role}', '${role}', 0, ${now})`
+				);
+			}).not.toThrow();
+		}
+	});
+
+	// -------------------------------------------------------------------------
+	// space_session_group_members status CHECK
+	// -------------------------------------------------------------------------
+
+	test('space_session_group_members status CHECK constraint is enforced', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		db.exec(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-status', '/workspace/status', 'Status Space', ${now}, ${now})`
+		);
+		db.exec(
+			`INSERT INTO space_session_groups (id, space_id, name, created_at, updated_at)
+			 VALUES ('sg-status', 'sp-status', 'Status Group', ${now}, ${now})`
+		);
+
+		// Valid statuses
+		for (const status of ['active', 'completed', 'failed']) {
+			expect(() => {
+				db.exec(
+					`INSERT INTO space_session_group_members (id, group_id, session_id, role, status, order_index, created_at)
+					 VALUES ('sgm-${status}', 'sg-status', 'sess-${status}', 'coder', '${status}', 0, ${now})`
 				);
 			}).not.toThrow();
 		}
 
-		// Arbitrary freeform roles now accepted (migration 40 dropped the CHECK)
-		for (const role of ['observer', 'security-auditor', 'coder', 'reviewer']) {
-			expect(() => {
-				db.exec(
-					`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-					 VALUES ('sgm-${role}', 'sg-5', 'sess-${role}', '${role}', 0, ${now})`
-				);
-			}).not.toThrow();
-		}
+		// Invalid status
+		expect(() => {
+			db.exec(
+				`INSERT INTO space_session_group_members (id, group_id, session_id, role, status, order_index, created_at)
+				 VALUES ('sgm-bad', 'sg-status', 'sess-bad', 'coder', 'pending', 0, ${now})`
+			);
+		}).toThrow();
 	});
 
 	// -------------------------------------------------------------------------
