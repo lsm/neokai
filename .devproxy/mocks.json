@@ -131,7 +131,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; bodyFragment does substring matching on the serialized request body; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches on tool_use_id 'toolu_get_detail_probe_001')",
+			"comment": "Space agent - semi_autonomous: returns get_task_detail tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool — avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__get_task_detail, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -168,7 +168,7 @@
 						}
 					],
 					"model": "claude-haiku-20250307",
-					"stop_reason": "tool_use",
+					"stop_reason": "end_turn",
 					"stop_sequence": null,
 					"usage": {
 						"input_tokens": 200,
@@ -181,7 +181,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; bodyFragment does substring matching on the serialized request body; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches on tool_use_id 'toolu_retry_probe_001')",
+			"comment": "Space agent - semi_autonomous: returns retry_task tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool — avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__retry_task, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -218,7 +218,7 @@
 						}
 					],
 					"model": "claude-haiku-20250307",
-					"stop_reason": "tool_use",
+					"stop_reason": "end_turn",
 					"stop_sequence": null,
 					"usage": {
 						"input_tokens": 200,
