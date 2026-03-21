@@ -32,6 +32,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
@@ -57,6 +58,15 @@ export interface SpaceRuntimeConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task repository for querying tasks by run/step */
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Optional TaskAgentManager for Task Agent mode.
+	 *
+	 * When provided, SpaceRuntime spawns Task Agent sessions for pending tasks
+	 * instead of calling advance() directly. Task Agents drive the workflow
+	 * via their MCP tools. When absent, the original direct-advance behavior
+	 * is preserved for backward compatibility.
+	 */
+	taskAgentManager?: TaskAgentManager;
 	/**
 	 * Interval between executeTick() calls in milliseconds.
 	 * Used by start(). Default: 5000 (5 seconds).
@@ -587,6 +597,77 @@ export class SpaceRuntime {
 				}
 			}
 		}
+
+		// ─── Task Agent integration ───────────────────────────────────────────────
+		// When a TaskAgentManager is configured, Task Agents drive the workflow.
+		// SpaceRuntime's role here is lifecycle management only: spawn for pending
+		// tasks, check liveness, and recover from crashes. advance() is never called
+		// directly — the Task Agent calls it via the advance_workflow MCP tool.
+		if (this.config.taskAgentManager) {
+			const tam = this.config.taskAgentManager;
+
+			// Step 1: Check tasks that already have a Task Agent session (in_progress).
+			// Full loop always completes so that dead-agent resets are applied to ALL
+			// tasks before deciding whether to skip. Early-returning on the first alive
+			// agent would leave dead-agent tasks unrecovered if a step has multiple tasks.
+			let anyAgentAlive = false;
+			for (const task of stepTasks) {
+				if (!task.taskAgentSessionId) continue;
+
+				if (tam.isTaskAgentAlive(task.id)) {
+					anyAgentAlive = true;
+					continue; // still check remaining tasks for dead agents
+				}
+
+				// Task Agent session is gone — reset for re-spawn on next tick
+				log.warn(
+					`SpaceRuntime: task agent for task ${task.id} is gone ` +
+						`(session ${task.taskAgentSessionId}), resetting to pending for re-spawn`
+				);
+				this.config.taskRepo.updateTask(task.id, {
+					taskAgentSessionId: null,
+					status: 'pending',
+				});
+			}
+
+			// If any Task Agent is actively running, skip this tick — it drives the workflow.
+			if (anyAgentAlive) return;
+
+			// Step 2: Spawn Task Agents for pending tasks without an agent session.
+			// Re-read from DB to pick up status resets applied in Step 1.
+			const pendingTasksNeedingAgent = this.config.taskRepo
+				.listByWorkflowRun(runId)
+				.filter(
+					(t) =>
+						t.workflowStepId === currentStep.id && t.status === 'pending' && !t.taskAgentSessionId
+				);
+
+			if (pendingTasksNeedingAgent.length > 0) {
+				if (!space) {
+					// Space was deleted while the run was in progress — log and wait.
+					// The run will remain stuck until the space is restored or cancelled.
+					log.warn(
+						`SpaceRuntime: cannot spawn task agents for run ${runId} — space ${meta.spaceId} not found`
+					);
+				} else {
+					for (const task of pendingTasksNeedingAgent) {
+						if (tam.isSpawning(task.id)) continue; // spawn already in progress
+						try {
+							// spawnTaskAgent writes taskAgentSessionId to the DB as a side effect.
+							// SpaceRuntime owns the status transition to 'in_progress' after spawn.
+							await tam.spawnTaskAgent(task, space, meta.workflow, run);
+							this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
+						} catch (err) {
+							log.error(`SpaceRuntime: failed to spawn task agent for task ${task.id}:`, err);
+						}
+					}
+				}
+			}
+
+			// Never call advance() directly — Task Agent drives the workflow.
+			return;
+		}
+		// ─────────────────────────────────────────────────────────────────────────
 
 		if (!stepTasks.every((t) => t.status === 'completed')) return;
 

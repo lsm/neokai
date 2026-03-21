@@ -1028,6 +1028,424 @@ describe('SpaceRuntime', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Task Agent integration (taskAgentManager configured)
+	// -------------------------------------------------------------------------
+
+	describe('Task Agent integration', () => {
+		/**
+		 * Minimal mock for TaskAgentManager — only implements the methods that
+		 * SpaceRuntime calls: isSpawning(), isTaskAgentAlive(), spawnTaskAgent().
+		 *
+		 * The default spawnTaskAgent mirrors the real TaskAgentManager's DB side-effect:
+		 * it writes taskAgentSessionId to the task row. SpaceRuntime relies on this
+		 * contract and only writes status: 'in_progress' itself. If this side-effect
+		 * were absent, the liveness check (Step 1) would never fire for the task.
+		 */
+		function makeMockTaskAgentManager(
+			overrides: {
+				isSpawning?: (taskId: string) => boolean;
+				isTaskAgentAlive?: (taskId: string) => boolean;
+				spawnTaskAgent?: (task: unknown) => Promise<string>;
+			} = {}
+		) {
+			const spawned: string[] = [];
+			return {
+				isSpawning: overrides.isSpawning ?? (() => false),
+				isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
+				spawnTaskAgent:
+					overrides.spawnTaskAgent ??
+					(async (task: unknown) => {
+						const t = task as { id: string };
+						spawned.push(t.id);
+						// Mirror real TaskAgentManager: writes taskAgentSessionId as a side-effect
+						taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+						return `session:${t.id}`;
+					}),
+				_spawned: spawned,
+			};
+		}
+
+		function buildRuntimeWithMockTAM(
+			tam: ReturnType<typeof makeMockTaskAgentManager>,
+			overrideSpaceManager?: {
+				getSpace: (id: string) => Promise<unknown>;
+				listSpaces: () => Promise<unknown[]>;
+			}
+		) {
+			return new SpaceRuntime({
+				db,
+				spaceManager: (overrideSpaceManager ?? spaceManager) as never,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				taskAgentManager: tam as never,
+			});
+		}
+
+		test('spawns Task Agent for pending task when taskAgentManager is configured', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const tam = makeMockTaskAgentManager();
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks[0].status).toBe('pending');
+
+			await rt.executeTick();
+
+			// Task Agent should have been spawned
+			expect(tam._spawned).toContain(tasks[0].id);
+			// Task should be in_progress
+			const updated = taskRepo.getTask(tasks[0].id)!;
+			expect(updated.status).toBe('in_progress');
+			expect(updated.taskAgentSessionId).toBe(`session:${tasks[0].id}`);
+		});
+
+		test('preserves direct advance() when taskAgentManager is NOT configured', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			// No taskAgentManager — runtime is the plain one from beforeEach
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+			await runtime.executeTick();
+
+			// Step B task should have been created by direct advance()
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			expect(allTasks).toHaveLength(2);
+			expect(allTasks.find((t) => t.workflowStepId === STEP_B)).toBeDefined();
+		});
+
+		test('skips tick when Task Agent is alive (in_progress task with taskAgentSessionId)', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			let spawnCount = 0;
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: () => true, // always alive
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					spawnCount++;
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					return `session:${t.id}`;
+				},
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// First tick: spawns Task Agent (no taskAgentSessionId yet)
+			await rt.executeTick();
+			expect(spawnCount).toBe(1);
+
+			// Mark task as in_progress (set by SpaceRuntime after spawn)
+			// taskAgentSessionId is already set by mock spawnTaskAgent
+			const taskAfterSpawn = taskRepo.getTask(tasks[0].id)!;
+			expect(taskAfterSpawn.taskAgentSessionId).toBeTruthy();
+
+			// Subsequent ticks: agent is alive → skip, no re-spawn
+			await rt.executeTick();
+			await rt.executeTick();
+			expect(spawnCount).toBe(1); // still only spawned once
+		});
+
+		test('does NOT advance when Task Agent mode is active (never calls advance())', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: () => false, // appears dead after spawn (returns false after 1st call)
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Mark task as completed — in TAM mode, advance() should NOT be called
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+			await rt.executeTick();
+
+			// No step B task should exist — SpaceRuntime never calls advance() in TAM mode
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			expect(allTasks).toHaveLength(1);
+			expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+		});
+
+		test('detects crashed Task Agent and resets task to pending for re-spawn', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			let callCount = 0;
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: () => false, // agent always reports as dead
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					callCount++;
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}:v${callCount}` });
+					return `session:${t.id}:v${callCount}`;
+				},
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Manually set taskAgentSessionId to simulate a previously spawned (now dead) agent
+			taskRepo.updateTask(tasks[0].id, {
+				taskAgentSessionId: 'session:dead',
+				status: 'in_progress',
+			});
+
+			// Tick: detect dead agent → reset to pending → spawn new agent
+			await rt.executeTick();
+
+			// Task should be in_progress with a fresh session
+			const updated = taskRepo.getTask(tasks[0].id)!;
+			expect(updated.status).toBe('in_progress');
+			expect(updated.taskAgentSessionId).toBe(`session:${tasks[0].id}:v1`);
+			expect(callCount).toBe(1); // spawned once for recovery
+		});
+
+		test('concurrency guard: isSpawning() prevents duplicate spawns during concurrent ticks', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			let spawnCount = 0;
+			const spawningSet = new Set<string>();
+			const tam = makeMockTaskAgentManager({
+				isSpawning: (taskId: string) => spawningSet.has(taskId),
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					spawnCount++;
+					spawningSet.add(t.id);
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					spawningSet.delete(t.id);
+					return `session:${t.id}`;
+				},
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Simulate concurrent tick while first is "spawning"
+			spawningSet.add(tasks[0].id); // pretend spawn is in progress
+
+			await rt.executeTick();
+
+			// No additional spawn should happen while isSpawning() returns true
+			expect(spawnCount).toBe(0);
+		});
+
+		test('idempotent spawn: pending task without taskAgentSessionId only spawns once per tick', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+				{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+			]);
+
+			let spawnCount = 0;
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: (taskId: string) => {
+					// Alive after spawn (taskAgentSessionId is set)
+					const task = taskRepo.getTask(taskId);
+					return !!task?.taskAgentSessionId;
+				},
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					spawnCount++;
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					return `session:${t.id}`;
+				},
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Multiple ticks — should only spawn once (agent is alive after first spawn)
+			await rt.executeTick();
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(spawnCount).toBe(1);
+			// Task should still be in_progress
+			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
+		});
+
+		test('new pending task from next workflow step gets a fresh Task Agent spawned', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const spawnedTasks: string[] = [];
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: (taskId: string) => {
+					const task = taskRepo.getTask(taskId);
+					return !!task?.taskAgentSessionId;
+				},
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					spawnedTasks.push(t.id);
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					return `session:${t.id}`;
+				},
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Tick 1: spawns Task Agent for step A
+			await rt.executeTick();
+			expect(spawnedTasks).toContain(tasks[0].id);
+
+			// Simulate Task Agent completing step A:
+			// - calls advance_workflow → creates step B task (pending, no taskAgentSessionId)
+			// - calls report_result → marks step A task as completed
+			// - advance() creates the step B task and advances the run's currentStepId
+			taskRepo.updateTask(tasks[0].id, { status: 'completed', taskAgentSessionId: null });
+			// Manually call advance to simulate Task Agent's advance_workflow tool
+			await rt.getExecutor(run.id)!.advance();
+
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			expect(stepBTask).toBeDefined();
+
+			// Tick 2: should spawn Task Agent for step B
+			await rt.executeTick();
+			expect(spawnedTasks).toContain(stepBTask!.id);
+		});
+
+		test('logs warning and skips spawn when space is null (space deleted mid-run)', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			// Start the run with the real space manager so startWorkflowRun() works.
+			const tam = makeMockTaskAgentManager({
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					return `session:${t.id}`;
+				},
+			});
+			const realRt = buildRuntimeWithMockTAM(tam);
+			const { tasks } = await realRt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			let spawnCount = 0;
+			const tamForNull = makeMockTaskAgentManager({
+				spawnTaskAgent: async (task: unknown) => {
+					const t = task as { id: string };
+					spawnCount++;
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					return `session:${t.id}`;
+				},
+			});
+
+			// Build a fresh runtime that uses a null space manager for getSpace().
+			// startWorkflowRun already created the run and executor in the DB; the fresh
+			// runtime rehydrates it on first executeTick() and then hits the null space path.
+			const nullSpaceManager = {
+				getSpace: async () => null,
+				listSpaces: async () => [{ id: SPACE_ID, workspacePath: WORKSPACE }],
+			};
+			const rtWithNullSpace = buildRuntimeWithMockTAM(tamForNull, nullSpaceManager);
+
+			// executeTick() rehydrates the run but getSpace() returns null → spawn skipped
+			await rtWithNullSpace.executeTick();
+
+			// No Task Agent spawned — space is null
+			expect(spawnCount).toBe(0);
+			// Task stays pending
+			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('pending');
+		});
+
+		test('liveness loop resets all dead-agent tasks before deciding to skip tick', async () => {
+			// Two tasks for the same step: task A alive, task B dead.
+			// The dead-agent reset for task B must still happen even though task A is alive.
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const tam = makeMockTaskAgentManager({
+				isTaskAgentAlive: (taskId: string) => taskId === 'task-alive',
+			});
+			const rt = buildRuntimeWithMockTAM(tam);
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Insert a second task for the same step directly via repo (multi-task scenario)
+			const taskB = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Plan B',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: STEP_A,
+				status: 'in_progress',
+			});
+
+			// Simulate: task B has a dead agent session; we override its id to match mock
+			// Use DB update + a custom tam that keys liveness by taskId
+			const taskBId = taskB.id;
+			taskRepo.updateTask(taskBId, { taskAgentSessionId: 'session:dead-b' });
+
+			// Create alive task separately by injecting its id into the mock
+			const firstTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.id !== taskBId)!;
+			taskRepo.updateTask(firstTask.id, {
+				taskAgentSessionId: 'session:alive-a',
+				status: 'in_progress',
+			});
+
+			// Override the mock to know which task is alive
+			const aliveId = firstTask.id;
+			const customTam = makeMockTaskAgentManager({
+				isTaskAgentAlive: (taskId: string) => taskId === aliveId,
+			});
+			const rt2 = buildRuntimeWithMockTAM(customTam);
+
+			await rt2.executeTick();
+
+			// Dead task B should have been reset to pending (dead-agent recovery happened)
+			const updatedB = taskRepo.getTask(taskBId)!;
+			expect(updatedB.status).toBe('pending');
+			expect(updatedB.taskAgentSessionId).toBeFalsy(); // cleared (null stored as undefined by repo)
+
+			// Alive task A should be untouched
+			const updatedA = taskRepo.getTask(aliveId)!;
+			expect(updatedA.status).toBe('in_progress');
+			expect(updatedA.taskAgentSessionId).toBe('session:alive-a');
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// seedPresetAgents + seedBuiltInWorkflows wiring (space-handlers)
 	// -------------------------------------------------------------------------
 
