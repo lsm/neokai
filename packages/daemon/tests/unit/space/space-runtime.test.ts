@@ -1354,5 +1354,51 @@ describe('SpaceRuntime', () => {
 			expect(events[1].kind).toBe('goal_tasks_complete');
 			expect(events[2].kind).toBe('task_needs_attention');
 		});
+
+		test('uses runtime-replaced sink from setNotificationSink() not the original config sink', async () => {
+			const configEvents: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const runtimeEvents: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+
+			// Construct runtime with a config sink (simulating construction before agent session exists)
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink: {
+					notify: async (e) => {
+						configEvents.push(e);
+					},
+				},
+			});
+
+			// Replace with the real runtime sink (simulating setNotificationSink() called after session provisioned)
+			runtimeWithSink.setNotificationSink({
+				notify: async (e) => {
+					runtimeEvents.push(e);
+				},
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			const t = await taskManager.createTask({ title: 'T', description: 'D', goalId: GOAL_ID });
+			await taskManager.startTask(t.id);
+			await taskManager.completeTask(t.id, 'done');
+
+			runtimeWithSink['rehydrated'] = true;
+			await runtimeWithSink.executeTick();
+
+			// Only the runtime (replaced) sink should receive the event
+			expect(runtimeEvents).toHaveLength(1);
+			expect(runtimeEvents[0].kind).toBe('goal_tasks_complete');
+			// The original config sink should have received NOTHING
+			expect(configEvents).toHaveLength(0);
+		});
 	});
 });

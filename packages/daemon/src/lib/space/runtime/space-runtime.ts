@@ -498,7 +498,7 @@ export class SpaceRuntime {
 	 */
 	private async checkGoalCompletion(): Promise<void> {
 		const goalRepo = this.config.goalRepo;
-		const sink = this.config.notificationSink ?? new NullNotificationSink();
+		const sink = this.notificationSink;
 		const maxIterations = this.config.maxGoalIterations ?? 3;
 
 		// Collect all goal IDs referenced by any space task in the DB.
@@ -573,6 +573,9 @@ export class SpaceRuntime {
 				goalTitle,
 				goalValidationCriteria,
 				iterationCount: newIterationCount,
+				// previousIssueCount is intentionally omitted here — tracking per-iteration
+				// issue counts would require storing verification task results in goalIterations.
+				// Deferred: populate once verification task result parsing is implemented.
 				timestamp: new Date().toISOString(),
 			});
 		}
