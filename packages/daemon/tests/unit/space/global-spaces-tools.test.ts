@@ -71,7 +71,9 @@ function makeSpaceManager(space: Space) {
 	};
 }
 
-function makeMockConfig(spaceManager: ReturnType<typeof makeSpaceManager>): GlobalSpacesToolsConfig {
+function makeMockConfig(
+	spaceManager: ReturnType<typeof makeSpaceManager>
+): GlobalSpacesToolsConfig {
 	return {
 		spaceManager: spaceManager as unknown as SpaceManager,
 		spaceAgentManager: {
