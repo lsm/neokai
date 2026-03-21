@@ -81,10 +81,19 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	const [expandedGoals, setExpandedGoals] = useState<Set<string>>(() => new Set());
 	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
 
-	// Task stats
-	const pendingCount = useMemo(() => tasks.filter((t) => t.status === 'pending').length, [tasks]);
 	const activeCount = useMemo(
-		() => tasks.filter((t) => t.status === 'in_progress').length,
+		() =>
+			tasks.filter(
+				(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+			).length,
+		[tasks]
+	);
+	const reviewCount = useMemo(
+		() => tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention').length,
+		[tasks]
+	);
+	const doneCount = useMemo(
+		() => tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled').length,
 		[tasks]
 	);
 
@@ -169,7 +178,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		[roomId, onNavigate]
 	);
 
-	const hasTasks = pendingCount > 0 || activeCount > 0;
+	const hasTasks = activeCount > 0 || reviewCount > 0 || doneCount > 0;
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
@@ -177,9 +186,13 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			<div class="px-3 py-2">
 				{hasTasks ? (
 					<span class="text-xs text-gray-500">
-						{pendingCount > 0 && <span class="text-yellow-500/80">{pendingCount} pending</span>}
-						{pendingCount > 0 && activeCount > 0 && <span class="text-gray-600"> · </span>}
-						{activeCount > 0 && <span class="text-green-500/80">{activeCount} active</span>}
+						{activeCount > 0 && <span class="text-blue-500/80">{activeCount} active</span>}
+						{activeCount > 0 && reviewCount > 0 && <span class="text-gray-600"> · </span>}
+						{reviewCount > 0 && <span class="text-purple-500/80">{reviewCount} review</span>}
+						{(activeCount > 0 || reviewCount > 0) && doneCount > 0 && (
+							<span class="text-gray-600"> · </span>
+						)}
+						{doneCount > 0 && <span>{doneCount} done</span>}
 					</span>
 				) : (
 					<span class="text-xs text-gray-600">No tasks</span>

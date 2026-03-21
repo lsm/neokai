@@ -6,9 +6,8 @@
  * - Model indicator showing current leader/worker model
  * - Archive button to archive the room
  * - Confirmation dialogs for pause, stop, and archive actions
- * - Stats overview (sessions, pending, active, completed, failed tasks)
  * - Sessions list
- * - Tasks list grouped by status
+ * - Tasks list grouped by status (Active/Review/Done/Archived tabs)
  */
 
 import { useState } from 'preact/hooks';

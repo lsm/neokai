@@ -140,6 +140,9 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
+	/** Archived tasks */
+	readonly archivedTasks = computed(() => this.tasks.value.filter((t) => t.status === 'archived'));
+
 	/** Tasks in review status */
 	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
 
@@ -198,6 +201,11 @@ class RoomStore {
 	/** Orphan tasks that are done (completed or cancelled) */
 	readonly orphanTasksDone = computed(() =>
 		this.orphanTasks.value.filter((t) => t.status === 'completed' || t.status === 'cancelled')
+	);
+
+	/** Orphan tasks that are archived */
+	readonly orphanTasksArchived = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'archived')
 	);
 
 	// ========================================
