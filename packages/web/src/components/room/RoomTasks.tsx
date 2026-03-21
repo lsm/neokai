@@ -45,6 +45,7 @@ interface RoomTasksProps {
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
+	onReactivate?: (taskId: string) => void;
 }
 
 /** Get count of tasks for each filter tab */
@@ -99,7 +100,14 @@ function getStatusBorderColor(status: TaskStatus): string {
 	}
 }
 
-export function RoomTasks({ tasks, onTaskClick, onView, onReject, onApprove }: RoomTasksProps) {
+export function RoomTasks({
+	tasks,
+	onTaskClick,
+	onView,
+	onReject,
+	onApprove,
+	onReactivate,
+}: RoomTasksProps) {
 	let selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
 
@@ -171,6 +179,7 @@ export function RoomTasks({ tasks, onTaskClick, onView, onReject, onApprove }: R
 					onView={onView}
 					onReject={onReject}
 					onApprove={onApprove}
+					onReactivate={onReactivate}
 				/>
 			)}
 		</div>
@@ -276,6 +285,7 @@ function TaskList({
 	onView,
 	onReject,
 	onApprove,
+	onReactivate,
 }: {
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
@@ -284,6 +294,7 @@ function TaskList({
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
+	onReactivate?: (taskId: string) => void;
 }) {
 	const [rejectingTaskId, setRejectingTaskId] = useState<string | null>(null);
 
@@ -391,6 +402,7 @@ function TaskList({
 						tasks={completed}
 						allTasks={allTasks}
 						onTaskClick={onTaskClick}
+						onReactivate={onReactivate}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
 					/>
@@ -403,6 +415,7 @@ function TaskList({
 						tasks={cancelled}
 						allTasks={allTasks}
 						onTaskClick={onTaskClick}
+						onReactivate={onReactivate}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
 					/>
@@ -439,6 +452,7 @@ function TaskGroup({
 	onView,
 	onReject,
 	onApprove,
+	onReactivate,
 	showAlert = false,
 	rejectingTaskId,
 	onSetRejectingTaskId,
@@ -452,6 +466,7 @@ function TaskGroup({
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
+	onReactivate?: (taskId: string) => void;
 	showAlert?: boolean;
 	rejectingTaskId?: string | null;
 	onSetRejectingTaskId?: (id: string | null) => void;
@@ -517,6 +532,7 @@ function TaskGroup({
 						onView={onView}
 						onReject={onReject}
 						onApprove={onApprove}
+						onReactivate={onReactivate}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={onSetRejectingTaskId}
 					/>
@@ -541,6 +557,7 @@ function TaskItem({
 	onView,
 	onReject,
 	onApprove,
+	onReactivate,
 	rejectingTaskId,
 	onSetRejectingTaskId,
 }: {
@@ -550,6 +567,7 @@ function TaskItem({
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
+	onReactivate?: (taskId: string) => void;
 	rejectingTaskId?: string | null;
 	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
@@ -567,6 +585,8 @@ function TaskItem({
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 	const isWorking = isReview && !!task.activeSession;
 	const isRejecting = rejectingTaskId === task.id;
+	const showReactivate =
+		(task.status === 'completed' || task.status === 'cancelled') && !!onReactivate;
 
 	// Compute border color: when approve animation active, switch to green
 	const borderColor = cardFading ? 'border-l-green-500' : getStatusBorderColor(task.status);
@@ -669,6 +689,21 @@ function TaskItem({
 							)}
 						</div>
 					)}
+				</div>
+			)}
+			{/* Done/Cancelled: reactivate action */}
+			{showReactivate && (
+				<div class="mt-2" onClick={(e) => e.stopPropagation()}>
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							onReactivate(task.id);
+						}}
+						class="px-3 py-1.5 text-xs font-medium text-blue-400 border border-blue-700/50 hover:bg-blue-900/20 rounded-lg transition-colors"
+						data-testid={`task-reactivate-${task.id}`}
+					>
+						Reactivate
+					</button>
 				</div>
 			)}
 			{task.status === 'needs_attention' && task.error && (

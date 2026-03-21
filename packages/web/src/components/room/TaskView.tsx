@@ -104,12 +104,14 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	review: 'text-purple-400',
 	draft: 'text-gray-500',
 	cancelled: 'text-gray-500',
+	archived: 'text-gray-600',
 };
 
 type HumanMessageTarget = 'worker' | 'leader';
 
 interface HumanInputAreaProps {
 	hasGroup: boolean;
+	taskStatus: string;
 	roomId: string;
 	taskId: string;
 	/** Called after a successful action that requires a full conversation re-fetch */
@@ -123,6 +125,7 @@ const TARGET_LABELS: Record<HumanMessageTarget, string> = {
 
 function HumanInputArea({
 	hasGroup,
+	taskStatus,
 	roomId,
 	taskId,
 	onMessageSentWithReload,
@@ -159,7 +162,9 @@ function HumanInputArea({
 		return () => document.removeEventListener('mousedown', onDocMouseDown);
 	}, [menuOpen]);
 
-	const canSend = hasGroup;
+	const isArchived = taskStatus === 'archived';
+	const canReactivateWithMessage = taskStatus === 'completed' || taskStatus === 'cancelled';
+	const canSend = !isArchived && (hasGroup || canReactivateWithMessage);
 
 	const sendMessage = async () => {
 		if (sending || !messageText.trim() || !canSend) return;
@@ -182,11 +187,15 @@ function HumanInputArea({
 	};
 
 	const targetLabel = target === 'leader' ? 'leader' : 'worker';
-	const placeholder = !hasGroup
-		? 'No active agent group yet — input will activate once a group starts.'
-		: isTouchDeviceRef.current
-			? `Send a message to the ${targetLabel}…`
-			: `Send a message to the ${targetLabel}… (Enter to send, Shift+Enter for newline)`;
+	const placeholder = isArchived
+		? 'Archived tasks cannot receive messages.'
+		: canReactivateWithMessage && !hasGroup
+			? 'Send a message to reactivate this task…'
+			: !hasGroup
+				? 'No active agent group yet — input will activate once a group starts.'
+				: isTouchDeviceRef.current
+					? `Send a message to the ${targetLabel}…`
+					: `Send a message to the ${targetLabel}… (Enter to send, Shift+Enter for newline)`;
 
 	return (
 		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
@@ -278,7 +287,16 @@ function HumanInputArea({
 					</div>
 				}
 			/>
-			{!canSend && <p class="text-xs text-gray-500">No active group to receive messages yet.</p>}
+			{canReactivateWithMessage && (
+				<p class="text-xs text-amber-500/80">Sending a message will reactivate this task.</p>
+			)}
+			{!canSend && !canReactivateWithMessage && (
+				<p class="text-xs text-gray-500">
+					{isArchived
+						? 'Archived tasks cannot receive messages.'
+						: 'No active group to receive messages yet.'}
+				</p>
+			)}
 			{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 		</div>
 	);
@@ -333,8 +351,8 @@ function CompleteTaskDialog({ task, isOpen, onClose, onConfirm }: CompleteTaskDi
 						<li>
 							Task status changes to <span class="text-green-400">completed</span>
 						</li>
-						<li>All sessions will be terminated</li>
-						<li>Task slot will be freed</li>
+						<li>Active sessions will be stopped</li>
+						<li>Worktree and branch are preserved — you can reactivate later</li>
 					</ul>
 				</div>
 
@@ -430,14 +448,14 @@ function CancelTaskDialog({ task, isOpen, onClose, onConfirm }: CancelTaskDialog
 					You are about to cancel <strong class="text-gray-100">{task.title}</strong>.
 				</p>
 
-				<div class="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-xs text-gray-400">
-					<p class="font-medium text-red-400 mb-1.5">This action cannot be undone:</p>
+				<div class="bg-amber-900/20 border border-amber-800/50 rounded-lg p-3 text-xs text-gray-400">
+					<p class="font-medium text-amber-400 mb-1.5">This action is reversible:</p>
 					<ul class="list-disc list-inside space-y-1">
 						<li>
 							Task will be marked as <span class="text-gray-300">cancelled</span>
 						</li>
-						<li>All sessions will be terminated</li>
-						<li>Isolated worktree and branch will be removed</li>
+						<li>Active sessions will be stopped</li>
+						<li>Worktree and branch are preserved — you can reactivate later</li>
 					</ul>
 				</div>
 
@@ -485,6 +503,97 @@ function CancelTaskDialog({ task, isOpen, onClose, onConfirm }: CancelTaskDialog
 	);
 }
 
+interface ArchiveTaskDialogProps {
+	task: NeoTask;
+	isOpen: boolean;
+	onClose: () => void;
+	onConfirm: () => Promise<void>;
+}
+
+function ArchiveTaskDialog({ task, isOpen, onClose, onConfirm }: ArchiveTaskDialogProps) {
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const handleClose = () => {
+		setError(null);
+		onClose();
+	};
+
+	const handleConfirm = async () => {
+		setLoading(true);
+		setError(null);
+		try {
+			await onConfirm();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to archive task');
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	return (
+		<Modal isOpen={isOpen} onClose={handleClose} title="Archive Task?" size="sm" showCloseButton>
+			<div class="space-y-4">
+				<p class="text-sm text-gray-300">
+					You are about to archive <strong class="text-gray-100">{task.title}</strong>.
+				</p>
+
+				<div class="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-xs text-gray-400">
+					<p class="font-medium text-red-400 mb-1.5">This action is permanent:</p>
+					<ul class="list-disc list-inside space-y-1">
+						<li>
+							Task will be marked as <span class="text-gray-300">archived</span>
+						</li>
+						<li>All sessions will be terminated</li>
+						<li>Isolated worktree and branch will be cleaned up</li>
+						<li>The task cannot be reactivated after archiving</li>
+					</ul>
+				</div>
+
+				{error && (
+					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
+						{error}
+					</p>
+				)}
+
+				<div class="flex items-center justify-end gap-3 pt-2">
+					<button
+						type="button"
+						onClick={handleClose}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						Keep Task
+					</button>
+					<button
+						type="button"
+						onClick={() => void handleConfirm()}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50 flex items-center gap-1.5"
+						data-testid="archive-task-confirm"
+					>
+						{loading ? (
+							'Archiving…'
+						) : (
+							<>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 13a2 2 0 002 2h8a2 2 0 002-2L19 8"
+									/>
+								</svg>
+								Archive Task
+							</>
+						)}
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
@@ -507,11 +616,13 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const completeModal = useModal();
 	const cancelModal = useModal();
 	const rejectModal = useModal();
+	const archiveModal = useModal();
 
 	// Review state — approve/reject for tasks awaiting human review
 	const [approving, setApproving] = useState(false);
 	const [rejecting, setRejecting] = useState(false);
 	const [reviewError, setReviewError] = useState<string | null>(null);
+	const [reactivating, setReactivating] = useState(false);
 
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
@@ -685,6 +796,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// Pending, in_progress, and review tasks can be cancelled
 	const canCancel =
 		task.status === 'pending' || task.status === 'in_progress' || task.status === 'review';
+	// Completed and cancelled tasks can be reactivated
+	const canReactivate = task.status === 'completed' || task.status === 'cancelled';
+	// Completed, cancelled, and needs_attention tasks can be archived
+	const canArchive =
+		task.status === 'completed' || task.status === 'cancelled' || task.status === 'needs_attention';
 
 	// Complete task handler — throws on error so the dialog can display it
 	const completeTask = async (summary: string) => {
@@ -704,6 +820,28 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		await request('task.cancel', { roomId, taskId });
 		cancelModal.close();
 		toast.info('Task cancelled');
+		navigateToRoom(roomId);
+	};
+
+	// Reactivate task handler — transitions completed/cancelled to in_progress
+	const reactivateTask = async () => {
+		if (reactivating) return;
+		setReactivating(true);
+		try {
+			await request('task.setStatus', { roomId, taskId, status: 'in_progress' });
+			toast.success('Task reactivated');
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to reactivate task');
+		} finally {
+			setReactivating(false);
+		}
+	};
+
+	// Archive task handler — transitions to archived (permanent)
+	const archiveTask = async () => {
+		await request('task.setStatus', { roomId, taskId, status: 'archived' });
+		archiveModal.close();
+		toast.info('Task archived');
 		navigateToRoom(roomId);
 	};
 
@@ -869,6 +1007,42 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						title="Cancel task"
 					>
 						Cancel
+					</button>
+				)}
+				{canReactivate && (
+					<button
+						class="py-1 px-2.5 rounded-lg text-xs bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+						onClick={() => void reactivateTask()}
+						disabled={reactivating}
+						data-testid="task-reactivate-button"
+						title="Reactivate task"
+					>
+						{reactivating ? (
+							'Reactivating…'
+						) : (
+							<>
+								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+									/>
+								</svg>
+								Reactivate
+							</>
+						)}
+					</button>
+				)}
+				{canArchive && (
+					<button
+						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						onClick={archiveModal.open}
+						disabled={reactivating}
+						data-testid="task-archive-button"
+						title="Archive task (permanent)"
+					>
+						Archive
 					</button>
 				)}
 				{canComplete && task.status !== 'review' && (
@@ -1110,6 +1284,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			{/* Human input area (always visible) */}
 			<HumanInputArea
 				hasGroup={group !== null}
+				taskStatus={task.status}
 				roomId={roomId}
 				taskId={taskId}
 				onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
@@ -1127,6 +1302,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				isOpen={cancelModal.isOpen}
 				onClose={cancelModal.close}
 				onConfirm={cancelTask}
+			/>
+			<ArchiveTaskDialog
+				task={task}
+				isOpen={archiveModal.isOpen}
+				onClose={archiveModal.close}
+				onConfirm={archiveTask}
 			/>
 			{/* Reject dialog — for tasks awaiting human review */}
 			<RejectModal

@@ -597,6 +597,29 @@ class RoomStore {
 	}
 
 	/**
+	 * Set task status directly (e.g., reactivate completed/cancelled to in_progress).
+	 */
+	async setTaskStatus(taskId: string, status: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ success: boolean }>('task.setStatus', {
+			roomId,
+			taskId,
+			status,
+		});
+
+		// Task state updates arrive via room.task.update events
+	}
+
+	/**
 	 * Reject a task in review status with feedback.
 	 */
 	async rejectTask(taskId: string, feedback: string): Promise<void> {
