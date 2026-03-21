@@ -32,6 +32,7 @@ import type {
 	UpdateSpaceWorkflowParams,
 	WorkflowCondition,
 } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { StepDraft } from '../WorkflowStepCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import { rulesToDrafts } from '../WorkflowRulesEditor';
@@ -116,7 +117,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			position = layoutFallback.get(s.id) ?? { x: 0, y: 0 };
 		}
 		const step: StepDraft = {
-			localId: crypto.randomUUID(),
+			localId: generateUUID(),
 			id: s.id,
 			name: s.name,
 			agentId: s.agentId,
@@ -176,7 +177,7 @@ function resolveStepId(node: VisualNode, generatedIds: Map<string, string>): str
 	if (node.step.id) return node.step.id;
 	const key = node.step.localId;
 	if (!generatedIds.has(key)) {
-		generatedIds.set(key, crypto.randomUUID());
+		generatedIds.set(key, generateUUID());
 	}
 	return generatedIds.get(key)!;
 }
@@ -364,7 +365,7 @@ export function visualStateToUpdateParams(
 		startStepId: fields.startStepId || null,
 		// WorkflowRule requires `id` — generate one for new rules that lack a persisted id
 		rules: fields.rules.map((r) => ({
-			id: r.id ?? crypto.randomUUID(),
+			id: r.id ?? generateUUID(),
 			name: r.name,
 			content: r.content,
 			appliesTo: r.appliesTo,
