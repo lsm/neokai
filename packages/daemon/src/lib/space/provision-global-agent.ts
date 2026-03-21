@@ -16,6 +16,7 @@ import type { SpaceAgentManager } from './managers/space-agent-manager';
 import type { SpaceWorkflowManager } from './managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { GoalRepository } from '../../storage/repositories/goal-repository';
 import type { SpaceRuntimeService } from './runtime/space-runtime-service';
 import { Logger } from '../logger';
 import { buildGlobalSpacesAgentPrompt } from './agents/global-spaces-agent';
@@ -42,6 +43,8 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Database instance passed through to GlobalSpacesToolsConfig for SpaceTaskManager creation. */
 	db: BunDatabase;
+	/** Goal repository for the complete_goal tool and goal-completion detection. */
+	goalRepo?: GoalRepository;
 	/** Shared mutable state for the active space context. Created externally so RPC handlers can use the same reference. */
 	state: GlobalSpacesState;
 }
@@ -66,6 +69,7 @@ export async function provisionGlobalSpacesAgent(
 		taskRepo,
 		workflowRunRepo,
 		db,
+		goalRepo,
 		state,
 	} = deps;
 
@@ -116,6 +120,7 @@ export async function provisionGlobalSpacesAgent(
 			taskRepo,
 			workflowRunRepo,
 			db,
+			goalRepo,
 		},
 		state
 	);

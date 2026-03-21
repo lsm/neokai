@@ -26,6 +26,7 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../src/lib/space/runtime/space-runtime.ts';
+import { GoalRepository } from '../../../src/storage/repositories/goal-repository.ts';
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -1399,6 +1400,102 @@ describe('SpaceRuntime', () => {
 			expect(runtimeEvents[0].kind).toBe('goal_tasks_complete');
 			// The original config sink should have received NOTHING
 			expect(configEvents).toHaveLength(0);
+		});
+
+		test('clears goalIterations on setNotificationSink so pre-provisioning completions are re-emitted', async () => {
+			const nullEvents: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const realEvents: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+
+			// Construct with a null-like sink (before real sink is available)
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink: {
+					notify: async (e) => {
+						nullEvents.push(e);
+					},
+				},
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			const t = await taskManager.createTask({ title: 'T', description: 'D', goalId: GOAL_ID });
+			await taskManager.startTask(t.id);
+			await taskManager.completeTask(t.id, 'done');
+
+			runtimeWithSink['rehydrated'] = true;
+			// First tick fires on the pre-provisioning sink
+			await runtimeWithSink.executeTick();
+			expect(nullEvents).toHaveLength(1); // fired on old sink
+
+			// Now wire in the real sink — this should clear goalIterations so the event can re-fire
+			runtimeWithSink.setNotificationSink({
+				notify: async (e) => {
+					realEvents.push(e);
+				},
+			});
+
+			// Second tick — goalIterations was cleared, so the event fires again on the real sink
+			await runtimeWithSink.executeTick();
+			expect(realEvents).toHaveLength(1);
+			expect(realEvents[0].kind).toBe('goal_tasks_complete');
+		});
+
+		test('includes goalTitle and goalValidationCriteria from goalRepo in emitted event', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+
+			const goalRepo = new GoalRepository(db);
+			const goal = goalRepo.createGoal({
+				roomId: 'room-1',
+				title: 'Build the feature',
+				description: 'Verify all tests pass and the API returns 200',
+			});
+
+			const runtimeWithGoalRepo = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				goalRepo,
+				notificationSink: {
+					notify: async (e) => {
+						events.push(e);
+					},
+				},
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			const t = await taskManager.createTask({
+				title: 'Implement',
+				description: 'Do the work',
+				goalId: goal.id,
+			});
+			await taskManager.startTask(t.id);
+			await taskManager.completeTask(t.id, 'done');
+
+			runtimeWithGoalRepo['rehydrated'] = true;
+			await runtimeWithGoalRepo.executeTick();
+
+			expect(events).toHaveLength(1);
+			const evt =
+				events[0] as import('../../../src/lib/space/runtime/notification-sink.ts').GoalTasksCompleteEvent;
+			expect(evt.goalId).toBe(goal.id);
+			expect(evt.goalTitle).toBe('Build the feature');
+			expect(evt.goalValidationCriteria).toBe('Verify all tests pass and the API returns 200');
 		});
 	});
 });

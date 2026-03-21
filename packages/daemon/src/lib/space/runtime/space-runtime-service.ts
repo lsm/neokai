@@ -15,6 +15,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { GoalRepository } from '../../../storage/repositories/goal-repository';
 import type { NotificationSink } from './notification-sink';
 import { SpaceRuntime } from './space-runtime';
 import { Logger } from '../../logger';
@@ -28,6 +29,8 @@ export interface SpaceRuntimeServiceConfig {
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	/** Goal repository for goal-completion detection and complete_goal tool. Optional. */
+	goalRepo?: GoalRepository;
 	tickIntervalMs?: number;
 }
 

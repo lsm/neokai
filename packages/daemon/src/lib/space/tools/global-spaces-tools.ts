@@ -28,6 +28,7 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { GoalRepository } from '../../../storage/repositories/goal-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -45,6 +46,8 @@ export interface GlobalSpacesToolsConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Database instance used to create SpaceTaskManager instances on demand. */
 	db: BunDatabase;
+	/** Goal repository for `complete_goal` tool. Optional — tool returns error when absent. */
+	goalRepo?: GoalRepository;
 }
 
 /**
@@ -86,6 +89,7 @@ export function createGlobalSpacesToolHandlers(
 		taskRepo,
 		workflowRunRepo,
 		db,
+		goalRepo,
 	} = config;
 
 	/**
@@ -326,6 +330,7 @@ export function createGlobalSpacesToolHandlers(
 			assigned_agent?: 'coder' | 'general';
 			custom_agent_id?: string;
 			depends_on?: string[];
+			goal_id?: string;
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args.space_id);
 			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
@@ -339,6 +344,7 @@ export function createGlobalSpacesToolHandlers(
 					assignedAgent: args.assigned_agent,
 					customAgentId: args.custom_agent_id,
 					dependsOn: args.depends_on,
+					goalId: args.goal_id,
 				});
 				return jsonResult({ success: true, space_id: resolved.spaceId, task });
 			} catch (err) {
@@ -462,6 +468,47 @@ export function createGlobalSpacesToolHandlers(
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
 			}
+		},
+
+		/**
+		 * Mark a goal as successfully completed with a summary.
+		 * Call this after verification confirms all tasks for the goal passed validation.
+		 */
+		async complete_goal(args: { goal_id: string; summary: string }): Promise<ToolResult> {
+			if (!goalRepo) {
+				return jsonResult({
+					success: false,
+					error: 'Goal repository not available — cannot complete goals in this context.',
+				});
+			}
+
+			const goal = goalRepo.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+
+			if (goal.status === 'completed') {
+				return jsonResult({
+					success: true,
+					goal,
+					message: `Goal "${goal.title}" is already marked as completed.`,
+				});
+			}
+
+			if (goal.status === 'archived') {
+				return jsonResult({
+					success: false,
+					error: `Cannot complete an archived goal: ${args.goal_id}`,
+				});
+			}
+
+			const updated = goalRepo.updateGoal(args.goal_id, { status: 'completed' });
+			return jsonResult({
+				success: true,
+				goal: updated,
+				summary: args.summary,
+				message: `Goal "${goal.title}" marked as completed.`,
+			});
 		},
 	};
 }
@@ -666,6 +713,12 @@ export function createGlobalSpacesMcpServer(
 					.array(z.string())
 					.optional()
 					.describe('IDs of tasks that must complete before this task can start'),
+				goal_id: z
+					.string()
+					.optional()
+					.describe(
+						'ID of the goal to link this task to. Pass goal_id to associate the task with a goal for SpaceRuntime goal-completion tracking.'
+					),
 			},
 			(args) => handlers.create_standalone_task(args)
 		),
@@ -733,6 +786,15 @@ export function createGlobalSpacesMcpServer(
 					.describe('Built-in agent type (used when custom_agent_id is null)'),
 			},
 			(args) => handlers.reassign_task(args)
+		),
+		tool(
+			'complete_goal',
+			"Mark a goal as successfully completed after verification confirms the work meets the goal's validation criteria.",
+			{
+				goal_id: z.string().describe('ID of the goal to mark as completed'),
+				summary: z.string().describe('Summary of what was accomplished'),
+			},
+			(args) => handlers.complete_goal(args)
 		),
 	];
 

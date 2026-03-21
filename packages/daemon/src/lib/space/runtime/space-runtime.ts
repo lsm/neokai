@@ -179,6 +179,7 @@ export class SpaceRuntime {
 		// sink was wired (e.g. ticks that ran before provisioning completed at daemon startup)
 		// get a chance to re-notify on the next tick.
 		this.notifiedTaskSet.clear();
+		this.goalIterations.clear();
 	}
 
 	// -------------------------------------------------------------------------
