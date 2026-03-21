@@ -43,9 +43,11 @@ Add iteration counting to workflow runs so that cyclic transitions (where a step
    - Update `rowToRun()` to read `iteration_count` and `max_iterations` from the DB row.
    - Add `iteration_count` and `max_iterations` to `UpdateWorkflowRunParams` interface.
    - Update `updateRun()` to handle the new fields. Note: the existing `updateCurrentStep()` and `updateStatus()` convenience wrappers delegate to `updateRun()` and will continue to work as-is.
-8. In `packages/daemon/src/storage/repositories/space-workflow-repository.ts` (or wherever workflows are persisted):
-   - Update `createWorkflow()` / `updateWorkflow()` to handle `max_iterations`.
-   - Update `rowToWorkflow()` to read `max_iterations` from the DB row.
+8. In `packages/daemon/src/storage/repositories/space-workflow-repository.ts`:
+   - Add `max_iterations` to the `WorkflowRow` interface (line ~35) — this is the DB row shape used by `rowToWorkflow()`.
+   - Update the `createWorkflow()` INSERT statement (line ~183) to include `max_iterations` column. The INSERT currently lists `id, space_id, name, description, start_step_id, config, layout, created_at, updated_at` — add `max_iterations` after `layout`.
+   - Update `updateWorkflow()` to handle `max_iterations` in its UPDATE statement.
+   - Update `rowToWorkflow()` (line ~118) to read `row.max_iterations` and map it to `maxIterations` on the returned `SpaceWorkflow`.
 9. Run `bun run typecheck` to verify compilation.
 
 **Acceptance criteria:**

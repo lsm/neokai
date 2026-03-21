@@ -104,15 +104,17 @@ Comprehensive test coverage for all new functionality: `task_result` condition e
 1. In `packages/daemon/tests/unit/space/built-in-workflows.test.ts`, add or update tests for the Coding Workflow template.
 2. Test cases:
    - Verify the workflow has 4 steps (Plan, Code, Verify, Done).
-   - Verify the transition graph: Plan -> Code (human), Code -> Verify (always), Verify -> Plan (task_result: 'failed'), Verify -> Done (task_result: 'passed').
+   - Verify the transition graph: Plan -> Code (human), Code -> Verify (always), Verify -> Plan (task_result: 'failed', isCyclic: true), Verify -> Done (task_result: 'passed').
    - Verify `maxIterations` is set to 3.
-   - Verify `seedBuiltInWorkflows` resolves all agent roles correctly.
+   - Verify `seedBuiltInWorkflows` resolves all agent roles correctly and forwards `isCyclic` and `maxIterations` to the persisted workflow.
+   - Verify export/import round-trip: export the updated Coding Workflow, re-import it, and verify that `isCyclic: true` on the Verify→Plan transition and `task_result` conditions are preserved. This tests that `ExportedWorkflowTransition` includes `isCyclic` and the Zod schema accepts `task_result`.
 3. Run tests.
 
 **Acceptance criteria:**
 - Template structure matches the design specification.
-- All transitions have correct conditions and ordering.
-- Seeding works with mock agent resolver.
+- All transitions have correct conditions, ordering, and `isCyclic` flags.
+- Seeding works with mock agent resolver and persists `maxIterations` and `isCyclic`.
+- Export/import round-trip preserves `isCyclic` and `task_result` conditions.
 
 **Depends on:** Task 4.1
 
@@ -142,7 +144,7 @@ Comprehensive test coverage for all new functionality: `task_result` condition e
    - Advance. Verify task for Verify step is created.
    - Simulate Verify task completion with result `'failed: tests are broken'`.
    - Advance. Verify the transition loops back to Plan and creates a new Plan task. Verify `iterationCount` is 1 (one logical cycle).
-   - Simulate Plan(2) completion, advance with human approval, simulate Code(2) completion, advance to create Verify(2).
+   - Simulate Plan(2) completion. Set `humanApproved` on the run config again (the executor's `clearHumanApproval()` clears it after each human gate). Advance with human approval for the second Plan→Code traversal. Simulate Code(2) completion, advance to create Verify(2).
    - Simulate Verify(2) task completion with result `'passed'`.
    - Advance. Verify the workflow reaches Done (terminal) and run status is `'completed'`.
    - Verify total `iterationCount` is still 1 (only one loop-back occurred — the second pass through Plan/Code/Verify is forward progress within iteration 2, not a new cycle).
