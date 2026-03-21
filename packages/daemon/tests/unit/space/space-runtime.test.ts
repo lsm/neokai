@@ -413,6 +413,136 @@ describe('SpaceRuntime', () => {
 
 			expect(run.description).toBe('Some description');
 		});
+
+		test('stores goalId on run record and propagates to initial task', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Goal Run',
+				undefined,
+				'goal-abc'
+			);
+
+			expect(run.goalId).toBe('goal-abc');
+			expect(tasks[0].goalId).toBe('goal-abc');
+		});
+
+		test('goalId defaults to undefined when not provided', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'No Goal');
+
+			expect(run.goalId).toBeUndefined();
+			expect(tasks[0].goalId).toBeUndefined();
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// goalId propagation through workflow advancement
+	// -------------------------------------------------------------------------
+
+	describe('goalId propagation through workflow advancement', () => {
+		test('goalId propagates to tasks created by followTransition on advance', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Goal Propagation Run',
+				undefined,
+				'goal-propagate'
+			);
+
+			// Initial task should have goalId
+			expect(tasks[0].goalId).toBe('goal-propagate');
+
+			// Complete step A → tick → step B task created with goalId
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			await runtime.executeTick();
+
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			expect(allTasks).toHaveLength(2);
+
+			const stepBTask = allTasks.find((t) => t.workflowStepId === STEP_B);
+			expect(stepBTask).toBeDefined();
+			expect(stepBTask!.goalId).toBe('goal-propagate');
+		});
+
+		test('goalId propagates through all steps of a three-step workflow', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+					{ id: STEP_C, name: 'Review', agentId: AGENT_GENERAL },
+				],
+				[{ type: 'always' }, { type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Full Goal Run',
+				undefined,
+				'goal-full'
+			);
+
+			// Complete step A → tick
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			await runtime.executeTick();
+
+			// Complete step B → tick
+			const stepBTask = taskRepo
+				.listByWorkflowRun(run.id)
+				.find((t) => t.workflowStepId === STEP_B)!;
+			taskRepo.updateTask(stepBTask.id, { status: 'completed' });
+			await runtime.executeTick();
+
+			// All three tasks should have the goalId
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			expect(allTasks).toHaveLength(3);
+			for (const task of allTasks) {
+				expect(task.goalId).toBe('goal-full');
+			}
+		});
+
+		test('tasks have no goalId when run has no goalId', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'No Goal Run');
+
+			// Complete step A → tick
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			await runtime.executeTick();
+
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			for (const task of allTasks) {
+				expect(task.goalId).toBeUndefined();
+			}
+		});
 	});
 
 	// -------------------------------------------------------------------------

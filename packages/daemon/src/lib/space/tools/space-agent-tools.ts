@@ -97,13 +97,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			workflow_id: string;
 			title: string;
 			description?: string;
+			goal_id?: string;
 		}): Promise<ToolResult> {
 			try {
 				const { run, tasks } = await runtime.startWorkflowRun(
 					spaceId,
 					args.workflow_id,
 					args.title,
-					args.description
+					args.description,
+					args.goal_id
 				);
 				return jsonResult({ success: true, run, tasks });
 			} catch (err) {
@@ -180,7 +182,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						spaceId,
 						args.workflow_id,
 						run.title,
-						newDescription
+						newDescription,
+						run.goalId
 					);
 					return jsonResult({
 						success: true,
@@ -492,6 +495,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('ID of the workflow to run (required — choose from list_workflows)'),
 				title: z.string().describe('Short title for this workflow run'),
 				description: z.string().optional().describe('Detailed description of the work to be done'),
+				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
 			},
 			(args) => handlers.start_workflow_run(args)
 		),

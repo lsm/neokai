@@ -30,8 +30,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, iteration_count, max_iterations, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -46,6 +46,7 @@ export class SpaceWorkflowRunRepository {
 			null,
 			0,
 			params.maxIterations ?? 5,
+			params.goalId ?? null,
 			now,
 			now
 		);
@@ -205,6 +206,7 @@ export class SpaceWorkflowRunRepository {
 			config,
 			iterationCount: (row.iteration_count as number | undefined) ?? 0,
 			maxIterations: (row.max_iterations as number | undefined) ?? 5,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 			completedAt: (row.completed_at as number | null) ?? undefined,

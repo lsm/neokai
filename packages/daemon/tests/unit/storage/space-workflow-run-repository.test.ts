@@ -235,4 +235,100 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(repo.deleteRun('nonexistent')).toBe(false);
 		});
 	});
+
+	describe('goalId', () => {
+		it('creates a run with goalId and persists it', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Goal Run',
+				goalId: 'goal-123',
+			});
+
+			expect(run.goalId).toBe('goal-123');
+
+			// Verify persistence via re-fetch
+			const fetched = repo.getRun(run.id)!;
+			expect(fetched.goalId).toBe('goal-123');
+		});
+
+		it('creates a run without goalId — maps to undefined', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'No Goal',
+			});
+
+			expect(run.goalId).toBeUndefined();
+
+			// Re-fetch from DB to confirm persistence
+			expect(repo.getRun(run.id)!.goalId).toBeUndefined();
+		});
+
+		it('goalId survives status and step updates', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Goal Persist',
+				goalId: 'goal-456',
+			});
+
+			repo.updateStatus(run.id, 'in_progress');
+			repo.updateCurrentStep(run.id, 'step-xyz');
+
+			const updated = repo.getRun(run.id)!;
+			expect(updated.goalId).toBe('goal-456');
+			expect(updated.status).toBe('in_progress');
+			expect(updated.currentStepId).toBe('step-xyz');
+		});
+
+		it('goalId is included when listing runs by space', () => {
+			repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'G1',
+				goalId: 'goal-a',
+			});
+			repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'G2',
+			});
+
+			const runs = repo.listBySpace(spaceId);
+			expect(runs).toHaveLength(2);
+			const withGoal = runs.find((r) => r.title === 'G1')!;
+			const withoutGoal = runs.find((r) => r.title === 'G2')!;
+			expect(withGoal.goalId).toBe('goal-a');
+			expect(withoutGoal.goalId).toBeUndefined();
+		});
+
+		it('goalId is included in getActiveRuns results', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Active Goal',
+				goalId: 'goal-active',
+			});
+			repo.updateStatus(run.id, 'in_progress');
+
+			const active = repo.getActiveRuns(spaceId);
+			expect(active).toHaveLength(1);
+			expect(active[0].goalId).toBe('goal-active');
+		});
+
+		it('goalId is included in getRehydratableRuns results', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Needs Attn',
+				goalId: 'goal-rehydrate',
+			});
+			repo.updateStatus(run.id, 'needs_attention');
+
+			const rehydratable = repo.getRehydratableRuns(spaceId);
+			expect(rehydratable).toHaveLength(1);
+			expect(rehydratable[0].goalId).toBe('goal-rehydrate');
+		});
+	});
 });

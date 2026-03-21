@@ -310,6 +310,8 @@ export interface SpaceWorkflowRun {
 	iterationCount: number;
 	/** Maximum iterations before escalating to needs_attention */
 	maxIterations: number;
+	/** Optional goal/mission ID this run is associated with */
+	goalId?: string;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -334,6 +336,8 @@ export interface CreateWorkflowRunParams {
 	currentStepId?: string;
 	/** Maximum iterations before escalating to needs_attention (overrides workflow default) */
 	maxIterations?: number;
+	/** Optional goal/mission ID to associate with this run */
+	goalId?: string;
 }
 
 // ============================================================================

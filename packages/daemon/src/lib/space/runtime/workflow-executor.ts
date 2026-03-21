@@ -373,6 +373,7 @@ export class WorkflowExecutor {
 			taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
 			customAgentId: resolved !== undefined ? resolved.customAgentId : nextStep.agentId,
 			status: 'pending',
+			goalId: this.run.goalId,
 		});
 
 		return { step: nextStep, tasks: [task] };
