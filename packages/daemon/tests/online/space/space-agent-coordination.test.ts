@@ -126,8 +126,8 @@ async function createTestSpace(
 		description: `Test space for coordination online tests (${autonomyLevel})`,
 		workspacePath: process.cwd(),
 		autonomyLevel,
-	})) as { space: Space };
-	return result.space;
+	})) as Space;
+	return result;
 }
 
 /**
@@ -143,8 +143,8 @@ async function createTestTask(
 		spaceId,
 		title,
 		description,
-	})) as { task: { id: string } };
-	return result.task.id;
+	})) as { id: string };
+	return result.id;
 }
 
 describe('Space Agent Coordination — Online Tests', () => {

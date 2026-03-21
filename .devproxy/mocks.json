@@ -93,7 +93,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; stop_reason end_turn so test reads tool_use from SDK messages without needing follow-up)",
+			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; stop_reason tool_use so SDK dispatches tool and records tool_use block; follow-up handled by tool_result mock)",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -147,7 +147,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; stop_reason end_turn so test reads tool_use from SDK messages without needing follow-up)",
+			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; stop_reason tool_use so SDK dispatches tool and records tool_use block; follow-up handled by tool_result mock)",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
