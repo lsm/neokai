@@ -295,7 +295,8 @@ export class WorkflowExecutor {
 		}
 
 		// Re-read the run from DB on every advance() to pick up any external changes
-		// (e.g. a human increasing maxIterations via updateRun()).
+		// (e.g. a human increasing maxIterations via updateRun(), or resetting status
+		// to 'in_progress' after resolving the condition failure).
 		this.run = this.workflowRunRepo.getRun(this.run.id) ?? this.run;
 
 		// A condition failure sets status to needs_attention; require explicit external
