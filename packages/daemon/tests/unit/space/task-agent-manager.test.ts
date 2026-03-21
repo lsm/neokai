@@ -310,18 +310,6 @@ function makeCtx(): TestCtx {
 		}
 	);
 
-	// Spy on AgentSession.restore to return mock sessions for rehydration tests.
-	// rehydrateTaskAgent() uses restore() (not fromInit()) to reload persisted sessions.
-	spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
-		// Only restore if the session exists in the mock DB
-		if (!mockDb.getSession(sessionId)) return null;
-		const existing = createdSessions.get(sessionId);
-		if (existing) return existing as unknown as AgentSession;
-		const mockSession = makeMockSession(sessionId);
-		createdSessions.set(sessionId, mockSession);
-		return mockSession as unknown as AgentSession;
-	});
-
 	const manager = new TaskAgentManager({
 		db: mockDb as unknown as import('../../../src/storage/database.ts').Database,
 		sessionManager:
@@ -1270,6 +1258,27 @@ describe('TaskAgentManager', () => {
 	// -----------------------------------------------------------------------
 
 	describe('rehydrate', () => {
+		// Scoped spy for AgentSession.restore — only active inside this describe block.
+		// rehydrateTaskAgent() uses restore() (not fromInit()) to reload persisted sessions.
+		// We restore the spy after each test so it does not leak into other test files.
+		let restoreSpyScoped: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
+
+		beforeEach(() => {
+			restoreSpyScoped = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				// Only restore if the session exists in the mock DB
+				if (!ctx.mockDb.getSession(sessionId)) return null;
+				const existing = ctx.createdSessions.get(sessionId);
+				if (existing) return existing as unknown as AgentSession;
+				const mockSession = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, mockSession);
+				return mockSession as unknown as AgentSession;
+			});
+		});
+
+		afterEach(() => {
+			restoreSpyScoped.mockRestore();
+		});
+
 		/**
 		 * Helper: seed a task with status in_progress and a pre-existing task agent session.
 		 * The session is stored in the mock DB with `type: 'space_task_agent'` so the
