@@ -1,0 +1,73 @@
+# Milestone 5: Database Cleanup Job and Stale Job Reclamation
+
+## Goal
+
+Add a self-scheduling `job_queue.cleanup` job that runs daily to remove old completed/dead jobs. Verify stale job reclamation works correctly on restart.
+
+## Scope
+
+- Create `job_queue.cleanup` handler
+- Schedule initial cleanup job on daemon start
+- Verify `reclaimStale()` reclaims stuck processing jobs on restart
+
+## Tasks
+
+### Task 5.1: Create cleanup handler and wire into app lifecycle
+
+**Description:** Create the `job_queue.cleanup` handler that removes old completed/dead jobs and self-schedules for the next day. Wire it into the daemon startup.
+
+**Agent type:** coder
+
+**Subtasks:**
+1. Run `bun install` at the worktree root
+2. Create `packages/daemon/src/lib/job-handlers/cleanup.handler.ts`:
+   - Handler calls `jobQueue.cleanup(Date.now() - maxAge)` where `maxAge` defaults to 7 days
+   - In `finally` block: dedup-check then enqueue next cleanup job with `runAt: Date.now() + 24 * 60 * 60 * 1000` (24 hours)
+   - Return `{ deletedJobs, nextRunAt }`
+3. In `packages/daemon/src/app.ts` (or a new init function):
+   - After `jobProcessor.start()`, register the cleanup handler
+   - Check if a pending `job_queue.cleanup` job already exists; if not, enqueue one with `runAt: Date.now()` (run immediately on first boot, then daily)
+4. Create unit test `packages/daemon/tests/unit/job-handlers/cleanup-handler.test.ts`:
+   - Test cleanup deletes old jobs
+   - Test self-scheduling
+   - Test dedup (does not create duplicate cleanup jobs)
+5. Run tests and `bun run check`
+
+**Acceptance criteria:**
+- Cleanup handler removes completed/dead jobs older than 7 days
+- Self-schedules next run in 24 hours
+- Dedup prevents multiple pending cleanup jobs
+- Registered and initial job enqueued on daemon start
+- Unit tests pass
+
+**Depends on:** Task 1.2
+
+**Changes must be on a feature branch with a GitHub PR created via `gh pr create`.**
+
+---
+
+### Task 5.2: Verify stale job reclamation on restart
+
+**Description:** Add tests verifying that jobs stuck in `processing` status are reclaimed after daemon restart, ensuring no jobs are permanently lost.
+
+**Agent type:** coder
+
+**Subtasks:**
+1. Create `packages/daemon/tests/unit/storage/job-queue-stale-reclamation.test.ts`
+2. Test scenarios:
+   - Enqueue a job, mark it as processing (simulate mid-execution crash)
+   - Create a new `JobQueueProcessor`, start it
+   - Verify the stale job is reclaimed after `staleThresholdMs`
+   - Verify reclaimed job is re-processed by its handler
+3. Test that non-stale processing jobs are NOT reclaimed (within threshold)
+4. Run tests
+
+**Acceptance criteria:**
+- Stale jobs (processing for longer than threshold) are reclaimed
+- Reclaimed jobs are re-processed
+- Non-stale processing jobs left alone
+- Tests pass
+
+**Depends on:** Task 1.2
+
+**Changes must be on a feature branch with a GitHub PR created via `gh pr create`.**
