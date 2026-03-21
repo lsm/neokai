@@ -10,6 +10,7 @@ but not yet wired into any RPC handlers or frontend components. This plan adopts
 3. Remove the one remaining redundant RPC handler broadcast (`task.fail → emitTaskUpdate`)
 4. Replace one-shot RPC + manual event listeners in the frontend with LiveQuery subscriptions
    (and atomically remove the corresponding daemon-side goal RPC handler broadcasts)
+5. Adopt LiveQuery for session-group message streaming in TaskView
 
 ## Process requirements (applies to all tasks)
 
