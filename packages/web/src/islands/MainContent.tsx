@@ -91,9 +91,7 @@ export default function MainContent() {
 	// Inbox route
 	if (navSection === 'inbox') {
 		return (
-			<div class="flex-1 flex items-center justify-center text-gray-500">
-				Inbox coming soon...
-			</div>
+			<div class="flex-1 flex items-center justify-center text-gray-500">Inbox coming soon...</div>
 		);
 	}
 
