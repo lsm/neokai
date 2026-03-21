@@ -234,7 +234,9 @@ export class WorkflowExecutor {
 			}
 
 			case 'task_result': {
-				// Task 1.2 implements full evaluation — for now, always fail
+				// TODO(Task 1.2): Implement prefix matching against completed task's result field.
+				// Until then, Verify step transitions (task_result conditions) will not fire,
+				// causing the run to go to needs_attention. This is intentional for phased rollout.
 				return { passed: false, reason: 'task_result evaluation not yet implemented' };
 			}
 

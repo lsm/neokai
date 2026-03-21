@@ -71,6 +71,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			id: CODING_VERIFY_STEP,
 			name: 'Verify & Test',
 			agentId: 'general',
+			// NOTE: task_result condition uses prefix matching — "failed: reason" matches expression "failed"
 			instructions:
 				'Review the completed work. Run tests, check for issues. Set result to "passed" if everything looks good, or "failed: <reason>" if problems are found.',
 		},
