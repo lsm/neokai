@@ -376,8 +376,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
-			// Handle restart/revive: update group state for needs_attention/cancelled tasks
-			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+			// Handle restart/revive: update group state for needs_attention, completed, and cancelled tasks
+			if (
+				task.status === 'needs_attention' ||
+				task.status === 'cancelled' ||
+				task.status === 'completed'
+			) {
 				const group = groupRepo.getGroupByTaskId(args.task_id);
 				if (group) {
 					if (args.status === 'pending' || args.status === 'in_progress') {
@@ -394,10 +398,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						task.status === 'needs_attention' &&
 						group.completedAt !== null
 					) {
-						// Lightweight revive (needs_attention → review only): clear completedAt
-						// without resetting metadata. Only offered on this agent-tool path for
-						// needs_attention tasks — cancelled tasks use resetGroupForRestart above
-						// for a clean-slate restart, not a lightweight revive.
+						// Lightweight revive: clear completedAt without resetting metadata.
+						// Supported for needs_attention → review only. Cancelled and completed
+						// tasks use resetGroupForRestart() above for a clean slate.
 						const revived = groupRepo.reviveGroup(group.id);
 						if (!revived) {
 							return jsonResult({
@@ -513,13 +516,11 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			// silently reactivate a task that was explicitly cancelled by a human. The
 			// worktree is still present (only archiveGroup cleans it up), but resuming
 			// without explicit human intent risks restarting undesired work.
-			// Use set_task_status to explicitly restart the task first.
+			// Use set_task_status to explicitly reactivate the task first.
 			if (task.status === 'cancelled') {
 				return jsonResult({
 					success: false,
-					error:
-						`Task ${args.task_id} is cancelled. Use set_task_status to restart it ` +
-						'(e.g. status: "pending" or "in_progress") before sending a message.',
+					error: `Task ${args.task_id} is cancelled. Use set_task_status to reactivate it first (e.g. status: "in_progress").`,
 				});
 			}
 
