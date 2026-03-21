@@ -1,10 +1,10 @@
 /**
- * Task Actions Dropdown E2E Tests
+ * Task Actions E2E Tests
  *
- * Tests the task completion/cancellation UX redesign:
- * - Three-dot dropdown menu replaces the old cancel button
- * - "Mark as Complete" option for in_progress/review tasks
- * - "Cancel Task" option for pending/in_progress/review tasks
+ * Tests the inline task action buttons in TaskView:
+ * - "Cancel" button (data-testid="task-cancel-button") for pending/in_progress/review tasks
+ * - "Complete" button (data-testid="task-complete-button") for in_progress tasks only
+ *   (hidden for review status despite canComplete being true)
  * - Confirmation dialogs for both operations
  *
  * Setup: creates a real room+task via RPC (infrastructure), then tests UI.
@@ -36,7 +36,7 @@ async function createRoomAndTask(
 		const taskRes = await hub.request('task.create', {
 			roomId,
 			title: 'E2E Test Task',
-			description: 'Task for testing the actions dropdown',
+			description: 'Task for testing the action buttons',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
@@ -82,7 +82,7 @@ async function deleteRoom(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-test.describe('Task Actions Dropdown', () => {
+test.describe('Task Action Buttons', () => {
 	let roomId = '';
 	let taskId = '';
 
@@ -99,32 +99,38 @@ test.describe('Task Actions Dropdown', () => {
 		await deleteRoom(page, roomId);
 	});
 
-	test('shows task options menu for pending task (cancel only)', async ({ page }) => {
+	test('shows cancel button for pending task (no complete button)', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Dropdown trigger should be visible for pending task (cancel is available)
-		const menuButton = page.locator('[data-testid="task-options-menu"]');
-		await expect(menuButton).toBeVisible({ timeout: 5000 });
+		// Pending task: cancel button visible, complete button not in DOM
+		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
 	});
 
-	test('shows task options menu for in_progress task (complete + cancel)', async ({ page }) => {
+	test('shows both cancel and complete buttons for in_progress task', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		const menuButton = page.locator('[data-testid="task-options-menu"]');
-		await expect(menuButton).toBeVisible({ timeout: 5000 });
+		// In-progress task: both buttons visible
+		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.locator('[data-testid="task-complete-button"]')).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
-	test('does NOT show task options menu for completed task', async ({ page }) => {
-		// Create a pending task then transition to completed via in_progress
+	test('does NOT show action buttons for completed task', async ({ page }) => {
+		// Create a task and transition to completed via RPC
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
-		// Complete the task via RPC (infrastructure)
 		await page.evaluate(
 			async ({ rId, tId }) => {
 				const hub = window.__messageHub || window.appState?.messageHub;
@@ -137,53 +143,46 @@ test.describe('Task Actions Dropdown', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// No dropdown for completed tasks
-		const menuButton = page.locator('[data-testid="task-options-menu"]');
-		await expect(menuButton).not.toBeVisible();
+		// Completed task: neither button should be in the DOM
+		await expect(page.locator('[data-testid="task-cancel-button"]')).not.toBeAttached();
+		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
 	});
 
-	test('opens dropdown and shows Cancel Task item', async ({ page }) => {
+	test('cancel button is visible for pending task', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Click the three-dot menu
-		await page.locator('[data-testid="task-options-menu"]').click();
-
-		// Cancel Task item should be visible
-		await expect(page.getByRole('menuitem', { name: /Cancel Task/ })).toBeVisible({
-			timeout: 5000,
-		});
+		// Cancel button should be directly visible (inline, not in a dropdown)
+		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
+		await expect(cancelBtn).toBeVisible({ timeout: 5000 });
+		await expect(cancelBtn).toHaveText(/Cancel/);
 	});
 
-	test('shows Mark as Complete for in_progress task', async ({ page }) => {
+	test('complete button is visible for in_progress task', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Click the three-dot menu
-		await page.locator('[data-testid="task-options-menu"]').click();
-
-		// Both options should be visible
-		await expect(page.getByRole('menuitem', { name: /Mark as Complete/ })).toBeVisible({
+		// Both action buttons should be visible
+		await expect(page.locator('[data-testid="task-complete-button"]')).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.getByRole('menuitem', { name: /Cancel Task/ })).toBeVisible({
+		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
 			timeout: 5000,
 		});
 	});
 
-	test('opens cancel confirmation dialog on Cancel Task click', async ({ page }) => {
+	test('opens cancel confirmation dialog on cancel button click', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Open dropdown and click Cancel Task
-		await page.locator('[data-testid="task-options-menu"]').click();
-		await page.getByRole('menuitem', { name: /Cancel Task/ }).click();
+		// Click the cancel button directly
+		await page.locator('[data-testid="task-cancel-button"]').click();
 
 		// Cancel dialog should appear with the task name
 		const cancelDialog = page.locator('[role="dialog"]');
@@ -194,15 +193,14 @@ test.describe('Task Actions Dropdown', () => {
 		await expect(cancelDialog.getByText(/cannot be undone/i)).toBeVisible();
 	});
 
-	test('opens complete confirmation dialog on Mark as Complete click', async ({ page }) => {
+	test('opens complete confirmation dialog on complete button click', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Open dropdown and click Mark as Complete
-		await page.locator('[data-testid="task-options-menu"]').click();
-		await page.getByRole('menuitem', { name: /Mark as Complete/ }).click();
+		// Click the complete button directly
+		await page.locator('[data-testid="task-complete-button"]').click();
 
 		// Complete dialog should appear with the task name
 		const completeDialog = page.locator('[role="dialog"]');
@@ -218,9 +216,8 @@ test.describe('Task Actions Dropdown', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Open dialog
-		await page.locator('[data-testid="task-options-menu"]').click();
-		await page.getByRole('menuitem', { name: /Cancel Task/ }).click();
+		// Open cancel dialog
+		await page.locator('[data-testid="task-cancel-button"]').click();
 		await expect(page.locator('[data-testid="cancel-task-confirm"]')).toBeVisible();
 
 		// Dismiss with Keep Task button
@@ -237,9 +234,8 @@ test.describe('Task Actions Dropdown', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Open dropdown → Cancel Task → confirm
-		await page.locator('[data-testid="task-options-menu"]').click();
-		await page.getByRole('menuitem', { name: /Cancel Task/ }).click();
+		// Click cancel button → confirm
+		await page.locator('[data-testid="task-cancel-button"]').click();
 		await expect(page.locator('[data-testid="cancel-task-confirm"]')).toBeVisible();
 		await page.locator('[data-testid="cancel-task-confirm"]').click();
 
@@ -253,9 +249,8 @@ test.describe('Task Actions Dropdown', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Open dropdown → Mark as Complete → confirm
-		await page.locator('[data-testid="task-options-menu"]').click();
-		await page.getByRole('menuitem', { name: /Mark as Complete/ }).click();
+		// Click complete button → confirm
+		await page.locator('[data-testid="task-complete-button"]').click();
 		await expect(page.locator('[data-testid="complete-task-confirm"]')).toBeVisible();
 		await page.locator('[data-testid="complete-task-confirm"]').click();
 
