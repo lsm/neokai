@@ -11,6 +11,7 @@
 import { useState } from 'preact/hooks';
 import { signal, effect } from '@preact/signals';
 import type { TaskSummary, TaskStatus } from '@neokai/shared';
+import { toast } from '../../lib/toast.ts';
 
 /** Tab filter types */
 export type TaskFilterTab = 'active' | 'review' | 'done' | 'needs_attention';
@@ -507,6 +508,10 @@ function TaskItem({
 	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
 	const [feedback, setFeedback] = useState('');
+	// Approve animation: button shows "✓ Approved" for 300ms, card fades to opacity-40
+	const [buttonApproved, setButtonApproved] = useState(false);
+	const [cardFading, setCardFading] = useState(false);
+
 	const isClickable = !!onClick;
 	const isReview = task.status === 'review';
 	const showView = isReview && !!onView;
@@ -517,9 +522,12 @@ function TaskItem({
 	const isWorking = isReview && !!task.activeSession;
 	const isRejecting = rejectingTaskId === task.id;
 
+	// Compute border color: when approve animation active, switch to green
+	const borderColor = cardFading ? 'border-l-green-500' : getStatusBorderColor(task.status);
+
 	return (
 		<div
-			class={`px-4 py-3 border-l-2 ${getStatusBorderColor(task.status)} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+			class={`px-4 py-3 border-l-2 ${borderColor} transition-[opacity,border-color] duration-500 ${cardFading ? 'opacity-40' : ''} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
 			onClick={isClickable ? () => onClick(task.id) : undefined}
 		>
 			<div class="flex items-start justify-between">
@@ -573,11 +581,17 @@ function TaskItem({
 								<button
 									onClick={(e) => {
 										e.stopPropagation();
+										// Start approve animation: button text + card fade
+										setButtonApproved(true);
+										setCardFading(true);
 										onApprove(task.id);
+										// Reset button text after 300ms
+										setTimeout(() => setButtonApproved(false), 300);
 									}}
-									class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+									disabled={buttonApproved}
+									class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors disabled:cursor-default"
 								>
-									Approve
+									{buttonApproved ? '✓ Approved' : 'Approve'}
 								</button>
 							)}
 							{showReject && (
@@ -645,8 +659,12 @@ function TaskItem({
 					/>
 				</div>
 			)}
-			{isRejecting && (
-				<div class="mt-3 pt-3 border-t border-dark-700" onClick={(e) => e.stopPropagation()}>
+			{/* Reject form — always rendered; max-height controls collapse with transition-all duration-200 */}
+			<div
+				class={`overflow-hidden transition-all duration-200 ${isRejecting ? 'max-h-48' : 'max-h-0 pointer-events-none'}`}
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div class="mt-3 pt-3 border-t border-dark-700">
 					<textarea
 						rows={2}
 						placeholder="Please provide feedback..."
@@ -669,6 +687,7 @@ function TaskItem({
 							onClick={(e) => {
 								e.stopPropagation();
 								onReject?.(task.id, feedback);
+								toast.rejected();
 								setFeedback('');
 								onSetRejectingTaskId?.(null);
 							}}
@@ -679,7 +698,7 @@ function TaskItem({
 						</button>
 					</div>
 				</div>
-			)}
+			</div>
 		</div>
 	);
 }
