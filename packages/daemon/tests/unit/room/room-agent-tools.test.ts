@@ -1278,15 +1278,19 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to in_progress and complete the task
+			// Move to in_progress, insert a group, and mark it completed via the repo
+			// so that completedAt is non-null before reactivation
 			await taskManager.startTask(taskId);
 			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			expect(groupInserted).not.toBeNull();
+			groupRepo.completeGroup(groupId, groupInserted!.version);
 			await taskManager.completeTask(taskId, 'Done');
 
-			// Verify the group exists
+			// Verify the group has a non-null completedAt before reactivation
 			const groupBefore = groupRepo.getGroup(groupId);
 			expect(groupBefore).not.toBeNull();
-			expect(groupBefore!.taskId).toBe(taskId);
+			expect(groupBefore!.completedAt).not.toBeNull();
 
 			// Reactivate the completed task
 			const result = parseResult(
@@ -1295,7 +1299,7 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('in_progress');
 
-			// The old completed group should be reset and active again
+			// resetGroupForRestart should have cleared completedAt and reset metadata
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
 			expect(groupAfter!.completedAt).toBeNull();
