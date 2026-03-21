@@ -396,6 +396,24 @@ export function setupTaskHandlers(
 			);
 		}
 
+		// Archiving: delegate entirely to archiveTaskGroup (terminates sessions + cleans worktree)
+		// or archiveTask (no runtime — sets archivedAt directly). Early return skips generic path.
+		if (params.status === 'archived') {
+			const runtime = runtimeService?.getRuntime(params.roomId);
+			if (runtime) {
+				await runtime.archiveTaskGroup(params.taskId);
+			} else {
+				await taskManager.archiveTask(params.taskId);
+			}
+
+			const archivedTask = await taskManager.getTask(params.taskId);
+			if (archivedTask) {
+				emitTaskUpdate(params.roomId, archivedTask);
+				emitRoomOverview(params.roomId);
+			}
+			return { task: archivedTask };
+		}
+
 		// If there's an active group with runtime, terminate it on terminal transitions.
 		if (runtimeService) {
 			const runtime = runtimeService.getRuntime(params.roomId);
@@ -431,7 +449,8 @@ export function setupTaskHandlers(
 			}
 		}
 
-		// Handle restart: reset needs_attention/cancelled group so runtime picks it up fresh
+		// Handle restart: reset cancelled/needs_attention group so runtime picks it up fresh.
+		// completed → in_progress uses lightweight revival (group preserved, no full wipe).
 		if (task.status === 'needs_attention' || task.status === 'cancelled') {
 			if (params.status === 'pending' || params.status === 'in_progress') {
 				const groupRepo = new SessionGroupRepository(db.getDatabase());
@@ -800,39 +819,41 @@ export function setupTaskHandlers(
 			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
 		}
 
-		// Cancelled tasks have their workspace cleaned up on cancellation.
-		// Restarting via session injection would point at a gone workspace.
-		// Direct the caller to use set_task_status to restart from scratch.
-		if (task.status === 'cancelled') {
-			throw new Error(
-				`Task ${params.taskId} is cancelled. Cancelled tasks cannot receive messages ` +
-					'because their workspace has been cleaned up. Use set_task_status to restart it ' +
-					'(e.g. status: "pending" or "in_progress").'
-			);
-		}
-
-		// needs_attention tasks: revive sessions and inject the message.
-		// Uses reviveTaskForMessage (lightweight revive via reviveGroup) which preserves
-		// metadata, conversation history, and uses the established session-restore path.
-		// This mirrors the agent-tool path in room-agent-tools.ts send_message_to_task.
-		if (task.status === 'needs_attention') {
+		// needs_attention, completed, and cancelled tasks: auto-reactivate via reviveTaskForMessage.
+		// reviveTaskForMessage is a lightweight revive that restores sessions and injects the
+		// message WITHOUT wiping the group metadata or conversation history.
+		//
+		// Note — deliberate asymmetry with task.setStatus:
+		//   task.setStatus(cancelled → in_progress)  → resetGroupForRestart (clean slate)
+		//   task.sendHumanMessage(cancelled task)     → reviveTaskForMessage  (keep history)
+		// Sending a message to a cancelled task is a "continue this conversation" action, so
+		// we preserve context. Explicitly restarting via setStatus is a "start over" action.
+		if (
+			task.status === 'needs_attention' ||
+			task.status === 'completed' ||
+			task.status === 'cancelled'
+		) {
+			// needs_attention transitions through 'review' (its prior working state);
+			// completed/cancelled transition directly to 'in_progress' as the pre-revival
+			// intermediate status before reviveTaskForMessage restores sessions.
+			const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 			try {
-				await taskManager.setTaskStatus(params.taskId, 'review');
+				await taskManager.setTaskStatus(params.taskId, intermediateStatus);
 			} catch (err) {
 				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
 			}
 
 			const revived = await runtime.reviveTaskForMessage(params.taskId, params.message.trim());
 			if (!revived) {
-				// Rollback: restore task to needs_attention (review → needs_attention is a valid transition)
+				// Rollback: restore task to original status
 				try {
-					await taskManager.setTaskStatus(params.taskId, 'needs_attention');
+					await taskManager.setTaskStatus(params.taskId, task.status);
 				} catch {
 					// Best-effort rollback; swallow to avoid masking the revive error
 				}
 				throw new Error(
 					`Failed to revive task ${params.taskId}: agent sessions could not be restored. ` +
-						'Task status has been reset to needs_attention.'
+						`Task status has been reset to ${task.status}.`
 				);
 			}
 

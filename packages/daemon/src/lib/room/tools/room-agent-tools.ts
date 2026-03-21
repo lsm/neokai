@@ -394,10 +394,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						task.status === 'needs_attention' &&
 						group.completedAt !== null
 					) {
-						// Lightweight revive (failed → review only): clear completedAt without
-						// resetting metadata. Only supported for failed tasks — cancelled tasks
-						// have their worktree cleaned up so reviving the group would point
-						// sessions at a gone workspace.
+						// Lightweight revive (needs_attention → review only): clear completedAt
+						// without resetting metadata. Only offered on this agent-tool path for
+						// needs_attention tasks — cancelled tasks use resetGroupForRestart above
+						// for a clean-slate restart, not a lightweight revive.
 						const revived = groupRepo.reviveGroup(group.id);
 						if (!revived) {
 							return jsonResult({
@@ -509,16 +509,17 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
 
-			// Cancelled tasks cannot be revived via message — the worktree is cleaned
-			// up on cancellation so restoring the session would point to a gone
-			// workspace. Direct the caller to restart the task from scratch instead.
+			// Cancelled tasks are blocked from agent-tool messaging — an agent should not
+			// silently reactivate a task that was explicitly cancelled by a human. The
+			// worktree is still present (only archiveGroup cleans it up), but resuming
+			// without explicit human intent risks restarting undesired work.
+			// Use set_task_status to explicitly restart the task first.
 			if (task.status === 'cancelled') {
 				return jsonResult({
 					success: false,
 					error:
-						`Task ${args.task_id} is cancelled. Cancelled tasks cannot receive messages ` +
-						'because their workspace has been cleaned up. Use set_task_status to restart it ' +
-						'(e.g. status: "pending" or "in_progress").',
+						`Task ${args.task_id} is cancelled. Use set_task_status to restart it ` +
+						'(e.g. status: "pending" or "in_progress") before sending a message.',
 				});
 			}
 
