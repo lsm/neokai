@@ -36,6 +36,7 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
+import { type NotificationSink, NullNotificationSink } from './notification-sink';
 
 const log = new Logger('space-runtime');
 
@@ -61,6 +62,12 @@ export interface SpaceRuntimeConfig {
 	 * Used by start(). Default: 5000 (5 seconds).
 	 */
 	tickIntervalMs?: number;
+	/**
+	 * Sink for structured notification events emitted after mechanical processing.
+	 * Defaults to NullNotificationSink (no-op). Use setNotificationSink() to wire
+	 * in a real sink after construction (e.g. once the Space Agent session exists).
+	 */
+	notificationSink?: NotificationSink;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +128,29 @@ export class SpaceRuntime {
 	/** Handle returned by setInterval when the tick loop is running */
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
 
-	constructor(private config: SpaceRuntimeConfig) {}
+	/** Active notification sink — replaced at runtime via setNotificationSink() */
+	private notificationSink: NotificationSink;
+
+	/**
+	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:needs_attention`
+	 * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
+	 * Entries are cleared when the task leaves the flagged state.
+	 */
+	private notifiedTaskSet = new Set<string>();
+
+	constructor(private config: SpaceRuntimeConfig) {
+		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
+	}
+
+	/**
+	 * Replace the notification sink at runtime.
+	 *
+	 * Called after construction once the Space Agent session has been provisioned,
+	 * since SpaceRuntimeService is instantiated before the global agent session exists.
+	 */
+	setNotificationSink(sink: NotificationSink): void {
+		this.notificationSink = sink;
+	}
 
 	// -------------------------------------------------------------------------
 	// Lifecycle — start / stop
@@ -182,7 +211,7 @@ export class SpaceRuntime {
 		}
 
 		await this.processCompletedTasks();
-		this.cleanupTerminalExecutors();
+		await this.cleanupTerminalExecutors();
 	}
 
 	/**
@@ -473,6 +502,61 @@ export class SpaceRuntime {
 		// step has not been spawned yet (session group creation is async and handled
 		// by a separate layer). Silently returning here is intentional.
 		if (stepTasks.length === 0) return;
+
+		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
+		for (const task of stepTasks) {
+			if (task.status !== 'needs_attention') {
+				this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+			}
+			if (task.status !== 'in_progress') {
+				this.notifiedTaskSet.delete(`${task.id}:timeout`);
+			}
+		}
+
+		// Detect task-level needs_attention BEFORE the all-completed guard.
+		// This is an explicit check — not inferred from WorkflowTransitionError.
+		if (stepTasks.some((t) => t.status === 'needs_attention')) {
+			for (const task of stepTasks) {
+				if (task.status !== 'needs_attention') continue;
+				const dedupKey = `${task.id}:needs_attention`;
+				if (!this.notifiedTaskSet.has(dedupKey)) {
+					this.notifiedTaskSet.add(dedupKey);
+					await this.notificationSink.notify({
+						kind: 'task_needs_attention',
+						spaceId: meta.spaceId,
+						taskId: task.id,
+						reason: task.error ?? 'Task requires attention',
+						timestamp: new Date().toISOString(),
+					});
+				}
+			}
+			return;
+		}
+
+		// Timeout detection: check in_progress tasks against Space.config.taskTimeoutMs.
+		const space = await this.config.spaceManager.getSpace(meta.spaceId);
+		const taskTimeoutMs = space?.config?.taskTimeoutMs;
+		if (taskTimeoutMs !== undefined) {
+			const now = Date.now();
+			for (const task of stepTasks) {
+				if (task.status !== 'in_progress' || !task.startedAt) continue;
+				const elapsedMs = now - task.startedAt;
+				if (elapsedMs > taskTimeoutMs) {
+					const dedupKey = `${task.id}:timeout`;
+					if (!this.notifiedTaskSet.has(dedupKey)) {
+						this.notifiedTaskSet.add(dedupKey);
+						await this.notificationSink.notify({
+							kind: 'task_timeout',
+							spaceId: meta.spaceId,
+							taskId: task.id,
+							elapsedMs,
+							timestamp: new Date().toISOString(),
+						});
+					}
+				}
+			}
+		}
+
 		if (!stepTasks.every((t) => t.status === 'completed')) return;
 
 		try {
@@ -482,9 +566,10 @@ export class SpaceRuntime {
 			// injected into the executor via buildExecutor(). No second update needed.
 
 			if (newTasks.length === 0) {
-				// Terminal step reached — run marked completed by advance(); clean up executor.
-				this.executors.delete(runId);
-				this.executorMeta.delete(runId);
+				// Terminal step reached — run marked completed by advance().
+				// cleanupTerminalExecutors() will emit workflow_run_completed and remove executor.
+				// No cleanup here: executors map is iterated by for..of which captures the
+				// initial key set, so the entry stays until cleanupTerminalExecutors() runs.
 			}
 		} catch (err) {
 			if (!(err instanceof WorkflowTransitionError)) {
@@ -492,6 +577,14 @@ export class SpaceRuntime {
 				throw err;
 			}
 			// Gate blocked: run status already set to 'needs_attention' by the executor.
+			// Emit notification so the Space Agent session is informed.
+			await this.notificationSink.notify({
+				kind: 'workflow_run_needs_attention',
+				spaceId: meta.spaceId,
+				runId,
+				reason: err.message,
+				timestamp: new Date().toISOString(),
+			});
 			// Keep executor and meta in map — will be retried after gate is resolved.
 		}
 	}
@@ -503,11 +596,26 @@ export class SpaceRuntime {
 	 * Reads run status from DB rather than relying on the executor's cached
 	 * this.run, so external status changes (e.g. cancellation via API) are
 	 * picked up without requiring executor recreation.
+	 *
+	 * Emits a `workflow_run_completed` notification for runs that reached the
+	 * `completed` state (either naturally via advance() or externally).
 	 */
-	private cleanupTerminalExecutors(): void {
+	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
 			if (!run || run.status === 'completed' || run.status === 'cancelled') {
+				if (run?.status === 'completed') {
+					const meta = this.executorMeta.get(runId);
+					if (meta) {
+						await this.notificationSink.notify({
+							kind: 'workflow_run_completed',
+							spaceId: meta.spaceId,
+							runId,
+							status: 'completed',
+							timestamp: new Date().toISOString(),
+						});
+					}
+				}
 				this.executors.delete(runId);
 				this.executorMeta.delete(runId);
 			}

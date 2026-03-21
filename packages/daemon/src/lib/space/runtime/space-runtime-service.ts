@@ -15,6 +15,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NotificationSink } from './notification-sink';
 import { SpaceRuntime } from './space-runtime';
 import { Logger } from '../../logger';
 
@@ -83,6 +84,17 @@ export class SpaceRuntimeService {
 			this.start();
 		}
 		return this.runtime;
+	}
+
+	/**
+	 * Wire a notification sink into the underlying SpaceRuntime.
+	 *
+	 * Called after construction once the Space Agent session has been provisioned,
+	 * since SpaceRuntimeService is instantiated before the global agent session exists.
+	 * Delegates directly to the shared SpaceRuntime instance.
+	 */
+	setNotificationSink(sink: NotificationSink): void {
+		this.runtime.setNotificationSink(sink);
 	}
 
 	/**
