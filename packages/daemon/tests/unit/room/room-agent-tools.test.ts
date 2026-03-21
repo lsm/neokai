@@ -1023,7 +1023,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should return error for cancelled task (worktree is preserved, explicit reactivation required)', async () => {
+		it('should auto-reactivate cancelled task and deliver message', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
@@ -1039,19 +1039,60 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to cancelled state
+			// Move to cancelled state with a group
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.cancelTask(taskId);
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
+			);
+			// Cancelled task should be auto-reactivated and message delivered
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('reactivated');
+			expect(result.message).toContain('in_progress');
+
+			// Task should now be in_progress
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+
+			// Group should have been reset (completedAt cleared)
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).toBeNull();
+		});
+
+		it('should roll back cancelled task when reviveTaskForMessage fails', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
 			await taskManager.startTask(taskId);
 			await taskManager.cancelTask(taskId);
 
 			const result = parseResult(
 				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
 			);
-			// Cancelled tasks cannot receive agent-tool messages — explicit reactivation required
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('cancelled');
-			expect(result.error).toContain('set_task_status');
 
-			// Task should remain cancelled (no revive attempted)
+			// Task status should be rolled back to cancelled
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('cancelled');
 		});

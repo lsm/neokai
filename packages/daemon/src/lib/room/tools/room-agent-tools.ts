@@ -512,15 +512,48 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
 
-			// Cancelled tasks are blocked from agent-tool messaging — an agent should not
-			// silently reactivate a task that was explicitly cancelled by a human. The
-			// worktree is still present (only archiveGroup cleans it up), but resuming
-			// without explicit human intent risks restarting undesired work.
-			// Use set_task_status to explicitly reactivate the task first.
+			// Auto-reactivate: if the task is cancelled, reset the group and transition to
+			// in_progress so the message can be delivered without manual intervention.
+			// Worktrees are preserved on cancel (only archiveGroup cleans them up), so
+			// session restoration is safe.
 			if (task.status === 'cancelled') {
+				const group = groupRepo.getGroupByTaskId(args.task_id);
+				if (group) {
+					const reset = groupRepo.resetGroupForRestart(group.id);
+					if (!reset) {
+						return jsonResult({
+							success: false,
+							error: `Failed to reactivate task ${args.task_id} — group may have been modified concurrently`,
+						});
+					}
+				}
+				try {
+					await taskManager.setTaskStatus(args.task_id, 'in_progress');
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: `Failed to reactivate task ${args.task_id}: ${String(err)}`,
+					});
+				}
+
+				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
+				if (!revived) {
+					// Roll back the task status; in_progress → cancelled is a valid transition.
+					try {
+						await taskManager.setTaskStatus(args.task_id, 'cancelled');
+					} catch {
+						// Rollback is best-effort; swallow to avoid masking the original error
+					}
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to reactivate task ${args.task_id}: agent sessions could not be restored. ` +
+							'Task status has been reset to cancelled.',
+					});
+				}
 				return jsonResult({
-					success: false,
-					error: `Task ${args.task_id} is cancelled. Use set_task_status to reactivate it first (e.g. status: "in_progress").`,
+					success: true,
+					message: `Task ${args.task_id} reactivated from cancelled to in_progress and message delivered to agent`,
 				});
 			}
 
