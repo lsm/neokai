@@ -181,6 +181,10 @@ describe('RoomContextPanel', () => {
 		cleanup();
 		vi.clearAllMocks();
 		initSignals();
+		// Restore default resolved value after clearAllMocks (which clears call history
+		// but not implementations). Required so reordering tests doesn't break the
+		// success path after any test that overrides with mockRejectedValue.
+		mockCreateSession.mockResolvedValue('new-session-id');
 	});
 
 	afterEach(() => {
