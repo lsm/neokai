@@ -819,6 +819,13 @@ export function setupTaskHandlers(
 			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
 		}
 
+		// Archived tasks are truly terminal — no messaging allowed.
+		if (task.status === 'archived') {
+			throw new Error(
+				`Task ${params.taskId} is archived and cannot receive messages. Archive is a terminal state.`
+			);
+		}
+
 		// needs_attention, completed, and cancelled tasks: auto-reactivate via reviveTaskForMessage.
 		// reviveTaskForMessage is a lightweight revive that restores sessions and injects the
 		// message WITHOUT wiping the group metadata or conversation history.

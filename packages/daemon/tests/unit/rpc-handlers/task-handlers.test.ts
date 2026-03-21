@@ -485,6 +485,18 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'cancelled');
 		});
 	});
+
+	describe('archived task messaging — archived is truly terminal', () => {
+		it('throws when task is archived — messaging is not allowed', async () => {
+			const archivedTask = { ...mockTask, status: 'archived' as const };
+			const { service } = makeRuntimeService(true, true, true);
+			setup({ task: archivedTask, runtimeService: service });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'can you still work?' }, {})
+			).rejects.toThrow('archived');
+		});
+	});
 });
 
 // ─── task.cancel Tests ───
@@ -884,6 +896,24 @@ describe('task.setStatus RPC Handler', () => {
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'pending' }, {})
 			).rejects.toThrow('Invalid status transition');
+		});
+
+		it('throws for any transition from archived — archived is truly terminal', async () => {
+			const archivedTask = { ...mockTask, status: 'archived' as const };
+			setup({ task: archivedTask, runtimeService: makeNullRuntimeService() });
+			// Try every possible target status — all must be rejected
+			for (const targetStatus of [
+				'pending',
+				'in_progress',
+				'review',
+				'completed',
+				'cancelled',
+				'needs_attention',
+			] as const) {
+				await expect(
+					getHandler()({ roomId: 'room-1', taskId: 'task-1', status: targetStatus }, {})
+				).rejects.toThrow('Invalid status transition');
+			}
 		});
 	});
 
