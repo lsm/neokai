@@ -168,7 +168,10 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 				</div>
 
 				{/* Action buttons */}
-				<div class="flex items-center gap-1.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+				<div
+					data-testid="workflow-card-actions"
+					class="flex items-center gap-1.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+				>
 					{confirmDelete ? (
 						<>
 							<span class="text-xs text-red-400">Delete?</span>

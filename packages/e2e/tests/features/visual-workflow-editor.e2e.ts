@@ -172,8 +172,15 @@ test.describe('Visual Workflow Editor', () => {
 		await editor.getByTestId('close-button').click();
 		await expect(editor.getByTestId('node-config-panel')).not.toBeVisible({ timeout: 2000 });
 
-		// Verify node 1 shows the start badge (it is the current start node)
-		await expect(nodes.nth(0).getByTestId('start-badge')).toBeVisible({ timeout: 2000 });
+		// Verify node 1 shows the start badge after the panel is closed.
+		// Assertions on start-badge are intentionally placed after the panel closes — the
+		// 320px NodeConfigPanel can visually occlude the badge while open.
+		await expect(
+			editor
+				.locator('[data-testid^="workflow-node-"]')
+				.filter({ hasText: 'Planner' })
+				.getByTestId('start-badge')
+		).toBeVisible({ timeout: 2000 });
 
 		// Configure node 2: name + agent
 		await nodes.nth(1).click();
@@ -181,6 +188,7 @@ test.describe('Visual Workflow Editor', () => {
 		await editor.getByTestId('step-name-input').fill('Coder');
 		await editor.getByTestId('agent-select').selectOption({ index: 1 });
 		await editor.getByTestId('close-button').click();
+		await expect(editor.getByTestId('node-config-panel')).not.toBeVisible({ timeout: 2000 });
 
 		// Configure node 3: name + agent + designate as start
 		await nodes.nth(2).click();
@@ -192,14 +200,25 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(editor.getByTestId('set-as-start-button')).toBeVisible({ timeout: 2000 });
 		await editor.getByTestId('set-as-start-button').click();
 
-		// Start badge should now appear on node 3
-		await expect(nodes.nth(2).getByTestId('start-badge')).toBeVisible({ timeout: 3000 });
-
-		// Close config panel
+		// Close config panel before asserting badge state on canvas nodes (panel may occlude)
 		await editor.getByTestId('close-button').click();
+		await expect(editor.getByTestId('node-config-panel')).not.toBeVisible({ timeout: 2000 });
 
-		// Node 1 should no longer show start badge after reassignment
-		await expect(nodes.nth(0).getByTestId('start-badge')).not.toBeVisible({ timeout: 2000 });
+		// Start badge should now appear on the Reviewer node (node 3)
+		await expect(
+			editor
+				.locator('[data-testid^="workflow-node-"]')
+				.filter({ hasText: 'Reviewer' })
+				.getByTestId('start-badge')
+		).toBeVisible({ timeout: 3000 });
+
+		// Planner node (node 1) should no longer show start badge after reassignment
+		await expect(
+			editor
+				.locator('[data-testid^="workflow-node-"]')
+				.filter({ hasText: 'Planner' })
+				.getByTestId('start-badge')
+		).not.toBeVisible({ timeout: 2000 });
 
 		// Save the workflow
 		await editor.getByTestId('save-button').click();
@@ -249,16 +268,16 @@ test.describe('Visual Workflow Editor', () => {
 		await page.locator('text=Workflows').first().click();
 		await expect(page.locator('text=Layout Persist Test')).toBeVisible({ timeout: 5000 });
 
-		// The Edit button is hidden under opacity-0 group-hover:opacity-100.
-		// Force it visible via JS before clicking — Tailwind CSS group-hover
-		// is unreliable in headless Chromium under xvfb.
+		// The Edit button lives inside a data-testid="workflow-card-actions" container that
+		// is opacity-0 by default (only visible on CSS group-hover). Force it visible via JS
+		// before clicking — Tailwind CSS group-hover is unreliable in headless Chromium/xvfb.
 		const workflowCard = page
 			.locator('[class*="group"]')
 			.filter({ has: page.locator('text=Layout Persist Test') })
 			.first();
 		await expect(workflowCard).toBeVisible({ timeout: 3000 });
 		await workflowCard.evaluate((el) => {
-			const actions = el.querySelector<HTMLElement>('.opacity-0');
+			const actions = el.querySelector<HTMLElement>('[data-testid="workflow-card-actions"]');
 			if (actions) actions.style.opacity = '1';
 		});
 
@@ -289,6 +308,23 @@ test.describe('Visual Workflow Editor', () => {
 			.locator('[data-testid^="workflow-node-"]')
 			.filter({ has: page.locator('text=Step One') });
 		await expect(nodeWithStepOne.getByTestId('start-badge')).toBeVisible({ timeout: 3000 });
+
+		// Verify that the two nodes are at different horizontal positions —
+		// the layout positions (x=100 and x=450) should result in nodes being
+		// clearly separated on-screen, not stacked at the same location.
+		const nodeOne = editor
+			.locator('[data-testid^="workflow-node-"]')
+			.filter({ has: page.locator('text=Step One') });
+		const nodeTwo = editor
+			.locator('[data-testid^="workflow-node-"]')
+			.filter({ has: page.locator('text=Step Two') });
+		const boxOne = await nodeOne.boundingBox();
+		const boxTwo = await nodeTwo.boundingBox();
+		expect(boxOne).not.toBeNull();
+		expect(boxTwo).not.toBeNull();
+		// The canvas transforms positions (x=100 vs x=450 → 350px apart in canvas space)
+		// After viewport scaling/translation the absolute screen positions differ by >50px
+		expect(Math.abs(boxTwo!.x - boxOne!.x)).toBeGreaterThan(50);
 
 		// Save (no changes) and verify round-trip: workflow still in list
 		await editor.getByTestId('save-button').click();
