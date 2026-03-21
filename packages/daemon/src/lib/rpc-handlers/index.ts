@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, MessageDeliveryMode } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
@@ -282,12 +282,34 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupGlobalSpacesHandlers(deps.messageHub, globalSpacesState);
 
 	if (process.env.NODE_ENV !== 'test') {
+		// Build a minimal SessionFactory adapter so SessionNotificationSink can inject messages
+		// into the spaces:global session. The adapter delegates to SessionManager.injectMessage()
+		// which handles DB persistence, UI publishing, and SDK query feeding.
+		const globalSessionFactory = {
+			injectMessage: (
+				sessionId: string,
+				message: string,
+				opts?: { deliveryMode?: MessageDeliveryMode }
+			) => deps.sessionManager.injectMessage(sessionId, message, opts),
+			hasSession: (sessionId: string) => deps.sessionManager.getSession(sessionId) !== null,
+			// Remaining SessionFactory methods are not needed for notification injection
+			createAndStartSession: async () => {},
+			answerQuestion: async () => false as const,
+			createWorktree: async () => null,
+			restoreSession: async () => false as const,
+			startSession: async () => false as const,
+			setSessionMcpServers: () => false as const,
+			removeWorktree: async () => false as const,
+			getProcessingState: (_sessionId: string) => undefined,
+		};
+
 		provisionGlobalSpacesAgent({
 			sessionManager: deps.sessionManager,
 			spaceManager: deps.spaceManager,
 			spaceAgentManager: deps.spaceAgentManager,
 			spaceWorkflowManager,
 			spaceRuntimeService,
+			sessionFactory: globalSessionFactory,
 			taskRepo: spaceTaskRepo,
 			workflowRunRepo: spaceWorkflowRunRepo,
 			db: deps.db.getDatabase(),

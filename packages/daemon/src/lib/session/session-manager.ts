@@ -12,7 +12,8 @@
  * - Background task tracking for cleanup
  */
 
-import type { Session, MessageHub } from '@neokai/shared';
+import type { Session, MessageHub, MessageDeliveryMode } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import { AgentSession } from '../agent/agent-session';
@@ -232,6 +233,26 @@ export class SessionManager {
 	 */
 	async getSessionAsync(sessionId: string): Promise<AgentSession | null> {
 		return this.sessionCache.getAsync(sessionId);
+	}
+
+	/**
+	 * Inject a message into a session bypassing the RPC/UI message flow.
+	 *
+	 * Used for internal daemon-to-session communication (e.g. SpaceRuntime → global agent).
+	 * Delegates to MessagePersistence so the message is persisted to DB and the session
+	 * query is started/notified exactly like a user-sent message.
+	 */
+	async injectMessage(
+		sessionId: string,
+		message: string,
+		opts?: { deliveryMode?: MessageDeliveryMode }
+	): Promise<void> {
+		await this.messagePersistence.persist({
+			sessionId,
+			messageId: generateUUID(),
+			content: message,
+			deliveryMode: opts?.deliveryMode,
+		});
 	}
 
 	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
