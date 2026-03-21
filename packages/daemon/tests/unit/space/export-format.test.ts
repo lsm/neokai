@@ -935,6 +935,33 @@ describe('validateExportedWorkflow', () => {
 			expect('unknownField' in result.value.transitions[0]).toBe(false);
 		}
 	});
+
+	test('rejects task_result condition without expression', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			steps: [
+				{ agentRef: 'Agent A', name: 'Step A' },
+				{ agentRef: 'Agent B', name: 'Step B' },
+			],
+			transitions: [
+				{
+					fromStep: 'Step A',
+					toStep: 'Step B',
+					condition: { type: 'task_result' },
+				},
+			],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('expression');
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------

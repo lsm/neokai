@@ -114,7 +114,7 @@ function rowToTransition(row: TransitionRow): WorkflowTransition {
 		to: row.to_step_id,
 		condition: condition ?? undefined,
 		order: row.order_index,
-		isCyclic: Boolean(row.is_cyclic),
+		isCyclic: row.is_cyclic !== null ? Boolean(row.is_cyclic) : undefined,
 	};
 }
 

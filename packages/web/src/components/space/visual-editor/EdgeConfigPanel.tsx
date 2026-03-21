@@ -149,18 +149,20 @@ export function EdgeConfigPanel({
 				</select>
 			</div>
 
-			{/* Expression input — only shown for 'condition' type */}
-			{condition.type === 'condition' && (
+			{/* Expression input — shown for 'condition' and 'task_result' types */}
+			{(condition.type === 'condition' || condition.type === 'task_result') && (
 				<div class="flex flex-col gap-1">
 					<label class="text-xs text-gray-400 font-medium" for="condition-expression">
-						Expression
+						{condition.type === 'task_result' ? 'Match value' : 'Expression'}
 					</label>
 					<input
 						id="condition-expression"
 						data-testid="condition-expression"
 						type="text"
 						class="bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
-						placeholder="e.g. test -f output.txt"
+						placeholder={
+							condition.type === 'task_result' ? 'e.g. passed, failed' : 'e.g. test -f output.txt'
+						}
 						value={condition.expression ?? ''}
 						onInput={handleExpressionChange}
 					/>

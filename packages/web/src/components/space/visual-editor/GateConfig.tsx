@@ -49,7 +49,10 @@ export function GateConfig({ condition, onChange, label, terminalMessage }: Gate
 						value={condition.type}
 						onChange={(e) => {
 							const type = (e.currentTarget as HTMLSelectElement).value as WorkflowConditionType;
-							onChange({ type, expression: type === 'condition' ? '' : undefined });
+							onChange({
+								type,
+								expression: type === 'condition' || type === 'task_result' ? '' : undefined,
+							});
 						}}
 						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
 					>
@@ -60,12 +63,16 @@ export function GateConfig({ condition, onChange, label, terminalMessage }: Gate
 						))}
 					</select>
 
-					{condition.type === 'condition' && (
+					{(condition.type === 'condition' || condition.type === 'task_result') && (
 						<div class="space-y-1">
 							<input
 								type="text"
 								required
-								placeholder="e.g. bun test && git diff --quiet"
+								placeholder={
+									condition.type === 'task_result'
+										? 'e.g. passed, failed'
+										: 'e.g. bun test && git diff --quiet'
+								}
 								value={condition.expression ?? ''}
 								onInput={(e) =>
 									onChange({
@@ -76,7 +83,9 @@ export function GateConfig({ condition, onChange, label, terminalMessage }: Gate
 								class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700"
 							/>
 							<p class="text-xs text-gray-600">
-								Transition fires when the shell command exits with code 0.
+								{condition.type === 'task_result'
+									? 'Fires when the task result matches this value.'
+									: 'Transition fires when the shell command exits with code 0.'}
 							</p>
 						</div>
 					)}

@@ -64,7 +64,7 @@ describe('SpaceWorkflowRepository — isCyclic', () => {
 		});
 	});
 
-	it('round-trips isCyclic: false (defaults) through insert and read', () => {
+	it('round-trips isCyclic: undefined (absent) through insert and read', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId,
 			name: 'Linear Workflow',
@@ -79,7 +79,7 @@ describe('SpaceWorkflowRepository — isCyclic', () => {
 		const fetched = workflowRepo.getWorkflow(workflow.id);
 		expect(fetched).not.toBeNull();
 		expect(fetched!.transitions).toHaveLength(1);
-		expect(fetched!.transitions[0].isCyclic).toBe(false);
+		expect(fetched!.transitions[0].isCyclic).toBeUndefined();
 	});
 
 	it('persists task_result condition type correctly', () => {

@@ -49,6 +49,13 @@ const workflowConditionSchema = z
 				path: ['expression'],
 			});
 		}
+		if (val.type === 'task_result' && (!val.expression || !val.expression.trim())) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "'task_result' type requires a non-empty expression (match value)",
+				path: ['expression'],
+			});
+		}
 	});
 
 const exportedWorkflowStepSchema = z.object({
