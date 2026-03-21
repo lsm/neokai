@@ -1059,4 +1059,166 @@ describe('WorkflowExecutor', () => {
 			expect(tasks).toHaveLength(0);
 		});
 	});
+
+	// =========================================================================
+	// goalId propagation through task creation
+	// =========================================================================
+
+	describe('goalId propagation', () => {
+		test('task created by advance() inherits goalId from run', async () => {
+			const { workflow } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+			]);
+
+			// Create run separately to set goalId
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Run with goalId',
+				currentStepId: workflow.startStepId,
+				goalId: 'goal-123',
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const { tasks } = await executor.advance();
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].goalId).toBe('goal-123');
+		});
+
+		test('task created by advance() has undefined goalId when run has no goalId', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+			]);
+
+			// Run created by createLinearWorkflow has no goalId
+			expect(run.goalId).toBeUndefined();
+
+			const executor = makeExecutor(workflow, run);
+			const { tasks } = await executor.advance();
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].goalId).toBeUndefined();
+		});
+
+		test('goalId propagates through multiple advance() calls in a three-step workflow', async () => {
+			const stepsData = [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Code', agentId: AGENT_B },
+				{ id: STEP_C, name: 'Review', agentId: AGENT_C },
+			];
+
+			const transitions = [
+				{ from: STEP_A, to: STEP_B, order: 0 },
+				{ from: STEP_B, to: STEP_C, order: 0 },
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF-goalId-multi',
+				steps: stepsData,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi-step goalId run',
+				currentStepId: workflow.startStepId,
+				goalId: 'goal-multi',
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// Advance A → B
+			const r1 = await executor.advance();
+			expect(r1.tasks[0].goalId).toBe('goal-multi');
+
+			// Advance B → C
+			const r2 = await executor.advance();
+			expect(r2.tasks[0].goalId).toBe('goal-multi');
+		});
+
+		test('goalId is undefined for all tasks when run has no goalId in multi-step workflow', async () => {
+			const stepsData = [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Code', agentId: AGENT_B },
+				{ id: STEP_C, name: 'Review', agentId: AGENT_C },
+			];
+
+			const transitions = [
+				{ from: STEP_A, to: STEP_B, order: 0 },
+				{ from: STEP_B, to: STEP_C, order: 0 },
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF-no-goalId',
+				steps: stepsData,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'No goalId run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			const r1 = await executor.advance();
+			expect(r1.tasks[0].goalId).toBeUndefined();
+
+			const r2 = await executor.advance();
+			expect(r2.tasks[0].goalId).toBeUndefined();
+		});
+
+		test('goalId propagates correctly through cyclic transitions', async () => {
+			// Create a workflow with a cycle: A → B → A
+			const stepsData = [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Verify', agentId: AGENT_B },
+			];
+
+			const transitions = [
+				{ from: STEP_A, to: STEP_B, order: 0 },
+				{ from: STEP_B, to: STEP_A, order: 0 }, // cycle back
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF-cyclic-goalId',
+				steps: stepsData,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic goalId run',
+				currentStepId: workflow.startStepId,
+				goalId: 'goal-cycle',
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B
+			const r1 = await executor.advance();
+			expect(r1.tasks[0].goalId).toBe('goal-cycle');
+
+			// B → A (cycle back)
+			const r2 = await executor.advance();
+			expect(r2.tasks[0].goalId).toBe('goal-cycle');
+
+			// A → B again
+			const r3 = await executor.advance();
+			expect(r3.tasks[0].goalId).toBe('goal-cycle');
+		});
+	});
 });
