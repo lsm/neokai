@@ -13,7 +13,12 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus, CreateSpaceParams, UpdateSpaceParams } from '@neokai/shared';
+import type {
+	SpaceTaskStatus,
+	SpaceAutonomyLevel,
+	CreateSpaceParams,
+	UpdateSpaceParams,
+} from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceRuntime } from '../runtime/space-runtime';
@@ -139,6 +144,7 @@ export function createGlobalSpacesToolHandlers(
 			workspace_path: string;
 			description?: string;
 			instructions?: string;
+			autonomy_level?: SpaceAutonomyLevel;
 		}): Promise<ToolResult> {
 			try {
 				const params: CreateSpaceParams = {
@@ -146,6 +152,7 @@ export function createGlobalSpacesToolHandlers(
 					workspacePath: args.workspace_path,
 					description: args.description,
 					instructions: args.instructions,
+					autonomyLevel: args.autonomy_level,
 				};
 				const space = await spaceManager.createSpace(params);
 				return jsonResult({ success: true, space });
@@ -171,6 +178,7 @@ export function createGlobalSpacesToolHandlers(
 			instructions?: string;
 			background_context?: string;
 			default_model?: string;
+			autonomy_level?: SpaceAutonomyLevel;
 		}): Promise<ToolResult> {
 			try {
 				const params: UpdateSpaceParams = {};
@@ -180,6 +188,7 @@ export function createGlobalSpacesToolHandlers(
 				if (args.background_context !== undefined)
 					params.backgroundContext = args.background_context;
 				if (args.default_model !== undefined) params.defaultModel = args.default_model;
+				if (args.autonomy_level !== undefined) params.autonomyLevel = args.autonomy_level;
 				const space = await spaceManager.updateSpace(args.space_id, params);
 				return jsonResult({ success: true, space });
 			} catch (err) {
@@ -355,6 +364,12 @@ export function createGlobalSpacesMcpServer(
 					.string()
 					.optional()
 					.describe('Instructions for agents working in this space'),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe(
+						'Autonomy level for the Space Agent. "supervised" (default): agent notifies human of all judgment-required events and waits for approval. "semi_autonomous": agent can retry failed tasks and reassign them autonomously.'
+					),
 			},
 			(args) => handlers.create_space(args)
 		),
@@ -376,6 +391,10 @@ export function createGlobalSpacesMcpServer(
 				instructions: z.string().optional().describe('New instructions for agents'),
 				background_context: z.string().optional().describe('New background context'),
 				default_model: z.string().optional().describe('New default model ID'),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe('New autonomy level for the Space Agent'),
 			},
 			(args) => handlers.update_space(args)
 		),
