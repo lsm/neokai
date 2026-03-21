@@ -152,6 +152,54 @@ class RoomStore {
 	/** Active goals */
 	readonly activeGoals = computed(() => this.goals.value.filter((g) => g.status === 'active'));
 
+	/** Tasks grouped by goal ID (Map<goalId, TaskSummary[]>) */
+	readonly tasksByGoalId = computed(() => {
+		const goals = this.goals.value;
+		const tasks = this.tasks.value;
+		const taskMap = new Map<string, TaskSummary>();
+		for (const t of tasks) {
+			taskMap.set(t.id, t);
+		}
+		const result = new Map<string, TaskSummary[]>();
+		for (const goal of goals) {
+			const linked: TaskSummary[] = [];
+			for (const taskId of goal.linkedTaskIds) {
+				const task = taskMap.get(taskId);
+				if (task) linked.push(task);
+			}
+			result.set(goal.id, linked);
+		}
+		return result;
+	});
+
+	/** Tasks not linked to any goal */
+	readonly orphanTasks = computed(() => {
+		const linkedIds = new Set<string>();
+		for (const goal of this.goals.value) {
+			for (const taskId of goal.linkedTaskIds) {
+				linkedIds.add(taskId);
+			}
+		}
+		return this.tasks.value.filter((t) => !linkedIds.has(t.id));
+	});
+
+	/** Orphan tasks that are active (draft, pending, or in_progress) */
+	readonly orphanTasksActive = computed(() =>
+		this.orphanTasks.value.filter(
+			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+		)
+	);
+
+	/** Orphan tasks in review (review or needs_attention) */
+	readonly orphanTasksReview = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'review' || t.status === 'needs_attention')
+	);
+
+	/** Orphan tasks that are done (completed or cancelled) */
+	readonly orphanTasksDone = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'completed' || t.status === 'cancelled')
+	);
+
 	// ========================================
 	// Private State
 	// ========================================
