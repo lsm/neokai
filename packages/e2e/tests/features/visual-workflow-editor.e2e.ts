@@ -73,21 +73,24 @@ async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 }
 
+/**
+ * Reset the workflow editor mode stored in localStorage to prevent test-ordering
+ * flakiness. SpaceIsland reads 'workflow-editor-mode' on mount; if a prior test
+ * left it at 'visual', subsequent tests start in visual mode unexpectedly.
+ */
+async function resetEditorModeStorage(page: Page): Promise<void> {
+	await page.evaluate(() => {
+		localStorage.removeItem('workflow-editor-mode');
+	});
+}
+
 /** Navigate to Workflows tab and open the workflow editor for a new workflow. */
 async function openNewWorkflowEditor(page: Page): Promise<void> {
 	// Click Workflows tab
 	await page.locator('text=Workflows').first().click();
-	await expect(
-		page.locator('text=New Workflow').or(page.locator('text=Create Workflow'))
-	).toBeVisible({
-		timeout: 5000,
-	});
 
-	// Click "New Workflow" / "Create Workflow" button
-	const createBtn = page
-		.getByRole('button', { name: 'New Workflow' })
-		.or(page.getByRole('button', { name: 'Create Workflow' }))
-		.first();
+	// Wait for the "Create Workflow" button (the only label used in WorkflowList.tsx)
+	const createBtn = page.getByRole('button', { name: 'Create Workflow' });
 	await expect(createBtn).toBeVisible({ timeout: 5000 });
 	await createBtn.click();
 
@@ -126,6 +129,8 @@ test.describe('Visual Workflow Editor', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		// Clear persisted editor mode so tests are independent of run order
+		await resetEditorModeStorage(page);
 		spaceId = await createTestSpace(page);
 	});
 
@@ -158,13 +163,17 @@ test.describe('Visual Workflow Editor', () => {
 		const nodes = editor.locator('[data-testid^="workflow-node-"]');
 		await expect(nodes).toHaveCount(3, { timeout: 3000 });
 
-		// Configure node 1: name + agent
+		// Configure node 1: name + agent.
+		// The first added node is auto-designated as start (VisualWorkflowEditor addStep).
 		await nodes.nth(0).click();
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 		await editor.getByTestId('step-name-input').fill('Planner');
 		await editor.getByTestId('agent-select').selectOption({ index: 1 });
 		await editor.getByTestId('close-button').click();
 		await expect(editor.getByTestId('node-config-panel')).not.toBeVisible({ timeout: 2000 });
+
+		// Verify node 1 shows the start badge (it is the current start node)
+		await expect(nodes.nth(0).getByTestId('start-badge')).toBeVisible({ timeout: 2000 });
 
 		// Configure node 2: name + agent
 		await nodes.nth(1).click();
@@ -179,17 +188,17 @@ test.describe('Visual Workflow Editor', () => {
 		await editor.getByTestId('step-name-input').fill('Reviewer');
 		await editor.getByTestId('agent-select').selectOption({ index: 1 });
 
-		// Set node 3 as the start node
+		// "Set as Start" only renders when !isStartNode — assert it is visible before clicking
+		await expect(editor.getByTestId('set-as-start-button')).toBeVisible({ timeout: 2000 });
 		await editor.getByTestId('set-as-start-button').click();
 
-		// Start badge should appear on node 3 (the one we're editing)
-		// After set-as-start, node 3's badge should show
+		// Start badge should now appear on node 3
 		await expect(nodes.nth(2).getByTestId('start-badge')).toBeVisible({ timeout: 3000 });
 
 		// Close config panel
 		await editor.getByTestId('close-button').click();
 
-		// Node 1 should no longer show start badge
+		// Node 1 should no longer show start badge after reassignment
 		await expect(nodes.nth(0).getByTestId('start-badge')).not.toBeVisible({ timeout: 2000 });
 
 		// Save the workflow
@@ -240,9 +249,18 @@ test.describe('Visual Workflow Editor', () => {
 		await page.locator('text=Workflows').first().click();
 		await expect(page.locator('text=Layout Persist Test')).toBeVisible({ timeout: 5000 });
 
-		// Hover over the workflow card to reveal the Edit button
-		const workflowCard = page.locator('text=Layout Persist Test').first();
-		await workflowCard.hover();
+		// The Edit button is hidden under opacity-0 group-hover:opacity-100.
+		// Force it visible via JS before clicking — Tailwind CSS group-hover
+		// is unreliable in headless Chromium under xvfb.
+		const workflowCard = page
+			.locator('[class*="group"]')
+			.filter({ has: page.locator('text=Layout Persist Test') })
+			.first();
+		await expect(workflowCard).toBeVisible({ timeout: 3000 });
+		await workflowCard.evaluate((el) => {
+			const actions = el.querySelector<HTMLElement>('.opacity-0');
+			if (actions) actions.style.opacity = '1';
+		});
 
 		// Click the Edit button
 		const editBtn = page.getByRole('button', { name: 'Edit' }).first();
@@ -298,11 +316,9 @@ test.describe('Visual Workflow Editor', () => {
 			timeout: 3000,
 		});
 
-		// Select the "Coding" template
-		const codingTemplate = editor
-			.locator('[data-testid="template-option"]')
-			.filter({ hasText: 'Coding' })
-			.first();
+		// Select the Coding template by its exact data-template-label attribute
+		// (more precise than partial text match — avoids false matches if new templates added)
+		const codingTemplate = editor.locator('[data-template-label="Coding (Plan → Code)"]');
 		await expect(codingTemplate).toBeVisible({ timeout: 3000 });
 		await codingTemplate.click();
 
@@ -349,17 +365,17 @@ test.describe('Visual Workflow Editor', () => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
 
-		// Verify List mode is active by default
+		// Verify List mode is active by default (localStorage was cleared in beforeEach)
 		await expect(page.getByTestId('editor-mode-list')).toHaveAttribute('aria-pressed', 'true');
 		await expect(page.getByTestId('editor-mode-visual')).toHaveAttribute('aria-pressed', 'false');
 
 		// List mode shows WorkflowEditor UI (has template/step controls)
-		await expect(
-			page.locator('text=Start from template').or(page.locator('text=Add Step')).first()
-		).toBeVisible({ timeout: 3000 });
+		await expect(page.getByRole('button', { name: /Start from template/ })).toBeVisible({
+			timeout: 3000,
+		});
 
 		// Add steps in List mode using a template
-		await page.locator('text=Start from template').click();
+		await page.getByRole('button', { name: /Start from template/ }).click();
 		await page.locator('text=Coding (Plan → Code)').click();
 
 		// Verify steps appear in List mode
