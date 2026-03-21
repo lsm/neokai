@@ -2,7 +2,7 @@
  * Tests for CollapsibleSection Component
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { CollapsibleSection } from './CollapsibleSection';
 
@@ -53,6 +53,21 @@ describe('CollapsibleSection', () => {
 		expect(getByText('▼')).toBeTruthy();
 	});
 
+	it('sets aria-expanded attribute correctly', () => {
+		const { getByRole } = render(
+			<CollapsibleSection title="Goals">
+				<div>Content</div>
+			</CollapsibleSection>
+		);
+
+		const button = getByRole('button');
+		expect(button.getAttribute('aria-expanded')).toBe('true');
+		expect(button.getAttribute('aria-label')).toBe('Goals section');
+
+		fireEvent.click(button);
+		expect(button.getAttribute('aria-expanded')).toBe('false');
+	});
+
 	it('renders count badge when count is provided', () => {
 		const { getByText } = render(
 			<CollapsibleSection title="Goals" count={5}>
@@ -85,7 +100,7 @@ describe('CollapsibleSection', () => {
 
 	it('renders headerRight slot', () => {
 		const { getByText } = render(
-			<CollapsibleSection title="Sessions" headerRight={<button type="button">+</button>}>
+			<CollapsibleSection title="Sessions" headerRight={<span>+</span>}>
 				<div>Content</div>
 			</CollapsibleSection>
 		);
@@ -100,7 +115,7 @@ describe('CollapsibleSection', () => {
 			</CollapsibleSection>
 		);
 
-		// Click the + button in headerRight
+		// Click the + button in headerRight (separate from toggle button)
 		fireEvent.click(getByText('+'));
 
 		// Section should still be expanded (not toggled)
