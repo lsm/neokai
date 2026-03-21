@@ -33,7 +33,7 @@ import {
 export interface DaemonServerOptions {
 	/**
 	 * Port for the daemon server
-	 * Default: random port in 19400-20400 range
+	 * Default: 0 (OS-assigned) for in-process mode, random for spawned mode
 	 */
 	port?: number;
 
@@ -499,7 +499,7 @@ async function createInProcessDaemonServer(
 	options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext & { daemonContext: DaemonAppContext }> {
 	const {
-		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		port: userPort = 0, // Use port 0 for OS-assigned port to avoid collisions in CI
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
@@ -576,8 +576,11 @@ async function createInProcessDaemonServer(
 		});
 	}
 
+	// Read back the actual port from the server (handles port 0 / OS-assigned ports)
+	const actualPort = daemonContext.server.port;
+
 	// Connect to the daemon's WebSocket server (just like a real client)
-	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
+	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
 	const transport = new WebSocketClientTransport({
 		url: wsUrl,
 		autoReconnect: false, // Don't auto-reconnect in tests
@@ -614,7 +617,7 @@ async function createInProcessDaemonServer(
 	return {
 		pid: process.pid, // Same process
 		messageHub,
-		baseUrl: `http://127.0.0.1:${userPort}`,
+		baseUrl: `http://127.0.0.1:${actualPort}`,
 		daemonContext, // Expose for advanced usage
 		devProxy,
 		kill: () => {
