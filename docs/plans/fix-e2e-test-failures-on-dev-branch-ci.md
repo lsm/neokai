@@ -117,7 +117,7 @@ All 6 tests in `visual-workflow-editor.e2e.ts` fail with a 60-second timeout wai
 **Subtasks:**
 1. Run the visual-workflow-editor test locally to reproduce the failure: `make run-e2e TEST=tests/features/visual-workflow-editor.e2e.ts`.
 2. Find the `navigateToSpace()` helper and update it to wait for a space-specific element (e.g., `text=Dashboard` tab) to be visible before returning. This ensures the SpaceIsland has finished loading.
-3. If `navigateToSpace` is shared across multiple test files, verify the change doesn't break other space-related tests (e.g., `space-creation.e2e.ts`).
+3. `navigateToSpace` is NOT a shared helper — it is a local function duplicated independently in both `visual-workflow-editor.e2e.ts` (line 71) and `space-workflow-rules.e2e.ts` (line 72). Both copies have the identical missing-wait bug. Apply the same fix to BOTH files to prevent a repeat failure in `space-workflow-rules` tests.
 4. For the "No agents found" error in test 2 (`getDefaultAgentId`): verify this is resolved by the loading wait fix. If not, add a retry or explicit wait for agents to be seeded before calling `spaceAgent.list`.
 5. Run the test locally and verify all 6 tests pass: `make run-e2e TEST=tests/features/visual-workflow-editor.e2e.ts`.
 
