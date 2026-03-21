@@ -44,11 +44,8 @@ import { TaskManager } from '../room/managers/task-manager';
 import { setupDialogHandlers } from './dialog-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
-import {
-	setupSpaceTaskHandlers,
-	setupSpaceTaskMessageHandlers,
-	type SpaceTaskManagerFactory,
-} from './space-task-handlers';
+import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
+import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
 import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
