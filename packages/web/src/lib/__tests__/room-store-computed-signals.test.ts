@@ -236,4 +236,89 @@ describe('RoomStore — computed goal/task signals', () => {
 			expect(roomStore.orphanTasksDone.value).toEqual([]);
 		});
 	});
+
+	describe('edge cases', () => {
+		it('returns empty arrays when tasks and goals are both empty', () => {
+			roomStore.tasks.value = [];
+			roomStore.goals.value = [];
+			expect(roomStore.tasksByGoalId.value.size).toBe(0);
+			expect(roomStore.orphanTasks.value).toEqual([]);
+			expect(roomStore.orphanTasksActive.value).toEqual([]);
+			expect(roomStore.orphanTasksReview.value).toEqual([]);
+			expect(roomStore.orphanTasksDone.value).toEqual([]);
+		});
+
+		it('handles a goal linking to the same task as another goal', () => {
+			roomStore.tasks.value = [makeTask('t1', 'pending')];
+			roomStore.goals.value = [makeGoal('g1', ['t1']), makeGoal('g2', ['t1'])];
+			// t1 appears under both goals
+			expect(roomStore.tasksByGoalId.value.get('g1')?.map((t) => t.id)).toEqual(['t1']);
+			expect(roomStore.tasksByGoalId.value.get('g2')?.map((t) => t.id)).toEqual(['t1']);
+			// t1 is linked, so no orphans
+			expect(roomStore.orphanTasks.value).toEqual([]);
+		});
+
+		it('handles no tasks linked (all are orphans)', () => {
+			roomStore.tasks.value = [makeTask('t1', 'pending'), makeTask('t2', 'review')];
+			roomStore.goals.value = [makeGoal('g1', [])];
+			expect(roomStore.orphanTasks.value.map((t) => t.id)).toEqual(['t1', 't2']);
+			expect(roomStore.tasksByGoalId.value.get('g1')).toEqual([]);
+		});
+	});
+
+	describe('reactivity', () => {
+		it('updates tasksByGoalId when tasks signal changes', () => {
+			roomStore.goals.value = [makeGoal('g1', ['t1', 't2'])];
+			roomStore.tasks.value = [makeTask('t1', 'pending')];
+			expect(roomStore.tasksByGoalId.value.get('g1')?.map((t) => t.id)).toEqual(['t1']);
+
+			// Add t2
+			roomStore.tasks.value = [makeTask('t1', 'pending'), makeTask('t2', 'in_progress')];
+			expect(roomStore.tasksByGoalId.value.get('g1')?.map((t) => t.id)).toEqual(['t1', 't2']);
+		});
+
+		it('updates tasksByGoalId when goals signal changes', () => {
+			roomStore.tasks.value = [makeTask('t1', 'pending'), makeTask('t2', 'review')];
+			roomStore.goals.value = [makeGoal('g1', ['t1'])];
+			expect(roomStore.tasksByGoalId.value.get('g1')?.map((t) => t.id)).toEqual(['t1']);
+
+			// Change goals to link t2 instead
+			roomStore.goals.value = [makeGoal('g1', ['t2'])];
+			expect(roomStore.tasksByGoalId.value.get('g1')?.map((t) => t.id)).toEqual(['t2']);
+		});
+
+		it('updates orphanTasks when a task becomes linked to a goal', () => {
+			roomStore.tasks.value = [makeTask('t1', 'draft'), makeTask('t2', 'pending')];
+			roomStore.goals.value = [];
+			expect(roomStore.orphanTasks.value.map((t) => t.id)).toEqual(['t1', 't2']);
+
+			// Link t1 to a goal
+			roomStore.goals.value = [makeGoal('g1', ['t1'])];
+			expect(roomStore.orphanTasks.value.map((t) => t.id)).toEqual(['t2']);
+		});
+
+		it('updates orphan buckets when task status changes', () => {
+			roomStore.tasks.value = [makeTask('t1', 'pending')];
+			roomStore.goals.value = [];
+			expect(roomStore.orphanTasksActive.value.map((t) => t.id)).toEqual(['t1']);
+			expect(roomStore.orphanTasksReview.value).toEqual([]);
+
+			// Change t1 status to review
+			roomStore.tasks.value = [makeTask('t1', 'review')];
+			expect(roomStore.orphanTasksActive.value).toEqual([]);
+			expect(roomStore.orphanTasksReview.value.map((t) => t.id)).toEqual(['t1']);
+		});
+
+		it('updates orphanTasksDone when task transitions to completed', () => {
+			roomStore.tasks.value = [makeTask('t1', 'in_progress')];
+			roomStore.goals.value = [];
+			expect(roomStore.orphanTasksActive.value.map((t) => t.id)).toEqual(['t1']);
+			expect(roomStore.orphanTasksDone.value).toEqual([]);
+
+			// Complete the task
+			roomStore.tasks.value = [makeTask('t1', 'completed')];
+			expect(roomStore.orphanTasksActive.value).toEqual([]);
+			expect(roomStore.orphanTasksDone.value.map((t) => t.id)).toEqual(['t1']);
+		});
+	});
 });
