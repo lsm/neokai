@@ -591,10 +591,11 @@ describe('Stuck worker detection and recovery', () => {
 		expect(leaderCalls).toHaveLength(1);
 	});
 
-	it('should skip stuck-worker recovery for groups with feedbackIteration > 0', async () => {
+	it('should skip stuck-worker recovery for groups with feedbackIteration > 0 and no expired rate limit', async () => {
 		const group = await spawnGroup();
 
 		// Manually increment feedbackIteration to simulate a group past its first review
+		// with no rate limit — leader may be actively working, skip recovery.
 		ctx.groupRepo.incrementFeedbackIteration(group.id, group.version);
 		const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
 		expect(updatedGroup.feedbackIteration).toBe(1);
@@ -608,11 +609,132 @@ describe('Stuck worker detection and recovery', () => {
 		await ctx.runtime.tick();
 		await new Promise((r) => setTimeout(r, 5));
 
-		// Should NOT re-trigger routing because feedbackIteration > 0
+		// Should NOT re-trigger routing because feedbackIteration > 0 and no expired rate limit
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
 		expect(leaderCalls).toHaveLength(1);
+	});
+
+	it('should re-trigger routing for feedbackIteration > 0 groups with an expired rate limit', async () => {
+		// Scenario: worker ran a second iteration (after leader feedback), hit a rate limit,
+		// and the rate limit timer fired. feedbackIteration > 0 but the leader was never
+		// triggered for this iteration — recovery must still happen.
+		const localCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId: string, _afterId: string | null) => [
+				// Return a fake rate-limit message so recoverStuckWorkers sees new output.
+				// group.rateLimit is non-null (expired), so the !group.rateLimit guard is false
+				// and the error class falls through to the worktree/exit-gate path.
+				{ id: 'msg-rl-1', text: 'API Error: 429 — rate limit reached', toolCallNames: [] },
+			],
+		});
+
+		const group = await (async () => {
+			await createGoalAndTask(localCtx);
+			localCtx.runtime.start();
+			await localCtx.runtime.tick();
+			const groups = localCtx.groupRepo.getActiveGroups('room-1');
+			return groups[0];
+		})();
+
+		// Advance feedbackIteration to 1 to simulate a post-review state
+		localCtx.groupRepo.incrementFeedbackIteration(group.id, group.version);
+		const afterIncrement = localCtx.groupRepo.getGroup(group.id)!;
+		expect(afterIncrement.feedbackIteration).toBe(1);
+
+		// Set an EXPIRED rate limit (resetsAt in the past) — simulates timer firing after expiry
+		const expiredRateLimit = {
+			detectedAt: Date.now() - 120_000, // detected 2 min ago
+			resetsAt: Date.now() - 10_000, // expired 10 s ago
+			sessionRole: 'worker' as const,
+		};
+		localCtx.groupRepo.setRateLimit(group.id, expiredRateLimit);
+
+		// Worker is in idle state (hit rate limit and stopped)
+		localCtx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+
+		// With eager init, the leader already exists — routeWorkerToLeader injects a message
+		// rather than creating a new leader session. Wait for injectMessage on the leader.
+		const leaderReceived = new Promise<void>((resolve) => {
+			const orig = localCtx.sessionFactory.injectMessage.bind(localCtx.sessionFactory);
+			localCtx.sessionFactory.injectMessage = async (
+				sessionId: string,
+				message: string,
+				opts?: unknown
+			) => {
+				await orig(sessionId, message, opts as never);
+				if (sessionId === group.leaderSessionId) {
+					localCtx.sessionFactory.injectMessage = orig;
+					resolve();
+				}
+			};
+		});
+
+		await localCtx.runtime.tick();
+
+		// Wait for the fire-and-forget routing triggered by recoverStuckWorkers,
+		// then give a brief drain for incrementFeedbackIteration (runs after injectMessage).
+		await leaderReceived;
+		await new Promise((r) => setTimeout(r, 10));
+
+		// Leader session should have received an injected message from the recovery routing
+		const injectCalls = localCtx.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
+		);
+		expect(injectCalls.length).toBeGreaterThanOrEqual(1);
+
+		// feedbackIteration should now be 2 (incremented by routeWorkerToLeader)
+		const updatedGroup = localCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.feedbackIteration).toBe(2);
+
+		localCtx.runtime.stop();
+		localCtx.db.close();
+	});
+
+	it('should NOT re-trigger routing for feedbackIteration > 0 with leader-side expired rate limit (no new worker messages)', async () => {
+		// Scenario: LEADER hit the rate limit (not worker). Worker messages were already
+		// forwarded to leader before it hit 429. After expiry, recoverStuckWorkers must
+		// NOT re-route because getWorkerMessages returns [] (no new worker output).
+		const localCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId: string, _afterId: string | null) => [],
+			// Empty: all worker messages already forwarded in routeWorkerToLeader
+		});
+
+		const group = await (async () => {
+			await createGoalAndTask(localCtx);
+			localCtx.runtime.start();
+			await localCtx.runtime.tick();
+			const groups = localCtx.groupRepo.getActiveGroups('room-1');
+			return groups[0];
+		})();
+
+		// Advance feedbackIteration to 1 (worker was routed to leader)
+		localCtx.groupRepo.incrementFeedbackIteration(group.id, group.version);
+
+		// Set an expired LEADER rate limit
+		const expiredLeaderRateLimit = {
+			detectedAt: Date.now() - 120_000,
+			resetsAt: Date.now() - 10_000,
+			sessionRole: 'leader' as const,
+		};
+		localCtx.groupRepo.setRateLimit(group.id, expiredLeaderRateLimit);
+
+		localCtx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+
+		const callsBefore = localCtx.sessionFactory.calls.length;
+
+		await localCtx.runtime.tick();
+		await new Promise((r) => setTimeout(r, 10));
+
+		// No new injectMessage or leader creation — no new worker messages to route
+		const newCalls = localCtx.sessionFactory.calls.slice(callsBefore);
+		const routingCalls = newCalls.filter(
+			(c) => c.method === 'injectMessage' || c.method === 'createAndStartSession'
+		);
+		expect(routingCalls).toHaveLength(0);
+
+		localCtx.runtime.stop();
+		localCtx.db.close();
 	});
 
 	it('should skip stuck-worker recovery for groups awaiting human review', async () => {
