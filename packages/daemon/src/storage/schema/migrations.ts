@@ -1679,6 +1679,7 @@ function runMigration29(db: BunDatabase): void {
 	);
 	// Note: idx_space_tasks_task_agent_session_id is created by migration 32,
 	// which first adds the column via ALTER TABLE for existing databases.
+	// Note: goal_id column is added by migration 34 (ALTER TABLE for existing DBs).
 
 	// -------------------------------------------------------------------------
 	// space_session_groups

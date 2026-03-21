@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with runMigration33 in packages/daemon/src/storage/schema/migrations.ts
+ * Keep in sync with runMigration34 in packages/daemon/src/storage/schema/migrations.ts
  * and space-agent-schema.ts.
  */
 
