@@ -306,8 +306,11 @@ interface MockDaemonHub {
 function makeMockDaemonHub(): MockDaemonHub {
 	const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
 	const hub = {
-		emit: mock(async (name: string, payload: Record<string, unknown>) => {
+		// Synchronous recording so tests don't need setTimeout to flush async microtasks.
+		// Returns Promise.resolve() to satisfy the async signature.
+		emit: mock((name: string, payload: Record<string, unknown>) => {
 			emittedEvents.push({ name, payload });
+			return Promise.resolve();
 		}),
 		on: mock(() => () => {}),
 		off: mock(() => {}),
@@ -1066,9 +1069,8 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 
 		await handlers.report_result({ status: 'completed', summary: 'All done.' });
 
-		// Allow micro-task queue to flush the void emit
-		await new Promise((resolve) => setTimeout(resolve, 0));
-
+		// The mock emit is synchronous (records events before returning Promise.resolve()),
+		// so no async flush is needed — assertions can run immediately.
 		expect(emittedEvents).toHaveLength(1);
 		expect(emittedEvents[0].name).toBe('space.task.completed');
 		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
@@ -1100,8 +1102,6 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 			error: 'CI pipeline error',
 		});
 
-		await new Promise((resolve) => setTimeout(resolve, 0));
-
 		expect(emittedEvents).toHaveLength(1);
 		expect(emittedEvents[0].name).toBe('space.task.failed');
 		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
@@ -1127,8 +1127,6 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 		});
 
 		await handlers.report_result({ status: 'cancelled', summary: 'User cancelled.' });
-
-		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(emittedEvents).toHaveLength(1);
 		expect(emittedEvents[0].name).toBe('space.task.failed');
@@ -1170,7 +1168,6 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 		});
 
 		await handlers.report_result({ status: 'completed', summary: 'Done.' });
-		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(emittedEvents[0].payload.sessionId).toBe('global');
 	});

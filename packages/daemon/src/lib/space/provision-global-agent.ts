@@ -27,6 +27,17 @@ import type { SessionFactory } from '../room/runtime/task-group-manager';
 const GLOBAL_SESSION_ID = 'spaces:global';
 const log = new Logger('global-spaces-agent');
 
+/**
+ * Unsubscribe handles for the task event subscriptions registered by the most recent
+ * `provisionGlobalSpacesAgent` call. Stored at module level so a second call (e.g. on
+ * daemon restart / error recovery) can clean up the previous listeners before re-subscribing,
+ * preventing duplicate notifications.
+ *
+ * Note: these subscriptions are intentionally daemon-lifetime; they are never unsubscribed
+ * during normal operation. The module-level store only exists to guard against double-init.
+ */
+let _taskEventUnsubs: Array<() => void> = [];
+
 export interface ProvisionGlobalSpacesAgentDeps {
 	sessionManager: SessionManager;
 	spaceManager: SpaceManager;
@@ -49,6 +60,10 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	 * DaemonHub for subscribing to task completion/failure events emitted by Task Agents.
 	 * When provided, the global Space Agent session receives notification messages when tasks
 	 * complete or fail via `space.task.completed` / `space.task.failed` events.
+	 *
+	 * The subscription routes all space task events to the single `spaces:global` session,
+	 * which is intentional: the global agent manages tasks across all spaces. The notification
+	 * message includes the spaceId and taskId so the agent can act on specific tasks.
 	 */
 	daemonHub?: DaemonHub;
 }
@@ -136,9 +151,21 @@ export async function provisionGlobalSpacesAgent(
 	// Subscribe to task completion/failure events from Task Agents.
 	// When a task completes or fails, inject a notification message into the Space Agent session
 	// so it can take appropriate action (start next task, alert the user, etc.).
+	//
+	// All space task events are routed to the single spaces:global session — the global agent
+	// manages tasks across all spaces. Each message includes spaceId and taskId so the agent
+	// can reference tasks in follow-up tool calls (e.g. get_task_detail).
+	//
+	// Guard against double-init: clean up any previous subscriptions before re-subscribing.
 	if (daemonHub) {
-		daemonHub.on('space.task.completed', (event) => {
-			const message = `Task '${event.taskTitle}' has completed. Summary: ${event.summary}`;
+		_taskEventUnsubs.forEach((unsub) => unsub());
+		_taskEventUnsubs = [];
+
+		const unsubCompleted = daemonHub.on('space.task.completed', (event) => {
+			const summaryPart = event.summary ? ` Summary: ${event.summary}` : '';
+			const message =
+				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
+				`has completed.${summaryPart}`;
 			void sessionFactory
 				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
 				.catch((err) => {
@@ -148,9 +175,12 @@ export async function provisionGlobalSpacesAgent(
 				});
 		});
 
-		daemonHub.on('space.task.failed', (event) => {
+		const unsubFailed = daemonHub.on('space.task.failed', (event) => {
 			const statusLabel = event.status === 'cancelled' ? 'cancelled' : 'failed';
-			const message = `Task '${event.taskTitle}' has ${statusLabel}. Summary: ${event.summary}`;
+			const summaryPart = event.summary ? ` Summary: ${event.summary}` : '';
+			const message =
+				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
+				`has ${statusLabel}.${summaryPart}`;
 			void sessionFactory
 				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
 				.catch((err) => {
@@ -160,6 +190,7 @@ export async function provisionGlobalSpacesAgent(
 				});
 		});
 
+		_taskEventUnsubs = [unsubCompleted, unsubFailed];
 		log.info('Subscribed to space.task.completed and space.task.failed events');
 	}
 

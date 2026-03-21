@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Space } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
+import { Logger } from '../../logger';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import { WorkflowGateError } from '../runtime/workflow-executor';
@@ -51,6 +52,8 @@ import type {
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
+
+const log = new Logger('task-agent-tools');
 
 // ---------------------------------------------------------------------------
 // Sub-session state
@@ -648,8 +651,10 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						taskTitle: mainTask.title,
 					};
 					const eventName = status === 'completed' ? 'space.task.completed' : 'space.task.failed';
-					void daemonHub.emit(eventName, eventPayload).catch(() => {
-						// Non-fatal — event emission must not block or throw
+					void daemonHub.emit(eventName, eventPayload).catch((err) => {
+						log.warn(
+							`Failed to emit ${eventName} for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+						);
 					});
 				}
 

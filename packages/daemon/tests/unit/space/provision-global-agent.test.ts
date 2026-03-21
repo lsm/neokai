@@ -797,6 +797,8 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		const lastCall = sessionFactory.calls[sessionFactory.calls.length - 1];
 		expect(lastCall.sessionId).toBe('spaces:global');
 		expect(lastCall.message).toContain('Implement login page');
+		expect(lastCall.message).toContain('task-001');
+		expect(lastCall.message).toContain('space-001');
 		expect(lastCall.message).toContain('completed');
 		expect(lastCall.message).toContain('Feature implemented successfully.');
 		expect(lastCall.opts?.deliveryMode).toBe('next_turn');
@@ -823,6 +825,8 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		const lastCall = sessionFactory.calls[sessionFactory.calls.length - 1];
 		expect(lastCall.sessionId).toBe('spaces:global');
 		expect(lastCall.message).toContain('Fix authentication bug');
+		expect(lastCall.message).toContain('task-002');
+		expect(lastCall.message).toContain('space-001');
 		expect(lastCall.message).toContain('failed');
 		expect(lastCall.message).toContain('Tests are failing.');
 		expect(lastCall.opts?.deliveryMode).toBe('next_turn');
@@ -848,6 +852,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		const lastCall = sessionFactory.calls[sessionFactory.calls.length - 1];
 		expect(lastCall.message).toContain('cancelled');
 		expect(lastCall.message).toContain('Deploy to production');
+		expect(lastCall.message).toContain('task-003');
 	});
 
 	test('does not throw when sessionFactory.injectMessage fails', async () => {
@@ -869,5 +874,44 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 				taskTitle: 'Some Task',
 			})
 		).resolves.toBeUndefined();
+	});
+
+	test('double-init guard: calling provisionGlobalSpacesAgent twice does not create duplicate subscriptions', async () => {
+		// First provisioning call: track unsubs returned by hub.on()
+		const unsubCalls: number[] = [];
+		let onCallCount = 0;
+
+		const hub1 = {
+			emit: mock(async () => {}),
+			on: mock(() => {
+				const callIdx = onCallCount++;
+				return () => {
+					unsubCalls.push(callIdx);
+				};
+			}),
+			off: mock(() => {}),
+			once: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		const sessionFactory = makeMockSessionFactory();
+		const deps = buildDeps(db, { sessionFactory });
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub1 });
+		// After first call: 2 on() calls (completed + failed), 0 unsubscribes
+		expect(onCallCount).toBe(2);
+		expect(unsubCalls).toHaveLength(0);
+
+		// Second provisioning call with a new hub (simulating re-init)
+		const hub2 = {
+			emit: mock(async () => {}),
+			on: mock(() => () => {}),
+			off: mock(() => {}),
+			once: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub2 });
+
+		// Previous hub's unsubscribe functions must have been called before re-subscribing
+		expect(unsubCalls).toHaveLength(2);
 	});
 });
