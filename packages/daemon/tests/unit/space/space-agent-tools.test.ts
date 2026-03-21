@@ -42,6 +42,41 @@ function makeDb(): { db: BunDatabase; dir: string } {
 	const db = new BunDatabase(join(dir, 'test.db'));
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
+	// runMigrations only alters existing tables; on a fresh test DB the goals table
+	// is never created (createTables() is only called at app startup). Create it here
+	// without the rooms FK since tests don't need full referential integrity.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS goals (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			progress INTEGER DEFAULT 0,
+			linked_task_ids TEXT DEFAULT '[]',
+			metrics TEXT DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			planning_attempts INTEGER DEFAULT 0,
+			goal_review_attempts INTEGER DEFAULT 0,
+			mission_type TEXT NOT NULL DEFAULT 'one_shot'
+				CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+			autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+				CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+			schedule TEXT,
+			schedule_paused INTEGER NOT NULL DEFAULT 0,
+			next_run_at INTEGER,
+			structured_metrics TEXT,
+			max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+			max_planning_attempts INTEGER NOT NULL DEFAULT 0,
+			consecutive_failures INTEGER NOT NULL DEFAULT 0,
+			replan_count INTEGER NOT NULL DEFAULT 0
+		)
+	`);
 	return { db, dir };
 }
 
