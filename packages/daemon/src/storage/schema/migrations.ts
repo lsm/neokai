@@ -132,6 +132,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 34: Add goal_id column to space_tasks for goal/mission association.
 	runMigration34(db);
+
+	// Migration 35: Add iteration tracking columns to space_workflow_runs.
+	runMigration35(db);
+
+	// Migration 36: Add max_iterations column to space_workflows.
+	runMigration36(db);
 }
 
 /**
@@ -2023,4 +2029,41 @@ function runMigration34(db: BunDatabase): void {
 		db.exec(`ALTER TABLE space_tasks ADD COLUMN goal_id TEXT`);
 	}
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
+}
+
+/**
+ * Migration 35: Add iteration tracking columns to `space_workflow_runs`.
+ *
+ * - `iteration_count`: how many times the run has looped back (default 0).
+ * - `max_iterations`: safety cap before escalating to needs_attention (default 5).
+ */
+function runMigration35(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_runs')) return;
+	try {
+		db.prepare(`SELECT iteration_count FROM space_workflow_runs LIMIT 1`).all();
+	} catch {
+		db.exec(
+			`ALTER TABLE space_workflow_runs ADD COLUMN iteration_count INTEGER NOT NULL DEFAULT 0`
+		);
+	}
+	try {
+		db.prepare(`SELECT max_iterations FROM space_workflow_runs LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 5`);
+	}
+}
+
+/**
+ * Migration 36: Add `max_iterations` column to `space_workflows`.
+ *
+ * Template-level default for the maximum number of cyclic iterations.
+ * Nullable — workflows without cyclic transitions don't need a cap.
+ */
+function runMigration36(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+	try {
+		db.prepare(`SELECT max_iterations FROM space_workflows LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN max_iterations INTEGER`);
+	}
 }

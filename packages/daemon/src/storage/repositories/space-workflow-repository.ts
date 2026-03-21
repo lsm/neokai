@@ -40,6 +40,7 @@ interface WorkflowRow {
 	start_step_id: string | null;
 	config: string | null;
 	layout: string | null;
+	max_iterations: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -135,6 +136,7 @@ function rowToWorkflow(
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
 		config: cfg.extra,
+		maxIterations: row.max_iterations ?? undefined,
 		layout: layout ?? undefined,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -178,8 +180,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, max_iterations, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -189,6 +191,7 @@ export class SpaceWorkflowRepository {
 				startStepId,
 				JSON.stringify(cfg),
 				layoutJson,
+				params.maxIterations ?? null,
 				now,
 				now
 			);
@@ -277,6 +280,11 @@ export class SpaceWorkflowRepository {
 		if (cfgChanged) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(newCfg));
+		}
+
+		if (params.maxIterations !== undefined) {
+			fields.push('max_iterations = ?');
+			values.push(params.maxIterations);
 		}
 
 		if (params.layout !== undefined) {

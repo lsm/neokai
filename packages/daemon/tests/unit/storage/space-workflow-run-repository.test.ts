@@ -179,6 +179,51 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
+	describe('iteration tracking', () => {
+		it('defaults iterationCount to 0 and maxIterations to 5', () => {
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+			expect(run.iterationCount).toBe(0);
+			expect(run.maxIterations).toBe(5);
+		});
+
+		it('creates a run with custom maxIterations', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Custom cap',
+				maxIterations: 3,
+			});
+			expect(run.maxIterations).toBe(3);
+			expect(run.iterationCount).toBe(0);
+		});
+
+		it('updates iterationCount via updateRun', () => {
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+			const updated = repo.updateRun(run.id, { iterationCount: 2 });
+			expect(updated!.iterationCount).toBe(2);
+			// Re-fetch to confirm persistence
+			expect(repo.getRun(run.id)!.iterationCount).toBe(2);
+		});
+
+		it('updates maxIterations via updateRun', () => {
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+			const updated = repo.updateRun(run.id, { maxIterations: 10 });
+			expect(updated!.maxIterations).toBe(10);
+		});
+
+		it('round-trips iteration fields through create → get', () => {
+			const run = repo.createRun({
+				spaceId,
+				workflowId: WORKFLOW_ID,
+				title: 'Round-trip',
+				maxIterations: 7,
+			});
+			const fetched = repo.getRun(run.id)!;
+			expect(fetched.iterationCount).toBe(0);
+			expect(fetched.maxIterations).toBe(7);
+		});
+	});
+
 	describe('deleteRun', () => {
 		it('deletes a run', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });

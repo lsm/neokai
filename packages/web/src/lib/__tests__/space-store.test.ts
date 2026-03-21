@@ -65,6 +65,8 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
 		workflowId: 'wf-1',
 		title: `Run ${id}`,
 		status: status as SpaceWorkflowRun['status'],
+		iterationCount: 0,
+		maxIterations: 5,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
