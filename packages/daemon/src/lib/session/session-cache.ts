@@ -92,9 +92,15 @@ export class SessionCache {
 		try {
 			const agentSession = await loadPromise;
 			if (agentSession) {
-				this.sessions.set(sessionId, agentSession);
+				// Guard: if set() was called while we were loading (e.g. via registerSession),
+				// prefer the registered live instance (which has MCP tools attached) over the
+				// bare DB-loaded duplicate. Without this check, the load would overwrite the
+				// registered session with a duplicate that creates competing event subscriptions.
+				if (!this.sessions.has(sessionId)) {
+					this.sessions.set(sessionId, agentSession);
+				}
 			}
-			return agentSession;
+			return this.sessions.get(sessionId) ?? null;
 		} catch {
 			// Failed to load session - return null for caller to handle
 			return null;
@@ -115,10 +121,18 @@ export class SessionCache {
 	}
 
 	/**
-	 * Set a session in the cache
+	 * Set a session in the cache.
+	 *
+	 * Also clears any in-flight load lock for this session ID so that new
+	 * getAsync() callers immediately see the registered instance rather than
+	 * waiting for a concurrent DB load that would create a competing duplicate.
+	 * Existing callers already awaiting the lock are handled by the guard in
+	 * getAsync() which prefers the registered instance on completion.
 	 */
 	set(sessionId: string, agentSession: AgentSession): void {
 		this.sessions.set(sessionId, agentSession);
+		// Cancel any pending load so new getAsync callers short-circuit to the in-memory check
+		this.sessionLoadLocks.delete(sessionId);
 	}
 
 	/**

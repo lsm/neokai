@@ -29,7 +29,11 @@ export class SessionRepository {
 			session.createdAt,
 			session.lastActiveAt,
 			session.status,
-			JSON.stringify(session.config),
+			JSON.stringify(session.config, (key, val) => {
+				if (key === 'mcpServers') return undefined;
+				if (typeof val === 'function') return undefined;
+				return val;
+			}),
 			JSON.stringify(session.metadata),
 			session.worktree?.isWorktree ? 1 : 0,
 			session.worktree?.worktreePath ?? null,

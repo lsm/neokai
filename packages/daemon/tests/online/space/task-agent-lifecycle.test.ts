@@ -409,7 +409,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			// Verify the mock was matched: the probe response mentions spawn_step_agent and
 			// the pre-assigned step ID step-code-lifecycle-001
 			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 3, // initial user + initial assistant + probe user + probe assistant
+				minCount: 4, // initial user + initial assistant + probe user + probe assistant
 				timeout: 5_000,
 			});
 
@@ -459,7 +459,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
 
 			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 3,
+				minCount: 4,
 				timeout: 5_000,
 			});
 
@@ -508,7 +508,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
 
 			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 3,
+				minCount: 4,
 				timeout: 5_000,
 			});
 
@@ -559,7 +559,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 
 			// Verify the report_result tool_use block appears in SDK messages
 			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 3,
+				minCount: 4,
 				timeout: 5_000,
 			});
 
