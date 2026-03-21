@@ -34,6 +34,7 @@ import {
 	type TaskAgentToolsConfig,
 } from '../../../src/lib/space/tools/task-agent-tools.ts';
 import type { Space, SpaceWorkflow, SpaceTask } from '@neokai/shared';
+import type { DaemonHub } from '../../../src/lib/daemon-hub.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -291,6 +292,28 @@ function makeConfig(
 		messageInjector: options?.messageInjector ?? (async () => {}),
 		onSubSessionComplete: options?.onSubSessionComplete ?? (async () => {}),
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Mock DaemonHub helper
+// ---------------------------------------------------------------------------
+
+interface MockDaemonHub {
+	hub: DaemonHub;
+	emittedEvents: Array<{ name: string; payload: Record<string, unknown> }>;
+}
+
+function makeMockDaemonHub(): MockDaemonHub {
+	const emittedEvents: Array<{ name: string; payload: Record<string, unknown> }> = [];
+	const hub = {
+		emit: mock(async (name: string, payload: Record<string, unknown>) => {
+			emittedEvents.push({ name, payload });
+		}),
+		on: mock(() => () => {}),
+		off: mock(() => {}),
+		once: mock(async () => {}),
+	} as unknown as DaemonHub;
+	return { hub, emittedEvents };
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,6 +1032,163 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('transition');
+	});
+});
+
+// ===========================================================================
+// report_result — DaemonHub event emission tests
+// ===========================================================================
+
+describe('createTaskAgentToolHandlers — report_result DaemonHub events', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('emits space.task.completed event when status is completed', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Test Task',
+			description: '',
+			status: 'in_progress',
+		});
+		const factory = makeMockSessionFactory();
+		const { hub, emittedEvents } = makeMockDaemonHub();
+
+		const handlers = createTaskAgentToolHandlers({
+			...makeConfig(ctx, mainTask.id, 'run-123', factory),
+			daemonHub: hub,
+		});
+
+		await handlers.report_result({ status: 'completed', summary: 'All done.' });
+
+		// Allow micro-task queue to flush the void emit
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(emittedEvents).toHaveLength(1);
+		expect(emittedEvents[0].name).toBe('space.task.completed');
+		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
+		expect(emittedEvents[0].payload.spaceId).toBe(ctx.spaceId);
+		expect(emittedEvents[0].payload.status).toBe('completed');
+		expect(emittedEvents[0].payload.summary).toBe('All done.');
+		expect(emittedEvents[0].payload.workflowRunId).toBe('run-123');
+		expect(emittedEvents[0].payload.taskTitle).toBe('Test Task');
+	});
+
+	test('emits space.task.failed event when status is needs_attention', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Failing Task',
+			description: '',
+			status: 'in_progress',
+		});
+		const factory = makeMockSessionFactory();
+		const { hub, emittedEvents } = makeMockDaemonHub();
+
+		const handlers = createTaskAgentToolHandlers({
+			...makeConfig(ctx, mainTask.id, 'run-456', factory),
+			daemonHub: hub,
+		});
+
+		await handlers.report_result({
+			status: 'needs_attention',
+			summary: 'Tests failed.',
+			error: 'CI pipeline error',
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(emittedEvents).toHaveLength(1);
+		expect(emittedEvents[0].name).toBe('space.task.failed');
+		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
+		expect(emittedEvents[0].payload.spaceId).toBe(ctx.spaceId);
+		expect(emittedEvents[0].payload.status).toBe('needs_attention');
+		expect(emittedEvents[0].payload.summary).toBe('Tests failed.');
+		expect(emittedEvents[0].payload.taskTitle).toBe('Failing Task');
+	});
+
+	test('emits space.task.failed event when status is cancelled', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Cancelled Task',
+			description: '',
+			status: 'in_progress',
+		});
+		const factory = makeMockSessionFactory();
+		const { hub, emittedEvents } = makeMockDaemonHub();
+
+		const handlers = createTaskAgentToolHandlers({
+			...makeConfig(ctx, mainTask.id, 'run-789', factory),
+			daemonHub: hub,
+		});
+
+		await handlers.report_result({ status: 'cancelled', summary: 'User cancelled.' });
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(emittedEvents).toHaveLength(1);
+		expect(emittedEvents[0].name).toBe('space.task.failed');
+		expect(emittedEvents[0].payload.status).toBe('cancelled');
+	});
+
+	test('does not emit events when daemonHub is not provided', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Task Without Hub',
+			description: '',
+			status: 'in_progress',
+		});
+		const factory = makeMockSessionFactory();
+
+		// No daemonHub in config
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id', factory));
+
+		const result = await handlers.report_result({ status: 'completed', summary: 'Done.' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		// Should still succeed — hub is optional
+		expect(parsed.success).toBe(true);
+	});
+
+	test('event payload includes sessionId: global', async () => {
+		const mainTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Hub Test Task',
+			description: '',
+			status: 'in_progress',
+		});
+		const factory = makeMockSessionFactory();
+		const { hub, emittedEvents } = makeMockDaemonHub();
+
+		const handlers = createTaskAgentToolHandlers({
+			...makeConfig(ctx, mainTask.id, 'run-id', factory),
+			daemonHub: hub,
+		});
+
+		await handlers.report_result({ status: 'completed', summary: 'Done.' });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(emittedEvents[0].payload.sessionId).toBe('global');
+	});
+
+	test('does not emit event when task is not found', async () => {
+		const factory = makeMockSessionFactory();
+		const { hub, emittedEvents } = makeMockDaemonHub();
+
+		const handlers = createTaskAgentToolHandlers({
+			...makeConfig(ctx, 'nonexistent-task', 'run-id', factory),
+			daemonHub: hub,
+		});
+
+		const result = await handlers.report_result({ status: 'completed', summary: 'Done.' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(emittedEvents).toHaveLength(0);
 	});
 });
 

@@ -266,6 +266,7 @@ export class TaskAgentManager {
 					this.injectSubSessionMessage(subSessionId, message),
 				onSubSessionComplete: (stepId, subSessionId) =>
 					this.handleSubSessionComplete(taskId, stepId, subSessionId),
+				daemonHub: this.config.daemonHub,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`

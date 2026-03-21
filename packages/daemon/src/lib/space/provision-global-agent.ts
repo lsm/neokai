@@ -17,6 +17,7 @@ import type { SpaceWorkflowManager } from './managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { SpaceRuntimeService } from './runtime/space-runtime-service';
+import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
 import { buildGlobalSpacesAgentPrompt } from './agents/global-spaces-agent';
 import { createGlobalSpacesMcpServer, type GlobalSpacesState } from './tools/global-spaces-tools';
@@ -44,6 +45,12 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	db: BunDatabase;
 	/** Shared mutable state for the active space context. Created externally so RPC handlers can use the same reference. */
 	state: GlobalSpacesState;
+	/**
+	 * DaemonHub for subscribing to task completion/failure events emitted by Task Agents.
+	 * When provided, the global Space Agent session receives notification messages when tasks
+	 * complete or fail via `space.task.completed` / `space.task.failed` events.
+	 */
+	daemonHub?: DaemonHub;
 }
 
 /**
@@ -67,6 +74,7 @@ export async function provisionGlobalSpacesAgent(
 		workflowRunRepo,
 		db,
 		state,
+		daemonHub,
 	} = deps;
 
 	// Get the shared runtime (no specific space context needed for the global agent)
@@ -124,6 +132,36 @@ export async function provisionGlobalSpacesAgent(
 		'global-spaces-tools': mcpServer as unknown as McpServerConfig,
 	});
 	existingSession.setRuntimeSystemPrompt(buildGlobalSpacesAgentPrompt());
+
+	// Subscribe to task completion/failure events from Task Agents.
+	// When a task completes or fails, inject a notification message into the Space Agent session
+	// so it can take appropriate action (start next task, alert the user, etc.).
+	if (daemonHub) {
+		daemonHub.on('space.task.completed', (event) => {
+			const message = `Task '${event.taskTitle}' has completed. Summary: ${event.summary}`;
+			void sessionFactory
+				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
+				.catch((err) => {
+					log.warn(
+						`Failed to inject task.completed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`
+					);
+				});
+		});
+
+		daemonHub.on('space.task.failed', (event) => {
+			const statusLabel = event.status === 'cancelled' ? 'cancelled' : 'failed';
+			const message = `Task '${event.taskTitle}' has ${statusLabel}. Summary: ${event.summary}`;
+			void sessionFactory
+				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
+				.catch((err) => {
+					log.warn(
+						`Failed to inject task.failed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`
+					);
+				});
+		});
+
+		log.info('Subscribed to space.task.completed and space.task.failed events');
+	}
 
 	log.info('Global spaces agent session provisioned');
 }
