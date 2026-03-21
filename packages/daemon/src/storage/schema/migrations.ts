@@ -1488,8 +1488,8 @@ function runMigration28(db: BunDatabase): void {
  * - space_workflow_transitions: directed edges between steps (graph navigation)
  * - space_workflow_runs: active/historical workflow executions (includes current_step_id)
  * - space_tasks: tasks with built-in custom_agent_id, workflow_run_id, workflow_step_id
- * - space_session_groups: named groups of related sessions (includes workflow_run_id, current_step_id)
- * - space_session_group_members: membership records for session groups
+ * - space_session_groups: named groups of related sessions (includes workflow_run_id, current_step_id, task_id)
+ * - space_session_group_members: membership records with freeform role, agent_id, and status
  *
  * All tables are created with IF NOT EXISTS so the migration is idempotent.
  * CASCADE deletes propagate from spaces → all child tables.
@@ -1711,6 +1711,7 @@ function runMigration29(db: BunDatabase): void {
 			description TEXT,
 			workflow_run_id TEXT,
 			current_step_id TEXT,
+			task_id TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -1728,8 +1729,10 @@ function runMigration29(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			group_id TEXT NOT NULL,
 			session_id TEXT NOT NULL,
-			role TEXT NOT NULL
-				CHECK(role IN ('worker', 'leader')),
+			role TEXT NOT NULL,
+			agent_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'completed', 'failed')),
 			order_index INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
