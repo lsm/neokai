@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for the rewritten RoomContextPanel component.
  *
@@ -8,8 +7,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, screen, within } from '@testing-library/preact';
-import { signal, computed } from '@preact/signals';
+import { render, fireEvent, cleanup, screen } from '@testing-library/preact';
+import { signal, computed, type Signal, type ReadonlySignal } from '@preact/signals';
+import type { NeoTask, RoomGoal, SessionSummary } from '@neokai/shared';
 
 // -------------------------------------------------------
 // Hoisted mocks
@@ -39,19 +39,19 @@ vi.mock('../../lib/toast.ts', () => ({
 // Signals used in mocks
 // -------------------------------------------------------
 
-let mockTasksSignal: ReturnType<typeof signal<any[]>>;
-let mockSessionsSignal: ReturnType<typeof signal<any[]>>;
-let mockGoalsSignal: ReturnType<typeof signal<any[]>>;
-let mockCurrentRoomSessionIdSignal: ReturnType<typeof signal<string | null>>;
-let mockCurrentRoomTaskIdSignal: ReturnType<typeof signal<string | null>>;
+let mockTasksSignal!: Signal<NeoTask[]>;
+let mockSessionsSignal!: Signal<SessionSummary[]>;
+let mockGoalsSignal!: Signal<RoomGoal[]>;
+let mockCurrentRoomSessionIdSignal!: Signal<string | null>;
+let mockCurrentRoomTaskIdSignal!: Signal<string | null>;
 
 // Computed signals derived from the mocks
-let mockActiveGoals: ReturnType<typeof computed>;
-let mockTasksByGoalId: ReturnType<typeof computed>;
-let mockOrphanTasks: ReturnType<typeof computed>;
-let mockOrphanTasksActive: ReturnType<typeof computed>;
-let mockOrphanTasksReview: ReturnType<typeof computed>;
-let mockOrphanTasksDone: ReturnType<typeof computed>;
+let mockActiveGoals!: ReadonlySignal<RoomGoal[]>;
+let mockTasksByGoalId!: ReadonlySignal<Map<string, NeoTask[]>>;
+let mockOrphanTasks!: ReadonlySignal<NeoTask[]>;
+let mockOrphanTasksActive!: ReadonlySignal<NeoTask[]>;
+let mockOrphanTasksReview!: ReadonlySignal<NeoTask[]>;
+let mockOrphanTasksDone!: ReadonlySignal<NeoTask[]>;
 
 function initSignals() {
 	mockTasksSignal = signal([]);
@@ -63,11 +63,11 @@ function initSignals() {
 	mockActiveGoals = computed(() => mockGoalsSignal.value.filter((g) => g.status === 'active'));
 
 	mockTasksByGoalId = computed(() => {
-		const taskMap = new Map();
+		const taskMap = new Map<string, NeoTask>();
 		for (const t of mockTasksSignal.value) taskMap.set(t.id, t);
-		const result = new Map();
+		const result = new Map<string, NeoTask[]>();
 		for (const goal of mockGoalsSignal.value) {
-			const linked = [];
+			const linked: NeoTask[] = [];
 			for (const taskId of goal.linkedTaskIds) {
 				const task = taskMap.get(taskId);
 				if (task) linked.push(task);
@@ -78,7 +78,7 @@ function initSignals() {
 	});
 
 	mockOrphanTasks = computed(() => {
-		const linkedIds = new Set();
+		const linkedIds = new Set<string>();
 		for (const goal of mockGoalsSignal.value) {
 			for (const taskId of goal.linkedTaskIds) linkedIds.add(taskId);
 		}
@@ -125,7 +125,7 @@ vi.mock('../../lib/router.ts', () => ({
 }));
 
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
-	const actual = await importOriginal();
+	const actual = await importOriginal<typeof import('../../lib/signals.ts')>();
 	return {
 		...actual,
 		get currentRoomSessionIdSignal() {
@@ -143,16 +143,33 @@ import { RoomContextPanel } from '../RoomContextPanel';
 // Helpers
 // -------------------------------------------------------
 
-function makeTask(id: string, title: string, status = 'pending') {
-	return { id, title, status, priority: 'normal', dependsOn: [] };
+function makeTask(id: string, title: string, status: NeoTask['status'] = 'pending'): NeoTask {
+	return { id, title, status, priority: 'normal', dependsOn: [] } as unknown as NeoTask;
 }
 
-function makeGoal(id: string, title: string, linkedTaskIds: string[] = [], status = 'active') {
-	return { id, title, status, priority: 'medium', linkedTaskIds, progress: 0 };
+function makeGoal(
+	id: string,
+	title: string,
+	linkedTaskIds: string[] = [],
+	status: RoomGoal['status'] = 'active'
+): RoomGoal {
+	return {
+		id,
+		title,
+		status,
+		priority: 'medium',
+		linkedTaskIds,
+		progress: 0,
+	} as unknown as RoomGoal;
 }
 
-function makeSession(id: string, title: string, status = 'idle', lastActiveAt?: number) {
-	return { id, title, status, lastActiveAt };
+function makeSession(
+	id: string,
+	title: string,
+	status = 'idle',
+	lastActiveAt?: number
+): SessionSummary {
+	return { id, title, status, lastActiveAt: lastActiveAt ?? 0 };
 }
 
 // -------------------------------------------------------
@@ -164,6 +181,9 @@ describe('RoomContextPanel', () => {
 		cleanup();
 		vi.clearAllMocks();
 		initSignals();
+		// Restore default resolved value after clearAllMocks (which clears call history
+		// but not implementations). Required so reordering tests doesn't break the
+		// success path after any test that overrides with mockRejectedValue.
 		mockCreateSession.mockResolvedValue('new-session-id');
 	});
 
@@ -319,6 +339,18 @@ describe('RoomContextPanel', () => {
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
+	it('highlights selected task inside an expanded goal', () => {
+		mockTasksSignal.value = [makeTask('t1', 'Linked Task', 'in_progress')];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1'])];
+		mockCurrentRoomTaskIdSignal.value = 't1';
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand goal to reveal linked task
+		fireEvent.click(screen.getByText('My Goal'));
+		const taskBtn = screen.getByText('Linked Task').closest('button');
+		expect(taskBtn?.className).toContain('bg-dark-700');
+	});
+
 	it('shows "No goals" when goal list is empty', () => {
 		render(<RoomContextPanel roomId="room-1" />);
 		expect(screen.getByText('No goals')).toBeTruthy();
@@ -335,6 +367,19 @@ describe('RoomContextPanel', () => {
 		render(<RoomContextPanel roomId="room-1" />);
 		expect(screen.getByText('Orphan Active')).toBeTruthy();
 		expect(screen.queryByText('Orphan Done')).toBeNull();
+	});
+
+	it('shows draft and pending tasks under Active tab', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Draft Task', 'draft'),
+			makeTask('t2', 'Pending Task', 'pending'),
+			makeTask('t3', 'Done Task', 'completed'),
+		];
+		render(<RoomContextPanel roomId="room-1" />);
+		// draft and pending should appear under Active tab (default)
+		expect(screen.getByText('Draft Task')).toBeTruthy();
+		expect(screen.getByText('Pending Task')).toBeTruthy();
+		expect(screen.queryByText('Done Task')).toBeNull();
 	});
 
 	it('switches to Review tab to show review orphan tasks', () => {
@@ -366,6 +411,24 @@ describe('RoomContextPanel', () => {
 		expect(screen.getByText('Done Task')).toBeTruthy();
 		expect(screen.getByText('Cancelled Task')).toBeTruthy();
 		expect(screen.queryByText('Active Task')).toBeNull();
+	});
+
+	it('archived orphan tasks do not appear in any tab', () => {
+		mockTasksSignal.value = [makeTask('t1', 'Archived Task', 'archived')];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Not in Active tab (default)
+		expect(screen.queryByText('Archived Task')).toBeNull();
+
+		// Not in Review tab
+		const reviewTab = screen.getAllByRole('button').find((b) => b.textContent === 'review');
+		fireEvent.click(reviewTab!);
+		expect(screen.queryByText('Archived Task')).toBeNull();
+
+		// Not in Done tab
+		const doneTab = screen.getAllByRole('button').find((b) => b.textContent === 'done');
+		fireEvent.click(doneTab!);
+		expect(screen.queryByText('Archived Task')).toBeNull();
 	});
 
 	it('shows "No orphan tasks" when filtered list is empty', () => {
@@ -402,6 +465,17 @@ describe('RoomContextPanel', () => {
 		expect(screen.getByText('Sessions')).toBeTruthy();
 		// But session content should not be visible (collapsed)
 		expect(screen.queryByText('Session 1')).toBeNull();
+	});
+
+	it('renders Sessions section count badge excluding archived sessions', () => {
+		mockSessionsSignal.value = [
+			makeSession('s1', 'Active Session A', 'idle'),
+			makeSession('s2', 'Archived Session', 'archived'),
+			makeSession('s3', 'Active Session B', 'idle'),
+		];
+		render(<RoomContextPanel roomId="room-1" />);
+		// Count badge reflects only non-archived sessions (2, not 3)
+		expect(screen.getByText('(2)')).toBeTruthy();
 	});
 
 	it('expands Sessions section when header is clicked', () => {
