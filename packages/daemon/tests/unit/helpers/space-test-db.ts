@@ -173,6 +173,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			description TEXT,
 			workflow_run_id TEXT,
 			current_step_id TEXT,
+			task_id TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -184,8 +185,10 @@ export function createSpaceTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			group_id TEXT NOT NULL,
 			session_id TEXT NOT NULL,
-			role TEXT NOT NULL
-				CHECK(role IN ('worker', 'leader')),
+			role TEXT NOT NULL,
+			agent_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'completed', 'failed')),
 			order_index INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
