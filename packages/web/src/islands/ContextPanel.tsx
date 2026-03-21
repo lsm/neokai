@@ -17,6 +17,7 @@ import {
 	navigateToSettings,
 	navigateToHome,
 	navigateToRooms,
+	navigateToInbox,
 	navigateToSpaces,
 } from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
@@ -167,6 +168,13 @@ export function ContextPanel() {
 			emptyDesc: 'Create a space to orchestrate agents',
 			actionLabel: 'Create Space',
 		},
+		inbox: {
+			title: 'Inbox',
+			emptyIcon: '📥',
+			emptyTitle: 'No items',
+			emptyDesc: 'Tasks awaiting review will appear here',
+			actionLabel: 'Inbox',
+		},
 		projects: {
 			title: 'Projects',
 			emptyIcon: '📁',
@@ -256,6 +264,9 @@ export function ContextPanel() {
 			case 'rooms':
 				navigateToRooms();
 				break;
+			case 'inbox':
+				navigateToInbox();
+				break;
 			case 'spaces':
 				navigateToSpaces();
 				break;
@@ -268,6 +279,7 @@ export function ContextPanel() {
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
+		navSection === 'inbox' ||
 		navSection === 'projects' ||
 		navSection === 'settings';
 
@@ -412,6 +424,9 @@ export function ContextPanel() {
 						onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
 						onCreateSpace={() => setCreateSpaceOpen(true)}
 					/>
+				)}
+				{navSection === 'inbox' && (
+					<div class="p-4 text-gray-400 text-sm">Inbox</div>
 				)}
 				{navSection === 'projects' && (
 					<div class="flex-1 flex items-center justify-center p-6">
