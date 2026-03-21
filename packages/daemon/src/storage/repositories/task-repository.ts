@@ -76,9 +76,9 @@ export class TaskRepository {
 		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
 
-		// Exclude archived tasks by default
+		// Exclude archived tasks by default (status is the source of truth for archival)
 		if (!filter?.includeArchived) {
-			query += ` AND archived_at IS NULL`;
+			query += ` AND status != 'archived'`;
 		}
 
 		if (filter?.status) {
@@ -202,13 +202,16 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Archive a task by setting archived_at timestamp.
+	 * Archive a task by setting status to 'archived' and archived_at timestamp.
+	 * status = 'archived' is the canonical source of truth; archived_at is a derived timestamp.
 	 * Archived tasks are hidden from UI by default.
 	 * Returns the updated task or null if not found.
 	 */
 	archiveTask(id: string): NeoTask | null {
 		const now = Date.now();
-		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ?, updated_at = ? WHERE id = ?`);
+		const stmt = this.db.prepare(
+			`UPDATE tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
+		);
 		stmt.run(now, now, id);
 		return this.getTask(id);
 	}

@@ -678,7 +678,7 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		expect(parsed.error).toContain('ghost-task');
 	});
 
-	test('returns error when task is in completed status', async () => {
+	test('retries a completed task to in_progress (reactivation)', async () => {
 		const handlers = makeHandlers(ctx, { activeSpaceId: null });
 
 		const createResult = await handlers.create_standalone_task({
@@ -693,8 +693,8 @@ describe('createGlobalSpacesToolHandlers — retry_task', () => {
 		const result = await handlers.retry_task({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
 
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('completed');
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('in_progress');
 	});
 
 	test('returns error when task belongs to different space', async () => {

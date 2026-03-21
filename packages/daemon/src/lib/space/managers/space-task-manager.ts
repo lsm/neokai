@@ -25,9 +25,10 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
 	pending: ['in_progress', 'cancelled'],
 	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
 	review: ['completed', 'needs_attention', 'in_progress'],
-	completed: [],
-	needs_attention: ['pending', 'in_progress', 'review'],
-	cancelled: ['pending', 'in_progress'],
+	completed: ['in_progress', 'archived'], // Reactivate or archive
+	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
+	cancelled: ['pending', 'in_progress', 'archived'], // Restart or archive
+	archived: [], // True terminal state — no going back
 };
 
 /**
@@ -325,15 +326,19 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		if (task.status !== 'needs_attention' && task.status !== 'cancelled') {
+		const retryableStatuses: SpaceTaskStatus[] = ['needs_attention', 'cancelled', 'completed'];
+		if (!retryableStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention' or 'cancelled' status.`
+				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention', 'cancelled', or 'completed' status.`
 			);
 		}
 
+		// Transition to in_progress for completed/cancelled (reactivation), pending for needs_attention
+		const targetStatus: SpaceTaskStatus =
+			task.status === 'completed' || task.status === 'cancelled' ? 'in_progress' : 'pending';
 		// Transition first — if this fails, the description is untouched (no partial state)
-		// setTaskStatus handles clearing error/result/progress on transition from needs_attention/cancelled -> pending
-		const retried = await this.setTaskStatus(taskId, 'pending');
+		// setTaskStatus handles clearing error/result/progress on transition
+		const retried = await this.setTaskStatus(taskId, targetStatus);
 
 		// Apply optional description update after successful status transition
 		if (options?.description !== undefined) {
@@ -360,10 +365,15 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const allowedStatuses: SpaceTaskStatus[] = ['pending', 'needs_attention', 'cancelled'];
+		const allowedStatuses: SpaceTaskStatus[] = [
+			'pending',
+			'needs_attention',
+			'cancelled',
+			'completed',
+		];
 		if (!allowedStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', or 'cancelled' status.`
+				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', 'cancelled', or 'completed' status.`
 			);
 		}
 

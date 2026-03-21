@@ -144,6 +144,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 38: Add is_cyclic column to space_workflow_transitions.
 	runMigration38(db);
+
+	// Migration 39: Add 'archived' to status CHECK constraints on tasks and space_tasks.
+	runMigration39(db);
 }
 
 /**
@@ -1645,7 +1648,7 @@ function runMigration29(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			task_type TEXT
@@ -2104,5 +2107,209 @@ function runMigration38(db: BunDatabase): void {
 		db.prepare(`SELECT is_cyclic FROM space_workflow_transitions LIMIT 1`).all();
 	} catch {
 		db.exec(`ALTER TABLE space_workflow_transitions ADD COLUMN is_cyclic INTEGER`);
+	}
+}
+
+/**
+ * Migration 39: Add 'archived' to the status CHECK constraint on `tasks` and `space_tasks`.
+ *
+ * Uses the SQLite table-rebuild pattern (same as migration 18) because SQLite does not
+ * support ALTER TABLE … ALTER CONSTRAINT.
+ *
+ * After the rebuild, backfills any rows where `archived_at IS NOT NULL` to
+ * `status = 'archived'` so the status column becomes the canonical source of truth.
+ */
+function runMigration39(db: BunDatabase): void {
+	// --- tasks table ---
+	if (tableExists(db, 'tasks')) {
+		const tableInfo = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+			.get() as { sql: string } | null;
+		const needsMigration = tableInfo !== null && !tableInfo.sql.includes("'archived'");
+
+		if (needsMigration) {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				db.exec(`DROP TABLE IF EXISTS tasks_new`);
+				db.exec(`
+					CREATE TABLE tasks_new (
+						id TEXT PRIMARY KEY,
+						room_id TEXT NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT NOT NULL,
+						status TEXT NOT NULL DEFAULT 'pending'
+							CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+						priority TEXT NOT NULL DEFAULT 'normal'
+							CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+						progress INTEGER,
+						current_step TEXT,
+						result TEXT,
+						error TEXT,
+						depends_on TEXT DEFAULT '[]',
+						created_at INTEGER NOT NULL,
+						started_at INTEGER,
+						completed_at INTEGER,
+						task_type TEXT DEFAULT 'coding'
+							CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+						assigned_agent TEXT DEFAULT 'coder',
+						created_by_task_id TEXT,
+						archived_at INTEGER,
+						active_session TEXT,
+						pr_url TEXT,
+						pr_number INTEGER,
+						pr_created_at INTEGER,
+						input_draft TEXT,
+						updated_at INTEGER,
+						FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+					)
+				`);
+
+				const cols = [
+					'id',
+					'room_id',
+					'title',
+					'description',
+					'status',
+					'priority',
+					'progress',
+					'current_step',
+					'result',
+					'error',
+					'depends_on',
+					'created_at',
+					'started_at',
+					'completed_at',
+				];
+				const optionalCols = [
+					'task_type',
+					'assigned_agent',
+					'created_by_task_id',
+					'archived_at',
+					'active_session',
+					'pr_url',
+					'pr_number',
+					'pr_created_at',
+					'input_draft',
+					'updated_at',
+				];
+				for (const col of optionalCols) {
+					if (tableHasColumn(db, 'tasks', col)) cols.push(col);
+				}
+				const selectCols = cols.join(', ');
+				db.exec(`INSERT INTO tasks_new (${selectCols}) SELECT ${selectCols} FROM tasks`);
+				db.exec(`DROP TABLE tasks`);
+				db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+
+		// Backfill: set status = 'archived' for rows with archived_at IS NOT NULL
+		db.exec(
+			`UPDATE tasks SET status = 'archived' WHERE archived_at IS NOT NULL AND status != 'archived'`
+		);
+	}
+
+	// --- space_tasks table ---
+	if (tableExists(db, 'space_tasks')) {
+		const tableInfo = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+			.get() as { sql: string } | null;
+		const needsMigration = tableInfo !== null && !tableInfo.sql.includes("'archived'");
+
+		if (needsMigration) {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				db.exec(`DROP TABLE IF EXISTS space_tasks_new`);
+				db.exec(`
+					CREATE TABLE space_tasks_new (
+						id TEXT PRIMARY KEY,
+						space_id TEXT NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT NOT NULL DEFAULT '',
+						status TEXT NOT NULL DEFAULT 'pending'
+							CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+						priority TEXT NOT NULL DEFAULT 'normal'
+							CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+						task_type TEXT
+							CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
+						assigned_agent TEXT
+							CHECK(assigned_agent IN ('coder', 'general')),
+						custom_agent_id TEXT,
+						workflow_run_id TEXT,
+						workflow_step_id TEXT,
+						created_by_task_id TEXT,
+						goal_id TEXT,
+						progress INTEGER,
+						current_step TEXT,
+						result TEXT,
+						error TEXT,
+						depends_on TEXT NOT NULL DEFAULT '[]',
+						input_draft TEXT,
+						active_session TEXT
+							CHECK(active_session IN ('worker', 'leader')),
+						task_agent_session_id TEXT,
+						pr_url TEXT,
+						pr_number INTEGER,
+						pr_created_at INTEGER,
+						archived_at INTEGER,
+						created_at INTEGER NOT NULL,
+						started_at INTEGER,
+						completed_at INTEGER,
+						updated_at INTEGER NOT NULL,
+						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+						FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+						FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
+					)
+				`);
+
+				const cols = ['id', 'space_id', 'title', 'description', 'status', 'priority'];
+				const optionalCols = [
+					'task_type',
+					'assigned_agent',
+					'custom_agent_id',
+					'workflow_run_id',
+					'workflow_step_id',
+					'created_by_task_id',
+					'goal_id',
+					'progress',
+					'current_step',
+					'result',
+					'error',
+					'depends_on',
+					'input_draft',
+					'active_session',
+					'task_agent_session_id',
+					'pr_url',
+					'pr_number',
+					'pr_created_at',
+					'archived_at',
+					'created_at',
+					'started_at',
+					'completed_at',
+					'updated_at',
+				];
+				for (const col of optionalCols) {
+					if (tableHasColumn(db, 'space_tasks', col)) cols.push(col);
+				}
+				const selectCols = cols.join(', ');
+				db.exec(
+					`INSERT INTO space_tasks_new (${selectCols}) SELECT ${selectCols} FROM space_tasks`
+				);
+				db.exec(`DROP TABLE space_tasks`);
+				db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+
+		// Backfill: set status = 'archived' for rows with archived_at IS NOT NULL
+		db.exec(
+			`UPDATE space_tasks SET status = 'archived' WHERE archived_at IS NOT NULL AND status != 'archived'`
+		);
 	}
 }

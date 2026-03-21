@@ -28,9 +28,10 @@ export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 	pending: ['in_progress', 'cancelled'],
 	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
 	review: ['completed', 'needs_attention', 'in_progress'],
-	completed: [], // Terminal state
-	needs_attention: ['pending', 'in_progress', 'review'], // Restart allowed + revive to review via message
-	cancelled: ['pending', 'in_progress'], // Restart only — worktree is cleaned up on cancel
+	completed: ['in_progress', 'archived'], // Reactivate or archive
+	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
+	cancelled: ['pending', 'in_progress', 'archived'], // Restart or archive
+	archived: [], // True terminal state — no going back
 };
 
 /**

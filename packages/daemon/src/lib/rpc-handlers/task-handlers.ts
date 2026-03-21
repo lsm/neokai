@@ -132,6 +132,7 @@ export function setupTaskHandlers(
 			roomId: string;
 			status?: TaskStatus;
 			priority?: TaskPriority;
+			includeArchived?: boolean;
 		};
 
 		if (!params.roomId) {
@@ -142,6 +143,7 @@ export function setupTaskHandlers(
 		const tasks = await taskManager.listTasks({
 			status: params.status,
 			priority: params.priority,
+			includeArchived: params.includeArchived,
 		});
 
 		return { tasks };
