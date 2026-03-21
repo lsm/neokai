@@ -10,13 +10,20 @@ import { signal } from '@preact/signals';
 import type { Room, RoomOverview, TaskSummary } from '@neokai/shared';
 
 // Hoisted mocks
-const { mockGetHub } = vi.hoisted(() => ({
+const { mockGetHub, mockToastError } = vi.hoisted(() => ({
 	mockGetHub: vi.fn(),
+	mockToastError: vi.fn(),
 }));
 
 vi.mock('./connection-manager', () => ({
 	connectionManager: {
 		getHub: mockGetHub,
+	},
+}));
+
+vi.mock('./toast', () => ({
+	toast: {
+		error: mockToastError,
 	},
 }));
 
@@ -192,6 +199,73 @@ describe('InboxStore', () => {
 
 			// Only one request — for the active room
 			expect(mockHub.request).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('approveTask()', () => {
+		it('should call room.task.approve and refresh on success', async () => {
+			const room = makeRoom('r', 'R');
+			mockRoomsSignal.value = [room];
+
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockImplementationOnce(() => Promise.resolve(undefined)) // approve
+					.mockImplementationOnce(() => Promise.resolve(makeOverview(room, []))), // refresh
+			};
+			mockGetHub.mockResolvedValue(mockHub);
+
+			await inboxStore.approveTask('task-1', 'r');
+
+			expect(mockHub.request).toHaveBeenCalledWith('room.task.approve', {
+				roomId: 'r',
+				taskId: 'task-1',
+			});
+		});
+
+		it('should show toast.error when approve fails', async () => {
+			const mockHub = {
+				request: vi.fn().mockRejectedValue(new Error('Server error')),
+			};
+			mockGetHub.mockResolvedValue(mockHub);
+
+			await inboxStore.approveTask('task-1', 'r');
+
+			expect(mockToastError).toHaveBeenCalledWith('Server error');
+		});
+	});
+
+	describe('rejectTask()', () => {
+		it('should call room.task.reject with feedback and refresh on success', async () => {
+			const room = makeRoom('r', 'R');
+			mockRoomsSignal.value = [room];
+
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockImplementationOnce(() => Promise.resolve(undefined)) // reject
+					.mockImplementationOnce(() => Promise.resolve(makeOverview(room, []))), // refresh
+			};
+			mockGetHub.mockResolvedValue(mockHub);
+
+			await inboxStore.rejectTask('task-1', 'r', 'needs more work');
+
+			expect(mockHub.request).toHaveBeenCalledWith('room.task.reject', {
+				roomId: 'r',
+				taskId: 'task-1',
+				feedback: 'needs more work',
+			});
+		});
+
+		it('should show toast.error when reject fails', async () => {
+			const mockHub = {
+				request: vi.fn().mockRejectedValue(new Error('Reject failed')),
+			};
+			mockGetHub.mockResolvedValue(mockHub);
+
+			await inboxStore.rejectTask('task-1', 'r', 'feedback');
+
+			expect(mockToastError).toHaveBeenCalledWith('Reject failed');
 		});
 	});
 

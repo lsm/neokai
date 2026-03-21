@@ -12,6 +12,7 @@ import { signal, computed } from '@preact/signals';
 import type { TaskSummary, RoomOverview } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { lobbyStore } from './lobby-store';
+import { toast } from './toast';
 
 /**
  * A review-status task enriched with room metadata for inbox display
@@ -75,9 +76,31 @@ async function refresh(): Promise<void> {
 	}
 }
 
+async function approveTask(taskId: string, roomId: string): Promise<void> {
+	try {
+		const hub = await connectionManager.getHub();
+		await hub.request('room.task.approve', { roomId, taskId });
+		await refresh();
+	} catch (err) {
+		toast.error(err instanceof Error ? err.message : 'Failed to approve task');
+	}
+}
+
+async function rejectTask(taskId: string, roomId: string, feedback: string): Promise<void> {
+	try {
+		const hub = await connectionManager.getHub();
+		await hub.request('room.task.reject', { roomId, taskId, feedback });
+		await refresh();
+	} catch (err) {
+		toast.error(err instanceof Error ? err.message : 'Failed to reject task');
+	}
+}
+
 export const inboxStore = {
 	items,
 	isLoading,
 	refresh,
 	reviewCount,
+	approveTask,
+	rejectTask,
 };
