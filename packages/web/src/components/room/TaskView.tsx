@@ -22,6 +22,7 @@ import { useMessageHub } from '../../hooks/useMessageHub';
 import { useModal } from '../../hooks/useModal';
 import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { getModelLabel } from '../../lib/session-utils';
 import { toast } from '../../lib/toast.ts';
 import { copyToClipboard } from '../../lib/utils';
 import { ActionBar } from '../ui/ActionBar';
@@ -30,6 +31,7 @@ import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
+import { TaskViewModelSelector } from './TaskViewModelSelector';
 
 interface CopyButtonProps {
 	text: string;
@@ -555,6 +557,24 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setAutoScrollEnabled(true);
 	}, [scrollToBottom]);
 
+	// Refresh worker session info after model switch
+	const handleWorkerModelSwitched = useCallback(() => {
+		if (group) {
+			void request<{ session: SessionInfo }>('session.get', { sessionId: group.workerSessionId })
+				.then((res) => setWorkerSession(res.session))
+				.catch(() => {});
+		}
+	}, [group, request]);
+
+	// Refresh leader session info after model switch
+	const handleLeaderModelSwitched = useCallback(() => {
+		if (group) {
+			void request<{ session: SessionInfo }>('session.get', { sessionId: group.leaderSessionId })
+				.then((res) => setLeaderSession(res.session))
+				.catch(() => {});
+		}
+	}, [group, request]);
+
 	useEffect(() => {
 		const channel = `room:${roomId}`;
 		joinRoom(channel);
@@ -951,31 +971,51 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							</>
 						)}
 						{workerSession && (
-							<div class="md:col-span-2">
-								<span class="text-gray-500">Worker worktree:</span>
-								<span class="text-gray-300 ml-2 font-mono break-all">
+							<div class="md:col-span-2 flex items-center gap-2 flex-wrap">
+								<span class="text-gray-500">Worker:</span>
+								<span class="text-gray-300 font-mono break-all">
 									{workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
 								</span>
 								<CopyButton
 									text={workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
 								/>
-								{workerSession.config.model && (
-									<span class="text-gray-500 ml-2">(model: {workerSession.config.model})</span>
-								)}
+								<span
+									class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-blue-400 font-medium"
+									title={workerSession.config.model ?? undefined}
+								>
+									{getModelLabel(workerSession.config.model)}
+								</span>
+								<TaskViewModelSelector
+									sessionId={workerSession.id}
+									currentModel={workerSession.config.model ?? ''}
+									currentProvider={workerSession.config.provider}
+									disabled={task.status !== 'in_progress' && task.status !== 'review'}
+									onModelSwitched={handleWorkerModelSwitched}
+								/>
 							</div>
 						)}
 						{leaderSession && (
-							<div class="md:col-span-2">
-								<span class="text-gray-500">Leader worktree:</span>
-								<span class="text-gray-300 ml-2 font-mono break-all">
+							<div class="md:col-span-2 flex items-center gap-2 flex-wrap">
+								<span class="text-gray-500">Leader:</span>
+								<span class="text-gray-300 font-mono break-all">
 									{leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
 								</span>
 								<CopyButton
 									text={leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
 								/>
-								{leaderSession.config.model && (
-									<span class="text-gray-500 ml-2">(model: {leaderSession.config.model})</span>
-								)}
+								<span
+									class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-purple-400 font-medium"
+									title={leaderSession.config.model ?? undefined}
+								>
+									{getModelLabel(leaderSession.config.model)}
+								</span>
+								<TaskViewModelSelector
+									sessionId={leaderSession.id}
+									currentModel={leaderSession.config.model ?? ''}
+									currentProvider={leaderSession.config.provider}
+									disabled={task.status !== 'in_progress' && task.status !== 'review'}
+									onModelSwitched={handleLeaderModelSwitched}
+								/>
 							</div>
 						)}
 					</div>

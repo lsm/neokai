@@ -22,6 +22,8 @@ import {
 	type TaskPriority,
 	type AgentType,
 	type RuntimeState,
+	type GlobalSettings,
+	type FallbackModelEntry,
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
@@ -36,6 +38,7 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
+import type { ModelSwitchResult } from '../../agent/model-switch-handler';
 import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
 import type {
@@ -93,6 +96,12 @@ export interface WorkerMessage {
 	toolCallNames: string[];
 }
 
+/** Response from session.model.get RPC */
+interface SessionModelGetResult {
+	currentModel: string;
+	modelInfo?: { provider?: string };
+}
+
 export interface RoomRuntimeConfig {
 	room: Room;
 	groupRepo: SessionGroupRepository;
@@ -133,6 +142,8 @@ export interface RoomRuntimeConfig {
 	getTask: (taskId: string) => Promise<NeoTask | null>;
 	/** Fetch goal from DB by ID (for lazy leader init with current data) */
 	getGoal: (goalId: string) => Promise<RoomGoal | null>;
+	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
+	getGlobalSettings: () => GlobalSettings;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -162,6 +173,7 @@ export class RoomRuntime {
 	private readonly deadLoopConfig: DeadLoopConfig;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
+	private readonly getGlobalSettings: () => GlobalSettings;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -268,6 +280,7 @@ export class RoomRuntime {
 		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
+		this.getGlobalSettings = config.getGlobalSettings;
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -294,6 +307,110 @@ export class RoomRuntime {
 			const leaderModel = this.resolveAgentModel(config.room, 'leader');
 			this.taskGroupManager.updateModel(leaderModel, this.resolveProviderForModel(leaderModel));
 		}
+	}
+
+	// =========================================================================
+	// Fallback Model Switching (for rate limit handling)
+	// =========================================================================
+
+	/**
+	 * Attempt to switch a session to a fallback model when a rate limit is detected.
+	 * Returns true if a fallback was attempted, false if no fallback is available.
+	 */
+	private async trySwitchToFallbackModel(
+		groupId: string,
+		sessionId: string,
+		sessionRole: 'worker' | 'leader'
+	): Promise<boolean> {
+		const settings = this.getGlobalSettings();
+		const fallbackModels = settings.fallbackModels ?? [];
+
+		if (fallbackModels.length === 0) {
+			return false;
+		}
+
+		// Get current model info from the session
+		let currentModel: string;
+		let currentProvider: string;
+		try {
+			const modelInfo = (await this.messageHub?.request('session.model.get', { sessionId })) as
+				| SessionModelGetResult
+				| undefined;
+			if (!modelInfo || !modelInfo.currentModel) {
+				log.warn(`Could not get current model for session ${sessionId}`);
+				return false;
+			}
+			currentModel = modelInfo.currentModel;
+			currentProvider = modelInfo.modelInfo?.provider ?? 'anthropic';
+		} catch (err) {
+			log.warn(`Error getting current model for session ${sessionId}:`, err);
+			return false;
+		}
+
+		// Find the index of the current model in the fallback chain
+		const currentIndex = fallbackModels.findIndex(
+			(f) => f.model === currentModel && f.provider === currentProvider
+		);
+
+		// Determine the next fallback model
+		let fallback: FallbackModelEntry | undefined;
+		if (currentIndex === -1) {
+			// Current model is not in fallback chain, use the first fallback
+			fallback = fallbackModels[0];
+		} else {
+			// Try the next one in the chain
+			const nextIndex = currentIndex + 1;
+			if (nextIndex < fallbackModels.length) {
+				fallback = fallbackModels[nextIndex];
+			}
+			// If current is the last in chain and there's only one fallback, no point switching
+			// to itself, so don't fall back
+		}
+
+		if (!fallback) {
+			log.info(
+				`No fallback model available for ${sessionRole} session ${sessionId} ` +
+					`(current: ${currentProvider}/${currentModel}, chain exhausted)`
+			);
+			return false;
+		}
+
+		// Don't switch to the same model
+		if (fallback.model === currentModel && fallback.provider === currentProvider) {
+			return false;
+		}
+
+		try {
+			const result = (await this.messageHub?.request('session.model.switch', {
+				sessionId,
+				model: fallback.model,
+				provider: fallback.provider,
+			})) as ModelSwitchResult | undefined;
+
+			if (result?.success) {
+				log.info(
+					`Switched ${sessionRole} session ${sessionId} from ${currentProvider}/${currentModel} ` +
+						`to ${fallback.provider}/${fallback.model} due to rate limit`
+				);
+				this.appendGroupEvent(groupId, 'model_fallback', {
+					text: `Switched from ${currentModel} to ${fallback.model} due to rate limit`,
+					fromModel: currentModel,
+					fromProvider: currentProvider,
+					toModel: fallback.model,
+					toProvider: fallback.provider,
+					sessionRole,
+				});
+				return true;
+			} else {
+				log.warn(
+					`Fallback model switch failed for ${sessionRole} session ${sessionId}: ${result?.error ?? 'unknown error'}`
+				);
+			}
+		} catch (err) {
+			log.error(`Error switching ${sessionRole} session ${sessionId} to fallback model:`, err);
+		}
+
+		return false;
 	}
 
 	// =========================================================================
@@ -530,8 +647,9 @@ export class RoomRuntime {
 		// worktree gate next would bounce the worker straight back into another failing API
 		// call — creating a rapid bounce loop.  Detecting the error first prevents that.
 		//
-		// terminal   → fail task immediately (4xx — unrecoverable, no point bouncing)
-		// rate_limit → set initial backoff and pause (only on first detection; re-triggers fall through)
+		// terminal    → fail task immediately (4xx — unrecoverable, no point bouncing)
+		// rate_limit  → set initial backoff and pause (only on first detection; re-triggers fall through)
+		// usage_limit → immediately try fallback model; if none available, fall through to fail
 		// recoverable / null → fall through to worktree check and exit gate
 		{
 			const errorClass = classifyError(workerOutputText);
@@ -576,10 +694,41 @@ export class RoomRuntime {
 						sessionRole: 'worker',
 					});
 					this.scheduleTickAfterRateLimitReset(groupId);
+					// Try to switch to a fallback model if configured
+					await this.trySwitchToFallbackModel(groupId, group.workerSessionId, 'worker');
 					return;
 				}
 				// group.rateLimit already set (even if expired): re-trigger after expiry.
 				// Fall through to the worktree check so the worker can attempt cleanup/retry.
+			}
+			if (errorClass?.class === 'usage_limit') {
+				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+				// If no fallback is configured or switch fails, fail the task so the user knows.
+				log.info(
+					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
+				);
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Usage limit reached — switching to fallback model`,
+				});
+				const switched = await this.trySwitchToFallbackModel(
+					groupId,
+					group.workerSessionId,
+					'worker'
+				);
+				if (!switched) {
+					// No fallback available — fail so the user sees a clear message
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Usage limit reached and no fallback model configured. ${errorClass.reason}`,
+					});
+					await this.taskGroupManager.fail(groupId, errorClass.reason);
+					this.cleanupMirroring(groupId, `Usage limit: ${errorClass.reason}`);
+					await this.emitTaskUpdateById(group.taskId);
+					await this.emitGoalProgressForTask(group.taskId);
+					this.scheduleTick();
+					return;
+				}
+				// Fall through to normal routing — fallback model switch event was already appended
+				// in trySwitchToFallbackModel so the UI shows the switch clearly.
 			}
 		}
 
@@ -833,10 +982,11 @@ export class RoomRuntime {
 		}
 
 		// Classify any API errors in leader output.
-		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
-		// rate_limit → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
-		//              (no parseable reset time) mirroring skips setRateLimit, so we must apply a
-		//              minimum backoff here to prevent the task stalling indefinitely.
+		// terminal    → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
+		// rate_limit  → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
+		//               (no parseable reset time) mirroring skips setRateLimit, so we must apply a
+		//               minimum backoff here to prevent the task stalling indefinitely.
+		// usage_limit → immediately try fallback model; if none available, fall through to fail
 		// recoverable / null → fall through (leader finished without calling a tool — that's fine)
 		//
 		// Note: fetching with afterMessageId=null returns all leader messages since session start.
@@ -895,7 +1045,36 @@ export class RoomRuntime {
 						sessionRole: 'leader',
 					});
 					this.scheduleTickAfterRateLimitReset(groupId);
+					// Try to switch to a fallback model if configured
+					await this.trySwitchToFallbackModel(groupId, group.leaderSessionId, 'leader');
 					return;
+				}
+				if (errorClass?.class === 'usage_limit') {
+					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					log.info(
+						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
+					);
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Usage limit reached in leader — switching to fallback model`,
+					});
+					const switched = await this.trySwitchToFallbackModel(
+						groupId,
+						group.leaderSessionId,
+						'leader'
+					);
+					if (!switched) {
+						// No fallback available — fail so the user sees a clear message
+						this.appendGroupEvent(groupId, 'status', {
+							text: `Usage limit reached in leader and no fallback model configured. ${errorClass.reason}`,
+						});
+						await this.taskGroupManager.fail(groupId, errorClass.reason);
+						this.cleanupMirroring(groupId, `Usage limit in leader: ${errorClass.reason}`);
+						await this.emitTaskUpdateById(group.taskId);
+						await this.emitGoalProgressForTask(group.taskId);
+						this.scheduleTick();
+						return;
+					}
+					// Fall through to normal completion — fallback model switch event was already appended
 				}
 			}
 		}
@@ -1946,12 +2125,24 @@ export class RoomRuntime {
 		});
 		if (this.messageHub) {
 			const now = Date.now();
+			// Map event kinds to message types for the frontend.
+			// 'leader_summary' is a special case (rendered as a distinct card).
+			// 'rate_limited' and 'model_fallback' get their own type so the frontend
+			// can render them as prominent notifications.
+			const messageType =
+				kind === 'leader_summary'
+					? 'leader_summary'
+					: kind === 'rate_limited'
+						? 'rate_limited'
+						: kind === 'model_fallback'
+							? 'model_fallback'
+							: 'status';
 			this.messageHub.event(
 				'state.groupMessages.delta',
 				{
 					added: [
 						{
-							type: kind === 'leader_summary' ? 'leader_summary' : 'status',
+							type: messageType,
 							text: payload?.text ?? kind,
 							timestamp: now,
 						},

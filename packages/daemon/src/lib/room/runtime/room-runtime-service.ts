@@ -8,7 +8,7 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
+import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -43,6 +43,8 @@ export interface RoomRuntimeServiceConfig {
 	sessionManager: SessionManager;
 	defaultWorkspacePath: string;
 	defaultModel: string;
+	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
+	getGlobalSettings: () => GlobalSettings;
 }
 
 export class RoomRuntimeService {
@@ -417,6 +419,7 @@ export class RoomRuntimeService {
 			getRoom: (roomId) => this.ctx.roomManager.getRoom(roomId),
 			getTask: (taskId) => taskManager.getTask(taskId),
 			getGoal: (goalId) => goalManager.getGoal(goalId),
+			getGlobalSettings: this.ctx.getGlobalSettings,
 		});
 
 		this.runtimes.set(room.id, runtime);

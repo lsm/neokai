@@ -114,6 +114,17 @@ export interface McpServerSettings {
 }
 
 /**
+ * A single fallback model entry in the fallback chain.
+ * Used when the primary model fails due to rate limits or usage limits.
+ */
+export interface FallbackModelEntry {
+	/** Model ID (e.g., 'claude-sonnet-4-5-20250929') */
+	model: string;
+	/** Provider ID (e.g., 'anthropic', 'glm', 'minimax') */
+	provider: string;
+}
+
+/**
  * Global settings that apply across all sessions
  */
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
@@ -136,6 +147,9 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 	// Room agent settings
 	/** Maximum number of concurrent worker sessions per room agent (default: 3) */
 	maxConcurrentWorkers?: number;
+
+	/** Ordered fallback model chain for automatic model switching on rate/usage limits */
+	fallbackModels?: FallbackModelEntry[];
 }
 
 /**
