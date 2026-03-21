@@ -10,6 +10,23 @@ Create the `TaskAgentManager` class that handles the full lifecycle of Task Agen
 
 **Description:** Create the `TaskAgentManager` class that manages the lifecycle of Task Agent sessions. This is the central integration point that ties together the session init factory, MCP tools, and sub-session management.
 
+**Key Design Decision — Sub-Session Lifecycle Strategy:**
+
+Sub-sessions (the step agents spawned by Task Agent) are **first-class `SessionManager` sessions** — they are created via `SessionManager.createSession()`, persisted in the DB, and participate in the full SDK lifecycle (event emission, message persistence, cleanup).
+
+This is chosen over the alternative of lightweight in-memory-only objects because:
+
+| Concern | First-class SessionManager sessions (chosen) | Lightweight in-memory only (rejected) |
+|---------|----------------------------------------------|---------------------------------------|
+| **DB persistence** | Conversation history persisted automatically via SessionManager's DB wiring. Sub-session messages are recoverable after crash. | No persistence — all sub-session conversation history lost on crash. Task Agent would need to fully re-run workflow steps. |
+| **Event lifecycle** | `session.completed`, `session.error` events emitted automatically. Completion listeners can use standard DaemonHub event patterns. | Must implement custom completion detection — polling, manual callbacks, or ad-hoc event emission. |
+| **Cleanup** | `SessionManager.deleteSession()` handles DB record removal. Well-defined contract. | No DB records to clean up, but also no way to audit what happened in a sub-session after the fact. |
+| **Crash recovery** | On daemon restart, sub-session records exist in DB. Task Agent's re-orientation message tells it to `check_step_status` — if a sub-session completed before the crash, its status is in the DB. If not, Task Agent re-spawns it. | On crash, all sub-session state is lost. Task Agent must re-run every step from scratch since there's no record of what completed. |
+| **Visibility** | Must be filtered from user-facing session lists via `{ internal: true, parentTaskId }` metadata. | Invisible by default since they're not in SessionManager. |
+| **Overhead** | Slightly more overhead (DB writes per message). Acceptable since sub-sessions are long-running workflow steps, not high-frequency operations. | Lower overhead but at the cost of durability and debuggability. |
+
+The `TaskAgentManager` adds an in-memory `subSessions: Map` on top of SessionManager for fast lookup by taskId + stepId, but SessionManager remains the source of truth for lifecycle. The in-memory map is a cache — it is rebuilt during rehydration (Task 5.3) by querying SessionManager for sessions with `internal: true` metadata matching the task's space.
+
 **Subtasks:**
 1. Create `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
 2. Define `TaskAgentManagerConfig` interface containing: `db`, `sessionManager`, `spaceManager`, `spaceAgentManager`, `spaceWorkflowManager`, `spaceRuntimeService`, `taskRepo`, `workflowRunRepo`, `daemonHub`, `messageHub`, `getApiKey`, `defaultModel`
