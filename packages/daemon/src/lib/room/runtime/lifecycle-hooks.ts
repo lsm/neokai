@@ -82,6 +82,12 @@ export interface WorkerExitHookContext {
 
 export interface LeaderCompleteHookContext {
 	workspacePath: string;
+	/**
+	 * The room's root workspace path (the main repository, NOT the task's isolated worktree).
+	 * Used by checkLeaderRootRepoSynced to pull the root repo after PR merge.
+	 * Falls back to workspacePath if not provided.
+	 */
+	rootWorkspacePath?: string;
 	taskType: string;
 	workerRole: string;
 	taskId: string;
@@ -117,7 +123,11 @@ async function defaultRunCommand(
 	try {
 		const proc = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' });
 		const stdout = await new Response(proc.stdout).text();
+		const stderr = await new Response(proc.stderr).text();
 		const exitCode = await proc.exited;
+		if (exitCode !== 0 && stderr.trim()) {
+			log.debug(`command failed (exit ${exitCode}): ${args.join(' ')}: ${stderr.trim()}`);
+		}
 		return { stdout: stdout.trim(), exitCode };
 	} catch {
 		return { stdout: '', exitCode: 1 };
@@ -598,6 +608,108 @@ export async function checkLeaderDraftsExist(
 	};
 }
 
+/**
+ * Sync the root repo (Room workspace path) to the latest remote HEAD after a PR merge.
+ * This ensures new worktrees branch from the most recent commit, not a stale one.
+ *
+ * Only runs for approved, non-bypassed tasks (i.e., a PR was actually merged).
+ * The `approved` guard mirrors the state machine rule in room-runtime.ts that prevents
+ * `complete_task` from being reached without human approval for PR-based roles. It acts
+ * as a proxy for "a real PR merge occurred that requires syncing the root repo". Do NOT
+ * remove it — bypass/research tasks have no PR to sync from.
+ *
+ * Uses rootWorkspacePath (the main repo) rather than workspacePath (the task worktree).
+ *
+ * Implementation note: uses `git fetch origin` + `git update-ref` rather than `git pull`
+ * to avoid modifying the working tree or failing due to an unexpected checkout state in
+ * the root repo (e.g., if HEAD is on a feature branch). `git update-ref` directly moves
+ * the local branch ref to match the remote-tracking ref without requiring a checkout.
+ */
+export async function checkLeaderRootRepoSynced(
+	ctx: LeaderCompleteHookContext,
+	opts?: HookOptions
+): Promise<HookResult> {
+	// Only sync when a PR was merged (approved task, not a bypass/research-only task).
+	// approved=false/undefined is the pre-approval phase; workerBypassed means no real PR exists.
+	if (!ctx.approved || ctx.workerBypassed) {
+		log.debug(
+			`checkLeaderRootRepoSynced: skipping root sync (approved=${ctx.approved}, workerBypassed=${ctx.workerBypassed})`
+		);
+		return { pass: true };
+	}
+
+	const rootPath = ctx.rootWorkspacePath ?? ctx.workspacePath;
+	const run = getRunner(opts);
+
+	// Detect default branch via git symbolic-ref
+	let defaultBranch = '';
+	const { stdout: symref, exitCode: symrefExit } = await run(
+		['git', 'symbolic-ref', 'refs/remotes/origin/HEAD'],
+		rootPath
+	);
+	if (symrefExit === 0 && symref) {
+		defaultBranch = symref.trim().replace('refs/remotes/origin/', '');
+	}
+
+	if (!defaultBranch) {
+		// Fallback: check well-known base branches by trying to resolve them
+		for (const candidate of BASE_BRANCHES) {
+			const { exitCode } = await run(
+				['git', 'rev-parse', '--verify', `origin/${candidate}`],
+				rootPath
+			);
+			if (exitCode === 0) {
+				defaultBranch = candidate;
+				break;
+			}
+		}
+	}
+
+	if (!defaultBranch) {
+		log.warn(`checkLeaderRootRepoSynced: could not determine default branch, skipping root sync`);
+		return { pass: true };
+	}
+
+	// Fetch latest from origin (updates remote-tracking refs like origin/main)
+	const { exitCode: fetchExit } = await run(['git', 'fetch', 'origin'], rootPath);
+	if (fetchExit !== 0) {
+		log.warn(`checkLeaderRootRepoSynced: git fetch origin failed (exit ${fetchExit})`);
+		return {
+			pass: false,
+			reason: 'Root repo sync failed: git fetch origin returned a non-zero exit code.',
+			bounceMessage:
+				'Could not sync the root repository — `git fetch origin` failed.\n\n' +
+				'Please check network connectivity and ensure the remote is reachable, ' +
+				'then call `complete_task` again.',
+		};
+	}
+
+	// Advance the local branch ref to match origin without touching the working tree.
+	// `git update-ref` is safe regardless of which branch HEAD currently points to and
+	// avoids the merge-commit / conflict risk of `git pull origin <branch>`.
+	const { exitCode: updateRefExit } = await run(
+		['git', 'update-ref', `refs/heads/${defaultBranch}`, `origin/${defaultBranch}`],
+		rootPath
+	);
+	if (updateRefExit !== 0) {
+		log.warn(
+			`checkLeaderRootRepoSynced: git update-ref refs/heads/${defaultBranch} origin/${defaultBranch} failed (exit ${updateRefExit})`
+		);
+		return {
+			pass: false,
+			reason: `Root repo sync failed: could not advance refs/heads/${defaultBranch} to origin/${defaultBranch}.`,
+			bounceMessage:
+				`Could not sync the root repository — updating \`refs/heads/${defaultBranch}\` to \`origin/${defaultBranch}\` failed.\n\n` +
+				'This is required so new worktrees branch from the latest commit.\n' +
+				`Run \`git update-ref refs/heads/${defaultBranch} origin/${defaultBranch}\` in the root repo ` +
+				'and call `complete_task` again.',
+		};
+	}
+
+	log.info(`checkLeaderRootRepoSynced: root repo synced to origin/${defaultBranch}`);
+	return { pass: true };
+}
+
 // --- PR URL Utility ---
 
 /**
@@ -735,8 +847,10 @@ export async function runLeaderSubmitGate(
  * Gate order:
  * 1. PR must be merged (universal — applies to all roles; fails open when gh unavailable,
  *    allowing bypass/research-only tasks to proceed without a PR)
- * 2. Planning tasks: draft tasks must exist (created by planner in Phase 2)
- * 3. Coder/general with reviewer sub-agents: reviews must be posted on the PR
+ * 2. Root repo sync — fetch origin and advance the local default-branch ref so new
+ *    worktrees branch from the latest remote HEAD (only for approved, non-bypass tasks)
+ * 3. Planning tasks: draft tasks must exist (created by planner in Phase 2)
+ * 4. Coder/general with reviewer sub-agents: reviews must be posted on the PR
  */
 export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
@@ -746,6 +860,11 @@ export async function runLeaderCompleteGate(
 	// Fails open when gh is unavailable (e.g. bypass/research-only tasks with no PR).
 	const mergedResult = await checkLeaderPrMerged(ctx, opts);
 	if (!mergedResult.pass) return mergedResult;
+
+	// Sync root repo after PR merge so new worktrees branch from the latest commit.
+	// Only runs for approved, non-bypassed tasks; fails open on missing default branch.
+	const syncResult = await checkLeaderRootRepoSynced(ctx, opts);
+	if (!syncResult.pass) return syncResult;
 
 	// Planning tasks: verify draft tasks were created from the merged plan.
 	if (ctx.taskType === 'planning') {

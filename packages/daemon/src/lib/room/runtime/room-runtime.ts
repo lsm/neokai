@@ -1212,6 +1212,7 @@ export class RoomRuntime {
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							rootWorkspacePath: this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
@@ -1340,11 +1341,16 @@ export class RoomRuntime {
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							rootWorkspacePath: this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
 							groupId,
 							hasReviewers,
+							// approved and workerBypassed intentionally omitted: runLeaderSubmitGate
+							// does not call checkLeaderRootRepoSynced (submit is pre-merge), so
+							// these fields are not needed here. If a future hook in runLeaderSubmitGate
+							// requires them, add them explicitly to avoid silent skips.
 						};
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
