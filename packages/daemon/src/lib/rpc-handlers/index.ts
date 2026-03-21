@@ -44,7 +44,12 @@ import { TaskManager } from '../room/managers/task-manager';
 import { setupDialogHandlers } from './dialog-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
-import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
+import {
+	setupSpaceTaskHandlers,
+	setupSpaceTaskMessageHandlers,
+	type SpaceTaskManagerFactory,
+} from './space-task-handlers';
+import { TaskAgentManager } from '../space/runtime/task-agent-manager';
 import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -63,8 +68,7 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
-import { TaskAgentManager } from '../space/runtime/task-agent-manager';
-import { setupSpaceTaskSendMessageHandler } from './space-task-message-handlers';
+import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -252,7 +256,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	});
 	spaceRuntimeService.start();
 
-	// Task Agent Manager — manages Task Agent session lifecycle for space tasks
+	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
+	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
+	// spaceRuntimeService.createOrGetRuntime(spaceId).
 	const taskAgentManager = new TaskAgentManager({
 		db: deps.db,
 		sessionManager: deps.sessionManager,
@@ -268,8 +274,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultModel: deps.config.defaultModel,
 	});
 
-	// space.task.sendMessage — inject a message into a Task Agent session
-	setupSpaceTaskSendMessageHandler(deps.messageHub, taskAgentManager);
+	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
+	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db);
 
 	// Space export/import handlers
 	setupSpaceExportImportHandlers(
