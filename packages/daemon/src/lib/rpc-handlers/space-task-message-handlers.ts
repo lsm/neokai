@@ -26,10 +26,11 @@ export function setupSpaceTaskSendMessageHandler(
 			throw new Error('message is required');
 		}
 
-		if (!taskAgentManager.isTaskAgentAlive(params.taskId)) {
-			throw new Error(`No active Task Agent session for task: ${params.taskId}`);
-		}
-
+		// Delegate directly to injectTaskAgentMessage — it is the single authoritative
+		// gate that throws "Task Agent session not found" if the session no longer exists.
+		// A separate isTaskAgentAlive pre-check would introduce a TOCTOU race: a
+		// concurrent cleanupAll() (e.g., triggered by daemon shutdown) could remove the
+		// session between the check and the injection call.
 		await taskAgentManager.injectTaskAgentMessage(params.taskId, params.message);
 		log.info(`space.task.sendMessage: injected message into task ${params.taskId}`);
 

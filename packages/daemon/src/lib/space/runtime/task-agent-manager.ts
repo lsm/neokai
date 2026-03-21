@@ -694,13 +694,20 @@ export class TaskAgentManager {
 	): Promise<void> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
-		// 'processing'/'queued' = actively running; 'waiting_for_input' = human gate open.
-		// All three states mean the session cannot safely receive a next_turn message
-		// right now — defer it for replay after the current interaction completes.
+		// 'processing'/'queued' = actively running; 'waiting_for_input' = human gate open;
+		// 'interrupted' = the current turn was interrupted but the session is still alive.
+		// All four states mean a next_turn message cannot be safely delivered right now —
+		// defer it for replay after the current interaction resolves.
+		//
+		// Note on 'interrupted': an interrupted session CAN accept a new current_turn
+		// message (ensureQueryStarted restarts the query), so only next_turn delivery is
+		// deferred. This matches the pattern for 'processing'/'queued': the message is
+		// saved and replayed once the session becomes idle.
 		const isBusy =
 			state.status === 'processing' ||
 			state.status === 'queued' ||
-			state.status === 'waiting_for_input';
+			state.status === 'waiting_for_input' ||
+			state.status === 'interrupted';
 
 		const messageId = generateUUID();
 		const sdkUserMessage: SDKUserMessage = {
