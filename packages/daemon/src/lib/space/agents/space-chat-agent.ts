@@ -27,6 +27,7 @@
  *       - retry_task
  *       - cancel_task
  *       - reassign_task
+ *       - send_message_to_task
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
@@ -277,6 +278,13 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(
 		`- **\`reassign_task\`** — Change the assigned agent for a task. Valid for tasks in \`pending\`, ` +
 			`\`needs_attention\`, or \`cancelled\` status. Use when a different agent would be better suited.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`send_message_to_task\`** — Send a message directly to the Task Agent session managing a ` +
+			`specific task. Use this to check on progress, provide feedback, or redirect work mid-execution. ` +
+			`The message is delivered to the Task Agent which may relay relevant parts to its active sub-session. ` +
+			`Only works for tasks that have an active Task Agent session (i.e., tasks in \`in_progress\` or \`review\` status).`
 	);
 
 	return sections.join('\n');

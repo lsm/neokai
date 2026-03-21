@@ -1160,3 +1160,218 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		expect(parsed.task.customAgentId).toBe(ctx.agentId);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// send_message_to_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error when taskAgentManager is not configured', async () => {
+		// makeHandlers() does not pass taskAgentManager — simulates unconfigured state
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'My task',
+			description: 'Some work',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).send_message_to_task({
+			task_id: taskId,
+			message: 'How is it going?',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('TaskAgentManager is not configured');
+	});
+
+	test('returns error when task is not found', async () => {
+		const injected: Array<{ taskId: string; message: string }> = [];
+		const fakeTaskAgentManager = {
+			injectTaskAgentMessage: async (taskId: string, message: string) => {
+				injected.push({ taskId, message });
+			},
+		};
+
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			taskAgentManager: fakeTaskAgentManager as never,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: 'task-does-not-exist',
+			message: 'Hello?',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-does-not-exist');
+		expect(injected).toHaveLength(0);
+	});
+
+	test('returns error when task has no taskAgentSessionId', async () => {
+		const injected: Array<{ taskId: string; message: string }> = [];
+		const fakeTaskAgentManager = {
+			injectTaskAgentMessage: async (taskId: string, message: string) => {
+				injected.push({ taskId, message });
+			},
+		};
+
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Pending task',
+			description: 'Not yet started',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		// Task is in 'pending' state — no taskAgentSessionId
+
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			taskAgentManager: fakeTaskAgentManager as never,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: taskId,
+			message: 'Any progress?',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('no active Task Agent session');
+		expect(parsed.taskStatus).toBe('pending');
+		expect(injected).toHaveLength(0);
+	});
+
+	test('successfully injects message when task has a taskAgentSessionId', async () => {
+		const injected: Array<{ taskId: string; message: string }> = [];
+		const fakeTaskAgentManager = {
+			injectTaskAgentMessage: async (taskId: string, message: string) => {
+				injected.push({ taskId, message });
+			},
+		};
+
+		// Create a task and set taskAgentSessionId to simulate an active agent
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Active task',
+			description: 'In progress with agent',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: 'space:test:task:active-task:agent' });
+
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			taskAgentManager: fakeTaskAgentManager as never,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: taskId,
+			message: 'Please prioritize the auth module.',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.taskId).toBe(taskId);
+		// taskAgentSessionId is intentionally omitted from the response to avoid leaking internals
+		expect(parsed.taskAgentSessionId).toBeUndefined();
+		expect(injected).toHaveLength(1);
+		expect(injected[0].taskId).toBe(taskId);
+		expect(injected[0].message).toBe('Please prioritize the auth module.');
+	});
+
+	test('returns error when task belongs to a different space (cross-space ownership check)', async () => {
+		const injected: Array<{ taskId: string; message: string }> = [];
+		const fakeTaskAgentManager = {
+			injectTaskAgentMessage: async (taskId: string, message: string) => {
+				injected.push({ taskId, message });
+			},
+		};
+
+		// Seed a second space and create a task in it
+		const otherSpaceId = 'space-other';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
+		const otherTask = await otherTaskManager.createTask({
+			title: 'Other space task',
+			description: 'Belongs to another space',
+		});
+		ctx.taskRepo.updateTask(otherTask.id, {
+			taskAgentSessionId: 'space:other:task:other-task',
+		});
+
+		// Space Agent for ctx.spaceId tries to message a task in otherSpaceId
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			taskAgentManager: fakeTaskAgentManager as never,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: otherTask.id,
+			message: 'Infiltration attempt',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(otherTask.id);
+		expect(injected).toHaveLength(0);
+	});
+
+	test('propagates error from injectTaskAgentMessage', async () => {
+		const fakeTaskAgentManager = {
+			injectTaskAgentMessage: async (_taskId: string, _message: string) => {
+				throw new Error('Session queue is full');
+			},
+		};
+
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Active task',
+			description: 'In progress',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: 'space:test:task:active-task' });
+
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			taskAgentManager: fakeTaskAgentManager as never,
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: taskId,
+			message: 'Hello',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Session queue is full');
+	});
+});

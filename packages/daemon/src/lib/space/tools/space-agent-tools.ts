@@ -29,6 +29,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 
@@ -51,6 +52,11 @@ export interface SpaceAgentToolsConfig {
 	taskManager: SpaceTaskManager;
 	/** Space agent manager for reassign validation. */
 	spaceAgentManager: SpaceAgentManager;
+	/**
+	 * Task Agent Manager for injecting messages into Task Agent sessions.
+	 * Optional — when not provided, send_message_to_task returns an error.
+	 */
+	taskAgentManager?: TaskAgentManager | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +76,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
+		taskAgentManager,
 	} = config;
 
 	return {
@@ -415,6 +422,46 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		/**
+		 * Send a message to the Task Agent session managing a specific task.
+		 * Use this to check progress, provide feedback, or redirect work.
+		 */
+		async send_message_to_task(args: { task_id: string; message: string }): Promise<ToolResult> {
+			if (!taskAgentManager) {
+				return jsonResult({
+					success: false,
+					error: 'TaskAgentManager is not configured — cannot send messages to task agents.',
+				});
+			}
+
+			// Use taskManager.getTask() (not taskRepo) to enforce space ownership — ensures
+			// Space Agent A cannot inject messages into Space B's Task Agent sessions.
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+
+			if (!task.taskAgentSessionId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} has no active Task Agent session (status: ${task.status}).`,
+					taskStatus: task.status,
+				});
+			}
+
+			try {
+				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
+				return jsonResult({
+					success: true,
+					taskId: task.id,
+					taskStatus: task.status,
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -589,6 +636,17 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Agent type to assign (coder or general)'),
 			},
 			(args) => handlers.reassign_task(args)
+		),
+		tool(
+			'send_message_to_task',
+			'Send a message to the Task Agent session managing a specific task. Use this to check on progress, provide feedback, or redirect work. The message will be delivered directly to the Task Agent which may relay relevant parts to its active sub-session.',
+			{
+				task_id: z
+					.string()
+					.describe('ID of the task whose Task Agent session should receive the message'),
+				message: z.string().describe('The message to send to the Task Agent'),
+			},
+			(args) => handlers.send_message_to_task(args)
 		),
 	];
 
