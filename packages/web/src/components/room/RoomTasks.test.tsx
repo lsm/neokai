@@ -1161,4 +1161,72 @@ describe('RoomTasks', () => {
 			expect(selectedTabSignal.value).toBe('archived');
 		});
 	});
+
+	describe('Reactivate Button in Done Tab', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'done';
+		});
+
+		it('should show Reactivate button for completed task when onReactivate is provided', () => {
+			const onReactivate = vi.fn();
+			const tasks = [createTask('t1', 'completed')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReactivate={onReactivate} />);
+
+			const reactivateBtn = container.querySelector('[data-testid="task-reactivate-t1"]');
+			expect(reactivateBtn).toBeTruthy();
+		});
+
+		it('should show Reactivate button for cancelled task when onReactivate is provided', () => {
+			const onReactivate = vi.fn();
+			const tasks = [createTask('t1', 'cancelled')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReactivate={onReactivate} />);
+
+			const reactivateBtn = container.querySelector('[data-testid="task-reactivate-t1"]');
+			expect(reactivateBtn).toBeTruthy();
+		});
+
+		it('should NOT show Reactivate button when onReactivate is not provided', () => {
+			const tasks = [createTask('t1', 'completed')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const reactivateBtn = container.querySelector('[data-testid="task-reactivate-t1"]');
+			expect(reactivateBtn).toBeFalsy();
+		});
+
+		it('should call onReactivate with correct task id when clicked', () => {
+			const onReactivate = vi.fn();
+			const tasks = [createTask('task-42', 'completed', { title: 'Done task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onReactivate={onReactivate} />);
+
+			const reactivateBtn = container.querySelector(
+				'[data-testid="task-reactivate-task-42"]'
+			) as HTMLButtonElement;
+			expect(reactivateBtn).toBeTruthy();
+			fireEvent.click(reactivateBtn);
+
+			expect(onReactivate).toHaveBeenCalledWith('task-42');
+		});
+
+		it('should NOT call onTaskClick when Reactivate is clicked (stopPropagation)', () => {
+			const onReactivate = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-42', 'completed', { title: 'Done task' })];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onReactivate={onReactivate} onTaskClick={onTaskClick} />
+			);
+
+			const reactivateBtn = container.querySelector(
+				'[data-testid="task-reactivate-task-42"]'
+			) as HTMLButtonElement;
+			fireEvent.click(reactivateBtn);
+
+			expect(onReactivate).toHaveBeenCalledWith('task-42');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+	});
 });

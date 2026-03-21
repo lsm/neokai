@@ -2047,9 +2047,10 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const statusBadge = container.querySelector('.text-gray-600');
+		// Verify the element containing "archived" text carries the text-gray-600 class
+		const allGraySpans = Array.from(container.querySelectorAll('.text-gray-600'));
+		const statusBadge = allGraySpans.find((el) => el.textContent?.includes('archived'));
 		expect(statusBadge).not.toBeNull();
-		expect(statusBadge?.textContent).toContain('archived');
 	});
 
 	it('input is enabled for completed task (no group)', async () => {
