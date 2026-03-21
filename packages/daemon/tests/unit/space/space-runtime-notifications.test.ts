@@ -1109,4 +1109,203 @@ describe('SpaceRuntime — notification events', () => {
 			await expect(rt.executeTick()).resolves.toBeUndefined();
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Full pipeline — concurrent events in a single tick
+	// Verifies that multiple distinct event kinds are ALL delivered when they
+	// occur in the same SpaceRuntime tick.
+	// -------------------------------------------------------------------------
+
+	describe('full pipeline — concurrent events in a single tick', () => {
+		test('two workflow runs both enter needs_attention in the same tick — both events delivered', async () => {
+			// Run A: task enters needs_attention
+			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-conc-a', name: 'Step A', agentId: AGENT_CODER },
+			]);
+			// Run B: task enters needs_attention (different error)
+			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-conc-b', name: 'Step B', agentId: AGENT_CODER },
+			]);
+
+			const { tasks: tasksA } = await runtime.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
+			const { tasks: tasksB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
+
+			taskRepo.updateTask(tasksA[0].id, { status: 'needs_attention', error: 'Test failed' });
+			taskRepo.updateTask(tasksB[0].id, { status: 'needs_attention', error: 'Build failed' });
+
+			// Single tick — both tasks are in needs_attention simultaneously
+			await runtime.executeTick();
+
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(2);
+
+			const taskIds = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.taskId : ''));
+			expect(taskIds).toContain(tasksA[0].id);
+			expect(taskIds).toContain(tasksB[0].id);
+
+			const reasons = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.reason : ''));
+			expect(reasons).toContain('Test failed');
+			expect(reasons).toContain('Build failed');
+		});
+
+		test('workflow run completes AND another task enters needs_attention in the same tick', async () => {
+			// Run A: single-step, completes → workflow_run_completed
+			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-mix-a', name: 'Only Step A', agentId: AGENT_CODER },
+			]);
+			// Run B: single-step, enters needs_attention → task_needs_attention
+			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-mix-b', name: 'Only Step B', agentId: AGENT_CODER },
+			]);
+
+			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfA.id,
+				'Run A'
+			);
+			const { tasks: tasksB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
+
+			taskRepo.updateTask(tasksA[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasksB[0].id, { status: 'needs_attention', error: 'Compile error' });
+
+			// Single tick processes both runs — each emits a different event kind
+			await runtime.executeTick();
+
+			expect(sink.events).toHaveLength(2);
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].runId).toBe(runA.id);
+				expect(completedEvents[0].status).toBe('completed');
+			}
+
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(1);
+			if (naEvents[0].kind === 'task_needs_attention') {
+				expect(naEvents[0].taskId).toBe(tasksB[0].id);
+				expect(naEvents[0].reason).toBe('Compile error');
+			}
+		});
+
+		test('workflow task needs_attention AND standalone task needs_attention in the same tick', async () => {
+			// Workflow task
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-mixed-wf', name: 'Workflow Step', agentId: AGENT_CODER },
+			]);
+			const { tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			taskRepo.updateTask(wfTasks[0].id, { status: 'needs_attention', error: 'Workflow error' });
+
+			// Standalone task (no workflowRunId)
+			const standaloneCreated = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone Failing Task',
+				description: '',
+				status: 'needs_attention',
+			});
+			taskRepo.updateTask(standaloneCreated.id, { error: 'Standalone error' });
+
+			// Single tick — workflow path (processRunTick) + standalone path (checkStandaloneTasks)
+			await runtime.executeTick();
+
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(2);
+
+			const taskIds = naEvents.map((e) => (e.kind === 'task_needs_attention' ? e.taskId : ''));
+			expect(taskIds).toContain(wfTasks[0].id);
+			expect(taskIds).toContain(standaloneCreated.id);
+		});
+
+		test('workflow timeout AND standalone timeout in the same tick', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000); // 1 second
+
+			// Workflow task that times out
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-timeout-wf', name: 'Slow Workflow Step', agentId: AGENT_CODER },
+			]);
+			const { tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			taskRepo.updateTask(wfTasks[0].id, { status: 'in_progress' });
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 3000,
+				wfTasks[0].id
+			);
+
+			// Standalone task that times out
+			const standalone = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Slow Standalone',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 3000,
+				standalone.id
+			);
+
+			// Single tick — both timeout events emitted
+			await runtime.executeTick();
+
+			const timeoutEvents = sink.events.filter((e) => e.kind === 'task_timeout');
+			expect(timeoutEvents).toHaveLength(2);
+
+			const taskIds = timeoutEvents.map((e) => (e.kind === 'task_timeout' ? e.taskId : ''));
+			expect(taskIds).toContain(wfTasks[0].id);
+			expect(taskIds).toContain(standalone.id);
+
+			for (const evt of timeoutEvents) {
+				if (evt.kind === 'task_timeout') {
+					expect(evt.elapsedMs).toBeGreaterThan(1000);
+					expect(evt.spaceId).toBe(SPACE_ID);
+				}
+			}
+		});
+
+		test('gate blocked AND workflow_run_completed in the same tick — both events delivered', async () => {
+			// Run A: two steps, step A completes, gate blocks → workflow_run_needs_attention
+			const wfA = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: 'step-gate-a1', name: 'Plan', agentId: AGENT_CODER },
+					{ id: 'step-gate-a2', name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'human' }]
+			);
+			// Run B: single step, completes → workflow_run_completed
+			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-gate-b', name: 'Quick Step', agentId: AGENT_CODER },
+			]);
+
+			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfA.id,
+				'Run A'
+			);
+			const { run: runB, tasks: tasksB } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfB.id,
+				'Run B'
+			);
+
+			taskRepo.updateTask(tasksA[0].id, { status: 'completed' }); // gate will block
+			taskRepo.updateTask(tasksB[0].id, { status: 'completed' }); // terminal → completes
+
+			// Single tick — gate fires for run A, completion fires for run B
+			await runtime.executeTick();
+
+			const gateEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			expect(gateEvents).toHaveLength(1);
+			if (gateEvents[0].kind === 'workflow_run_needs_attention') {
+				expect(gateEvents[0].runId).toBe(runA.id);
+				expect(gateEvents[0].reason).toMatch(/human/i);
+			}
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].runId).toBe(runB.id);
+				expect(completedEvents[0].status).toBe('completed');
+			}
+		});
+	});
 });
