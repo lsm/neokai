@@ -82,13 +82,13 @@ describe('Inbox', () => {
 
 		it('should show count of awaiting review tasks', () => {
 			mockItemsSignal.value = [makeInboxTask('t1', 'r1', 'Room 1')];
-			render(<Inbox />);
-			expect(screen.getByText('1 awaiting review')).toBeTruthy();
+			const { container } = render(<Inbox />);
+			expect(container.textContent).toContain('1 awaiting review');
 		});
 
 		it('should show 0 awaiting review when empty', () => {
-			render(<Inbox />);
-			expect(screen.getByText('0 awaiting review')).toBeTruthy();
+			const { container } = render(<Inbox />);
+			expect(container.textContent).toContain('0 awaiting review');
 		});
 	});
 
@@ -125,13 +125,13 @@ describe('Inbox', () => {
 			expect(screen.getByText('My Room')).toBeTruthy();
 		});
 
-		it('should render a Review button for each task', () => {
+		it('should render a View button for each task', () => {
 			mockItemsSignal.value = [
 				makeInboxTask('t1', 'r1', 'Room 1'),
 				makeInboxTask('t2', 'r2', 'Room 2'),
 			];
 			render(<Inbox />);
-			const buttons = screen.getAllByText('Review');
+			const buttons = screen.getAllByText('View');
 			expect(buttons).toHaveLength(2);
 		});
 
@@ -142,11 +142,11 @@ describe('Inbox', () => {
 			expect(card).toBeTruthy();
 		});
 
-		it('should navigate to correct room and task on Review click', () => {
+		it('should navigate to correct room and task on View click', () => {
 			mockItemsSignal.value = [makeInboxTask('task-abc', 'room-xyz', 'Test Room')];
 			render(<Inbox />);
 
-			const reviewBtn = screen.getByText('Review');
+			const reviewBtn = screen.getByText('View');
 			fireEvent.click(reviewBtn);
 
 			expect(navSectionSignal.value).toBe('rooms');

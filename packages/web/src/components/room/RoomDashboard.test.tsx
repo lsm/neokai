@@ -413,7 +413,7 @@ describe('RoomDashboard', () => {
 			await selectReviewTab(container);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			)!;
 			expect(viewBtn).toBeTruthy();
 
@@ -429,7 +429,7 @@ describe('RoomDashboard', () => {
 			await selectReviewTab(container);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			)!;
 			await fireEvent.click(viewBtn);
 

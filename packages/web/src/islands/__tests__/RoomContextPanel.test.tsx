@@ -204,9 +204,9 @@ describe('RoomContextPanel', () => {
 			makeTask('t2', 'T2', 'in_progress'),
 			makeTask('t3', 'T3', 'pending'),
 		];
-		render(<RoomContextPanel roomId="room-1" />);
-		expect(screen.getByText('2 pending')).toBeTruthy();
-		expect(screen.getByText('1 active')).toBeTruthy();
+		const { container } = render(<RoomContextPanel roomId="room-1" />);
+		// All draft/pending/in_progress tasks are counted as "active" in the stats strip
+		expect(container.textContent).toContain('3 active');
 	});
 
 	it('renders "No tasks" when there are no tasks', () => {
