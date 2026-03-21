@@ -129,6 +129,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 33: Add autonomy_level column to spaces table.
 	runMigration33(db);
+
+	// Migration 34: Add goal_id column to space_tasks for goal/mission association.
+	runMigration34(db);
 }
 
 /**
@@ -2003,4 +2006,20 @@ function runMigration33(db: BunDatabase): void {
 	} catch {
 		db.exec(`ALTER TABLE spaces ADD COLUMN autonomy_level TEXT NOT NULL DEFAULT 'supervised'`);
 	}
+}
+
+/**
+ * Migration 34: Add goal_id column to space_tasks.
+ *
+ * Links space tasks to goals/missions for cross-workflow-run querying.
+ * Nullable — existing tasks will have goal_id as NULL.
+ */
+function runMigration34(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	try {
+		db.prepare(`SELECT goal_id FROM space_tasks LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN goal_id TEXT`);
+	}
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
 }

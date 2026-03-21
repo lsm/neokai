@@ -136,6 +136,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_run_id TEXT,
 			workflow_step_id TEXT,
 			created_by_task_id TEXT,
+			goal_id TEXT,
 			progress INTEGER,
 			current_step TEXT,
 			result TEXT,
