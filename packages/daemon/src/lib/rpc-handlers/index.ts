@@ -65,7 +65,6 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
-import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;

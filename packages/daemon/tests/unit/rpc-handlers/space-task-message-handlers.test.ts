@@ -415,9 +415,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
 		it('throws when taskId is missing', async () => {
 			setup(mockTaskWithSession);
-			await expect(
-				call('space.task.getMessages', { spaceId: 'space-1' })
-			).rejects.toThrow('taskId is required');
+			await expect(call('space.task.getMessages', { spaceId: 'space-1' })).rejects.toThrow(
+				'taskId is required'
+			);
 		});
 
 		it('throws when task is not found', async () => {
