@@ -365,11 +365,22 @@ export class SpaceWorkflowRepository {
 	/**
 	 * Find all workflows in a space whose steps reference the given custom SpaceAgent ID.
 	 * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
+	 *
+	 * Checks two storage locations:
+	 * - The `agent_id` column: used by single-agent steps (legacy agentId format).
+	 * - The `config` JSON column: used by multi-agent steps (agents[] format stores agent IDs
+	 *   in the JSON config; the agent_id column is NULL for these steps).
 	 */
 	getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
+		// Match single-agent steps (agent_id column) and multi-agent steps (config JSON contains
+		// the agent ID string). The LIKE pattern is conservative — it matches any config that
+		// contains the UUID as a substring, which is safe because UUIDs are globally unique.
 		const stepRows = this.db
-			.prepare(`SELECT DISTINCT workflow_id FROM space_workflow_steps WHERE agent_id = ?`)
-			.all(agentId) as Array<{ workflow_id: string }>;
+			.prepare(
+				`SELECT DISTINCT workflow_id FROM space_workflow_steps
+         WHERE agent_id = ? OR config LIKE '%' || ? || '%'`
+			)
+			.all(agentId, agentId) as Array<{ workflow_id: string }>;
 
 		const workflows: SpaceWorkflow[] = [];
 		for (const { workflow_id } of stepRows) {

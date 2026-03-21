@@ -100,6 +100,8 @@ export class SpaceWorkflowManager {
 					id: s.id,
 					name: s.name,
 					agentId: s.agentId,
+					agents: s.agents,
+					channels: s.channels,
 					instructions: s.instructions,
 				})
 			);

@@ -838,6 +838,12 @@ export interface UpdateSpaceWorkflowParams {
  * (in `ExportedWorkflowTransition.fromStep`/`toStep`,
  * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
  * Step names must therefore be unique within an exported workflow.
+ *
+ * **Multi-agent limitation (Milestone 5):** The export format currently only supports
+ * single-agent steps via `agentRef`. Multi-agent steps (`agents[]`) and channel topology
+ * (`channels[]`) are not yet represented here. When exporting a multi-agent step, the
+ * primary agent's name is used as `agentRef` and the remaining agents are dropped.
+ * Full multi-agent export/import support is planned for Milestone 5.
  */
 export interface ExportedWorkflowStep {
 	/** Name of the SpaceAgent assigned to this step (portable, not a UUID) */

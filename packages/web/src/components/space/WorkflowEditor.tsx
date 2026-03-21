@@ -89,6 +89,12 @@ export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
  *
  * Defined outside the component so it is not recreated on each render and
  * is clearly a pure initialization helper, not a reactive dependency.
+ *
+ * NOTE (Milestone 5): `StepDraft` only carries `agentId` (single-agent format).
+ * Multi-agent steps (`agents[]`) and `channels[]` are silently dropped when a workflow
+ * is loaded into the editor. Saving such a workflow through the UI would overwrite those
+ * fields with the single-agent representation. There is no UI to create multi-agent steps
+ * yet, so the practical risk is limited to API-created workflows opened in this editor.
  */
 export function initFromWorkflow(wf: SpaceWorkflow): {
 	steps: StepDraft[];
