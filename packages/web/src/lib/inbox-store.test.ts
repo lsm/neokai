@@ -203,7 +203,7 @@ describe('InboxStore', () => {
 	});
 
 	describe('approveTask()', () => {
-		it('should call room.task.approve and refresh on success', async () => {
+		it('should call room.task.approve, refresh, and return true on success', async () => {
 			const room = makeRoom('r', 'R');
 			mockRoomsSignal.value = [room];
 
@@ -215,28 +215,30 @@ describe('InboxStore', () => {
 			};
 			mockGetHub.mockResolvedValue(mockHub);
 
-			await inboxStore.approveTask('task-1', 'r');
+			const result = await inboxStore.approveTask('task-1', 'r');
 
+			expect(result).toBe(true);
 			expect(mockHub.request).toHaveBeenCalledWith('room.task.approve', {
 				roomId: 'r',
 				taskId: 'task-1',
 			});
 		});
 
-		it('should show toast.error when approve fails', async () => {
+		it('should show toast.error and return false when approve fails', async () => {
 			const mockHub = {
 				request: vi.fn().mockRejectedValue(new Error('Server error')),
 			};
 			mockGetHub.mockResolvedValue(mockHub);
 
-			await inboxStore.approveTask('task-1', 'r');
+			const result = await inboxStore.approveTask('task-1', 'r');
 
+			expect(result).toBe(false);
 			expect(mockToastError).toHaveBeenCalledWith('Server error');
 		});
 	});
 
 	describe('rejectTask()', () => {
-		it('should call room.task.reject with feedback and refresh on success', async () => {
+		it('should call room.task.reject with feedback, refresh, and return true on success', async () => {
 			const room = makeRoom('r', 'R');
 			mockRoomsSignal.value = [room];
 
@@ -248,8 +250,9 @@ describe('InboxStore', () => {
 			};
 			mockGetHub.mockResolvedValue(mockHub);
 
-			await inboxStore.rejectTask('task-1', 'r', 'needs more work');
+			const result = await inboxStore.rejectTask('task-1', 'r', 'needs more work');
 
+			expect(result).toBe(true);
 			expect(mockHub.request).toHaveBeenCalledWith('room.task.reject', {
 				roomId: 'r',
 				taskId: 'task-1',
@@ -257,14 +260,15 @@ describe('InboxStore', () => {
 			});
 		});
 
-		it('should show toast.error when reject fails', async () => {
+		it('should show toast.error and return false when reject fails', async () => {
 			const mockHub = {
 				request: vi.fn().mockRejectedValue(new Error('Reject failed')),
 			};
 			mockGetHub.mockResolvedValue(mockHub);
 
-			await inboxStore.rejectTask('task-1', 'r', 'feedback');
+			const result = await inboxStore.rejectTask('task-1', 'r', 'feedback');
 
+			expect(result).toBe(false);
 			expect(mockToastError).toHaveBeenCalledWith('Reject failed');
 		});
 	});

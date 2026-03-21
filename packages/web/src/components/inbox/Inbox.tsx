@@ -32,17 +32,19 @@ function InboxTaskCard({
 
 	const handleApprove = async () => {
 		onStartApprove(item.task.id);
-		await inboxStore.approveTask(item.task.id, item.roomId);
-		toast.approved();
+		const ok = await inboxStore.approveTask(item.task.id, item.roomId);
+		if (ok) toast.approved();
 		onFinishApprove();
 	};
 
 	const handleRejectSubmit = async () => {
 		if (!feedback.trim()) return;
-		await inboxStore.rejectTask(item.task.id, item.roomId, feedback.trim());
-		toast.rejected();
-		setFeedback('');
-		setIsRejecting(false);
+		const ok = await inboxStore.rejectTask(item.task.id, item.roomId, feedback.trim());
+		if (ok) {
+			toast.rejected();
+			setFeedback('');
+			setIsRejecting(false);
+		}
 	};
 
 	return (
