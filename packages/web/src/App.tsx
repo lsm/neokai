@@ -13,6 +13,8 @@ import {
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
 	currentSpaceIdSignal,
+	currentSpaceSessionIdSignal,
+	currentSpaceTaskIdSignal,
 	navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
@@ -26,10 +28,16 @@ import {
 	navigateToRoomTask,
 	navigateToHome,
 	navigateToSpacesPage,
+	navigateToSpace,
+	navigateToSpaceSession,
+	navigateToSpaceTask,
 	createSessionPath,
 	createRoomPath,
 	createRoomSessionPath,
 	createRoomTaskPath,
+	createSpacePath,
+	createSpaceSessionPath,
+	createSpaceTaskPath,
 } from './lib/router.ts';
 
 export function App() {
@@ -76,7 +84,7 @@ export function App() {
 
 		init();
 
-		// STEP 4: Sync URL when session/room changes from external sources
+		// STEP 4: Sync URL when session/room/space changes from external sources
 		// (e.g., session created/deleted in another tab)
 		// This effect watches for signal changes and updates the URL
 		return effect(() => {
@@ -85,34 +93,48 @@ export function App() {
 			const roomSessionId = currentRoomSessionIdSignal.value;
 			const roomTaskId = currentRoomTaskIdSignal.value;
 			const spaceId = currentSpaceIdSignal.value;
+			const spaceSessionId = currentSpaceSessionIdSignal.value;
+			const spaceTaskId = currentSpaceTaskIdSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
-				: roomTaskId && roomId
-					? createRoomTaskPath(roomId, roomTaskId)
-					: roomSessionId && roomId
-						? createRoomSessionPath(roomId, roomSessionId)
-						: roomId
-							? createRoomPath(roomId)
-							: navSection === 'spaces' && !spaceId
-								? '/spaces'
-								: navSection === 'chats'
-									? '/sessions'
-									: '/';
+				: spaceTaskId && spaceId
+					? createSpaceTaskPath(spaceId, spaceTaskId)
+					: spaceSessionId && spaceId
+						? createSpaceSessionPath(spaceId, spaceSessionId)
+						: spaceId
+							? createSpacePath(spaceId)
+							: roomTaskId && roomId
+								? createRoomTaskPath(roomId, roomTaskId)
+								: roomSessionId && roomId
+									? createRoomSessionPath(roomId, roomSessionId)
+									: roomId
+										? createRoomPath(roomId)
+										: navSection === 'spaces'
+											? '/spaces'
+											: navSection === 'chats'
+												? '/sessions'
+												: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
 			if (currentPath !== expectedPath) {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
+				} else if (spaceTaskId && spaceId) {
+					navigateToSpaceTask(spaceId, spaceTaskId, true);
+				} else if (spaceSessionId && spaceId) {
+					navigateToSpaceSession(spaceId, spaceSessionId, true);
+				} else if (spaceId) {
+					navigateToSpace(spaceId, true);
 				} else if (roomTaskId && roomId) {
 					navigateToRoomTask(roomId, roomTaskId, true);
 				} else if (roomSessionId && roomId) {
 					navigateToRoomSession(roomId, roomSessionId, true);
 				} else if (roomId) {
 					navigateToRoom(roomId, true);
-				} else if (navSection === 'spaces' && !spaceId) {
+				} else if (navSection === 'spaces') {
 					navigateToSpacesPage(true);
 				} else if (navSection === 'chats') {
 					// Already at /sessions or no navigation needed

@@ -32,15 +32,15 @@ async function createTestSpace(page: Page): Promise<string> {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Delete any leftover space from a previous failed run
+			// Clean up any leftover spaces (path comparison may differ due to macOS
+			// symlink resolution: /var/folders/ vs /private/var/folders/)
 			try {
 				const list = (await hub.request('space.list', {})) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;
-				const existing = list.find((s) => s.workspacePath === wsPath);
-				if (existing) {
-					await hub.request('space.delete', { id: existing.id });
+				for (const s of list) {
+					await hub.request('space.delete', { id: s.id });
 				}
 			} catch {
 				// Ignore cleanup errors
@@ -72,11 +72,15 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+	// Wait for SpaceIsland to finish loading — the tab bar appears after space.overview resolves
+	await expect(page.locator('text=Dashboard').first()).toBeVisible({ timeout: 15000 });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Space Workflow Rules & Navigation Integration', () => {
+	// All tests share the same workspace path (one space at a time) — must run serially
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
