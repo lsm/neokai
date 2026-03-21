@@ -7,17 +7,20 @@
  *
  * ## How it works
  *
- * 1. The daemon auto-provisions the `spaces:global` session at startup.
- * 2. Tests inject [TASK_EVENT] messages via `message.send` to that session.
+ * 1. The daemon auto-provisions the `spaces:global` session at startup when
+ *    `NEOKAI_ENABLE_SPACES_AGENT=1` is set (or in non-test environments).
+ * 2. Tests inject [TASK_EVENT] messages via `sendMessage` to that session.
  * 3. Dev Proxy intercepts Anthropic API calls and returns pre-configured mocks.
  * 4. Mock responses are selected by body content matching on a unique "probe phrase"
  *    embedded in the [TASK_EVENT] `reason` field:
  *    - `probe_supervised_escalation`  → escalation text (supervised mode)
  *    - `probe_semi_autonomous_get_detail` → tool_use: get_task_detail
  *    - `probe_semi_autonomous_retry`  → tool_use: retry_task
- * 5. All tool-use mocks use `stop_reason: "end_turn"` to avoid follow-up API
- *    calls (no infinite loop), while still recording tool_use blocks in SDK
- *    messages that the test can assert on.
+ * 5. Tool-use mocks use `stop_reason: "tool_use"` so the SDK executes the tool
+ *    and makes a follow-up API call. A "tool_result" body-matcher mock (ordered
+ *    first in mocks.json) intercepts the follow-up and returns `end_turn` text,
+ *    preventing an infinite loop. Tool_use blocks are recorded in SDK messages
+ *    so tests can assert on them.
  *
  * ## Running
  *
@@ -35,6 +38,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
+import { formatEventMessage } from '../../../src/lib/space/runtime/session-notification-sink';
 import type { Space } from '@neokai/shared';
 
 // Detect mock mode for faster timeouts
@@ -48,38 +52,6 @@ const TEST_TIMEOUT = IS_MOCK ? 30000 : 120000;
  * All space coordination notifications are sent to this session.
  */
 const GLOBAL_SPACES_SESSION_ID = 'spaces:global';
-
-/**
- * Build a realistic [TASK_EVENT] notification message — matches the format
- * produced by SessionNotificationSink.formatEventMessage().
- */
-function buildTaskNeedsAttentionMessage(
-	spaceId: string,
-	taskId: string,
-	reason: string,
-	autonomyLevel: 'supervised' | 'semi_autonomous'
-): string {
-	const humanReadable = `Task ${taskId} in space ${spaceId} needs attention: ${reason}`;
-	const payload = {
-		kind: 'task_needs_attention',
-		spaceId,
-		taskId,
-		reason,
-		timestamp: new Date().toISOString(),
-		autonomyLevel,
-	};
-	return [
-		'[TASK_EVENT] task_needs_attention',
-		'',
-		humanReadable,
-		'',
-		`Autonomy level: ${autonomyLevel}`,
-		'',
-		'```json',
-		JSON.stringify(payload, null, 2),
-		'```',
-	].join('\n');
-}
 
 /**
  * Read all SDK messages for a session and return the assistant messages
@@ -161,7 +133,6 @@ async function createTestTask(
 		spaceId,
 		title,
 		description,
-		status: 'needs_attention',
 	})) as { task: { id: string } };
 	return result.task.id;
 }
@@ -170,7 +141,10 @@ describe('Space Agent Coordination — Online Tests', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await createDaemonServer();
+		// NEOKAI_ENABLE_SPACES_AGENT=1 opts in to spaces:global provisioning in test mode.
+		// Without it, the daemon skips provisioning when NODE_ENV=test to avoid side-effects
+		// on other test suites that don't need the global spaces agent.
+		daemon = await createDaemonServer({ env: { NEOKAI_ENABLE_SPACES_AGENT: '1' } });
 		// Track the global spaces session for cleanup
 		daemon.trackSession(GLOBAL_SPACES_SESSION_ID);
 	}, SETUP_TIMEOUT);
@@ -197,10 +171,14 @@ describe('Space Agent Coordination — Online Tests', () => {
 			// 2. Build a [TASK_EVENT] message with the probe phrase embedded in the reason.
 			//    The dev proxy matches on "probe_supervised_escalation" and returns
 			//    an escalation text response (see mocks.json).
-			const eventMessage = buildTaskNeedsAttentionMessage(
-				space.id,
-				taskId,
-				'probe_supervised_escalation: agent returned a non-zero exit code',
+			const eventMessage = formatEventMessage(
+				{
+					kind: 'task_needs_attention',
+					spaceId: space.id,
+					taskId,
+					reason: 'probe_supervised_escalation: agent returned a non-zero exit code',
+					timestamp: new Date().toISOString(),
+				},
 				'supervised'
 			);
 
@@ -252,10 +230,14 @@ describe('Space Agent Coordination — Online Tests', () => {
 
 			// 2. Embed the probe phrase "probe_semi_autonomous_get_detail" in the reason.
 			//    The dev proxy returns a mocked response with get_task_detail tool_use.
-			const eventMessage = buildTaskNeedsAttentionMessage(
-				space.id,
-				taskId,
-				'probe_semi_autonomous_get_detail: task exited with error code 1',
+			const eventMessage = formatEventMessage(
+				{
+					kind: 'task_needs_attention',
+					spaceId: space.id,
+					taskId,
+					reason: 'probe_semi_autonomous_get_detail: task exited with error code 1',
+					timestamp: new Date().toISOString(),
+				},
 				'semi_autonomous'
 			);
 
@@ -300,10 +282,14 @@ describe('Space Agent Coordination — Online Tests', () => {
 
 			// 2. Embed the probe phrase "probe_semi_autonomous_retry" in the reason.
 			//    The dev proxy returns a mocked response with retry_task tool_use.
-			const eventMessage = buildTaskNeedsAttentionMessage(
-				space.id,
-				taskId,
-				'probe_semi_autonomous_retry: transient failure, suitable for automatic retry',
+			const eventMessage = formatEventMessage(
+				{
+					kind: 'task_needs_attention',
+					spaceId: space.id,
+					taskId,
+					reason: 'probe_semi_autonomous_retry: transient failure, suitable for automatic retry',
+					timestamp: new Date().toISOString(),
+				},
 				'semi_autonomous'
 			);
 

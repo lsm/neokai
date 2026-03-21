@@ -246,6 +246,10 @@ jobs:
           - module: sdk
             test_path: tests/online/sdk
             mock_sdk: true
+          - module: space
+            test_path: tests/online/space
+            mock_sdk: true
+            enable_spaces_agent: true
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
@@ -287,6 +291,7 @@ jobs:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          NEOKAI_ENABLE_SPACES_AGENT: ${{ matrix.enable_spaces_agent == true && '1' || '' }}
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.

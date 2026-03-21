@@ -1,6 +1,52 @@
 {
 	"mocks": [
 		{
+			"comment": "Space agent - follow-up after tool execution: matches when messages contain a tool_result (placed before probe mocks for priority). Returns end_turn text so session goes idle.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"body": {
+					"matcher": ".JsonContains",
+					"key": "messages",
+					"value": "tool_result"
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent tool_result follow-up)"
+					}
+				],
+				"body": {
+					"id": "msg_space_followup_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Tool executed. The coordination action has been handled."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 20,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
 			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason)",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
@@ -14,8 +60,14 @@
 			"response": {
 				"statusCode": 200,
 				"headers": [
-					{ "name": "content-type", "value": "application/json" },
-					{ "name": "x-mocked-by", "value": "Dev Proxy mocks.json (space-agent supervised)" }
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent supervised)"
+					}
 				],
 				"body": {
 					"id": "msg_space_supervised_001",
@@ -54,7 +106,10 @@
 			"response": {
 				"statusCode": 200,
 				"headers": [
-					{ "name": "content-type", "value": "application/json" },
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
 					{
 						"name": "x-mocked-by",
 						"value": "Dev Proxy mocks.json (space-agent semi_autonomous get_task_detail)"
@@ -79,7 +134,7 @@
 						}
 					],
 					"model": "claude-haiku-20250307",
-					"stop_reason": "end_turn",
+					"stop_reason": "tool_use",
 					"stop_sequence": null,
 					"usage": {
 						"input_tokens": 200,
@@ -105,7 +160,10 @@
 			"response": {
 				"statusCode": 200,
 				"headers": [
-					{ "name": "content-type", "value": "application/json" },
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
 					{
 						"name": "x-mocked-by",
 						"value": "Dev Proxy mocks.json (space-agent semi_autonomous retry_task)"
@@ -130,7 +188,7 @@
 						}
 					],
 					"model": "claude-haiku-20250307",
-					"stop_reason": "end_turn",
+					"stop_reason": "tool_use",
 					"stop_sequence": null,
 					"usage": {
 						"input_tokens": 200,

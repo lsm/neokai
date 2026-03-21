@@ -112,7 +112,7 @@ check_split_module "providers" "${PROVIDERS_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
-KNOWN_DIRS="agent components convo coordinator features git glm lifecycle mcp providers rewind room rpc sandbox sdk websocket"
+KNOWN_DIRS="agent components convo coordinator features git glm lifecycle mcp providers rewind room rpc sandbox sdk space websocket"
 
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue

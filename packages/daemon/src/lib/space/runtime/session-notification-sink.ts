@@ -95,6 +95,7 @@ export class SessionNotificationSink implements NotificationSink {
  * 2. Human-readable summary with context
  * 3. JSON payload for structured processing + autonomy level
  */
+// Exported for use in tests that build realistic [TASK_EVENT] messages.
 export function formatEventMessage(
 	event: SpaceNotificationEvent,
 	autonomyLevel: AutonomyLevel

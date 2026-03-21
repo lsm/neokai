@@ -309,10 +309,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Create shared state synchronously so the RPC handler is available immediately.
 	// The actual session creation and MCP wiring happens asynchronously.
 	// Skip provisioning in tests to avoid side-effects on session counts.
+	// Set NEOKAI_ENABLE_SPACES_AGENT=1 to opt in (e.g., online tests that need spaces:global).
 	const globalSpacesState: GlobalSpacesState = { activeSpaceId: null };
 	setupGlobalSpacesHandlers(deps.messageHub, globalSpacesState);
 
-	if (process.env.NODE_ENV !== 'test') {
+	if (process.env.NODE_ENV !== 'test' || process.env.NEOKAI_ENABLE_SPACES_AGENT === '1') {
 		// Build a minimal SessionFactory adapter so SessionNotificationSink can inject messages
 		// into the spaces:global session. The adapter delegates to SessionManager.injectMessage()
 		// which handles DB persistence, UI publishing, and SDK query feeding.
