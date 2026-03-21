@@ -2425,28 +2425,43 @@ export class RoomRuntime {
 	 * 1. Observer callback fired but the routing threw an error (now logged, but still need recovery)
 	 * 2. Observer callback was missed due to a race condition (extremely rare)
 	 * 3. Any other silent failure in the worker→leader routing path
+	 * 4. Worker paused by rate limit — when the backoff expires the timer fires scheduleTick()
+	 *    which calls this function; the group is re-triggered regardless of feedbackIteration.
 	 *
 	 * Conditions for a "stuck worker":
-	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
+	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never
+	 *   happened), OR the group has an expired rate limit that was set during a later iteration —
+	 *   in that case the leader was never triggered (onWorkerTerminalState returned early after
+	 *   detecting the rate limit) so recovery is still needed.
 	 * - Worker session IS in the session factory (not a zombie)
 	 * - Worker session processing state is terminal (idle or interrupted)
 	 * - Leader session may or may not exist (with eager init, it always exists; with old lazy
 	 *   init, it may not exist yet — both cases are handled by routeWorkerToLeader)
 	 * - Group is NOT awaiting human review
-	 * - Group is NOT rate-limited
+	 * - Group is NOT actively rate-limited (resetsAt still in the future)
 	 * - Group is NOT paused waiting for a question answer (waiting_for_input is intentional pause)
 	 * - A recovery for this group is NOT already in-flight from a previous tick
 	 */
 	private recoverStuckWorkers(): void {
 		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
 
+		const now = Date.now();
 		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
 		for (const group of activeGroups) {
-			// Only recover groups that haven't routed to leader yet
-			if (group.feedbackIteration > 0) continue;
+			// An expired rate limit means the worker was paused mid-iteration (feedbackIteration may
+			// be > 0) and the leader was never triggered. Allow recovery in that case.
+			// isRateLimited() already returns false for expired limits, so we check the raw field.
+			const hasExpiredRateLimit = group.rateLimit !== null && now >= group.rateLimit.resetsAt;
+
+			// Skip groups where the leader is actively working (feedbackIteration > 0 means the
+			// worker→leader routing already happened at least once and the leader may still be
+			// reviewing). The exception is an expired rate limit: in that case onWorkerTerminalState
+			// returned early (before routing to the leader) so feedbackIteration was NOT incremented
+			// for this iteration — the leader is idle and recovery is safe.
+			if (group.feedbackIteration > 0 && !hasExpiredRateLimit) continue;
 			// Skip groups awaiting human
 			if (group.submittedForReview) continue;
-			// Skip rate-limited groups
+			// Skip actively rate-limited groups (backoff not yet expired)
 			if (this.groupRepo.isRateLimited(group.id)) continue;
 			// Skip groups paused waiting for a question answer — waiting_for_input is an
 			// intentional pause, not a stuck state; the task resumes when the user answers
@@ -2465,6 +2480,9 @@ export class RoomRuntime {
 			// resumeLeaderFromHuman (or resumeWorkerFromHuman) but the worker has not
 			// produced any new output yet — re-routing would inject a sentinel string
 			// into the leader while it is already processing the human's message.
+			// For the expired-rate-limit case this also acts as a safety net: if the LEADER
+			// hit the rate limit (rateLimit.sessionRole === 'leader'), the worker messages were
+			// already forwarded (lastForwardedMessageId updated) and this check skips re-routing.
 			// When getWorkerMessages is absent (some test contexts), fall through to
 			// preserve the original safety-net behavior.
 			if (this.getWorkerMessages) {
@@ -2484,9 +2502,12 @@ export class RoomRuntime {
 				continue;
 			}
 
+			const reason = hasExpiredRateLimit
+				? `rate limit expired (feedbackIteration=${group.feedbackIteration})`
+				: `feedbackIteration=0, waitingForQuestion=false`;
 			log.warn(
 				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but routing to leader not yet ` +
-					`completed (feedbackIteration=0, waitingForQuestion=false). Re-triggering worker→leader routing.`
+					`completed (${reason}). Re-triggering worker→leader routing.`
 			);
 			this.appendGroupEvent(group.id, 'status', {
 				text: `Worker found in ${workerState} state with routing not yet complete — re-triggering routing to Leader.`,
