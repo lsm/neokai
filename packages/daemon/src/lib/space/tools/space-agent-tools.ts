@@ -22,11 +22,13 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus } from '@neokai/shared';
+import type { SpaceTaskStatus, SpaceTaskPriority, SpaceTaskType } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 
@@ -45,6 +47,10 @@ export interface SpaceAgentToolsConfig {
 	taskRepo: SpaceTaskRepository;
 	/** Workflow run repository for listing and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Task manager for create/retry/cancel/reassign operations. */
+	taskManager: SpaceTaskManager;
+	/** Space agent manager for reassign validation. */
+	spaceAgentManager: SpaceAgentManager;
 }
 
 /**
@@ -102,7 +108,15 @@ const SUGGEST_WORKFLOW_STOP_WORDS = new Set([
  * Returns a map of tool name → handler function.
  */
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
-	const { spaceId, runtime, workflowManager, taskRepo, workflowRunRepo } = config;
+	const {
+		spaceId,
+		runtime,
+		workflowManager,
+		taskRepo,
+		workflowRunRepo,
+		taskManager,
+		spaceAgentManager,
+	} = config;
 
 	return {
 		/**
@@ -321,6 +335,131 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 			return jsonResult({ success: true, tasks });
 		},
+
+		/**
+		 * Create a standalone task not associated with any workflow run.
+		 */
+		async create_standalone_task(args: {
+			title: string;
+			description: string;
+			priority?: SpaceTaskPriority;
+			task_type?: SpaceTaskType;
+			assigned_agent?: 'coder' | 'general';
+			custom_agent_id?: string;
+		}): Promise<ToolResult> {
+			try {
+				// Validate custom_agent_id if provided
+				if (args.custom_agent_id) {
+					const agent = spaceAgentManager.getById(args.custom_agent_id);
+					if (!agent) {
+						return jsonResult({
+							success: false,
+							error: `Custom agent not found: ${args.custom_agent_id}`,
+						});
+					}
+				}
+
+				const task = await taskManager.createTask({
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					taskType: args.task_type,
+					assignedAgent: args.assigned_agent,
+					customAgentId: args.custom_agent_id,
+				});
+				return jsonResult({ success: true, task });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Get the full detail of a task by ID.
+		 */
+		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			return jsonResult({ success: true, task });
+		},
+
+		/**
+		 * Retry a failed or cancelled task by resetting it to pending.
+		 */
+		async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
+			try {
+				const task = await taskManager.retryTask(args.task_id, {
+					description: args.description,
+				});
+				return jsonResult({ success: true, task });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Cancel a task and optionally cancel its workflow run.
+		 * Cascades cancellation to pending dependent tasks automatically.
+		 */
+		async cancel_task(args: {
+			task_id: string;
+			cancel_workflow_run?: boolean;
+		}): Promise<ToolResult> {
+			try {
+				const task = await taskManager.cancelTask(args.task_id);
+
+				if (args.cancel_workflow_run && task.workflowRunId) {
+					workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
+					return jsonResult({
+						success: true,
+						task,
+						workflowRunCancelled: true,
+						workflowRunId: task.workflowRunId,
+					});
+				}
+
+				return jsonResult({ success: true, task });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Reassign a task to a different agent.
+		 */
+		async reassign_task(args: {
+			task_id: string;
+			custom_agent_id?: string | null;
+			assigned_agent?: 'coder' | 'general';
+		}): Promise<ToolResult> {
+			try {
+				// Validate custom_agent_id if being set to a non-null value
+				if (args.custom_agent_id != null) {
+					const agent = spaceAgentManager.getById(args.custom_agent_id);
+					if (!agent) {
+						return jsonResult({
+							success: false,
+							error: `Custom agent not found: ${args.custom_agent_id}`,
+						});
+					}
+				}
+
+				const customAgentId = args.custom_agent_id !== undefined ? args.custom_agent_id : null;
+				const task = await taskManager.reassignTask(
+					args.task_id,
+					customAgentId,
+					args.assigned_agent
+				);
+				return jsonResult({ success: true, task });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -417,6 +556,84 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Filter to only tasks belonging to a specific workflow run'),
 			},
 			(args) => handlers.list_tasks(args)
+		),
+		tool(
+			'create_standalone_task',
+			'Create a standalone task not associated with any workflow run. Use this to assign ad-hoc work directly to an agent.',
+			{
+				title: z.string().describe('Short title for the task'),
+				description: z.string().describe('Detailed description of the work to be done'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.describe('Task priority (default: normal)'),
+				task_type: z
+					.enum(['planning', 'coding', 'research', 'design', 'review'])
+					.optional()
+					.describe('Task type — determines default execution approach'),
+				assigned_agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.describe('Agent type to execute this task (default: coder)'),
+				custom_agent_id: z
+					.string()
+					.optional()
+					.describe('ID of a custom Space agent to assign this task to'),
+			},
+			(args) => handlers.create_standalone_task(args)
+		),
+		tool(
+			'get_task_detail',
+			'Get the full detail of a task by ID, including error, result, PR URL, PR number, progress, and current step.',
+			{
+				task_id: z.string().describe('ID of the task to retrieve'),
+			},
+			(args) => handlers.get_task_detail(args)
+		),
+		tool(
+			'retry_task',
+			'Retry a failed (needs_attention) or cancelled task by resetting it to pending. Optionally provide an updated description.',
+			{
+				task_id: z.string().describe('ID of the task to retry'),
+				description: z
+					.string()
+					.optional()
+					.describe('Updated task description for the retry attempt'),
+			},
+			(args) => handlers.retry_task(args)
+		),
+		tool(
+			'cancel_task',
+			'Cancel a task. Automatically cascades cancellation to pending dependent tasks. Optionally also cancel the associated workflow run.',
+			{
+				task_id: z.string().describe('ID of the task to cancel'),
+				cancel_workflow_run: z
+					.boolean()
+					.optional()
+					.describe(
+						'If true and the task belongs to a workflow run, also cancel that workflow run'
+					),
+			},
+			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'reassign_task',
+			'Change the agent assignment for a task. Only allowed for tasks in pending, needs_attention, or cancelled status.',
+			{
+				task_id: z.string().describe('ID of the task to reassign'),
+				custom_agent_id: z
+					.string()
+					.nullable()
+					.optional()
+					.describe(
+						'ID of the custom Space agent to assign to. Pass null to clear the custom agent assignment.'
+					),
+				assigned_agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.describe('Agent type to assign (coder or general)'),
+			},
+			(args) => handlers.reassign_task(args)
 		),
 	];
 
