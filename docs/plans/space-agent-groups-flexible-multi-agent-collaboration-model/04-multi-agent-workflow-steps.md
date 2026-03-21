@@ -45,16 +45,23 @@ Allow workflow steps to specify multiple agents that execute in parallel, and de
 7. Add `agents?: WorkflowStepAgent[]` and `channels?: WorkflowChannel[]` to `WorkflowStepInput` interface
 8. Make `agentId` optional on `WorkflowStepInput`
 9. Add a utility function `resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[]` that normalizes the two formats into a single `agents` array (for use by executor and other consumers). Document precedence rules clearly in JSDoc.
-10. Add a utility function `resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): ResolvedChannel[]` that expands role-based channel declarations into concrete session-level routing rules. This resolves `from`/`to` role strings to actual agent entries, expands wildcards (`*`), and expands `to: string[]` fan-out into individual channel entries. `ResolvedChannel` contains `fromAgentId`, `toAgentId[]`, `direction`, and `label`.
+10. Add a utility function `resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): ResolvedChannel[]` that expands role-based channel declarations into concrete session-level routing rules:
+    - Resolves `from`/`to` role strings to actual agent entries
+    - Expands wildcards (`*`) to all agents in the step
+    - Expands `to: string[]` fan-out into individual routing entries
+    - For **bidirectional fan-out (hub-spoke)**: `{from: 'A', to: ['B','C','D'], direction: 'bidirectional'}` resolves to: A→B, A→C, A→D (hub sends to spokes) AND B→A, C→A, D→A (spokes reply to hub only). Spokes do NOT get channels to each other.
+    - For **bidirectional point-to-point**: `{from: 'A', to: 'B', direction: 'bidirectional'}` resolves to: A→B AND B→A (symmetric).
+    - `ResolvedChannel` contains `fromRole`, `toRole`, `fromAgentId`, `toAgentId`, `direction` (always resolved to `'one-way'` at this level — bidirectional is expanded into two one-way entries), `label`, and `isHubSpoke: boolean` (true for spoke→hub replies in a fan-out bidirectional, so the messaging layer knows spokes can only reply to the hub).
 11. Add channel validation: `from`/`to` role strings must reference roles present in the step's `agents` array (or be `*`). Invalid role references produce a clear validation error.
 
 **Acceptance Criteria:**
 - `bun run typecheck` passes
 - Backward compatible: steps with only `agentId` still work (no channels = no messaging constraints)
 - The `resolveStepAgents` function correctly handles both formats
-- The `resolveStepChannels` function correctly expands wildcards, fan-out, and bidirectional channels
+- The `resolveStepChannels` function correctly expands all topology patterns including hub-spoke
+- Hub-spoke resolution: hub can send to any/all spokes, spokes can only reply to hub (not to each other)
 - Channel validation rejects references to roles not present in the step's agents
-- Supported topology patterns: `A → B` (one-way), `A ↔ B` (bidirectional), `A → [B,C,D]` (fan-out), `* → B` (sink), `A → *` (broadcast-all)
+- Supported topology patterns: `A → B`, `A ↔ B`, `A → [B,C,D]`, `A ↔ [B,C,D]` (hub-spoke), `* → B`, `A → *`
 
 **Dependencies:** None (types only, no runtime dependency on Milestone 1)
 
@@ -159,8 +166,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 9. Test `resolveStepAgents()` utility with various input combinations (agentId only, agents only, both present → agents wins)
 10. Test `resolveStepChannels()` utility:
     - `A → B` one-way: resolves to single directed channel
-    - `A ↔ B` bidirectional: resolves to two directed channels (A→B and B→A)
-    - `A → [B, C, D]` fan-out: resolves to three directed channels
+    - `A ↔ B` bidirectional point-to-point: resolves to two directed channels (A→B and B→A)
+    - `A → [B, C, D]` fan-out one-way: resolves to three directed channels, no reverse
+    - `A ↔ [B, C, D]` fan-out bidirectional (hub-spoke): resolves to A→B, A→C, A→D (hub to spokes) AND B→A, C→A, D→A (spokes to hub). Verify B cannot send to C (spoke isolation).
     - `* → B` wildcard from: resolves to channels from all agents to B
     - `A → *` wildcard to: resolves to channels from A to all agents
     - Invalid role reference: produces validation error

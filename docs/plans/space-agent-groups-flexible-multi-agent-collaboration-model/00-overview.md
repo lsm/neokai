@@ -60,13 +60,23 @@ interface WorkflowChannel {
 ```
 
 **Supported topology patterns:**
-- **`A → B`** (one-way): A can send to B, B cannot reply via this channel. Modeled as `{from: 'A', to: 'B', direction: 'one-way'}`.
-- **`A ↔ B`** (bidirectional): Full duplex between A and B. Modeled as `{from: 'A', to: 'B', direction: 'bidirectional'}`.
-- **`A → (B, C, D)`** (fan-out/broadcast): A sends to multiple agents. Modeled as `{from: 'A', to: ['B', 'C', 'D'], direction: 'one-way'}`.
-- **`* → B`** (sink): Any agent can send to B. Modeled as `{from: '*', to: 'B', direction: 'one-way'}`.
-- **`A → *`** (broadcast-all): A can send to all agents. Modeled as `{from: 'A', to: '*', direction: 'one-way'}`.
 
-**Enforcement:** The `send_feedback` MCP tool validates against declared channels before routing. If no channel permits the direction, the message is rejected. The channel topology is resolved at step-start time and passed to each agent session's tool context so agents know their permitted communication paths.
+| Pattern | Declaration | Semantics |
+|---------|-------------|-----------|
+| One-way | `{from: 'A', to: 'B', direction: 'one-way'}` | A sends, B cannot reply via this channel |
+| Bidirectional point-to-point | `{from: 'A', to: 'B', direction: 'bidirectional'}` | Full duplex 1:1 between A and B |
+| Fan-out one-way | `{from: 'A', to: ['B','C','D'], direction: 'one-way'}` | A broadcasts/multicasts to B, C, D; no replies |
+| Fan-out bidirectional (hub-spoke) | `{from: 'A', to: ['B','C','D'], direction: 'bidirectional'}` | A broadcasts/multicasts to spokes + independent async replies from each spoke back to A (hub). Spokes do NOT message each other through this channel. |
+| Sink | `{from: '*', to: 'B', direction: 'one-way'}` | Any agent can send to B |
+| Broadcast-all | `{from: 'A', to: '*', direction: 'one-way'}` | A can send to all agents |
+
+**Hub-spoke semantics (fan-out bidirectional):**
+- **Broadcast**: Hub (A) sends one message delivered to all spokes (B, C, D) simultaneously
+- **Targeted multicast**: Hub sends individual messages to a specific spoke (point-to-point within the same declared channel)
+- **Independent async replies**: Each spoke replies to the hub at its own pace, independently (no synchronization barrier between spokes)
+- **Spoke isolation**: Spokes do NOT message each other through this channel. B cannot send to C via an `A <-> [B,C,D]` channel — that requires a separate `B <-> C` declaration.
+
+**Enforcement:** The `send_feedback` MCP tool validates against declared channels before routing. If no channel permits the direction, the message is rejected. The `send_feedback` tool supports: `target: 'coder'` (point-to-point), `target: '*'` (broadcast to all permitted targets on the channel), or `target: ['coder', 'reviewer']` (targeted multicast). The channel topology is resolved at step-start time and passed to each agent session's tool context so agents know their permitted communication paths.
 
 **Fallback:** When no channels are declared on a step (or when a message doesn't match any channel), the Task Agent mediated `request_peer_input` tool remains available as a fallback — the Task Agent can relay messages at its discretion.
 

@@ -54,8 +54,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. In the step node component, if a step has `agents` array, render multiple agent badges/chips instead of a single agent name
 2. **Render channel edges between agent nodes within a step**: When a step has `channels`, draw directed edges (arrows) between agent badges to visualize the messaging topology:
    - `A → B` (one-way): single arrow from A to B
-   - `A ↔ B` (bidirectional): double-headed arrow or two arrows
-   - `A → [B, C, D]` (fan-out): arrows from A to B, C, D
+   - `A ↔ B` (bidirectional point-to-point): double-headed arrow or two arrows
+   - `A → [B, C, D]` (fan-out one-way): arrows from A to B, C, D
+   - `A ↔ [B, C, D]` (fan-out bidirectional / hub-spoke): arrows from A to B, C, D with reply arrows from each spoke back to A. Visually distinguish the hub-spoke pattern (e.g., hub node centered, spokes radiating out, or a distinct hub icon)
    - Show the optional `label` on the edge if present
 3. In the step edit panel/modal, add an "Agents" section that:
    - Shows the current list of agents for the step

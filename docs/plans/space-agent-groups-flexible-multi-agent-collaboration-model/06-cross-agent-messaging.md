@@ -59,12 +59,17 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Description:** Add MCP tools to step agents for direct peer communication. The `send_feedback` tool (primary model) validates against declared channels before routing. The `request_peer_input` tool (fallback) routes through the Task Agent for undeclared paths.
 
 **Subtasks:**
-1. Add `send_feedback(targetRole: string, message: string)` tool as the **primary** direct messaging tool for step agents:
-   - **Validates against declared channels** before routing: uses `ChannelResolver.canSend(senderRole, targetRole)` to check if a channel permits this direction
-   - If channel validation passes: resolves the target role to a session ID, injects the message as a user-turn into the target session via `messageInjector`
+1. Add `send_feedback(target: string | string[], message: string)` tool as the **primary** direct messaging tool for step agents:
+   - `target` supports three forms:
+     - `target: 'coder'` — point-to-point to a single role
+     - `target: '*'` — broadcast to all roles the sender has a channel to
+     - `target: ['coder', 'reviewer']` — targeted multicast to specific roles
+   - **Validates against declared channels** before routing: uses `ChannelResolver.canSend(senderRole, targetRole)` to check if a channel permits this direction for each target
+   - If channel validation passes: resolves the target role(s) to session ID(s), injects the message as a user-turn into each target session via `messageInjector`
    - If channel validation fails (no declared channel permits this direction): returns a clear error explaining which channels are available, and suggests using `request_peer_input` as a fallback
-   - For fan-out channels (`to: ['B', 'C', 'D']`): sends to all target roles in the channel
-   - For bidirectional channels: permits both directions
+   - **Hub-spoke enforcement**: In a fan-out bidirectional channel `A ↔ [B,C,D]`, spoke agents (B, C, D) can only target the hub (A) — not each other. The resolver marks spoke→hub entries with `isHubSpoke: true` so validation knows spokes are restricted to the hub.
+   - For fan-out one-way channels (`A → [B,C,D]`): hub sends to all spokes, spokes cannot reply
+   - For bidirectional point-to-point (`A ↔ B`): permits both directions symmetrically
    - Uses `messageInjector` from the session factory
 2. Add `request_peer_input(targetRole: string, question: string)` tool as the **fallback** Task Agent mediated routing:
    - Available when no direct channel is declared between sender and target, OR when the step has no `channels` at all (open communication)
@@ -83,7 +88,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Acceptance Criteria:**
 - `send_feedback` validates against declared channels and rejects unauthorized directions
-- `send_feedback` correctly handles one-way, bidirectional, and fan-out channel patterns
+- `send_feedback` correctly handles one-way, bidirectional point-to-point, fan-out one-way, and fan-out bidirectional (hub-spoke) patterns
+- Hub-spoke: hub can broadcast/multicast to spokes, spokes can only reply to hub (not to each other)
+- `send_feedback` supports `target: string`, `target: '*'`, and `target: string[]` forms
 - `request_peer_input` remains available as fallback for undeclared paths
 - Step agents can discover their permitted channels via `list_peers()`
 - Steps with no `channels` declared: all peer communication goes through `request_peer_input` (open/mediated model)
@@ -106,13 +113,16 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. Test `ChannelResolver.canSend()`: correctly permits/denies based on declared channels
 3. Test `ChannelResolver` with all topology patterns:
    - `A → B` one-way: A can send to B, B cannot send to A
-   - `A ↔ B` bidirectional: both directions permitted
-   - `A → [B, C, D]` fan-out: A can send to B, C, D; none can send back to A
+   - `A ↔ B` bidirectional point-to-point: both directions permitted
+   - `A → [B, C, D]` fan-out one-way: A can send to B, C, D; none can send back to A
+   - `A ↔ [B, C, D]` fan-out bidirectional (hub-spoke): A can send to B, C, D; B, C, D can each reply to A; B cannot send to C (spoke isolation)
    - `* → B` wildcard: any role can send to B
    - `A → *` wildcard: A can send to any role
 4. Test `send_feedback` tool: validates against channels and injects message on success
 5. Test `send_feedback` channel denial: rejects message when no channel permits the direction, returns clear error
-6. Test `send_feedback` fan-out: sends to all target roles in a fan-out channel
+6. Test `send_feedback` fan-out one-way: hub sends to all spokes, spokes cannot reply
+7. Test `send_feedback` hub-spoke bidirectional: hub broadcasts to spokes, spoke replies to hub only, spoke-to-spoke rejected
+8. Test `send_feedback` target modes: `target: 'role'` (point-to-point), `target: '*'` (broadcast), `target: ['a','b']` (multicast)
 7. Test `request_peer_input` tool: request is routed to Task Agent (fallback path)
 8. Test `list_group_members` tool: returns correct members with channel information
 9. Test `relay_message` tool: Task Agent can relay to any member (not constrained by channels)
@@ -148,8 +158,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 3. Attempt to send a message from a member in group A to a member in group B — verify it is rejected
 4. Send a message from a member in group A to another member in group A along a declared channel — verify it succeeds
 5. Attempt to send a message in a direction not permitted by declared channels — verify it is rejected with a clear error
-6. **Test bidirectional A ↔ B exchange**: set up a `bidirectional` channel between two agents, send messages in both directions, verify both are delivered correctly and the full exchange completes
-7. **Test fan-out delivery**: set up `A → [B, C, D]` channel, send from A, verify B, C, and D all receive the message
+6. **Test bidirectional point-to-point A ↔ B exchange**: set up a `bidirectional` channel between two agents, send messages in both directions, verify both are delivered correctly and the full exchange completes
+7. **Test fan-out one-way delivery**: set up `A → [B, C, D]` channel, send from A, verify B, C, and D all receive the message; verify B cannot reply to A
+8. **Test hub-spoke bidirectional**: set up `A ↔ [B, C, D]` channel, verify: (a) A broadcasts to all spokes, (b) each spoke independently replies to A, (c) spoke B attempting to send to spoke C is rejected (spoke isolation)
 8. Test concurrent message injection: two agents inject into the same target simultaneously — verify messages are serialized (no interleaving, both delivered)
 9. Verify that group lookups and channel resolution work correctly after simulated data reload (testing the DB-based validation, not just in-memory state)
 
@@ -157,8 +168,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - All tests pass with `cd packages/daemon && bun test tests/unit/cross-agent-messaging-integration.test.ts`
 - Cross-group messaging is definitively rejected
 - Channel direction enforcement is verified (one-way cannot reverse)
-- Bidirectional exchange completes correctly
-- Fan-out delivers to all targets
+- Bidirectional point-to-point exchange completes correctly
+- Fan-out one-way delivers to all targets, no reverse permitted
+- Hub-spoke bidirectional: hub broadcasts, spokes reply to hub only, spoke isolation verified
 - Concurrent injection is serialized correctly
 - Tests use real DB (SQLite in-memory) not mocks
 
