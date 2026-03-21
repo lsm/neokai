@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mocks
 // -------------------------------------------------------
 
-let mockEventHandlers: Map<string, (event: unknown) => void>;
+let mockEventHandlers: Array<{ name: string; handler: (event: unknown) => void }>;
 let mockHub: ReturnType<typeof makeMockHub>;
 
 function makeMockHub() {
@@ -22,8 +22,12 @@ function makeMockHub() {
 		joinChannel: vi.fn(),
 		leaveChannel: vi.fn(),
 		onEvent: vi.fn((eventName: string, handler: (e: unknown) => void) => {
-			mockEventHandlers.set(eventName, handler);
-			return () => mockEventHandlers.delete(eventName);
+			const entry = { name: eventName, handler };
+			mockEventHandlers.push(entry);
+			return () => {
+				const idx = mockEventHandlers.indexOf(entry);
+				if (idx >= 0) mockEventHandlers.splice(idx, 1);
+			};
 		}),
 		request: vi.fn(async (method: string) => {
 			if (method === 'room.get') {
@@ -72,7 +76,7 @@ describe('RoomStore — computed goal/task signals', () => {
 	let roomStore: typeof import('../room-store').roomStore;
 
 	beforeEach(async () => {
-		mockEventHandlers = new Map();
+		mockEventHandlers = [];
 		mockHub = makeMockHub();
 		vi.resetModules();
 		const mod = await import('../room-store');
@@ -104,7 +108,18 @@ describe('RoomStore — computed goal/task signals', () => {
 			roomStore.tasks.value = [makeTask('t1', 'pending')];
 			roomStore.goals.value = [makeGoal('g1', ['t1', 'nonexistent'])];
 			const map = roomStore.tasksByGoalId.value;
+			expect(map.has('g1')).toBe(true);
 			expect(map.get('g1')?.map((t) => t.id)).toEqual(['t1']);
+		});
+
+		it('includes goal with empty linkedTaskIds as a key with empty array', () => {
+			roomStore.tasks.value = [makeTask('t1', 'pending')];
+			roomStore.goals.value = [makeGoal('g1', []), makeGoal('g2', ['t1'])];
+			const map = roomStore.tasksByGoalId.value;
+			expect(map.has('g1')).toBe(true);
+			expect(map.get('g1')).toEqual([]);
+			expect(map.has('g2')).toBe(true);
+			expect(map.get('g2')?.map((t) => t.id)).toEqual(['t1']);
 		});
 	});
 
