@@ -308,4 +308,79 @@ describe('SpaceTaskRepository', () => {
 			expect(tasks.every((t) => t.status !== 'draft')).toBe(true);
 		});
 	});
+
+	describe('goalId', () => {
+		it('creates a task with goalId', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Goal task',
+				description: '',
+				goalId: 'goal-123',
+			});
+			expect(task.goalId).toBe('goal-123');
+		});
+
+		it('leaves goalId undefined when not provided', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			expect(task.goalId).toBeUndefined();
+		});
+
+		it('updates goalId on existing task', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, { goalId: 'goal-456' });
+			expect(updated!.goalId).toBe('goal-456');
+		});
+
+		it('clears goalId with null', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'T',
+				description: '',
+				goalId: 'goal-789',
+			});
+			const updated = repo.updateTask(task.id, { goalId: null });
+			expect(updated!.goalId).toBeUndefined();
+		});
+	});
+
+	describe('findByGoalId', () => {
+		it('returns tasks for a given goal', () => {
+			repo.createTask({ spaceId, title: 'A', description: '', goalId: 'goal-1' });
+			repo.createTask({ spaceId, title: 'B', description: '', goalId: 'goal-1' });
+			repo.createTask({ spaceId, title: 'C', description: '', goalId: 'goal-2' });
+			repo.createTask({ spaceId, title: 'D', description: '' });
+
+			const tasks = repo.findByGoalId('goal-1');
+			expect(tasks).toHaveLength(2);
+			expect(tasks.map((t) => t.title)).toEqual(['A', 'B']);
+		});
+
+		it('excludes archived tasks', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Archived',
+				description: '',
+				goalId: 'goal-1',
+			});
+			repo.createTask({ spaceId, title: 'Active', description: '', goalId: 'goal-1' });
+			repo.archiveTask(task.id);
+
+			const tasks = repo.findByGoalId('goal-1');
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].title).toBe('Active');
+		});
+
+		it('returns empty array when no tasks match', () => {
+			expect(repo.findByGoalId('nonexistent')).toEqual([]);
+		});
+
+		it('orders results by created_at ascending', () => {
+			repo.createTask({ spaceId, title: 'First', description: '', goalId: 'goal-1' });
+			repo.createTask({ spaceId, title: 'Second', description: '', goalId: 'goal-1' });
+			repo.createTask({ spaceId, title: 'Third', description: '', goalId: 'goal-1' });
+
+			const tasks = repo.findByGoalId('goal-1');
+			expect(tasks.map((t) => t.title)).toEqual(['First', 'Second', 'Third']);
+		});
+	});
 });

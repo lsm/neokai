@@ -25,8 +25,8 @@ export class SpaceTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -42,6 +42,7 @@ export class SpaceTaskRepository {
 			params.workflowRunId ?? null,
 			params.workflowStepId ?? null,
 			params.createdByTaskId ?? null,
+			params.goalId ?? null,
 			JSON.stringify(params.dependsOn ?? []),
 			params.taskAgentSessionId ?? null,
 			now,
@@ -85,6 +86,17 @@ export class SpaceTaskRepository {
 			`SELECT * FROM space_tasks WHERE workflow_run_id = ? AND archived_at IS NULL ORDER BY created_at ASC`
 		);
 		const rows = stmt.all(workflowRunId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
+	 * List all non-archived tasks associated with a goal/mission.
+	 */
+	findByGoalId(goalId: string): SpaceTask[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_tasks WHERE goal_id = ? AND archived_at IS NULL ORDER BY created_at ASC`
+		);
+		const rows = stmt.all(goalId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
 	}
 
@@ -227,6 +239,10 @@ export class SpaceTaskRepository {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
 		}
+		if (params.goalId !== undefined) {
+			fields.push('goal_id = ?');
+			values.push(params.goalId ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -335,6 +351,7 @@ export class SpaceTaskRepository {
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
 			workflowStepId: (row.workflow_step_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,
 			result: (row.result as string | null) ?? undefined,

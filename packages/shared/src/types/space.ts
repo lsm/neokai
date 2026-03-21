@@ -165,6 +165,8 @@ export interface SpaceTask {
 	workflowStepId?: string;
 	/** ID of the planning task that created this task */
 	createdByTaskId?: string;
+	/** ID of the goal/mission this task is associated with */
+	goalId?: string;
 	/** Progress percentage (0-100) */
 	progress?: number | null;
 	/** Description of current step */
@@ -227,6 +229,8 @@ export interface CreateSpaceTaskParams {
 	status?: SpaceTaskStatus;
 	/** ID of planning task that created this task */
 	createdByTaskId?: string;
+	/** Goal/mission this task is associated with */
+	goalId?: string;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when the task transitions from 'pending' to 'in_progress'.
@@ -257,6 +261,8 @@ export interface UpdateSpaceTaskParams {
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
 	inputDraft?: string | null;
+	/** Goal/mission this task is associated with; null to clear */
+	goalId?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when spawning a Task Agent; null to clear the reference.
