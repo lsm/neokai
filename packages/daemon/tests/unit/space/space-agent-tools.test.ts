@@ -20,6 +20,7 @@ import { SpaceTaskRepository } from '../../../src/storage/repositories/space-tas
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { createSpaceAgentToolHandlers } from '../../../src/lib/space/tools/space-agent-tools.ts';
@@ -102,6 +103,8 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	taskManager: SpaceTaskManager;
+	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
 }
 
@@ -134,7 +137,20 @@ function makeCtx(): TestCtx {
 		taskRepo,
 	});
 
-	return { db, dir, spaceId, agentId, workflowManager, workflowRunRepo, taskRepo, runtime };
+	const taskManager = new SpaceTaskManager(db, spaceId);
+
+	return {
+		db,
+		dir,
+		spaceId,
+		agentId,
+		workflowManager,
+		workflowRunRepo,
+		taskRepo,
+		taskManager,
+		agentManager,
+		runtime,
+	};
 }
 
 function makeHandlers(ctx: TestCtx) {
@@ -144,6 +160,8 @@ function makeHandlers(ctx: TestCtx) {
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
+		taskManager: ctx.taskManager,
+		spaceAgentManager: ctx.agentManager,
 	});
 }
 
@@ -675,5 +693,470 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflows).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// create_standalone_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('creates a task with required fields only', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'My task',
+			description: 'Do something',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.title).toBe('My task');
+		expect(parsed.task.description).toBe('Do something');
+		expect(parsed.task.workflowRunId ?? null).toBeNull();
+		expect(parsed.task.workflowStepId ?? null).toBeNull();
+		expect(parsed.task.spaceId).toBe(ctx.spaceId);
+	});
+
+	test('creates a task with all optional fields', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Full task',
+			description: 'Detailed description',
+			priority: 'high',
+			task_type: 'coding',
+			assigned_agent: 'coder',
+			custom_agent_id: ctx.agentId,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.priority).toBe('high');
+		expect(parsed.task.taskType).toBe('coding');
+		expect(parsed.task.assignedAgent).toBe('coder');
+		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+	});
+
+	test('returns error when custom_agent_id does not exist', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Desc',
+			custom_agent_id: 'agent-does-not-exist',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('agent-does-not-exist');
+	});
+
+	test('task is retrievable from repo after creation', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Stored task',
+			description: 'Check storage',
+		});
+		const taskId = JSON.parse(result.content[0].text).task.id;
+		const stored = ctx.taskRepo.getTask(taskId);
+		expect(stored).not.toBeNull();
+		expect(stored?.title).toBe('Stored task');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// get_task_detail
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — get_task_detail', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns full task record by ID', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Detail task',
+			description: 'Some work',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).get_task_detail({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.id).toBe(taskId);
+		expect(parsed.task.title).toBe('Detail task');
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).get_task_detail({ task_id: 'task-missing' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-missing');
+	});
+
+	test('returns task with error and result fields', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Failed task',
+			description: 'Will fail',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Start and then fail the task
+		await ctx.taskManager.startTask(taskId);
+		await ctx.taskManager.failTask(taskId, 'Something went wrong');
+
+		const result = await makeHandlers(ctx).get_task_detail({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('needs_attention');
+		expect(parsed.task.error).toBe('Something went wrong');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// retry_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — retry_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('resets a needs_attention task to pending', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Retry task',
+			description: 'Will be retried',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		await ctx.taskManager.startTask(taskId);
+		await ctx.taskManager.failTask(taskId, 'Error');
+
+		const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.error ?? null).toBeNull();
+	});
+
+	test('resets a cancelled task to pending', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Cancelled task',
+			description: 'Will be retried',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		await ctx.taskManager.cancelTask(taskId);
+
+		const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('pending');
+	});
+
+	test('updates description on retry when provided', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task with desc update',
+			description: 'Original description',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		await ctx.taskManager.startTask(taskId);
+		await ctx.taskManager.failTask(taskId, 'Error');
+
+		const result = await makeHandlers(ctx).retry_task({
+			task_id: taskId,
+			description: 'Updated description',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.description).toBe('Updated description');
+	});
+
+	test('returns error for in_progress task', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Active task',
+			description: 'Currently running',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		await ctx.taskManager.startTask(taskId);
+
+		const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('in_progress');
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).retry_task({ task_id: 'task-missing' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-missing');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// cancel_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — cancel_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('cancels a pending task', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Cancel me',
+			description: 'Will be cancelled',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).cancel_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('cancelled');
+	});
+
+	test('cancels dependent tasks in cascade', async () => {
+		// Create two tasks where second depends on first
+		const t1 = await ctx.taskManager.createTask({ title: 'T1', description: 'First' });
+		const t2 = await ctx.taskManager.createTask({
+			title: 'T2',
+			description: 'Depends on T1',
+			dependsOn: [t1.id],
+		});
+
+		const result = await makeHandlers(ctx).cancel_task({ task_id: t1.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.id).toBe(t1.id);
+		expect(parsed.task.status).toBe('cancelled');
+
+		// Dependent task should also be cancelled
+		const t2Updated = ctx.taskRepo.getTask(t2.id);
+		expect(t2Updated?.status).toBe('cancelled');
+	});
+
+	test('cancels the workflow run when cancel_workflow_run is true', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Cancel WF');
+		const startResult = await makeHandlers(ctx).start_workflow_run({
+			workflow_id: wf.id,
+			title: 'Run to cancel',
+		});
+		const { run, tasks } = JSON.parse(startResult.content[0].text);
+		const taskId = tasks[0].id;
+		const runId = run.id;
+
+		const result = await makeHandlers(ctx).cancel_task({
+			task_id: taskId,
+			cancel_workflow_run: true,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.workflowRunCancelled).toBe(true);
+		expect(parsed.workflowRunId).toBe(runId);
+
+		const updatedRun = ctx.workflowRunRepo.getRun(runId);
+		expect(updatedRun?.status).toBe('cancelled');
+	});
+
+	test('does not cancel workflow run when cancel_workflow_run is false', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Keep Run WF'
+		);
+		const startResult = await makeHandlers(ctx).start_workflow_run({
+			workflow_id: wf.id,
+			title: 'Run to keep',
+		});
+		const { run, tasks } = JSON.parse(startResult.content[0].text);
+		const taskId = tasks[0].id;
+		const runId = run.id;
+
+		await makeHandlers(ctx).cancel_task({
+			task_id: taskId,
+			cancel_workflow_run: false,
+		});
+
+		const updatedRun = ctx.workflowRunRepo.getRun(runId);
+		expect(updatedRun?.status).toBe('in_progress');
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).cancel_task({ task_id: 'task-missing' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-missing');
+	});
+
+	test('returns error when cancelling a completed task', async () => {
+		const t = await ctx.taskManager.createTask({ title: 'T', description: 'Done' });
+		await ctx.taskManager.startTask(t.id);
+		await ctx.taskManager.completeTask(t.id, 'done');
+
+		const result = await makeHandlers(ctx).cancel_task({ task_id: t.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// reassign_task
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — reassign_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('reassigns a pending task to a custom agent', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Reassign me',
+			description: 'Will be reassigned',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			custom_agent_id: ctx.agentId,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+	});
+
+	test('reassigns by changing assigned_agent type', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Agent type change',
+			description: 'Change agent type',
+			assigned_agent: 'coder',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			assigned_agent: 'general',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.assignedAgent).toBe('general');
+	});
+
+	test('does not clear existing customAgentId when only assigned_agent is changed', async () => {
+		// Create task with a custom agent assigned
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Has custom agent',
+			description: 'Custom agent must be preserved',
+			custom_agent_id: ctx.agentId,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Reassign only the agent type — custom_agent_id not provided
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			assigned_agent: 'general',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.assignedAgent).toBe('general');
+		// customAgentId must NOT have been cleared
+		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+	});
+
+	test('clears custom agent when custom_agent_id is null', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Clear agent',
+			description: 'Remove custom agent',
+			custom_agent_id: ctx.agentId,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			custom_agent_id: null,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.customAgentId ?? null).toBeNull();
+	});
+
+	test('returns error when custom_agent_id does not exist', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Task',
+			description: 'Desc',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			custom_agent_id: 'agent-does-not-exist',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('agent-does-not-exist');
+	});
+
+	test('returns error when task is in_progress', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Active task',
+			description: 'Currently running',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		await ctx.taskManager.startTask(taskId);
+
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			assigned_agent: 'general',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('in_progress');
+	});
+
+	test('returns error when task not found', async () => {
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: 'task-missing',
+			assigned_agent: 'general',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-missing');
+	});
+
+	test('reassigns a needs_attention task successfully', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Failed task',
+			description: 'Failed and reassign',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		await ctx.taskManager.startTask(taskId);
+		await ctx.taskManager.failTask(taskId, 'Error');
+
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			custom_agent_id: ctx.agentId,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.customAgentId).toBe(ctx.agentId);
 	});
 });
