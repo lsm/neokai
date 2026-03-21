@@ -421,10 +421,10 @@ describe('Migration 29: Space system tables', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// space_session_group_members role CHECK
+	// space_session_group_members role — freeform after migration 40
 	// -------------------------------------------------------------------------
 
-	test('space_session_group_members role CHECK constraint is enforced', () => {
+	test('space_session_group_members role accepts any freeform string (CHECK constraint dropped by migration 40)', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
@@ -437,7 +437,7 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('sg-5', 'sp-5', 'Group 5', ${now}, ${now})`
 		);
 
-		// Valid roles
+		// Former enum values still work
 		for (const role of ['worker', 'leader']) {
 			expect(() => {
 				db.exec(
@@ -447,13 +447,15 @@ describe('Migration 29: Space system tables', () => {
 			}).not.toThrow();
 		}
 
-		// Invalid role
-		expect(() => {
-			db.exec(
-				`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-				 VALUES ('sgm-bad', 'sg-5', 'sess-bad', 'observer', 0, ${now})`
-			);
-		}).toThrow();
+		// Arbitrary freeform roles now accepted (migration 40 dropped the CHECK)
+		for (const role of ['observer', 'security-auditor', 'coder', 'reviewer']) {
+			expect(() => {
+				db.exec(
+					`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
+					 VALUES ('sgm-${role}', 'sg-5', 'sess-${role}', '${role}', 0, ${now})`
+				);
+			}).not.toThrow();
+		}
 	});
 
 	// -------------------------------------------------------------------------

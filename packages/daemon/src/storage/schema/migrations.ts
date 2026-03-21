@@ -147,6 +147,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 39: Add 'archived' to status CHECK constraints on tasks and space_tasks.
 	runMigration39(db);
+
+	// Migration 40: Flexible session groups — add task_id + status to space_session_groups,
+	// drop role CHECK constraint and add agent_id + status to space_session_group_members.
+	runMigration40(db);
 }
 
 /**
@@ -2326,5 +2330,90 @@ function runMigration39(db: BunDatabase): void {
 		db.exec(
 			`UPDATE space_tasks SET status = 'archived' WHERE archived_at IS NOT NULL AND status != 'archived'`
 		);
+	}
+}
+
+/**
+ * Migration 40: Flexible session groups.
+ *
+ * space_session_groups:
+ *   - Add `task_id TEXT` (nullable) — links group to SpaceTask
+ *   - Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','failed'))`
+ *   - Add index on space_session_groups(task_id)
+ *
+ * space_session_group_members:
+ *   - Drop the CHECK constraint on `role` so it accepts any freeform string
+ *   - Add `agent_id TEXT` (nullable) — references SpaceAgent config
+ *   - Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','failed'))`
+ *
+ * SQLite cannot drop CHECK constraints via ALTER TABLE, so space_session_group_members
+ * uses the recreate-table pattern (same as migrations 18 and 39).
+ * ALTER TABLE ADD COLUMN is used for the two new space_session_groups columns because
+ * no constraint change is needed there.
+ */
+function runMigration40(db: BunDatabase): void {
+	// -------------------------------------------------------------------------
+	// space_session_groups — add task_id and status via ALTER TABLE (idempotent)
+	// -------------------------------------------------------------------------
+	if (tableExists(db, 'space_session_groups')) {
+		if (!tableHasColumn(db, 'space_session_groups', 'task_id')) {
+			db.exec(`ALTER TABLE space_session_groups ADD COLUMN task_id TEXT`);
+		}
+		if (!tableHasColumn(db, 'space_session_groups', 'status')) {
+			db.exec(
+				`ALTER TABLE space_session_groups ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed'))`
+			);
+		}
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// space_session_group_members — recreate table to drop role CHECK constraint
+	// and add agent_id + status columns.
+	//
+	// Idempotency guard: if agent_id already exists the migration has already run.
+	// -------------------------------------------------------------------------
+	if (
+		tableExists(db, 'space_session_group_members') &&
+		!tableHasColumn(db, 'space_session_group_members', 'agent_id')
+	) {
+		db.exec('PRAGMA foreign_keys = OFF');
+		try {
+			db.exec(`DROP TABLE IF EXISTS space_session_group_members_new`);
+			db.exec(`
+				CREATE TABLE space_session_group_members_new (
+					id TEXT PRIMARY KEY,
+					group_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					role TEXT NOT NULL,
+					agent_id TEXT,
+					status TEXT NOT NULL DEFAULT 'active'
+						CHECK(status IN ('active', 'completed', 'failed')),
+					order_index INTEGER NOT NULL DEFAULT 0,
+					created_at INTEGER NOT NULL,
+					FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
+					UNIQUE(group_id, session_id)
+				)
+			`);
+
+			// Copy existing columns; agent_id and status get their defaults
+			const cols = ['id', 'group_id', 'session_id', 'role', 'order_index', 'created_at'];
+			const selectCols = cols.join(', ');
+			db.exec(
+				`INSERT INTO space_session_group_members_new (${selectCols}) SELECT ${selectCols} FROM space_session_group_members`
+			);
+			db.exec(`DROP TABLE space_session_group_members`);
+			db.exec(`ALTER TABLE space_session_group_members_new RENAME TO space_session_group_members`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_group_id ON space_session_group_members(group_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
+			);
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
 	}
 }
