@@ -1015,6 +1015,69 @@ describe('TaskManager', () => {
 		});
 	});
 
+	describe('archiveTask method', () => {
+		it('should archive a completed task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should archive a cancelled task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should archive a needs_attention task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should reject archiving a pending task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await expect(taskManager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'pending'"
+			);
+		});
+
+		it('should reject archiving an in_progress task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await expect(taskManager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'in_progress'"
+			);
+		});
+
+		it('should clear active_session when archiving', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.activeSession).toBeNull();
+		});
+
+		it('should throw for non-existent task', async () => {
+			await expect(taskManager.archiveTask('non-existent')).rejects.toThrow(
+				'Task not found: non-existent'
+			);
+		});
+	});
+
 	describe('VALID_STATUS_TRANSITIONS map', () => {
 		it('archived is a true terminal state with no transitions', () => {
 			expect(VALID_STATUS_TRANSITIONS.archived).toEqual([]);

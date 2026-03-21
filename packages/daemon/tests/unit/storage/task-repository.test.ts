@@ -640,6 +640,22 @@ describe('TaskRepository', () => {
 			const result = repository.archiveTask('nonexistent');
 			expect(result).toBeNull();
 		});
+
+		it('should clear active_session when archiving', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'Active session task',
+				description: '',
+			});
+			repository.updateTask(task.id, {
+				status: 'in_progress',
+				activeSession: 'worker',
+			});
+
+			const archived = repository.archiveTask(task.id);
+			expect(archived!.status).toBe('archived');
+			expect(archived!.activeSession).toBeNull();
+		});
 	});
 
 	describe('listTasks archive filtering', () => {

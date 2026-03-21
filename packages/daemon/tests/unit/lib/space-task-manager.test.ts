@@ -461,6 +461,17 @@ describe('SpaceTaskManager', () => {
 			);
 		});
 
+		it('throws when task is archived', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'done');
+			await manager.archiveTask(task.id);
+
+			await expect(manager.reassignTask(task.id, 'new-agent')).rejects.toThrow(
+				"Cannot reassign task in 'archived'"
+			);
+		});
+
 		it('throws for unknown task', async () => {
 			await expect(manager.reassignTask('nonexistent', 'agent-id')).rejects.toThrow(
 				'Task not found'
