@@ -35,3 +35,5 @@ export {
 export type { EdgeRendererProps, EdgePoints } from './EdgeRenderer';
 export { EdgeConfigPanel } from './EdgeConfigPanel';
 export type { EdgeConfigPanelProps, EdgeTransition } from './EdgeConfigPanel';
+export { VisualWorkflowEditor } from './VisualWorkflowEditor';
+export type { VisualWorkflowEditorProps } from './VisualWorkflowEditor';
