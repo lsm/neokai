@@ -4,9 +4,13 @@
  * Verifies:
  * - Prompt includes available workflow names, descriptions, and tags
  * - Prompt includes available agent names and roles
- * - Guidance text for start_workflow_run vs create_task is present
+ * - Guidance text for start_workflow_run vs create_standalone_task is present
  * - Operator-supplied background and instructions are included
  * - Empty workflows/agents handled gracefully
+ * - Event handling section always included with all four event kinds
+ * - Autonomy level section reflects configured level
+ * - Escalation section always included
+ * - Coordination tools section always included
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -193,9 +197,9 @@ describe('buildSpaceChatSystemPrompt — workflow vs task guidance', () => {
 		expect(prompt).toContain('start_workflow_run');
 	});
 
-	test('includes create_task guidance', () => {
+	test('includes create_standalone_task guidance', () => {
 		const prompt = buildSpaceChatSystemPrompt(makeContext());
-		expect(prompt).toContain('create_task');
+		expect(prompt).toContain('create_standalone_task');
 	});
 
 	test('mentions list_workflows discovery tool', () => {
@@ -246,5 +250,203 @@ describe('buildSpaceChatSystemPrompt — operator context', () => {
 	test('omits instructions section when not provided', () => {
 		const prompt = buildSpaceChatSystemPrompt({});
 		expect(prompt).not.toContain('Space Instructions');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Event handling section
+// ---------------------------------------------------------------------------
+
+describe('buildSpaceChatSystemPrompt — event handling', () => {
+	test('includes Event Handling section header', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Event Handling');
+	});
+
+	test('includes [TASK_EVENT] prefix description', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('[TASK_EVENT]');
+	});
+
+	test('includes task_needs_attention event kind', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('task_needs_attention');
+	});
+
+	test('includes workflow_run_needs_attention event kind', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('workflow_run_needs_attention');
+	});
+
+	test('includes task_timeout event kind', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('task_timeout');
+	});
+
+	test('includes workflow_run_completed event kind', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('workflow_run_completed');
+	});
+
+	test('event handling section present regardless of autonomy level', () => {
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const empty = buildSpaceChatSystemPrompt({});
+		for (const prompt of [supervised, semi, empty]) {
+			expect(prompt).toContain('task_needs_attention');
+			expect(prompt).toContain('workflow_run_completed');
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Autonomy level section
+// ---------------------------------------------------------------------------
+
+describe('buildSpaceChatSystemPrompt — autonomy level', () => {
+	test('includes Autonomy Level section header', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Autonomy Level');
+	});
+
+	test('defaults to supervised mode when autonomyLevel is not set', () => {
+		const prompt = buildSpaceChatSystemPrompt({});
+		expect(prompt).toContain('supervised');
+		expect(prompt).toContain('wait for human approval');
+	});
+
+	test('supervised mode includes notify-human instruction', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		expect(prompt).toContain('Notify the human');
+	});
+
+	test('supervised mode includes wait for approval instruction', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		expect(prompt).toContain('wait for human approval');
+	});
+
+	test('supervised mode forbids autonomous retry/reassign/cancel', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		expect(prompt).toContain('Do not call `retry_task`');
+	});
+
+	test('semi_autonomous mode shows the configured level', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		expect(prompt).toContain('semi_autonomous');
+	});
+
+	test('semi_autonomous mode allows autonomous retry', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		expect(prompt).toContain('Retry a failed task once');
+	});
+
+	test('semi_autonomous mode allows reassign', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		expect(prompt).toContain('Reassign a task');
+	});
+
+	test('semi_autonomous mode says escalate after one failed retry', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		expect(prompt).toContain('one failed retry');
+	});
+
+	test('semi_autonomous mode still enforces human-gated steps', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		expect(prompt).toContain('Human-gated workflow steps always require human approval');
+	});
+
+	test('supervised and semi_autonomous produce different autonomy instructions', () => {
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		expect(supervised).not.toEqual(semi);
+		expect(supervised).toContain('wait for human approval');
+		expect(semi).toContain('Retry a failed task once');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Escalation section
+// ---------------------------------------------------------------------------
+
+describe('buildSpaceChatSystemPrompt — escalation', () => {
+	test('includes Escalation section header', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Escalation');
+	});
+
+	test('includes "What happened" escalation step', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('What happened');
+	});
+
+	test('includes "What was considered" escalation step', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('What was considered');
+	});
+
+	test('includes "What is recommended" escalation step', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('What is recommended');
+	});
+
+	test('includes "Clear question" escalation step', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Clear question');
+	});
+
+	test('escalation section present regardless of autonomy level', () => {
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		for (const prompt of [supervised, semi]) {
+			expect(prompt).toContain('Escalation');
+			expect(prompt).toContain('What happened');
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Coordination tools section
+// ---------------------------------------------------------------------------
+
+describe('buildSpaceChatSystemPrompt — coordination tools', () => {
+	test('includes Coordination Tools section header', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('Coordination Tools');
+	});
+
+	test('documents create_standalone_task tool', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		// At least two occurrences: Decision Guide and Coordination Tools
+		const count = (prompt.match(/create_standalone_task/g) ?? []).length;
+		expect(count).toBeGreaterThanOrEqual(2);
+	});
+
+	test('documents get_task_detail tool', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('get_task_detail');
+	});
+
+	test('documents retry_task tool', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('retry_task');
+	});
+
+	test('documents cancel_task tool', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('cancel_task');
+	});
+
+	test('documents reassign_task tool', () => {
+		const prompt = buildSpaceChatSystemPrompt();
+		expect(prompt).toContain('reassign_task');
+	});
+
+	test('coordination tools section present for all autonomy levels', () => {
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		for (const prompt of [supervised, semi]) {
+			expect(prompt).toContain('get_task_detail');
+			expect(prompt).toContain('retry_task');
+		}
 	});
 });
