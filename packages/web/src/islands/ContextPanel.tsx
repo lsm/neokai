@@ -44,6 +44,7 @@ const SETTINGS_SECTIONS: Array<{
 	{ id: 'general', label: 'General', icon: 'settings' },
 	{ id: 'providers', label: 'Providers', icon: 'cloud' },
 	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
+	{ id: 'fallback-models', label: 'Fallback Models', icon: 'swap' },
 	{ id: 'usage', label: 'Usage', icon: 'chart' },
 	{ id: 'about', label: 'About', icon: 'info' },
 ];
@@ -109,6 +110,17 @@ function SectionIcon({ type }: { type: string }) {
 						stroke-linejoin="round"
 						stroke-width={2}
 						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'swap':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
 					/>
 				</svg>
 			);

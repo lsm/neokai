@@ -4,7 +4,7 @@ import { SessionGroupRepository } from '../../../src/lib/room/state/session-grou
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
-import type { Room } from '@neokai/shared';
+import type { Room, GlobalSettings } from '@neokai/shared';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks';
@@ -227,6 +227,8 @@ export interface RuntimeTestContextOptions {
 		sessionId: string,
 		afterMessageId: string | null
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
+	/** Get global settings for testing fallback model logic */
+	getGlobalSettings?: () => GlobalSettings;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -266,6 +268,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),
 		getGoal: (goalId) => goalManager.getGoal(goalId),
+		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
 		daemonHub: mockHub as unknown as DaemonHub,
 	});
 

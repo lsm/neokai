@@ -150,6 +150,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		defaultWorkspacePath: deps.config.workspaceRoot,
 		defaultModel: deps.config.defaultModel,
+		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 	});
 	roomRuntimeService.start().catch((error) => {
 		log.error('Failed to start RoomRuntimeService:', error);

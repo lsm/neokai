@@ -3,7 +3,9 @@
  *
  * Single point of truth for classifying API errors from agent output:
  * - terminal:    unrecoverable errors (4xx) → fail task immediately
- * - rate_limit:  429 rate limits with parseable retry-after → pause with backoff
+ * - rate_limit:  HTTP 429 rate limits with parseable retry-after → pause with backoff
+ * - usage_limit: daily/weekly usage cap limits (e.g. "You've hit your limit · resets 2pm")
+ *                → immediately attempt fallback model, skip backoff
  * - recoverable: transient errors (5xx) → bounce/retry
  *
  * Detection strategy: match only structured "API Error: NNN" messages from the
@@ -12,13 +14,14 @@
  * (e.g. "implemented handling for invalid model errors").
  *
  * The Anthropic usage-limit text pattern ("You've hit your limit · resets …")
- * is kept as a rate_limit fallback because it is highly specific and not
- * something a worker would write as normal explanatory output.
+ * is classified as usage_limit (not rate_limit) because waiting for the reset
+ * can mean hours of downtime. Falling back to an alternative model keeps the
+ * task moving without requiring the user to wait.
  */
 
 import { parseRateLimitReset } from './rate-limit-utils';
 
-export type ErrorClass = 'terminal' | 'rate_limit' | 'recoverable';
+export type ErrorClass = 'terminal' | 'rate_limit' | 'usage_limit' | 'recoverable';
 
 export interface ErrorClassification {
 	class: ErrorClass;
@@ -26,8 +29,9 @@ export interface ErrorClassification {
 	/** HTTP status code extracted from the error message, if present */
 	statusCode?: number;
 	/**
-	 * For rate_limit: Unix timestamp (ms) when the limit resets.
-	 * Consumers should set a backoff until this time.
+	 * For rate_limit / usage_limit: Unix timestamp (ms) when the limit resets.
+	 * Consumers should set a backoff until this time for rate_limit;
+	 * for usage_limit this is informational only (backoff is skipped).
 	 */
 	resetsAt?: number;
 }
@@ -60,7 +64,7 @@ function extractHttpStatus(message: string): number | undefined {
  * Classify an error message from agent output.
  *
  * Only matches structured "API Error: NNN" messages produced by the Claude
- * Agent SDK, plus the Anthropic usage-limit text for rate_limit detection.
+ * Agent SDK, plus the Anthropic usage-limit text for usage_limit detection.
  * Free-form prose does NOT trigger classification.
  *
  * Evaluation order (first match wins):
@@ -68,7 +72,7 @@ function extractHttpStatus(message: string): number | undefined {
  *    - 400/401/403/404/422 → terminal
  *    - 429               → rate_limit (with resetsAt if parseable)
  *    - 5xx              → recoverable
- * 2. Anthropic usage-limit text → rate_limit (specific, not prose-writable)
+ * 2. Anthropic usage-limit text → usage_limit (immediate fallback, no backoff)
  *
  * Returns null when the message is not an API error.
  *
@@ -77,6 +81,9 @@ function extractHttpStatus(message: string): number | undefined {
  * // → { class: 'terminal', reason: '...', statusCode: 400 }
  *
  * classifyError("You've hit your limit · resets 1pm (America/New_York)")
+ * // → { class: 'usage_limit', reason: '...', resetsAt: <timestamp> }
+ *
+ * classifyError('API Error: 429 {"error":{"message":"rate limit exceeded"}}')
  * // → { class: 'rate_limit', reason: '...', resetsAt: <timestamp> }
  *
  * classifyError('API Error: 500 Internal Server Error')
@@ -118,13 +125,15 @@ export function classifyError(message: string): ErrorClassification | null {
 		}
 	}
 
-	// ── 2. Anthropic usage-limit text (specific, cannot appear in normal prose)
-	const resetsAt = parseRateLimitReset(message);
-	if (resetsAt !== null) {
+	// ── 2. Anthropic usage-limit text (specific, cannot appear in normal prose).
+	//     Classified as usage_limit — falling back to an alternative model keeps the
+	//     task moving instead of waiting hours until the daily/weekly cap resets.
+	const usageLimitResetsAt = parseRateLimitReset(message);
+	if (usageLimitResetsAt !== null) {
 		return {
-			class: 'rate_limit',
-			reason: `Rate limit reached — resets at ${new Date(resetsAt).toLocaleTimeString()}`,
-			resetsAt,
+			class: 'usage_limit',
+			reason: `Usage limit reached — would reset at ${new Date(usageLimitResetsAt).toLocaleTimeString()}`,
+			resetsAt: usageLimitResetsAt,
 		};
 	}
 

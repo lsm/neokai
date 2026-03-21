@@ -17,6 +17,7 @@ import { SpacesPage } from './SpacesPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
 import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
+import { FallbackModelsSettings } from '../components/settings/FallbackModelsSettings.tsx';
 import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
@@ -105,6 +106,7 @@ export default function MainContent() {
 						{settingsSection === 'general' && <GeneralSettings />}
 						{settingsSection === 'providers' && <ProvidersSettings />}
 						{settingsSection === 'mcp-servers' && <McpServersSettings />}
+						{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
 						{settingsSection === 'usage' && <UsageAnalytics />}
 						{settingsSection === 'about' && <AboutSection />}
 					</div>
