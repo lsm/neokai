@@ -583,17 +583,19 @@ export class SpaceRuntime {
 			const tam = this.config.taskAgentManager;
 
 			// Step 1: Check tasks that already have a Task Agent session (in_progress).
-			// If the agent is alive, skip this tick — it is driving the workflow.
-			// If the agent is gone (crashed/stopped), reset the task to pending so the
-			// next tick will spawn a fresh agent to resume from the current workflow state.
+			// Full loop always completes so that dead-agent resets are applied to ALL
+			// tasks before deciding whether to skip. Early-returning on the first alive
+			// agent would leave dead-agent tasks unrecovered if a step has multiple tasks.
+			let anyAgentAlive = false;
 			for (const task of stepTasks) {
 				if (!task.taskAgentSessionId) continue;
 
 				if (tam.isTaskAgentAlive(task.id)) {
-					return; // Task Agent is running — skip this tick entirely
+					anyAgentAlive = true;
+					continue; // still check remaining tasks for dead agents
 				}
 
-				// Task Agent session is gone — reset for re-spawn
+				// Task Agent session is gone — reset for re-spawn on next tick
 				log.warn(
 					`SpaceRuntime: task agent for task ${task.id} is gone ` +
 						`(session ${task.taskAgentSessionId}), resetting to pending for re-spawn`
@@ -603,6 +605,9 @@ export class SpaceRuntime {
 					status: 'pending',
 				});
 			}
+
+			// If any Task Agent is actively running, skip this tick — it drives the workflow.
+			if (anyAgentAlive) return;
 
 			// Step 2: Spawn Task Agents for pending tasks without an agent session.
 			// Re-read from DB to pick up status resets applied in Step 1.
@@ -614,10 +619,18 @@ export class SpaceRuntime {
 				);
 
 			if (pendingTasksNeedingAgent.length > 0) {
-				if (space) {
+				if (!space) {
+					// Space was deleted while the run was in progress — log and wait.
+					// The run will remain stuck until the space is restored or cancelled.
+					log.warn(
+						`SpaceRuntime: cannot spawn task agents for run ${runId} — space ${meta.spaceId} not found`
+					);
+				} else {
 					for (const task of pendingTasksNeedingAgent) {
 						if (tam.isSpawning(task.id)) continue; // spawn already in progress
 						try {
+							// spawnTaskAgent writes taskAgentSessionId to the DB as a side effect.
+							// SpaceRuntime owns the status transition to 'in_progress' after spawn.
 							await tam.spawnTaskAgent(task, space, meta.workflow, run);
 							this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
 						} catch (err) {
