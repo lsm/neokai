@@ -196,16 +196,15 @@ export function setupSessionHandlers(
 
 		await sessionManager.deleteSession(targetSessionId);
 
-		const deletedPayload = { sessionId: targetSessionId, roomId: roomIdForDelete };
-
-		// Broadcast deletion event on global channel (backward compat)
-		messageHub.event('session.deleted', deletedPayload, { channel: 'global' });
-
-		// Also broadcast on room channel so RoomStore can react immediately
+		// Broadcast on room channel so RoomStore reacts immediately.
+		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
+		// to avoid triple-firing the event. We only add the room-scoped broadcast here.
 		if (roomIdForDelete) {
-			messageHub.event('session.deleted', deletedPayload, {
-				channel: `room:${roomIdForDelete}`,
-			});
+			messageHub.event(
+				'session.deleted',
+				{ sessionId: targetSessionId, roomId: roomIdForDelete },
+				{ channel: `room:${roomIdForDelete}` }
+			);
 		}
 
 		return { success: true };

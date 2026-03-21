@@ -361,7 +361,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Session lifecycle events
+			// 5. Session lifecycle events (delete / update / archive)
 			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
 				'session.deleted',
 				(event) => {
@@ -400,7 +400,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubSessionUpdated);
 
-			// 5. Fetch initial state via RPC
+			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
