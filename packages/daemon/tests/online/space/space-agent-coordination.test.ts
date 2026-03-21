@@ -162,15 +162,22 @@ describe('Space Agent Coordination — Online Tests', () => {
 		// the spaces:global session may not yet exist when beforeEach returns.
 		// Poll session.get until the session is ready before proceeding to the test.
 		const deadline = Date.now() + SETUP_TIMEOUT;
+		let sessionReady = false;
 		while (Date.now() < deadline) {
 			try {
 				await daemon.messageHub.request('session.get', {
 					sessionId: GLOBAL_SPACES_SESSION_ID,
 				});
+				sessionReady = true;
 				break; // session exists — ready to proceed
 			} catch {
 				await new Promise((resolve) => setTimeout(resolve, 200));
 			}
+		}
+		if (!sessionReady) {
+			throw new Error(
+				`spaces:global session was not ready within ${SETUP_TIMEOUT}ms — aborting test setup`
+			);
 		}
 	}, SETUP_TIMEOUT);
 
