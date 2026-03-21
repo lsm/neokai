@@ -283,24 +283,68 @@ describe('RoomStore — session lifecycle events', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// session.updated — must NOT trigger re-fetch (draft-save storm prevention)
+	// session.updated — triggers refresh only when status field is present
 	// -----------------------------------------------------------------------
 
 	describe('session.updated event', () => {
-		it('does NOT trigger a room.get re-fetch (avoids draft-save RPC storm)', async () => {
+		it('triggers a room.get re-fetch when event carries a status field', async () => {
 			const before = countRequests(hub, 'room.get');
 
 			hub.fire('session.updated', { sessionId: 'session-1', roomId: ROOM_ID, status: 'archived' });
+
+			await vi.waitFor(() => {
+				expect(countRequests(hub, 'room.get')).toBeGreaterThan(before);
+			});
+		});
+
+		it('updates sessions signal from server response after status change', async () => {
+			hub.request.mockImplementation((method: string) => {
+				if (method === 'room.get')
+					return Promise.resolve({
+						...twoSessionOverview(),
+						sessions: [
+							{
+								id: 'session-1',
+								title: 'Session One',
+								status: 'archived',
+								lastActiveAt: 1000,
+							},
+							{ id: 'session-2', title: 'Session Two', status: 'active', lastActiveAt: 2000 },
+						],
+					});
+				if (method === 'goal.list') return Promise.resolve({ goals: [] });
+				if (method === 'room.runtime.state') return Promise.resolve({ state: 'stopped' });
+				if (method === 'room.runtime.models')
+					return Promise.resolve({ leaderModel: null, workerModel: null });
+				return Promise.resolve({});
+			});
+
+			hub.fire('session.updated', { sessionId: 'session-1', roomId: ROOM_ID, status: 'archived' });
+
+			await vi.waitFor(() => {
+				const s1 = roomStore.sessions.value.find((s) => s.id === 'session-1');
+				expect(s1?.status).toBe('archived');
+			});
+		});
+
+		it('does NOT trigger a re-fetch when event has no status field (draft save)', async () => {
+			const before = countRequests(hub, 'room.get');
+
+			hub.fire('session.updated', {
+				sessionId: 'session-1',
+				roomId: ROOM_ID,
+				title: 'New Title',
+			});
 
 			await new Promise((r) => setTimeout(r, 30));
 
 			expect(countRequests(hub, 'room.get')).toBe(before);
 		});
 
-		it('does NOT trigger a re-fetch for rapid consecutive updates', async () => {
+		it('does NOT trigger a re-fetch for rapid consecutive draft saves', async () => {
 			const before = countRequests(hub, 'room.get');
 
-			// Simulate typing — 5 rapid draft saves
+			// Simulate typing — 5 rapid draft saves without status field
 			for (let i = 0; i < 5; i++) {
 				hub.fire('session.updated', {
 					sessionId: 'session-1',
@@ -308,6 +352,20 @@ describe('RoomStore — session lifecycle events', () => {
 					metadata: { inputDraft: `draft ${i}` },
 				});
 			}
+
+			await new Promise((r) => setTimeout(r, 30));
+
+			expect(countRequests(hub, 'room.get')).toBe(before);
+		});
+
+		it('does NOT trigger a re-fetch for a different room', async () => {
+			const before = countRequests(hub, 'room.get');
+
+			hub.fire('session.updated', {
+				sessionId: 'session-1',
+				roomId: OTHER_ROOM_ID,
+				status: 'archived',
+			});
 
 			await new Promise((r) => setTimeout(r, 30));
 

@@ -363,13 +363,10 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Session lifecycle events (delete)
-			// Re-fetch the authoritative session list from the server when a session is
-			// deleted. This avoids manual array splicing and self-heals any events missed
-			// during WebSocket reconnect gaps.
-			// Note: session.updated is intentionally NOT subscribed here — draft saves via
-			// useInputDraft call session.update every ~250 ms and would trigger a 4-RPC
-			// storm (room.get + goal.list + runtime.state + runtime.models) on every keystroke.
+			// 5. Session lifecycle events (delete / status change)
+			// Re-fetch the authoritative session list from the server on meaningful session
+			// changes. This avoids manual array splicing and self-heals events missed during
+			// WebSocket reconnect gaps.
 			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
 				'session.deleted',
 				(event) => {
@@ -389,6 +386,22 @@ class RoomStore {
 				}
 			);
 			this.cleanupFunctions.push(unsubSessionDeleted);
+
+			// session.updated: only refresh when a status field is present.
+			// Draft saves (useInputDraft, ~250 ms debounce) only carry title/inputDraft —
+			// no status — so this guard keeps RPC calls at zero during typing.
+			const unsubSessionUpdated = hub.onEvent<{
+				sessionId: string;
+				roomId?: string;
+				status?: string;
+			}>('session.updated', (event) => {
+				if (event.roomId !== roomId) return;
+				if (event.status === undefined) return;
+				this.refresh().catch((err) => {
+					logger.error('Failed to refresh after session.updated:', err);
+				});
+			});
+			this.cleanupFunctions.push(unsubSessionUpdated);
 
 			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
