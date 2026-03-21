@@ -69,7 +69,7 @@ export class TaskRepository {
 
 	/**
 	 * List tasks for a room, optionally filtered.
-	 * By default, archived tasks (archived_at IS NOT NULL) are excluded.
+	 * By default, archived tasks (status = 'archived') are excluded.
 	 * Use filter.includeArchived = true to include archived tasks.
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {

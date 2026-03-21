@@ -121,7 +121,7 @@ export class SpaceTaskRepository {
 	 */
 	listByStatus(spaceId: string, status: SpaceTaskStatus): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? AND status != 'archived' ORDER BY updated_at DESC`
+			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC`
 		);
 		const rows = stmt.all(spaceId, status) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
