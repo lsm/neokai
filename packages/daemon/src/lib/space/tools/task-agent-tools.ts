@@ -22,6 +22,8 @@
 import { randomUUID } from 'node:crypto';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Space } from '@neokai/shared';
+import type { DaemonHub } from '../../daemon-hub';
+import { Logger } from '../../logger';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import { WorkflowGateError } from '../runtime/workflow-executor';
@@ -50,6 +52,8 @@ import type {
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
+
+const log = new Logger('task-agent-tools');
 
 // ---------------------------------------------------------------------------
 // Sub-session state
@@ -140,6 +144,11 @@ export interface TaskAgentToolsConfig {
 	 * The Task Agent handler registers this as the session completion callback.
 	 */
 	onSubSessionComplete: (stepId: string, sessionId: string) => Promise<void>;
+	/**
+	 * DaemonHub instance for emitting task completion/failure events.
+	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
+	 */
+	daemonHub?: DaemonHub;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +174,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		sessionFactory,
 		messageInjector,
 		onSubSessionComplete,
+		daemonHub,
 	} = config;
 
 	return {
@@ -628,6 +638,25 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					result: summary,
 					error: errorDetail,
 				});
+
+				// Emit DaemonHub event so the Space Agent is notified of task completion/failure.
+				if (daemonHub) {
+					const eventPayload = {
+						sessionId: 'global',
+						taskId,
+						spaceId: space.id,
+						status,
+						summary: summary ?? '',
+						workflowRunId,
+						taskTitle: mainTask.title,
+					};
+					const eventName = status === 'completed' ? 'space.task.completed' : 'space.task.failed';
+					void daemonHub.emit(eventName, eventPayload).catch((err) => {
+						log.warn(
+							`Failed to emit ${eventName} for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+						);
+					});
+				}
 
 				return jsonResult({
 					success: true,

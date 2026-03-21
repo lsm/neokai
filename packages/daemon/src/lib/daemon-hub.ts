@@ -436,6 +436,28 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		task: import('@neokai/shared').SpaceTask;
 	};
 
+	// Space Task Agent completion events (use 'global' as sessionId)
+	/** Emitted by report_result when a Task Agent marks a task as completed. */
+	'space.task.completed': {
+		sessionId: string;
+		taskId: string;
+		spaceId: string;
+		status: string;
+		summary: string;
+		workflowRunId: string;
+		taskTitle: string;
+	};
+	/** Emitted by report_result when a Task Agent marks a task as needs_attention or cancelled. */
+	'space.task.failed': {
+		sessionId: string;
+		taskId: string;
+		spaceId: string;
+		status: string;
+		summary: string;
+		workflowRunId: string;
+		taskTitle: string;
+	};
+
 	// Space workflow run events (global events - use 'global' as sessionId)
 	'space.workflowRun.created': {
 		sessionId: string;

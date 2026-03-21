@@ -45,6 +45,7 @@ import type { SpaceWorkflowRunRepository as ISpaceWorkflowRunRepository } from '
 import type { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import type { MessageDeliveryMode } from '@neokai/shared';
 import type { NotificationSink } from '../../../src/lib/space/runtime/notification-sink.ts';
+import type { DaemonHub } from '../../../src/lib/daemon-hub.ts';
 
 // ---------------------------------------------------------------------------
 // Expected tool lists (Task 5.3)
@@ -689,5 +690,228 @@ describe('createGlobalSpacesMcpServer — MCP instance tool registration', () =>
 		});
 		const registeredNames = getRegisteredToolNames(server);
 		expect(registeredNames).toHaveLength(EXPECTED_TOOLS.length);
+	});
+});
+
+// ===========================================================================
+// Task 6.2 — space.task.completed / space.task.failed subscription tests
+// ===========================================================================
+
+/** Build a controllable mock DaemonHub that records subscriptions and allows triggering them. */
+function makeMockDaemonHubForProvision(): {
+	hub: DaemonHub;
+	trigger: (
+		event: 'space.task.completed' | 'space.task.failed',
+		payload: Record<string, unknown>
+	) => Promise<void>;
+} {
+	const handlers = new Map<
+		string,
+		Array<(payload: Record<string, unknown>) => void | Promise<void>>
+	>();
+
+	const hub = {
+		emit: mock(async () => {}),
+		on: mock(
+			(event: string, handler: (payload: Record<string, unknown>) => void | Promise<void>) => {
+				if (!handlers.has(event)) handlers.set(event, []);
+				handlers.get(event)!.push(handler);
+				return () => {};
+			}
+		),
+		off: mock(() => {}),
+		once: mock(async () => {}),
+	} as unknown as DaemonHub;
+
+	async function trigger(
+		event: 'space.task.completed' | 'space.task.failed',
+		payload: Record<string, unknown>
+	): Promise<void> {
+		const eventHandlers = handlers.get(event) ?? [];
+		for (const handler of eventHandlers) {
+			await handler(payload);
+		}
+	}
+
+	return { hub, trigger };
+}
+
+describe('provisionGlobalSpacesAgent — task completion event subscriptions', () => {
+	let db: BunDatabase;
+	let dir: string;
+
+	beforeEach(() => {
+		({ db, dir } = makeDb());
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			/* ignore */
+		}
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	});
+
+	test('subscribes to space.task.completed and space.task.failed when daemonHub is provided', async () => {
+		const { hub } = makeMockDaemonHubForProvision();
+		const deps = buildDeps(db);
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub });
+
+		const onMock = hub.on as ReturnType<typeof mock>;
+		const subscribedEvents = onMock.mock.calls.map((call: unknown[]) => call[0] as string);
+		expect(subscribedEvents).toContain('space.task.completed');
+		expect(subscribedEvents).toContain('space.task.failed');
+	});
+
+	test('does not subscribe when daemonHub is not provided', async () => {
+		const deps = buildDeps(db);
+		// No daemonHub — should not throw and should not subscribe
+		await expect(provisionGlobalSpacesAgent(deps)).resolves.toBeUndefined();
+	});
+
+	test('injects completed notification into global session when space.task.completed fires', async () => {
+		const sessionFactory = makeMockSessionFactory();
+		const { hub, trigger } = makeMockDaemonHubForProvision();
+		const deps = buildDeps(db, { sessionFactory });
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub });
+
+		await trigger('space.task.completed', {
+			sessionId: 'global',
+			taskId: 'task-001',
+			spaceId: 'space-001',
+			status: 'completed',
+			summary: 'Feature implemented successfully.',
+			workflowRunId: 'run-001',
+			taskTitle: 'Implement login page',
+		});
+
+		// The notification should be injected into the global session
+		expect(sessionFactory.calls.length).toBeGreaterThanOrEqual(1);
+		const lastCall = sessionFactory.calls[sessionFactory.calls.length - 1];
+		expect(lastCall.sessionId).toBe('spaces:global');
+		expect(lastCall.message).toContain('Implement login page');
+		expect(lastCall.message).toContain('task-001');
+		expect(lastCall.message).toContain('space-001');
+		expect(lastCall.message).toContain('completed');
+		expect(lastCall.message).toContain('Feature implemented successfully.');
+		expect(lastCall.opts?.deliveryMode).toBe('next_turn');
+	});
+
+	test('injects failed notification into global session when space.task.failed fires', async () => {
+		const sessionFactory = makeMockSessionFactory();
+		const { hub, trigger } = makeMockDaemonHubForProvision();
+		const deps = buildDeps(db, { sessionFactory });
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub });
+
+		await trigger('space.task.failed', {
+			sessionId: 'global',
+			taskId: 'task-002',
+			spaceId: 'space-001',
+			status: 'needs_attention',
+			summary: 'Tests are failing.',
+			workflowRunId: 'run-002',
+			taskTitle: 'Fix authentication bug',
+		});
+
+		expect(sessionFactory.calls.length).toBeGreaterThanOrEqual(1);
+		const lastCall = sessionFactory.calls[sessionFactory.calls.length - 1];
+		expect(lastCall.sessionId).toBe('spaces:global');
+		expect(lastCall.message).toContain('Fix authentication bug');
+		expect(lastCall.message).toContain('task-002');
+		expect(lastCall.message).toContain('space-001');
+		expect(lastCall.message).toContain('failed');
+		expect(lastCall.message).toContain('Tests are failing.');
+		expect(lastCall.opts?.deliveryMode).toBe('next_turn');
+	});
+
+	test('uses "cancelled" label in notification when status is cancelled', async () => {
+		const sessionFactory = makeMockSessionFactory();
+		const { hub, trigger } = makeMockDaemonHubForProvision();
+		const deps = buildDeps(db, { sessionFactory });
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub });
+
+		await trigger('space.task.failed', {
+			sessionId: 'global',
+			taskId: 'task-003',
+			spaceId: 'space-001',
+			status: 'cancelled',
+			summary: 'User cancelled the task.',
+			workflowRunId: 'run-003',
+			taskTitle: 'Deploy to production',
+		});
+
+		const lastCall = sessionFactory.calls[sessionFactory.calls.length - 1];
+		expect(lastCall.message).toContain('cancelled');
+		expect(lastCall.message).toContain('Deploy to production');
+		expect(lastCall.message).toContain('task-003');
+	});
+
+	test('does not throw when sessionFactory.injectMessage fails', async () => {
+		const sessionFactory = makeMockSessionFactory({ injectError: new Error('Session gone') });
+		const { hub, trigger } = makeMockDaemonHubForProvision();
+		const deps = buildDeps(db, { sessionFactory });
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub });
+
+		// Should not throw even when injection fails
+		await expect(
+			trigger('space.task.completed', {
+				sessionId: 'global',
+				taskId: 'task-004',
+				spaceId: 'space-001',
+				status: 'completed',
+				summary: 'Done.',
+				workflowRunId: 'run-004',
+				taskTitle: 'Some Task',
+			})
+		).resolves.toBeUndefined();
+	});
+
+	test('double-init guard: calling provisionGlobalSpacesAgent twice does not create duplicate subscriptions', async () => {
+		// First provisioning call: track unsubs returned by hub.on()
+		const unsubCalls: number[] = [];
+		let onCallCount = 0;
+
+		const hub1 = {
+			emit: mock(async () => {}),
+			on: mock(() => {
+				const callIdx = onCallCount++;
+				return () => {
+					unsubCalls.push(callIdx);
+				};
+			}),
+			off: mock(() => {}),
+			once: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		const sessionFactory = makeMockSessionFactory();
+		const deps = buildDeps(db, { sessionFactory });
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub1 });
+		// After first call: 2 on() calls (completed + failed), 0 unsubscribes
+		expect(onCallCount).toBe(2);
+		expect(unsubCalls).toHaveLength(0);
+
+		// Second provisioning call with a new hub (simulating re-init)
+		const hub2 = {
+			emit: mock(async () => {}),
+			on: mock(() => () => {}),
+			off: mock(() => {}),
+			once: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		await provisionGlobalSpacesAgent({ ...deps, daemonHub: hub2 });
+
+		// Previous hub's unsubscribe functions must have been called before re-subscribing
+		expect(unsubCalls).toHaveLength(2);
 	});
 });
