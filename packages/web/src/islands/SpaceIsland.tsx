@@ -17,6 +17,7 @@ import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { SpaceAgentList } from '../components/space/SpaceAgentList';
 import { WorkflowList } from '../components/space/WorkflowList';
 import { WorkflowEditor } from '../components/space/WorkflowEditor';
+import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWorkflowEditor';
 import { SpaceSettings } from '../components/space/SpaceSettings';
 import { cn } from '../lib/utils';
 
@@ -25,6 +26,13 @@ interface SpaceIslandProps {
 }
 
 type SpaceTab = 'dashboard' | 'agents' | 'workflows' | 'settings';
+type EditorMode = 'list' | 'visual';
+
+/**
+ * localStorage key for the user's preferred workflow editor mode.
+ * Shared across all spaces — the preference is global, not per-space.
+ */
+const EDITOR_MODE_KEY = 'workflow-editor-mode';
 
 const TABS: { id: SpaceTab; label: string }[] = [
 	{ id: 'dashboard', label: 'Dashboard' },
@@ -33,10 +41,20 @@ const TABS: { id: SpaceTab; label: string }[] = [
 	{ id: 'settings', label: 'Settings' },
 ];
 
+function readStoredEditorMode(): EditorMode {
+	try {
+		const stored = localStorage.getItem(EDITOR_MODE_KEY);
+		return stored === 'visual' ? 'visual' : 'list';
+	} catch {
+		return 'list';
+	}
+}
+
 export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
+	const [editorMode, setEditorMode] = useState<EditorMode>(readStoredEditorMode);
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
 
@@ -61,6 +79,27 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 			setWorkflowEditId(null);
 		}
 	}, [activeTab]);
+
+	/**
+	 * Switch editor mode, persisting the preference to localStorage.
+	 * Prompts the user to confirm if an editor is open — switching modes
+	 * unmounts the active editor, which would discard any unsaved draft state.
+	 */
+	function handleSetEditorMode(mode: EditorMode) {
+		if (mode === editorMode) return;
+		if (
+			workflowEditId !== null &&
+			!confirm('Switching editor modes will discard any unsaved changes. Continue?')
+		) {
+			return;
+		}
+		setEditorMode(mode);
+		try {
+			localStorage.setItem(EDITOR_MODE_KEY, mode);
+		} catch {
+			// ignore storage errors
+		}
+	}
 
 	const handleTaskPaneClose = () => {
 		navigateToSpace(spaceId);
@@ -126,11 +165,61 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 				{/* Tab content */}
 				<div class="flex-1 overflow-hidden">
 					{showWorkflowEditor ? (
-						<WorkflowEditor
-							workflow={editingWorkflow}
-							onSave={() => setWorkflowEditId(null)}
-							onCancel={() => setWorkflowEditId(null)}
-						/>
+						<div class="flex flex-col h-full overflow-hidden">
+							{/* Editor mode toggle strip */}
+							<div
+								class="flex items-center justify-end px-4 py-1.5 border-b border-dark-700 bg-dark-900 flex-shrink-0"
+								data-testid="editor-mode-toggle"
+							>
+								<div class="flex rounded-md overflow-hidden border border-dark-600 text-xs">
+									<button
+										type="button"
+										data-testid="editor-mode-list"
+										aria-pressed={editorMode === 'list'}
+										onClick={() => handleSetEditorMode('list')}
+										class={cn(
+											'px-3 py-1 transition-colors',
+											editorMode === 'list'
+												? 'bg-dark-600 text-gray-100'
+												: 'bg-dark-800 text-gray-500 hover:text-gray-300'
+										)}
+									>
+										List
+									</button>
+									<button
+										type="button"
+										data-testid="editor-mode-visual"
+										aria-pressed={editorMode === 'visual'}
+										onClick={() => handleSetEditorMode('visual')}
+										class={cn(
+											'px-3 py-1 transition-colors',
+											editorMode === 'visual'
+												? 'bg-dark-600 text-gray-100'
+												: 'bg-dark-800 text-gray-500 hover:text-gray-300'
+										)}
+									>
+										Visual
+									</button>
+								</div>
+							</div>
+
+							{/* Active editor */}
+							{editorMode === 'visual' ? (
+								<VisualWorkflowEditor
+									key={workflowEditId}
+									workflow={editingWorkflow}
+									onSave={() => setWorkflowEditId(null)}
+									onCancel={() => setWorkflowEditId(null)}
+								/>
+							) : (
+								<WorkflowEditor
+									key={workflowEditId}
+									workflow={editingWorkflow}
+									onSave={() => setWorkflowEditId(null)}
+									onCancel={() => setWorkflowEditId(null)}
+								/>
+							)}
+						</div>
 					) : (
 						<>
 							{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
