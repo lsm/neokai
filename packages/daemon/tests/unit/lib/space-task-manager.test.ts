@@ -225,13 +225,34 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('archiveTask', () => {
-		it('archives a completed task', async () => {
+		it('archives a completed task and sets both status and archivedAt', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
 			await manager.setTaskStatus(task.id, 'in_progress');
 			await manager.setTaskStatus(task.id, 'completed');
 			const archived = await manager.archiveTask(task.id);
 			expect(archived.status).toBe('archived');
 			expect(archived.archivedAt).toBeDefined();
+			expect(typeof archived.archivedAt).toBe('number');
+		});
+
+		it('archives a cancelled task and sets both status and archivedAt', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.cancelTask(task.id);
+			const archived = await manager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+			expect(typeof archived.archivedAt).toBe('number');
+		});
+
+		it('archives a needs_attention task and sets both status and archivedAt', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'err' });
+			const archived = await manager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+			expect(typeof archived.archivedAt).toBe('number');
 		});
 
 		it('throws when archiving a task in pending status', async () => {
@@ -476,6 +497,47 @@ describe('SpaceTaskManager', () => {
 			await expect(manager.reassignTask('nonexistent', 'agent-id')).rejects.toThrow(
 				'Task not found'
 			);
+		});
+	});
+
+	describe('completion does not prevent reactivation', () => {
+		it('completed task can be reactivated to in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'done');
+
+			// Verify completed state
+			const completed = await manager.getTask(task.id);
+			expect(completed!.status).toBe('completed');
+			expect(completed!.result).toBe('done');
+			expect(completed!.progress).toBe(100);
+
+			// Reactivate — should succeed without any cleanup blocking it
+			const reactivated = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+			expect(reactivated.result).toBeUndefined();
+			expect(reactivated.progress).toBeUndefined();
+		});
+
+		it('cancelled task can be reactivated to in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.cancelTask(task.id);
+
+			const reactivated = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+			expect(reactivated.error).toBeUndefined();
+		});
+
+		it('completed task can be retried via retryTask()', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'previous result');
+
+			const retried = await manager.retryTask(task.id);
+			expect(retried.status).toBe('in_progress');
+			expect(retried.result).toBeUndefined();
+			expect(retried.progress).toBeUndefined();
 		});
 	});
 
