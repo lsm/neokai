@@ -101,11 +101,7 @@ describe('ActionBar', () => {
 		it('calls primaryAction.onClick when primary button is clicked', () => {
 			const onClick = vi.fn();
 			const { getByTestId } = render(
-				<ActionBar
-					type="review"
-					title="Review"
-					primaryAction={{ label: 'Approve', onClick }}
-				/>
+				<ActionBar type="review" title="Review" primaryAction={{ label: 'Approve', onClick }} />
 			);
 			fireEvent.click(getByTestId('action-bar-primary'));
 			expect(onClick).toHaveBeenCalledOnce();
