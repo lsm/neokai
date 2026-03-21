@@ -37,7 +37,7 @@ Enable bidirectional communication between the Space Agent and Task Agent sessio
 - Existing Space Agent tool tests continue to pass
 - New tests cover the added tool
 
-**Dependencies:** Task 4.3 (needs TaskAgentManager wired and accessible)
+**Dependencies:** Task 4.1 (needs TaskAgentManager class). Note: Does not depend on 4.3 (DaemonApp wiring) — the tool handler receives TaskAgentManager via its config interface. Can run in parallel with 4.2, 4.3, and 5.1.
 
 **Agent Type:** coder
 

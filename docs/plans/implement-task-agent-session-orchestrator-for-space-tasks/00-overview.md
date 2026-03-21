@@ -26,14 +26,52 @@ Key architectural decision: The Task Agent replaces SpaceRuntime's direct `advan
 5. **SpaceRuntime Integration** -- Modify SpaceRuntime tick loop to spawn Task Agent sessions for pending tasks and delegate workflow advancement to the Task Agent
 6. **Space Agent Communication** -- Add `send_message_to_task` tool to Space Agent tools and wire up bidirectional messaging between Space Agent and Task Agent
 
-## Cross-Milestone Dependencies
+## Parallel Execution Strategy
 
-- Milestone 2 depends on Milestone 1 (types must exist before building prompts/init)
-- Milestone 3 depends on Milestone 1 (tool schemas) and Milestone 2 (session init for sub-sessions)
-- Milestone 4 depends on Milestones 2 and 3 (needs session init factory and tools)
-- Milestone 5 depends on Milestone 4 (needs TaskAgentManager to spawn sessions)
-- Milestone 6 depends on Milestones 4 and 5 (needs working Task Agent sessions to message)
+Tasks are organized into waves that maximize parallel execution:
+
+### Wave 1 (no dependencies — fully parallel)
+- **Task 1.1**: Add `space_task_agent` session type and extend SpaceTask type
+- **Task 1.3**: Define Task Agent MCP tool schemas
+
+### Wave 2 (depends on Wave 1 — fully parallel)
+- **Task 1.2**: Update SpaceTask DB schema and repository (needs 1.1)
+- **Task 2.1**: Build Task Agent system prompt (needs 1.1)
+- **Task 3.1**: Implement Task Agent tool handlers (needs 1.3 only — uses callback patterns, no dependency on session init)
+
+### Wave 3 (depends on Wave 2 — fully parallel)
+- **Task 2.2**: Create Task Agent session init factory (needs 2.1)
+- **Task 3.2**: Create Task Agent MCP server factory (needs 3.1)
+
+### Wave 4 (convergence point)
+- **Task 4.1**: Implement TaskAgentManager core (needs 2.2 + 3.2)
+
+### Wave 5 (depends on 4.1 — fully parallel)
+- **Task 4.2**: Add human message routing to Task Agent (needs 4.1)
+- **Task 4.3**: Wire TaskAgentManager into DaemonApp (needs 4.1)
+- **Task 5.1**: Add Task Agent spawning to SpaceRuntime tick loop (needs 4.1)
+- **Task 6.1**: Add `send_message_to_task` tool to Space Agent (needs 4.1)
+
+### Wave 6 (depends on Wave 5 — fully parallel)
+- **Task 5.2**: Update SpaceRuntimeService to pass TaskAgentManager (needs 5.1 + 4.3)
+- **Task 5.3**: Task Agent session rehydration on restart (needs 5.1)
+- **Task 6.2**: Add task completion notification to Space Agent (needs 3.1 + 6.1)
+
+### Wave 7 (final integration)
+- **Task 6.3**: End-to-end online test (needs all previous tasks)
+
+## Dependency Graph
+
+```
+1.1 ──┬── 1.2
+      ├── 2.1 ── 2.2 ──┐
+      │                 ├── 4.1 ──┬── 4.2
+1.3 ──┴── 3.1 ── 3.2 ──┘         ├── 4.3 ──┬── 5.2
+                                  ├── 5.1 ──┼── 5.3
+                                  └── 6.1 ──┴── 6.2
+                                                 └── 6.3
+```
 
 ## Estimated Task Count
 
-~18 tasks across 6 milestones.
+~18 tasks across 6 milestones, organized into 7 execution waves with maximum parallelism (up to 4 tasks running concurrently in Waves 2 and 5).

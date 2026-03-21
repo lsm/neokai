@@ -36,7 +36,7 @@ Modify the SpaceRuntime tick loop to spawn Task Agent sessions for pending tasks
 - All existing SpaceRuntime tests continue to pass
 - New tests cover the Task Agent integration path
 
-**Dependencies:** Task 4.3 (needs TaskAgentManager wired into daemon context)
+**Dependencies:** Task 4.1 (needs TaskAgentManager class). Note: Does not depend on 4.3 (DaemonApp wiring) — SpaceRuntime accepts TaskAgentManager via its config interface, independent of how it's wired in app.ts. Can run in parallel with 4.2, 4.3, and 6.1.
 
 **Agent Type:** coder
 
@@ -61,7 +61,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - `app.ts` passes the manager when constructing the service
 - Tests verify the configuration is correctly propagated
 
-**Dependencies:** Task 5.1 (needs the SpaceRuntime changes), Task 4.3 (needs TaskAgentManager in daemon context)
+**Dependencies:** Task 5.1 (needs SpaceRuntime changes), Task 4.3 (needs TaskAgentManager wired in DaemonApp)
 
 **Agent Type:** coder
 

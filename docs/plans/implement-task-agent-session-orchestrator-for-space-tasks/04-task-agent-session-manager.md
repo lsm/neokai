@@ -105,7 +105,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Cleanup on shutdown stops all Task Agent sessions
 - Type checks pass
 
-**Dependencies:** Task 4.1 (needs TaskAgentManager class), Task 4.2 (RPC handlers need the manager)
+**Dependencies:** Task 4.1 (needs TaskAgentManager class). Note: Can run in parallel with Task 4.2 — wiring and RPC handlers are independent.
 
 **Agent Type:** coder
 

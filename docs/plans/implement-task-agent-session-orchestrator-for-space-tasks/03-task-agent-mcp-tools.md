@@ -30,7 +30,7 @@ Implement the 5 MCP tools that give the Task Agent the ability to orchestrate wo
 - `request_human_input` pauses execution and surfaces the question
 - Unit tests cover success, error, and edge cases for each handler
 
-**Dependencies:** Task 1.3 (tool schemas), Task 2.2 (session init factory for understanding sub-session creation pattern)
+**Dependencies:** Task 1.3 (tool schemas). Note: This task does NOT depend on Task 2.2 — tool handlers use callback patterns (`sessionFactory`, `messageInjector`) and do not directly reference the session init factory.
 
 **Agent Type:** coder
 
