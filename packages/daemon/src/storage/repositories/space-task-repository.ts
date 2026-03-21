@@ -89,6 +89,22 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * List standalone tasks for a space (tasks with no workflowRunId).
+	 * The SQL-level filter avoids fetching workflow tasks that would be discarded by the caller.
+	 */
+	listStandaloneBySpace(spaceId: string, includeArchived = false): SpaceTask[] {
+		let query = `SELECT * FROM space_tasks WHERE space_id = ? AND workflow_run_id IS NULL`;
+		if (!includeArchived) {
+			query += ` AND archived_at IS NULL`;
+		}
+		query += ` ORDER BY updated_at DESC`;
+
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(spaceId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
 	 * List tasks by status within a space
 	 */
 	listByStatus(spaceId: string, status: SpaceTaskStatus): SpaceTask[] {
