@@ -444,8 +444,12 @@ export class SessionLifecycle {
 			// This removes the .jsonl files created by Claude Agent SDK
 			if (session) {
 				try {
+					// Use worktree path when available — SDK creates session files based on CWD
+					const sdkWorkspacePath = session.worktree
+						? session.worktree.worktreePath
+						: session.workspacePath;
 					const deleteResult = deleteSDKSessionFiles(
-						session.workspacePath,
+						sdkWorkspacePath,
 						session.sdkSessionId ?? null,
 						sessionId
 					);
