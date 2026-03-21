@@ -9,7 +9,10 @@
  * - start() / stop() lifecycle: idempotent, starts/stops underlying runtime
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
@@ -17,8 +20,19 @@ import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-ag
 import type { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import type {
+	NotificationSink,
+	SpaceNotificationEvent,
+} from '../../../src/lib/space/runtime/notification-sink.ts';
 import type { Space } from '@neokai/shared';
-import type { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository as SpaceTaskRepo } from '../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentManager as AgentMgr } from '../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager as WorkflowMgr } from '../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceManager as SpaceMgr } from '../../../src/lib/space/managers/space-manager.ts';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -141,6 +155,15 @@ describe('SpaceRuntimeService', () => {
 		});
 	});
 
+	// ─── setNotificationSink ─────────────────────────────────────────────────
+
+	describe('setNotificationSink()', () => {
+		test('method exists and is callable', () => {
+			// Verify the delegation method is present on SpaceRuntimeService
+			expect(typeof service.setNotificationSink).toBe('function');
+		});
+	});
+
 	// ─── start / stop lifecycle ───────────────────────────────────────────────
 
 	describe('start() / stop()', () => {
@@ -183,5 +206,154 @@ describe('SpaceRuntimeService', () => {
 			const runtime = await service.createOrGetRuntime('space-1');
 			expect(runtime).toBeDefined();
 		});
+	});
+});
+
+// ─── setNotificationSink() integration tests ─────────────────────────────────
+//
+// Requires a real DB to trigger actual events via executeTick().
+
+class MockSink implements NotificationSink {
+	readonly events: SpaceNotificationEvent[] = [];
+	notify(event: SpaceNotificationEvent): Promise<void> {
+		this.events.push(event);
+		return Promise.resolve();
+	}
+}
+
+function makeTestDb(): { db: BunDatabase; dir: string } {
+	const dir = join(
+		process.cwd(),
+		'tmp',
+		'test-srs-notif',
+		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+	);
+	mkdirSync(dir, { recursive: true });
+	const db = new BunDatabase(join(dir, 'test.db'));
+	db.exec('PRAGMA foreign_keys = ON');
+	runMigrations(db, () => {});
+	return { db, dir };
+}
+
+describe('SpaceRuntimeService.setNotificationSink() — delegation integration', () => {
+	let db: BunDatabase;
+	let dir: string;
+	let svc: SpaceRuntimeService;
+	let taskRepo: SpaceTaskRepo;
+	let workflowRunRepo: SpaceWorkflowRunRepo;
+	let workflowManager: WorkflowMgr;
+
+	const SPACE_ID = 'srs-notif-space';
+	const AGENT_ID = 'srs-notif-agent';
+	const STEP_A = 'srs-step-a';
+
+	beforeEach(() => {
+		({ db, dir } = makeTestDb());
+
+		// Seed space row
+		db.prepare(
+			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+       allowed_models, session_ids, status, created_at, updated_at)
+       VALUES (?, ?, ?, '', '', '', '[]', '[]', 'active', ?, ?)`
+		).run(SPACE_ID, '/tmp/srs-ws', `Space ${SPACE_ID}`, Date.now(), Date.now());
+
+		// Seed agent row
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
+       config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
+		).run(AGENT_ID, SPACE_ID, 'Coder', 'coder', Date.now(), Date.now());
+
+		workflowRunRepo = new SpaceWorkflowRunRepo(db);
+		taskRepo = new SpaceTaskRepo(db);
+
+		const agentManager = new AgentMgr(new SpaceAgentRepository(db));
+		workflowManager = new WorkflowMgr(new SpaceWorkflowRepository(db));
+		const spaceManager = new SpaceMgr(db);
+
+		svc = new SpaceRuntimeService({
+			db,
+			spaceManager,
+			spaceAgentManager: agentManager,
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+		});
+	});
+
+	afterEach(() => {
+		svc.stop();
+		try {
+			db.close();
+		} catch {
+			/* ignore */
+		}
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	});
+
+	test('setNotificationSink() delegates to SpaceRuntime — sink receives workflow_run_completed', async () => {
+		const sink = new MockSink();
+
+		// Wire sink via the service (post-construction wiring)
+		svc.setNotificationSink(sink);
+
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'Single-step',
+			description: '',
+			steps: [{ id: STEP_A, name: 'Only Step', agentId: AGENT_ID }],
+			transitions: [],
+			startStepId: STEP_A,
+			rules: [],
+			tags: [],
+		});
+
+		const runtime = await svc.createOrGetRuntime(SPACE_ID);
+		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Test Run');
+		taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+		await runtime.executeTick();
+
+		// The sink was wired through the service — it must have received the event
+		expect(sink.events).toHaveLength(1);
+		expect(sink.events[0].kind).toBe('workflow_run_completed');
+		if (sink.events[0].kind === 'workflow_run_completed') {
+			expect(sink.events[0].spaceId).toBe(SPACE_ID);
+			expect(sink.events[0].status).toBe('completed');
+		}
+	});
+
+	test('setNotificationSink() replaces any previously set sink', async () => {
+		const sink1 = new MockSink();
+		const sink2 = new MockSink();
+
+		svc.setNotificationSink(sink1);
+		svc.setNotificationSink(sink2); // replaces sink1
+
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'Replace Sink',
+			description: '',
+			steps: [{ id: STEP_A, name: 'Only Step', agentId: AGENT_ID }],
+			transitions: [],
+			startStepId: STEP_A,
+			rules: [],
+			tags: [],
+		});
+
+		const runtime = await svc.createOrGetRuntime(SPACE_ID);
+		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+		await runtime.executeTick();
+
+		// Only sink2 should have received events
+		expect(sink1.events).toHaveLength(0);
+		expect(sink2.events).toHaveLength(1);
+		expect(sink2.events[0].kind).toBe('workflow_run_completed');
 	});
 });

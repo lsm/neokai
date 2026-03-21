@@ -99,6 +99,36 @@ describe('SpaceManager', () => {
 				'already exists'
 			);
 		});
+
+		it('creates a space with supervised autonomy level', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'Supervised Space',
+				autonomyLevel: 'supervised',
+			});
+
+			expect(space.autonomyLevel).toBe('supervised');
+		});
+
+		it('creates a space with semi_autonomous autonomy level', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'Semi-Auto Space',
+				autonomyLevel: 'semi_autonomous',
+			});
+
+			expect(space.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('defaults autonomy level to supervised when not specified', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'Default Autonomy Space',
+			});
+
+			// DB default is 'supervised'
+			expect(space.autonomyLevel).toBe('supervised');
+		});
 	});
 
 	describe('getSpace', () => {
@@ -141,6 +171,32 @@ describe('SpaceManager', () => {
 
 		it('throws for unknown space', async () => {
 			await expect(manager.updateSpace('nonexistent', { name: 'X' })).rejects.toThrow('not found');
+		});
+
+		it('updates autonomy level to semi_autonomous', async () => {
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+			const updated = await manager.updateSpace(space.id, { autonomyLevel: 'semi_autonomous' });
+			expect(updated.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('updates autonomy level back to supervised', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'A',
+				autonomyLevel: 'semi_autonomous',
+			});
+			const updated = await manager.updateSpace(space.id, { autonomyLevel: 'supervised' });
+			expect(updated.autonomyLevel).toBe('supervised');
+		});
+
+		it('does not change autonomy level when not provided in update', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'A',
+				autonomyLevel: 'semi_autonomous',
+			});
+			const updated = await manager.updateSpace(space.id, { name: 'B' });
+			expect(updated.autonomyLevel).toBe('semi_autonomous');
 		});
 	});
 

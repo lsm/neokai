@@ -17,6 +17,8 @@ import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
 import { setupSpaceHandlers } from '../../../src/lib/rpc-handlers/space-handlers';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
+import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
+import type { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
@@ -36,6 +38,7 @@ const mockSpace: Space = {
 	instructions: '',
 	sessionIds: [],
 	status: 'active',
+	autonomyLevel: 'supervised',
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -126,6 +129,21 @@ function createMockRunRepo(runs: SpaceWorkflowRun[] = [mockRun]): SpaceWorkflowR
 	} as unknown as SpaceWorkflowRunRepository;
 }
 
+function createMockSpaceAgentManager(): SpaceAgentManager {
+	return {
+		create: mock(async () => ({})),
+		listBySpaceId: mock(() => []),
+	} as unknown as SpaceAgentManager;
+}
+
+function createMockSpaceWorkflowManager(): SpaceWorkflowManager {
+	return {
+		createWorkflow: mock(() => ({})),
+		listWorkflows: mock(() => []),
+		getWorkflow: mock(() => null),
+	} as unknown as SpaceWorkflowManager;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('space-handlers', () => {
@@ -144,7 +162,15 @@ describe('space-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		taskRepo = createMockTaskRepo();
 		runRepo = createMockRunRepo();
-		setupSpaceHandlers(hub, spaceManager, taskRepo, runRepo, daemonHub);
+		setupSpaceHandlers(
+			hub,
+			spaceManager,
+			taskRepo,
+			runRepo,
+			daemonHub,
+			createMockSpaceAgentManager(),
+			createMockSpaceWorkflowManager()
+		);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -219,6 +245,36 @@ describe('space-handlers', () => {
 					autonomyLevel: 'fully_autonomous',
 				})
 			).rejects.toThrow('Invalid autonomyLevel: fully_autonomous');
+		});
+
+		it('passes autonomyLevel=supervised to SpaceManager', async () => {
+			await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+				autonomyLevel: 'supervised',
+			});
+
+			expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
+			const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
+			expect(params.autonomyLevel).toBe('supervised');
+		});
+
+		it('passes autonomyLevel=semi_autonomous to SpaceManager', async () => {
+			await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+				autonomyLevel: 'semi_autonomous',
+			});
+
+			const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
+			expect(params.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('passes undefined autonomyLevel to SpaceManager when not specified', async () => {
+			await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
+
+			const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
+			expect(params.autonomyLevel).toBeUndefined();
 		});
 	});
 
@@ -302,6 +358,28 @@ describe('space-handlers', () => {
 			await expect(
 				call('space.update', { id: 'space-1', autonomyLevel: 'fully_autonomous' })
 			).rejects.toThrow('Invalid autonomyLevel: fully_autonomous');
+		});
+
+		it('passes autonomyLevel=semi_autonomous to SpaceManager.updateSpace', async () => {
+			await call('space.update', { id: 'space-1', autonomyLevel: 'semi_autonomous' });
+
+			expect(spaceManager.updateSpace).toHaveBeenCalledTimes(1);
+			const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
+			expect(params.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('passes autonomyLevel=supervised to SpaceManager.updateSpace', async () => {
+			await call('space.update', { id: 'space-1', autonomyLevel: 'supervised' });
+
+			const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
+			expect(params.autonomyLevel).toBe('supervised');
+		});
+
+		it('does not set autonomyLevel in updateParams when not provided', async () => {
+			await call('space.update', { id: 'space-1', name: 'New Name' });
+
+			const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
+			expect(params.autonomyLevel).toBeUndefined();
 		});
 	});
 

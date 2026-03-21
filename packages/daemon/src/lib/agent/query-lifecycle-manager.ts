@@ -69,6 +69,19 @@ export class QueryLifecycleManager {
 	}
 
 	/**
+	 * Get the effective workspace path for SDK session file lookups.
+	 *
+	 * The SDK subprocess uses its CWD to determine the project directory
+	 * for session files. For worktree sessions, the CWD is the worktree path,
+	 * not session.workspacePath (which is the main repo path).
+	 * Must match QueryOptionsBuilder.getCwd() to find the correct files.
+	 */
+	private getSDKWorkspacePath(): string {
+		const { session } = this.ctx;
+		return session.worktree ? session.worktree.worktreePath : session.workspacePath;
+	}
+
+	/**
 	 * Stop the current query
 	 *
 	 * Shared logic for restart and reset operations:
@@ -167,7 +180,7 @@ export class QueryLifecycleManager {
 			// Also detects stale sdkSessionId when the session file no longer exists.
 			if (session.sdkSessionId) {
 				const isValid = validateAndRepairSDKSession(
-					session.workspacePath,
+					this.getSDKWorkspacePath(),
 					session.sdkSessionId,
 					session.id,
 					db
@@ -253,7 +266,7 @@ export class QueryLifecycleManager {
 				// Also detects stale sdkSessionId when the session file no longer exists.
 				if (session.sdkSessionId) {
 					const isValid = validateAndRepairSDKSession(
-						session.workspacePath,
+						this.getSDKWorkspacePath(),
 						session.sdkSessionId,
 						session.id,
 						db
@@ -311,7 +324,7 @@ export class QueryLifecycleManager {
 		// Validate SDK session file
 		if (session.sdkSessionId) {
 			const isValid = validateAndRepairSDKSession(
-				session.workspacePath,
+				this.getSDKWorkspacePath(),
 				session.sdkSessionId,
 				session.id,
 				db

@@ -35,6 +35,8 @@
 // Context types
 // ---------------------------------------------------------------------------
 
+import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
+
 /** Minimal workflow summary for prompt embedding (avoids exposing full step graph). */
 export interface WorkflowSummary {
 	id: string;
@@ -62,6 +64,8 @@ export interface SpaceChatAgentContext {
 	workflows?: WorkflowSummary[];
 	/** Agents configured in this Space. */
 	agents?: AgentSummary[];
+	/** Autonomy level for this Space — controls how much the agent can decide without human approval. */
+	autonomyLevel?: SpaceAutonomyLevel;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +147,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	);
 	sections.push('');
 	sections.push(
-		`**Use \`create_task\`** for standalone work that needs no multi-step orchestration:\n` +
+		`**Use \`create_standalone_task\`** for standalone work that needs no multi-step orchestration:\n` +
 			`  - A single, self-contained task (e.g. "fix this bug", "answer this question")\n` +
 			`  - No workflow structure is needed\n` +
 			`  - The work does not match any available workflow`
@@ -160,7 +164,119 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(
 		`**IMPORTANT**: Never create tasks immediately when a goal or plan is mentioned. ` +
 			`If the request involves a workflow, start the workflow run and let the workflow ` +
-			`orchestrate task creation. Only use \`create_task\` for explicitly standalone work.`
+			`orchestrate task creation. Only use \`create_standalone_task\` for explicitly standalone work.`
+	);
+
+	// Event handling section — always included
+	sections.push(`\n## Event Handling\n`);
+	sections.push(
+		`SpaceRuntime will inject structured event messages into your session when tasks or workflows ` +
+			`require judgment. These messages are prefixed with \`[TASK_EVENT]\` and contain a JSON payload.`
+	);
+	sections.push('');
+	sections.push(`**Event message format:**`);
+	sections.push(
+		'```\n' +
+			'[TASK_EVENT] {"kind":"<event_kind>","taskId":"<id>","reason":"<reason>",...}\n' +
+			'```'
+	);
+	sections.push('');
+	sections.push(`**Event kinds and how to handle them:**`);
+	sections.push('');
+	sections.push(
+		`- **\`task_needs_attention\`** — A task has entered the \`needs_attention\` state and cannot proceed automatically.\n` +
+			`  Payload fields: \`taskId\`, \`reason\`, \`autonomyLevel\`\n` +
+			`  Action: Investigate with \`get_task_detail\`, then retry, reassign, or escalate per your autonomy level.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`workflow_run_needs_attention\`** — A workflow run's transition condition failed or the run is stuck.\n` +
+			`  Payload fields: \`runId\`, \`reason\`, \`autonomyLevel\`\n` +
+			`  Action: Inspect the run state, determine whether to retry the failing task or escalate.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`task_timeout\`** — A task has exceeded its configured time threshold.\n` +
+			`  Payload fields: \`taskId\`, \`reason\`, \`autonomyLevel\`\n` +
+			`  Action: Check task status with \`get_task_detail\`. Decide whether to wait, reassign, or cancel.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`workflow_run_completed\`** — A workflow run has finished (success or failure summary).\n` +
+			`  Payload fields: \`runId\`, \`reason\`, \`autonomyLevel\`\n` +
+			`  Action: Summarize the outcome to the user and suggest next steps if relevant.`
+	);
+
+	// Autonomy level section
+	const level = context.autonomyLevel ?? 'supervised';
+	sections.push(`\n## Autonomy Level\n`);
+	sections.push(`This Space is configured in **\`${level}\`** mode.`);
+	sections.push('');
+
+	if (level === 'semi_autonomous') {
+		sections.push(
+			`In \`semi_autonomous\` mode you may act without human approval in these cases:\n` +
+				`  - **Retry a failed task once**: Call \`retry_task\` immediately when a task enters \`needs_attention\` for the first time.\n` +
+				`  - **Reassign a task**: If retrying fails or a different agent would be better suited, call \`reassign_task\`.\n` +
+				`  - After one failed retry or when genuinely uncertain, **escalate to the human** (see Escalation section below).\n` +
+				`  - Human-gated workflow steps always require human approval — never bypass them.`
+		);
+	} else {
+		sections.push(
+			`In \`supervised\` mode you must not take autonomous action on judgment-required events:\n` +
+				`  - **Notify the human** of every \`[TASK_EVENT]\` that requires a decision.\n` +
+				`  - **Provide a recommendation** (what you would do and why) but **wait for human approval** before acting.\n` +
+				`  - Do not call \`retry_task\`, \`reassign_task\`, or \`cancel_task\` without explicit human instruction.`
+		);
+	}
+
+	// Escalation section
+	sections.push(`\n## Escalation\n`);
+	sections.push(`When you need to escalate an issue to the human, structure your message clearly:`);
+	sections.push('');
+	sections.push(
+		`1. **What happened** — Describe the task or workflow context and the event received.\n` +
+			`2. **What was considered** — List the options you evaluated and why each was or wasn't viable.\n` +
+			`3. **What is recommended** — State your preferred action and the reasoning behind it.\n` +
+			`4. **Clear question** — End with a direct, specific question the human can answer to unblock you.`
+	);
+	sections.push('');
+	sections.push(`**Example escalation:**`);
+	sections.push(
+		`> Task "Implement login page" (task-42) has entered \`needs_attention\` with reason: "Build failed — missing dependency".\n` +
+			`> I considered: (1) retrying as-is — unlikely to help without fixing the dependency; (2) updating the task description to include dependency installation steps.\n` +
+			`> I recommend updating the description and retrying.\n` +
+			`> **Should I update the task description to include \`npm install react-router-dom\` and retry?**`
+	);
+
+	// Coordination tools section
+	sections.push(`\n## Coordination Tools\n`);
+	sections.push(`Use these tools to manage tasks and respond to events:`);
+	sections.push('');
+	sections.push(
+		`- **\`create_standalone_task\`** — Create a task outside any workflow. Use for self-contained work ` +
+			`that doesn't require multi-step orchestration. Provide a title, description, and optionally an agent ID.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`get_task_detail\`** — Retrieve full detail for a task including agent output, PR status, ` +
+			`error information, and current status. Always call this before deciding how to handle a \`[TASK_EVENT]\`.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`retry_task\`** — Reset a failed or \`needs_attention\` task back to \`pending\` so it runs again. ` +
+			`Optionally pass an updated description to address the root cause. Only valid for tasks in ` +
+			`\`needs_attention\` or \`cancelled\` status.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`cancel_task\`** — Cancel a task and optionally cancel its associated workflow run. ` +
+			`Use when the task is no longer needed or when retrying would be futile.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`reassign_task\`** — Change the assigned agent for a task. Valid for tasks in \`pending\`, ` +
+			`\`needs_attention\`, or \`cancelled\` status. Use when a different agent would be better suited.`
 	);
 
 	return sections.join('\n');

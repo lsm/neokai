@@ -36,6 +36,7 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
+import { type NotificationSink, NullNotificationSink } from './notification-sink';
 
 const log = new Logger('space-runtime');
 
@@ -61,6 +62,12 @@ export interface SpaceRuntimeConfig {
 	 * Used by start(). Default: 5000 (5 seconds).
 	 */
 	tickIntervalMs?: number;
+	/**
+	 * Sink for structured notification events emitted after mechanical processing.
+	 * Defaults to NullNotificationSink (no-op). Use setNotificationSink() to wire
+	 * in a real sink after construction (e.g. once the Space Agent session exists).
+	 */
+	notificationSink?: NotificationSink;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +128,34 @@ export class SpaceRuntime {
 	/** Handle returned by setInterval when the tick loop is running */
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
 
-	constructor(private config: SpaceRuntimeConfig) {}
+	/** Active notification sink — replaced at runtime via setNotificationSink() */
+	private notificationSink: NotificationSink;
+
+	/**
+	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:needs_attention`
+	 * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
+	 * Entries are cleared when the task leaves the flagged state.
+	 *
+	 * Restart contract: this set is in-memory only and starts empty on every daemon restart.
+	 * Tasks already in `needs_attention` at restart time will be re-notified once on the first
+	 * tick. This is intentional: the Space Agent session is also new after restart and needs to
+	 * learn about outstanding issues. No DB persistence for dedup state is required.
+	 */
+	private notifiedTaskSet = new Set<string>();
+
+	constructor(private config: SpaceRuntimeConfig) {
+		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
+	}
+
+	/**
+	 * Replace the notification sink at runtime.
+	 *
+	 * Called after construction once the Space Agent session has been provisioned,
+	 * since SpaceRuntimeService is instantiated before the global agent session exists.
+	 */
+	setNotificationSink(sink: NotificationSink): void {
+		this.notificationSink = sink;
+	}
 
 	// -------------------------------------------------------------------------
 	// Lifecycle — start / stop
@@ -174,6 +208,7 @@ export class SpaceRuntime {
 	 * On every call:
 	 * 1. Processes completed tasks and advances their workflows
 	 * 2. Cleans up executors for runs that have reached a terminal state
+	 * 3. Checks standalone tasks (no workflowRunId) for needs_attention and timeout
 	 */
 	async executeTick(): Promise<void> {
 		if (!this.rehydrated) {
@@ -182,7 +217,8 @@ export class SpaceRuntime {
 		}
 
 		await this.processCompletedTasks();
-		this.cleanupTerminalExecutors();
+		await this.cleanupTerminalExecutors();
+		await this.checkStandaloneTasks();
 	}
 
 	/**
@@ -473,6 +509,61 @@ export class SpaceRuntime {
 		// step has not been spawned yet (session group creation is async and handled
 		// by a separate layer). Silently returning here is intentional.
 		if (stepTasks.length === 0) return;
+
+		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
+		for (const task of stepTasks) {
+			if (task.status !== 'needs_attention') {
+				this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+			}
+			if (task.status !== 'in_progress') {
+				this.notifiedTaskSet.delete(`${task.id}:timeout`);
+			}
+		}
+
+		// Detect task-level needs_attention BEFORE the all-completed guard.
+		// This is an explicit check — not inferred from WorkflowTransitionError.
+		if (stepTasks.some((t) => t.status === 'needs_attention')) {
+			for (const task of stepTasks) {
+				if (task.status !== 'needs_attention') continue;
+				const dedupKey = `${task.id}:needs_attention`;
+				if (!this.notifiedTaskSet.has(dedupKey)) {
+					this.notifiedTaskSet.add(dedupKey);
+					await this.notificationSink.notify({
+						kind: 'task_needs_attention',
+						spaceId: meta.spaceId,
+						taskId: task.id,
+						reason: task.error ?? 'Task requires attention',
+						timestamp: new Date().toISOString(),
+					});
+				}
+			}
+			return;
+		}
+
+		// Timeout detection: check in_progress tasks against Space.config.taskTimeoutMs.
+		const space = await this.config.spaceManager.getSpace(meta.spaceId);
+		const taskTimeoutMs = space?.config?.taskTimeoutMs;
+		if (taskTimeoutMs !== undefined) {
+			const now = Date.now();
+			for (const task of stepTasks) {
+				if (task.status !== 'in_progress' || !task.startedAt) continue;
+				const elapsedMs = now - task.startedAt;
+				if (elapsedMs > taskTimeoutMs) {
+					const dedupKey = `${task.id}:timeout`;
+					if (!this.notifiedTaskSet.has(dedupKey)) {
+						this.notifiedTaskSet.add(dedupKey);
+						await this.notificationSink.notify({
+							kind: 'task_timeout',
+							spaceId: meta.spaceId,
+							taskId: task.id,
+							elapsedMs,
+							timestamp: new Date().toISOString(),
+						});
+					}
+				}
+			}
+		}
+
 		if (!stepTasks.every((t) => t.status === 'completed')) return;
 
 		try {
@@ -482,9 +573,10 @@ export class SpaceRuntime {
 			// injected into the executor via buildExecutor(). No second update needed.
 
 			if (newTasks.length === 0) {
-				// Terminal step reached — run marked completed by advance(); clean up executor.
-				this.executors.delete(runId);
-				this.executorMeta.delete(runId);
+				// Terminal step reached — run marked completed by advance().
+				// cleanupTerminalExecutors() will emit workflow_run_completed and remove executor.
+				// No cleanup here: executors map is iterated by for..of which captures the
+				// initial key set, so the entry stays until cleanupTerminalExecutors() runs.
 			}
 		} catch (err) {
 			if (!(err instanceof WorkflowTransitionError)) {
@@ -492,6 +584,14 @@ export class SpaceRuntime {
 				throw err;
 			}
 			// Gate blocked: run status already set to 'needs_attention' by the executor.
+			// Emit notification so the Space Agent session is informed.
+			await this.notificationSink.notify({
+				kind: 'workflow_run_needs_attention',
+				spaceId: meta.spaceId,
+				runId,
+				reason: err.message,
+				timestamp: new Date().toISOString(),
+			});
 			// Keep executor and meta in map — will be retried after gate is resolved.
 		}
 	}
@@ -503,13 +603,129 @@ export class SpaceRuntime {
 	 * Reads run status from DB rather than relying on the executor's cached
 	 * this.run, so external status changes (e.g. cancellation via API) are
 	 * picked up without requiring executor recreation.
+	 *
+	 * Emits a `workflow_run_completed` notification for runs that reached the
+	 * `completed` state (either naturally via advance() or externally).
 	 */
-	private cleanupTerminalExecutors(): void {
+	private async cleanupTerminalExecutors(): Promise<void> {
 		for (const [runId] of this.executors) {
 			const run = this.config.workflowRunRepo.getRun(runId);
 			if (!run || run.status === 'completed' || run.status === 'cancelled') {
+				if (run?.status === 'completed') {
+					const meta = this.executorMeta.get(runId);
+					if (meta) {
+						await this.notificationSink.notify({
+							kind: 'workflow_run_completed',
+							spaceId: meta.spaceId,
+							runId,
+							status: 'completed',
+							timestamp: new Date().toISOString(),
+						});
+					}
+				}
+				// Prune dedup entries for all tasks in this run so the set doesn't
+				// grow unboundedly. Once a run is terminal its tasks will never
+				// reappear in stepTasks, so the normal per-tick pruning loop
+				// (processRunTick) would never clear them otherwise.
+				for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
+					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+					this.notifiedTaskSet.delete(`${task.id}:timeout`);
+				}
 				this.executors.delete(runId);
 				this.executorMeta.delete(runId);
+			}
+		}
+	}
+
+	/**
+	 * Returns the cached SpaceTaskManager for a given space.
+	 * Public so that tool handlers (e.g. global-spaces-tools) can retry/cancel/reassign tasks.
+	 */
+	getTaskManagerForSpace(spaceId: string): SpaceTaskManager {
+		return this.getOrCreateTaskManager(spaceId);
+	}
+
+	/**
+	 * Checks standalone tasks (tasks without a workflowRunId) across all spaces for:
+	 *   - `needs_attention` status → emit `task_needs_attention` notification
+	 *   - `in_progress` timeout    → emit `task_timeout` notification
+	 *
+	 * Uses the shared `notifiedTaskSet` for deduplication so the same task+status pair
+	 * is never notified twice in a row. Dedup keys are cleared when the task leaves the
+	 * flagged state, allowing re-notification if the task cycles back into it.
+	 *
+	 * Dedup cleanup includes archived tasks (fetched via includeArchived=true) to prevent
+	 * notifiedTaskSet from accumulating stale keys for tasks that were archived while in
+	 * a flagged state. Archived tasks can never re-enter needs_attention or in_progress,
+	 * so their dedup keys are always safe to remove.
+	 *
+	 * Restart contract: because `notifiedTaskSet` is in-memory only, tasks already in
+	 * `needs_attention` at daemon startup will re-notify once on the first tick. This is
+	 * intentional — the Space Agent session is new after restart and needs to be informed
+	 * of outstanding issues. See the `notifiedTaskSet` field comment for details.
+	 */
+	private async checkStandaloneTasks(): Promise<void> {
+		const spaces = await this.config.spaceManager.listSpaces(false);
+
+		for (const space of spaces) {
+			// Fetch all standalone tasks including archived ones for the dedup cleanup pass.
+			// Using listStandaloneBySpace pushes workflow_run_id IS NULL into SQL so only
+			// standalone tasks are returned — no JS-side filtering needed.
+			// includeArchived=true ensures archived tasks have their dedup keys cleared and
+			// do not accumulate as stale entries in notifiedTaskSet indefinitely.
+			const allStandalone = this.config.taskRepo.listStandaloneBySpace(space.id, true);
+			const activeStandalone = allStandalone.filter((t) => !t.archivedAt);
+
+			// Dedup cleanup: clear keys for tasks that have left their flagged state.
+			// Archived tasks always get their keys cleared — they can never re-enter a
+			// flagged state, so keeping their keys would be a permanent memory leak.
+			for (const task of allStandalone) {
+				const archived = !!task.archivedAt;
+				if (archived || task.status !== 'needs_attention') {
+					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+				}
+				if (archived || task.status !== 'in_progress') {
+					this.notifiedTaskSet.delete(`${task.id}:timeout`);
+				}
+			}
+
+			// Emit task_needs_attention for active standalone tasks in needs_attention state.
+			for (const task of activeStandalone) {
+				if (task.status !== 'needs_attention') continue;
+				const dedupKey = `${task.id}:needs_attention`;
+				if (!this.notifiedTaskSet.has(dedupKey)) {
+					this.notifiedTaskSet.add(dedupKey);
+					await this.notificationSink.notify({
+						kind: 'task_needs_attention',
+						spaceId: space.id,
+						taskId: task.id,
+						reason: task.error ?? 'Task requires attention',
+						timestamp: new Date().toISOString(),
+					});
+				}
+			}
+
+			// Timeout detection for active standalone in_progress tasks.
+			const taskTimeoutMs = space.config?.taskTimeoutMs;
+			if (taskTimeoutMs !== undefined) {
+				const now = Date.now();
+				for (const task of activeStandalone) {
+					if (task.status !== 'in_progress' || !task.startedAt) continue;
+					const elapsedMs = now - task.startedAt;
+					if (elapsedMs > taskTimeoutMs) {
+						const dedupKey = `${task.id}:timeout`;
+						if (!this.notifiedTaskSet.has(dedupKey)) {
+							this.notifiedTaskSet.add(dedupKey);
+							await this.notificationSink.notify({
+								kind: 'task_timeout',
+								spaceId: space.id,
+								taskId: task.id,
+								elapsedMs,
+								timestamp: new Date().toISOString(),
+							});
+						}
+					}
+				}
 			}
 		}
 	}
