@@ -814,7 +814,7 @@ describe('SpaceWorkflowManager', () => {
 		seedAgent(db, 'agent-1', 'space-1', 'MyAgent');
 		const lookup: SpaceAgentLookup = {
 			getAgentById: (_spaceId, id) =>
-				id === 'agent-1' ? { id: 'agent-1', name: 'MyAgent' } : null,
+				id === 'agent-1' ? { id: 'agent-1', name: 'MyAgent', role: 'coder' } : null,
 		};
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		const wf = mgr.createWorkflow({
@@ -1062,5 +1062,416 @@ describe('SpaceWorkflowManager', () => {
 		const refs = manager.getWorkflowsReferencingAgent('agent-1');
 		expect(refs).toHaveLength(1);
 		expect(refs[0].id).toBe(wf.id);
+	});
+
+	// -------------------------------------------------------------------------
+	// agents[] format validation (no agentLookup needed)
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow rejects agents[] entry with empty agentId (no lookup)', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Agents Empty',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: '' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects agents[] entry with whitespace-only agentId (no lookup)', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Agents Whitespace',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: '   ' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow accepts agents[] with non-empty agentIds (no lookup)', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Valid Agents',
+			steps: [
+				{
+					name: 'Step',
+					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+				},
+			],
+		});
+		expect(wf.steps[0].agents).toHaveLength(2);
+	});
+
+	test('updateWorkflow rejects agents[] entry with empty agentId (no lookup)', () => {
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		expect(() =>
+			manager.updateWorkflow(wf.id, {
+				steps: [{ id: 'step-x', name: 'Step', agents: [{ agentId: '' }] }],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	// -------------------------------------------------------------------------
+	// Channel validation — structural (no agentLookup needed)
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow rejects channels with invalid direction', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Direction',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: 'coder', to: 'reviewer', direction: 'invalid' as never }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels with empty from', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Empty From',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: '', to: 'reviewer', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels with empty string to', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Empty To',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: 'coder', to: '', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels with empty array to', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Empty Array To',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: 'coder', to: [], direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels when no agents[] provided', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Channels No Agents',
+				steps: [
+					{
+						name: 'Step',
+						agentId: 'agent-a',
+						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow accepts valid channels with * wildcard (no lookup)', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Wildcard Channels',
+			steps: [
+				{
+					name: 'Step',
+					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					channels: [
+						{ from: '*', to: 'reviewer', direction: 'one-way' },
+						{ from: 'coder', to: '*', direction: 'bidirectional' },
+						{ from: '*', to: '*', direction: 'one-way' },
+					],
+				},
+			],
+		});
+		expect(wf.steps[0].channels).toHaveLength(3);
+	});
+
+	test('createWorkflow accepts valid one-way channel with array to (no lookup)', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Array To Channels',
+			steps: [
+				{
+					name: 'Step',
+					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					channels: [{ from: 'hub', to: ['spoke-a', 'spoke-b'], direction: 'bidirectional' }],
+				},
+			],
+		});
+		expect(wf.steps[0].channels).toHaveLength(1);
+	});
+
+	// -------------------------------------------------------------------------
+	// Channel role validation — requires agentLookup
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow validates channel roles against agent roles (with lookup)', () => {
+		seedAgent(db, 'agent-coder-id', 'space-1', 'CoderAgent');
+		seedAgent(db, 'agent-reviewer-id', 'space-1', 'ReviewerAgent');
+		const lookup: SpaceAgentLookup = {
+			getAgentById: (_spaceId, id) => {
+				if (id === 'agent-coder-id') return { id, name: 'CoderAgent', role: 'coder' };
+				if (id === 'agent-reviewer-id') return { id, name: 'ReviewerAgent', role: 'reviewer' };
+				return null;
+			},
+		};
+		const mgr = new SpaceWorkflowManager(repo, lookup);
+		const wf = mgr.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Valid Role Channels',
+			steps: [
+				{
+					name: 'Step',
+					agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+				},
+			],
+		});
+		expect(wf.steps[0].channels).toHaveLength(1);
+	});
+
+	test('createWorkflow rejects channel from referencing unknown role (with lookup)', () => {
+		const lookup: SpaceAgentLookup = {
+			getAgentById: (_spaceId, id) => {
+				if (id === 'agent-coder-id') return { id, name: 'CoderAgent', role: 'coder' };
+				return null;
+			},
+		};
+		const mgr = new SpaceWorkflowManager(repo, lookup);
+		expect(() =>
+			mgr.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Role From',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-coder-id' }],
+						channels: [{ from: 'unknown-role', to: 'coder', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channel to referencing unknown role (with lookup)', () => {
+		const lookup: SpaceAgentLookup = {
+			getAgentById: (_spaceId, id) => {
+				if (id === 'agent-coder-id') return { id, name: 'CoderAgent', role: 'coder' };
+				return null;
+			},
+		};
+		const mgr = new SpaceWorkflowManager(repo, lookup);
+		expect(() =>
+			mgr.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Bad Role To',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-coder-id' }],
+						channels: [{ from: 'coder', to: 'unknown-role', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow accepts * wildcard in channel roles even with lookup', () => {
+		const lookup: SpaceAgentLookup = {
+			getAgentById: (_spaceId, id) => {
+				if (id === 'agent-coder-id') return { id, name: 'CoderAgent', role: 'coder' };
+				return null;
+			},
+		};
+		const mgr = new SpaceWorkflowManager(repo, lookup);
+		const wf = mgr.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Wildcard With Lookup',
+			steps: [
+				{
+					name: 'Step',
+					agents: [{ agentId: 'agent-coder-id' }],
+					channels: [{ from: '*', to: 'coder', direction: 'one-way' }],
+				},
+			],
+		});
+		expect(wf.steps[0].channels).toHaveLength(1);
+	});
+
+	test('updateWorkflow validates channel roles in step replacement (with lookup)', () => {
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const lookup: SpaceAgentLookup = {
+			getAgentById: (_spaceId, id) => {
+				if (id === 'agent-coder-id') return { id, name: 'CoderAgent', role: 'coder' };
+				return null;
+			},
+		};
+		const mgr = new SpaceWorkflowManager(repo, lookup);
+		expect(() =>
+			mgr.updateWorkflow(wf.id, {
+				steps: [
+					{
+						id: 'step-x',
+						name: 'Step',
+						agents: [{ agentId: 'agent-coder-id' }],
+						channels: [{ from: 'coder', to: 'bad-role', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	// -------------------------------------------------------------------------
+	// Multi-agent step CRUD round-trip via manager
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow with multi-agent step and channels persists and reads back correctly', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Multi-Agent CRUD',
+			steps: [
+				{
+					id: 'step-1',
+					name: 'Parallel Review',
+					agents: [
+						{ agentId: 'agent-coder', instructions: 'write code' },
+						{ agentId: 'agent-reviewer' },
+					],
+					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'submit' }],
+					instructions: 'shared context',
+				},
+			],
+		});
+
+		const read = manager.getWorkflow(wf.id)!;
+		const step = read.steps[0];
+		expect(step.agentId).toBeUndefined();
+		expect(step.agents).toHaveLength(2);
+		expect(step.agents![0].agentId).toBe('agent-coder');
+		expect(step.agents![0].instructions).toBe('write code');
+		expect(step.agents![1].agentId).toBe('agent-reviewer');
+		expect(step.channels).toHaveLength(1);
+		expect(step.channels![0]).toMatchObject({
+			from: 'coder',
+			to: 'reviewer',
+			direction: 'one-way',
+			label: 'submit',
+		});
+		expect(step.instructions).toBe('shared context');
+	});
+
+	test('updateWorkflow replaces multi-agent step with channels correctly', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Update Multi-Agent',
+			steps: [coderStep],
+		});
+
+		const updated = manager.updateWorkflow(wf.id, {
+			steps: [
+				{
+					id: 'step-new',
+					name: 'New Parallel Step',
+					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					channels: [{ from: 'security', to: ['coder', 'reviewer'], direction: 'bidirectional' }],
+				},
+			],
+		})!;
+
+		const step = updated.steps[0];
+		expect(step.agentId).toBeUndefined();
+		expect(step.agents).toHaveLength(2);
+		expect(step.channels).toHaveLength(1);
+		expect(step.channels![0].direction).toBe('bidirectional');
+		expect(step.channels![0].to).toEqual(['coder', 'reviewer']);
+	});
+
+	test('deleteWorkflow with multi-agent step cleans up correctly', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Delete Multi-Agent',
+			steps: [
+				{
+					id: 'step-1',
+					name: 'Parallel Step',
+					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+				},
+			],
+		});
+
+		expect(manager.deleteWorkflow(wf.id)).toBe(true);
+		expect(manager.getWorkflow(wf.id)).toBeNull();
+	});
+
+	test('legacy single-agent workflow continues to work alongside multi-agent workflows', () => {
+		// Create a mix of single-agent and multi-agent workflows
+		const single = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Single Agent',
+			steps: [coderStep],
+		});
+		const multi = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Multi Agent',
+			steps: [
+				{
+					id: 'step-m',
+					name: 'Parallel',
+					agents: [{ agentId: 'agent-x' }, { agentId: 'agent-y' }],
+					channels: [{ from: 'x', to: 'y', direction: 'bidirectional' }],
+				},
+			],
+		});
+
+		const workflows = manager.listWorkflows('space-1');
+		expect(workflows).toHaveLength(2);
+
+		const readSingle = manager.getWorkflow(single.id)!;
+		expect(readSingle.steps[0].agentId).toBe('agent-coder');
+		expect(readSingle.steps[0].agents).toBeUndefined();
+		expect(readSingle.steps[0].channels).toBeUndefined();
+
+		const readMulti = manager.getWorkflow(multi.id)!;
+		expect(readMulti.steps[0].agents).toHaveLength(2);
+		expect(readMulti.steps[0].channels).toHaveLength(1);
 	});
 });

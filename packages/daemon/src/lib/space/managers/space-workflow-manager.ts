@@ -32,7 +32,7 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
  */
 export interface SpaceAgentLookup {
 	/** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
-	getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
+	getAgentById(spaceId: string, id: string): { id: string; name: string; role: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +187,19 @@ export class SpaceWorkflowManager {
 			);
 		}
 
+		// Format-level validation: always run regardless of agentLookup
+		if (hasAgents) {
+			for (let j = 0; j < step.agents!.length; j++) {
+				const entry = step.agents![j];
+				if (!entry.agentId || !entry.agentId.trim()) {
+					throw new WorkflowValidationError(
+						`step[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
+					);
+				}
+			}
+		}
+
+		// Existence validation: only when agentLookup is available
 		if (this.agentLookup) {
 			if (hasAgentId) {
 				const agent = this.agentLookup.getAgentById(spaceId, step.agentId!);
@@ -199,11 +212,6 @@ export class SpaceWorkflowManager {
 			if (hasAgents) {
 				for (let j = 0; j < step.agents!.length; j++) {
 					const entry = step.agents![j];
-					if (!entry.agentId || !entry.agentId.trim()) {
-						throw new WorkflowValidationError(
-							`step[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
-						);
-					}
 					const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
 					if (!agent) {
 						throw new WorkflowValidationError(
@@ -212,6 +220,92 @@ export class SpaceWorkflowManager {
 					}
 				}
 			}
+		}
+
+		// Channel validation (after agent validation so we can collect roles)
+		if (step.channels && step.channels.length > 0) {
+			this.validateStepChannels(spaceId, step, index);
+		}
+	}
+
+	private validateStepChannels(spaceId: string, step: WorkflowStepInput, stepIndex: number): void {
+		const channels = step.channels!;
+
+		// Channels require the multi-agent agents[] format — single-agent steps have no peers
+		if (!step.agents || step.agents.length === 0) {
+			throw new WorkflowValidationError(
+				`step[${stepIndex}]: channels require a multi-agent step (agents[] must be provided)`
+			);
+		}
+
+		// Collect known roles from agents when agentLookup is available
+		let knownRoles: Set<string> | null = null;
+		if (this.agentLookup) {
+			knownRoles = new Set<string>();
+			for (const agentEntry of step.agents) {
+				if (agentEntry.agentId && agentEntry.agentId.trim()) {
+					const agent = this.agentLookup.getAgentById(spaceId, agentEntry.agentId);
+					if (agent) {
+						knownRoles.add(agent.role);
+					}
+				}
+			}
+		}
+
+		const validDirections = new Set(['one-way', 'bidirectional']);
+
+		for (let ci = 0; ci < channels.length; ci++) {
+			const ch = channels[ci];
+			const loc = `step[${stepIndex}].channels[${ci}]`;
+
+			// Validate direction
+			if (!validDirections.has(ch.direction)) {
+				throw new WorkflowValidationError(
+					`${loc}: direction must be 'one-way' or 'bidirectional', got "${ch.direction}"`
+				);
+			}
+
+			// Validate from
+			if (!ch.from || !ch.from.trim()) {
+				throw new WorkflowValidationError(`${loc}: 'from' must be a non-empty role string`);
+			}
+
+			// Validate to
+			if (Array.isArray(ch.to)) {
+				if (ch.to.length === 0) {
+					throw new WorkflowValidationError(
+						`${loc}: 'to' array must contain at least one role string`
+					);
+				}
+				for (let ti = 0; ti < ch.to.length; ti++) {
+					if (!ch.to[ti] || !ch.to[ti].trim()) {
+						throw new WorkflowValidationError(`${loc}.to[${ti}]: must be a non-empty role string`);
+					}
+				}
+			} else {
+				if (!ch.to || !(ch.to as string).trim()) {
+					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty role string`);
+				}
+			}
+
+			// Role reference validation: only when agentLookup resolved roles
+			if (knownRoles !== null) {
+				this.validateChannelRoleRef(ch.from, knownRoles, `${loc}.from`);
+				const toRoles = Array.isArray(ch.to) ? ch.to : [ch.to as string];
+				for (const toRole of toRoles) {
+					this.validateChannelRoleRef(toRole, knownRoles, `${loc}.to`);
+				}
+			}
+		}
+	}
+
+	private validateChannelRoleRef(role: string, knownRoles: Set<string>, location: string): void {
+		if (role === '*') return; // wildcard matches all agents
+		if (!knownRoles.has(role)) {
+			const known = [...knownRoles].join(', ') || 'none';
+			throw new WorkflowValidationError(
+				`${location}: role "${role}" does not match any agent role in this step (known roles: ${known})`
+			);
 		}
 	}
 
