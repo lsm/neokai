@@ -13,12 +13,14 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	SpaceTaskStatus,
-	SpaceTaskType,
 	SpaceAutonomyLevel,
 	CreateSpaceParams,
 	UpdateSpaceParams,
+	SpaceTaskPriority,
+	SpaceTaskType,
 } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -26,6 +28,9 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import { SpaceTaskManager } from '../managers/space-task-manager';
+import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
+import type { ToolResult } from './tool-result';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -38,6 +43,8 @@ export interface GlobalSpacesToolsConfig {
 	workflowManager: SpaceWorkflowManager;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Database instance used to create SpaceTaskManager instances on demand. */
+	db: BunDatabase;
 }
 
 /**
@@ -61,61 +68,6 @@ const AUTONOMY_LEVEL_VALUES = [
 	'supervised',
 	'semi_autonomous',
 ] as const satisfies readonly SpaceAutonomyLevel[];
-
-interface ToolResult {
-	content: Array<{ type: 'text'; text: string }>;
-}
-
-function jsonResult(data: unknown): ToolResult {
-	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-}
-
-/**
- * Common English stop words filtered out by suggest_workflow before keyword matching.
- */
-const SUGGEST_WORKFLOW_STOP_WORDS = new Set([
-	'the',
-	'and',
-	'for',
-	'are',
-	'but',
-	'not',
-	'you',
-	'all',
-	'can',
-	'her',
-	'was',
-	'one',
-	'our',
-	'out',
-	'day',
-	'get',
-	'has',
-	'him',
-	'his',
-	'how',
-	'its',
-	'may',
-	'new',
-	'now',
-	'old',
-	'see',
-	'two',
-	'use',
-	'way',
-	'who',
-	'did',
-	'let',
-	'put',
-	'say',
-	'she',
-	'too',
-	'had',
-	'any',
-	'via',
-]);
-
-// ---------------------------------------------------------------------------
 // Tool handlers (separated for testability)
 // ---------------------------------------------------------------------------
 
@@ -126,8 +78,33 @@ export function createGlobalSpacesToolHandlers(
 	config: GlobalSpacesToolsConfig,
 	state: GlobalSpacesState
 ) {
-	const { spaceManager, spaceAgentManager, runtime, workflowManager, taskRepo, workflowRunRepo } =
-		config;
+	const {
+		spaceManager,
+		spaceAgentManager,
+		runtime,
+		workflowManager,
+		taskRepo,
+		workflowRunRepo,
+		db,
+	} = config;
+
+	/**
+	 * Cache of SpaceTaskManager instances keyed by spaceId.
+	 * Follows the same getOrCreate pattern as SpaceRuntime.getOrCreateTaskManager().
+	 * Lifecycle: the cache is created once per createGlobalSpacesToolHandlers() call.
+	 * In practice createGlobalSpacesMcpServer() calls this exactly once per provisioning,
+	 * so there is no cross-call state sharing to worry about.
+	 */
+	const taskManagers = new Map<string, SpaceTaskManager>();
+
+	function getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
+		let mgr = taskManagers.get(spaceId);
+		if (!mgr) {
+			mgr = new SpaceTaskManager(db, spaceId);
+			taskManagers.set(spaceId, mgr);
+		}
+		return mgr;
+	}
 
 	/**
 	 * Resolve the spaceId for per-space tools.
@@ -338,24 +315,30 @@ export function createGlobalSpacesToolHandlers(
 			});
 		},
 
-		// ---- Task coordination tools ----
+		// ---- Coordination tools ----
 
 		async create_standalone_task(args: {
 			space_id?: string;
 			title: string;
-			description?: string;
+			description: string;
+			priority?: SpaceTaskPriority;
 			task_type?: SpaceTaskType;
+			assigned_agent?: 'coder' | 'general';
 			custom_agent_id?: string;
+			depends_on?: string[];
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args.space_id);
 			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
 			try {
-				const taskManager = runtime.getTaskManagerForSpace(resolved.spaceId);
-				const task = await taskManager.createTask({
+				const mgr = getOrCreateTaskManager(resolved.spaceId);
+				const task = await mgr.createTask({
 					title: args.title,
-					description: args.description ?? '',
-					taskType: args.task_type ?? 'coding',
+					description: args.description,
+					priority: args.priority,
+					taskType: args.task_type,
+					assignedAgent: args.assigned_agent,
 					customAgentId: args.custom_agent_id,
+					dependsOn: args.depends_on,
 				});
 				return jsonResult({ success: true, space_id: resolved.spaceId, task });
 			} catch (err) {
@@ -364,24 +347,46 @@ export function createGlobalSpacesToolHandlers(
 			}
 		},
 
-		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
+		async get_task_detail(args: { task_id: string; space_id?: string }): Promise<ToolResult> {
 			const task = taskRepo.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			// Space ownership validation: when a space context is available (explicit space_id or
+			// activeSpaceId), reject cross-space access. When no context is available the Global
+			// Agent is operating cross-space and the check is intentionally skipped — task IDs are
+			// globally unique UUIDs and the Global Agent is trusted to use them responsibly.
+			const resolved = resolveSpaceId(args.space_id);
+			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to space ${resolved.spaceId}`,
+				});
 			}
 			return jsonResult({ success: true, task });
 		},
 
-		async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
+		async retry_task(args: {
+			task_id: string;
+			space_id?: string;
+			description?: string;
+		}): Promise<ToolResult> {
 			const task = taskRepo.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			try {
-				const taskManager = runtime.getTaskManagerForSpace(task.spaceId);
-				const retried = await taskManager.retryTask(args.task_id, {
-					description: args.description,
+			// Space ownership validation: when a context is available, enforce it. When absent,
+			// the Global Agent is operating cross-space and the check is intentionally skipped.
+			const resolved = resolveSpaceId(args.space_id);
+			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to space ${resolved.spaceId}`,
 				});
+			}
+			try {
+				const mgr = getOrCreateTaskManager(task.spaceId);
+				const retried = await mgr.retryTask(args.task_id, { description: args.description });
 				return jsonResult({ success: true, task: retried });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -391,24 +396,35 @@ export function createGlobalSpacesToolHandlers(
 
 		async cancel_task(args: {
 			task_id: string;
+			space_id?: string;
 			cancel_workflow_run?: boolean;
 		}): Promise<ToolResult> {
 			const task = taskRepo.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
+			// Space ownership validation: when a context is available, enforce it. When absent,
+			// the Global Agent is operating cross-space and the check is intentionally skipped.
+			const resolved = resolveSpaceId(args.space_id);
+			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to space ${resolved.spaceId}`,
+				});
+			}
 			try {
-				const taskManager = runtime.getTaskManagerForSpace(task.spaceId);
-				const cancelled = await taskManager.cancelTask(args.task_id);
-				const result: { success: boolean; task: unknown; workflow_run_cancelled?: boolean } = {
-					success: true,
-					task: cancelled,
-				};
+				const mgr = getOrCreateTaskManager(task.spaceId);
+				const cancelled = await mgr.cancelTask(args.task_id);
+				let cancelledRun = null;
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					await workflowRunRepo.updateRun(task.workflowRunId, { status: 'cancelled' });
-					result.workflow_run_cancelled = true;
+					// Guard against stale run IDs: updateStatus returns null when the run is
+					// not found, which would leave the task cancelled but the run untouched.
+					const updatedRun = workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
+					if (updatedRun) {
+						cancelledRun = task.workflowRunId;
+					}
 				}
-				return jsonResult(result);
+				return jsonResult({ success: true, task: cancelled, cancelledWorkflowRunId: cancelledRun });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
@@ -417,6 +433,7 @@ export function createGlobalSpacesToolHandlers(
 
 		async reassign_task(args: {
 			task_id: string;
+			space_id?: string;
 			custom_agent_id: string | null;
 			assigned_agent?: 'coder' | 'general';
 		}): Promise<ToolResult> {
@@ -424,9 +441,18 @@ export function createGlobalSpacesToolHandlers(
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
+			// Space ownership validation: when a context is available, enforce it. When absent,
+			// the Global Agent is operating cross-space and the check is intentionally skipped.
+			const resolved = resolveSpaceId(args.space_id);
+			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to space ${resolved.spaceId}`,
+				});
+			}
 			try {
-				const taskManager = runtime.getTaskManagerForSpace(task.spaceId);
-				const reassigned = await taskManager.reassignTask(
+				const mgr = getOrCreateTaskManager(task.spaceId);
+				const reassigned = await mgr.reassignTask(
 					args.task_id,
 					args.custom_agent_id,
 					args.assigned_agent
@@ -609,70 +635,102 @@ export function createGlobalSpacesMcpServer(
 			(args) => handlers.suggest_workflow(args)
 		),
 
-		// Task coordination tools
+		// Coordination tools
 		tool(
 			'create_standalone_task',
-			'Create a task outside any workflow. Use for ad-hoc work that does not fit an existing workflow.',
+			'Create a task outside any workflow. Use this to spin up ad-hoc work that does not belong to an existing workflow run.',
 			{
 				space_id: z
 					.string()
 					.optional()
 					.describe('Target space ID (defaults to the active space context)'),
 				title: z.string().describe('Short title for the task'),
-				description: z.string().optional().describe('Detailed description of the work'),
-				task_type: z
-					.enum(['planning', 'coding', 'review'])
+				description: z.string().describe('Detailed description of the work to be done'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
 					.optional()
-					.describe('Task type (defaults to coding)'),
-				custom_agent_id: z.string().optional().describe('ID of a custom agent to assign'),
+					.describe('Task priority (default: normal)'),
+				task_type: z
+					.enum(['planning', 'coding', 'research', 'design', 'review'])
+					.optional()
+					.describe('Task type for routing and display'),
+				assigned_agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.describe('Built-in agent type to assign (default: coder)'),
+				custom_agent_id: z
+					.string()
+					.optional()
+					.describe('Custom Space agent ID to assign instead of the built-in agent'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('IDs of tasks that must complete before this task can start'),
 			},
 			(args) => handlers.create_standalone_task(args)
 		),
 		tool(
 			'get_task_detail',
-			'Get full task details including agent output, PR status, and error information. Call this before deciding how to handle a failed task.',
+			'Get the full detail of a task including agent output, PR status, and error info. Task IDs are globally unique.',
 			{
 				task_id: z.string().describe('ID of the task to retrieve'),
+				space_id: z
+					.string()
+					.optional()
+					.describe(
+						'Space ID to validate ownership against (defaults to the active space context; omit to skip validation)'
+					),
 			},
 			(args) => handlers.get_task_detail(args)
 		),
 		tool(
 			'retry_task',
-			'Reset a needs_attention or cancelled task back to pending so it can be picked up again. Optionally update the description.',
+			'Reset a failed (needs_attention) or cancelled task back to pending so it can be picked up again. Optionally update the description before retry.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
-				description: z
+				space_id: z
 					.string()
 					.optional()
-					.describe('Updated task description (clarified instructions for the retry)'),
+					.describe('Space ID to validate ownership (defaults to active space context)'),
+				description: z.string().optional().describe('Updated task description to use on retry'),
 			},
 			(args) => handlers.retry_task(args)
 		),
 		tool(
 			'cancel_task',
-			'Cancel a task. Optionally cancel its entire workflow run.',
+			'Cancel a task. Pending tasks that depend on this task are also cancelled (cascade). Optionally cancel the associated workflow run.',
 			{
 				task_id: z.string().describe('ID of the task to cancel'),
+				space_id: z
+					.string()
+					.optional()
+					.describe('Space ID to validate ownership (defaults to active space context)'),
 				cancel_workflow_run: z
 					.boolean()
 					.optional()
-					.describe('Also cancel the workflow run this task belongs to'),
+					.describe(
+						'If true and the task belongs to a workflow run, cancel that run as well (default: false)'
+					),
 			},
 			(args) => handlers.cancel_task(args)
 		),
 		tool(
 			'reassign_task',
-			'Change the assigned agent for a task. Only works for tasks in pending, needs_attention, or cancelled status.',
+			'Change the agent assigned to a task. Only allowed for tasks in pending, needs_attention, or cancelled status.',
 			{
 				task_id: z.string().describe('ID of the task to reassign'),
+				space_id: z
+					.string()
+					.optional()
+					.describe('Space ID to validate ownership (defaults to active space context)'),
 				custom_agent_id: z
 					.string()
 					.nullable()
-					.describe('ID of the custom agent to assign, or null to clear the custom assignment'),
+					.describe('Custom Space agent ID to assign, or null to revert to the built-in agent'),
 				assigned_agent: z
 					.enum(['coder', 'general'])
 					.optional()
-					.describe('Preset agent role to assign'),
+					.describe('Built-in agent type (used when custom_agent_id is null)'),
 			},
 			(args) => handlers.reassign_task(args)
 		),

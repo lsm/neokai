@@ -290,6 +290,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			spaceRuntimeService,
 			taskRepo: spaceTaskRepo,
 			workflowRunRepo: spaceWorkflowRunRepo,
+			db: deps.db.getDatabase(),
 			state: globalSpacesState,
 		}).catch((error) => {
 			log.error('Failed to provision global spaces agent:', error);
