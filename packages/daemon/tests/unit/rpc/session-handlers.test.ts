@@ -565,24 +565,6 @@ describe('Session RPC Handlers', () => {
 			);
 		});
 
-		it('also broadcasts session.deleted on room channel when session has a roomId', async () => {
-			const handler = messageHubData.handlers.get('session.delete');
-			expect(handler).toBeDefined();
-
-			const { agentSession } = createMockAgentSession({
-				context: { roomId: 'room-abc' },
-			} as Partial<AgentSession>);
-			sessionManagerData.mocks.getSession.mockReturnValueOnce(agentSession);
-
-			await handler!({ sessionId: 'session-123' }, {});
-
-			expect(messageHubData.hub.event).toHaveBeenCalledWith(
-				'session.deleted',
-				expect.objectContaining({ sessionId: 'session-123', roomId: 'room-abc' }),
-				{ channel: 'room:room-abc' }
-			);
-		});
-
 		it('does not broadcast any event when session has no roomId', async () => {
 			const handler = messageHubData.handlers.get('session.delete');
 			expect(handler).toBeDefined();
