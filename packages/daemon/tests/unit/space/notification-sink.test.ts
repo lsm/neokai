@@ -38,6 +38,7 @@ describe('SpaceNotificationEvent types', () => {
 		expect(event.spaceId).toBe('space-2');
 		expect(event.runId).toBe('run-99');
 		expect(event.reason).toBe('Transition condition failed: tests did not pass');
+		expect(event.timestamp).toBe('2026-03-20T11:00:00.000Z');
 	});
 
 	it('constructs a task_timeout event', () => {
@@ -73,12 +74,12 @@ describe('SpaceNotificationEvent types', () => {
 			kind: 'workflow_run_completed',
 			spaceId: 'space-4',
 			runId: 'run-2',
-			status: 'failed',
+			status: 'needs_attention',
 			timestamp: '2026-03-20T13:00:00.000Z',
 		};
 
 		expect(event.kind).toBe('workflow_run_completed');
-		expect(event.status).toBe('failed');
+		expect(event.status).toBe('needs_attention');
 		expect(event.summary).toBeUndefined();
 	});
 

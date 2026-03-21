@@ -52,15 +52,19 @@ export interface TaskTimeoutEvent {
 	timestamp: string;
 }
 
-/** A workflow run has reached a terminal state (completed or failed). */
+/** A workflow run has reached a terminal state (completed, cancelled, or needs_attention). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
 	/** Space the workflow run belongs to. */
 	spaceId: string;
 	/** Workflow run that completed. */
 	runId: string;
-	/** Final status of the run. */
-	status: 'completed' | 'failed' | 'cancelled';
+	/**
+	 * Final status of the run — a terminal subset of `WorkflowRunStatus`.
+	 * `'needs_attention'` represents a run that ended due to an unrecoverable
+	 * error or condition gate failure.
+	 */
+	status: 'completed' | 'cancelled' | 'needs_attention';
 	/** Optional summary of what the run accomplished. */
 	summary?: string;
 	/** ISO-8601 timestamp when the event was emitted. */
@@ -130,7 +134,7 @@ export interface NotificationSink {
  * has been provisioned).
  */
 export class NullNotificationSink implements NotificationSink {
-	async notify(_event: SpaceNotificationEvent): Promise<void> {
-		// intentional no-op
+	notify(_event: SpaceNotificationEvent): Promise<void> {
+		return Promise.resolve();
 	}
 }
