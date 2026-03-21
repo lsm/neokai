@@ -7,6 +7,7 @@ import {
 	navigateToInbox,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
+import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
 	id: NavSection;
@@ -125,15 +126,7 @@ export function BottomTabBar() {
 					>
 						<div class="relative">
 							<tab.icon />
-							{badge > 0 && (
-								<div class="w-2 h-2 rounded-full bg-red-500 absolute -top-0.5 -right-0.5 flex items-center justify-center">
-									{badge <= 9 ? (
-										<span class="text-white text-[8px] font-bold leading-none">{badge}</span>
-									) : (
-										<span class="text-white text-[8px] font-bold leading-none">9+</span>
-									)}
-								</div>
-							)}
+							<InboxBadge count={badge} class="absolute -top-0.5 -right-0.5" />
 						</div>
 						<span class="text-[10px] font-medium leading-none">{tab.label}</span>
 					</button>

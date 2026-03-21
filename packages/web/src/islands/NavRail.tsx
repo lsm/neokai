@@ -8,6 +8,7 @@ import {
 	navigateToSpaces,
 } from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
+import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
@@ -69,15 +70,7 @@ export function NavRail() {
 								>
 									{item.icon}
 								</NavIconButton>
-								{badge > 0 && (
-									<div class="w-2 h-2 rounded-full bg-red-500 absolute top-1 right-1 flex items-center justify-center">
-										{badge <= 9 ? (
-											<span class="text-white text-[8px] font-bold leading-none">{badge}</span>
-										) : (
-											<span class="text-white text-[8px] font-bold leading-none">9+</span>
-										)}
-									</div>
-								)}
+								<InboxBadge count={badge} class="absolute top-1 right-1" />
 							</div>
 						);
 					}

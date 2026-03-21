@@ -6,9 +6,20 @@
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { TaskSummary } from '@neokai/shared';
 import { RoomTasks, selectedTabSignal } from './RoomTasks';
+
+// Mock toast to prevent side effects from toast.rejected() calls
+vi.mock('../../lib/toast.ts', () => ({
+	toast: {
+		rejected: vi.fn(),
+		approved: vi.fn(),
+		error: vi.fn(),
+		success: vi.fn(),
+		info: vi.fn(),
+	},
+}));
 
 describe('RoomTasks', () => {
 	afterEach(() => {
@@ -767,7 +778,9 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
-			expect(container.querySelector('textarea')).toBeTruthy();
+			// Form wrapper should be expanded (max-h-48 replaces max-h-0)
+			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
+			expect(formWrapper?.classList.contains('max-h-48')).toBe(true);
 			expect(container.textContent).toContain('Confirm Reject');
 			expect(container.textContent).toContain('Cancel');
 		});
@@ -783,15 +796,16 @@ describe('RoomTasks', () => {
 				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
-			expect(container.querySelector('textarea')).toBeTruthy();
+			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
+			expect(formWrapper?.classList.contains('max-h-48')).toBe(true);
 
-			// Cancel
+			// Cancel — form should collapse (max-h-0)
 			const cancelBtn = Array.from(container.querySelectorAll('button')).find(
 				(b) => b.textContent?.trim() === 'Cancel'
 			) as HTMLButtonElement;
 			fireEvent.click(cancelBtn);
 
-			expect(container.querySelector('textarea')).toBeFalsy();
+			expect(formWrapper?.classList.contains('max-h-0')).toBe(true);
 		});
 
 		it('Confirm Reject button should be disabled when feedback is empty', () => {
@@ -836,7 +850,7 @@ describe('RoomTasks', () => {
 			expect(onReject).toHaveBeenCalledWith('task-99', 'Needs more work');
 		});
 
-		it('should close form after Confirm Reject is clicked', () => {
+		it('should collapse form after Confirm Reject is clicked', () => {
 			const onReject = vi.fn();
 			const tasks = [createTask('t1', 'review')];
 
@@ -856,7 +870,9 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(confirmBtn);
 
-			expect(container.querySelector('textarea')).toBeFalsy();
+			// Form should be collapsed (max-h-0)
+			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
+			expect(formWrapper?.classList.contains('max-h-0')).toBe(true);
 		});
 
 		it('should NOT call onTaskClick when Reject button is clicked', () => {
@@ -947,6 +963,74 @@ describe('RoomTasks', () => {
 
 			expect(onApprove).toHaveBeenCalledWith('task-55');
 			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should show "✓ Approved" on button and disable it immediately after click', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-99', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(approveBtn.textContent?.trim()).toContain('Approved');
+			expect(approveBtn.disabled).toBe(true);
+		});
+
+		it('should add opacity-40 to card after Approve is clicked', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-98', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			const fadedCard = container.querySelector('.opacity-40');
+			expect(fadedCard).toBeTruthy();
+		});
+
+		it('should add border-l-green-500 to card after Approve is clicked', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-97', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			const greenCard = container.querySelector('.border-l-green-500');
+			expect(greenCard).toBeTruthy();
+		});
+
+		it('should revert Approve button text to "Approve" after 300ms', async () => {
+			vi.useFakeTimers();
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-96', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(approveBtn.textContent?.trim()).toContain('Approved');
+
+			await act(async () => {
+				vi.advanceTimersByTime(310);
+			});
+			expect(approveBtn.textContent?.trim()).toBe('Approve');
+			expect(approveBtn.disabled).toBe(false);
+
+			vi.useRealTimers();
 		});
 	});
 
