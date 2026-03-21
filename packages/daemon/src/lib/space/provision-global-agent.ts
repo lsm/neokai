@@ -19,6 +19,8 @@ import type { SpaceRuntimeService } from './runtime/space-runtime-service';
 import { Logger } from '../logger';
 import { buildGlobalSpacesAgentPrompt } from './agents/global-spaces-agent';
 import { createGlobalSpacesMcpServer, type GlobalSpacesState } from './tools/global-spaces-tools';
+import { SessionNotificationSink } from './runtime/session-notification-sink';
+import type { SessionFactory } from '../room/runtime/task-group-manager';
 
 const GLOBAL_SESSION_ID = 'spaces:global';
 const log = new Logger('global-spaces-agent');
@@ -29,6 +31,12 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	spaceAgentManager: SpaceAgentManager;
 	spaceWorkflowManager: SpaceWorkflowManager;
 	spaceRuntimeService: SpaceRuntimeService;
+	/**
+	 * SessionFactory used to inject messages into the global agent session.
+	 * Must support `injectMessage(sessionId, message, opts)` for the `spaces:global` session.
+	 * Typically built as an adapter over `SessionManager.injectMessage()`.
+	 */
+	sessionFactory: SessionFactory;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Shared mutable state for the active space context. Created externally so RPC handlers can use the same reference. */
@@ -51,6 +59,7 @@ export async function provisionGlobalSpacesAgent(
 		spaceAgentManager,
 		spaceWorkflowManager,
 		spaceRuntimeService,
+		sessionFactory,
 		taskRepo,
 		workflowRunRepo,
 		state,
@@ -82,6 +91,16 @@ export async function provisionGlobalSpacesAgent(
 	if (!existingSession) {
 		throw new Error(`Failed to get AgentSession for ${GLOBAL_SESSION_ID} after creation`);
 	}
+
+	// Wire the NotificationSink: session now exists so the sink can be created and injected.
+	// SpaceRuntimeService is constructed before this point and exposes a setter exactly for this
+	// pattern (circular dependency: service exists before session does).
+	const notificationSink = new SessionNotificationSink({
+		sessionFactory,
+		sessionId: GLOBAL_SESSION_ID,
+	});
+	spaceRuntimeService.setNotificationSink(notificationSink);
+	log.info('Notification sink wired into SpaceRuntimeService');
 
 	// Create MCP server and attach to session
 	const mcpServer = createGlobalSpacesMcpServer(
