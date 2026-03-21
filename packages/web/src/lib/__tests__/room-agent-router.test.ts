@@ -127,7 +127,7 @@ describe('Room Agent Router', () => {
 		});
 	});
 
-	describe('getRoomIdFromPath recognizes agent route', () => {
+	describe('getRoomIdFromPath', () => {
 		it('extracts roomId from agent path', () => {
 			expect(getRoomIdFromPath('/room/abc-def-123/agent')).toBe('abc-def-123');
 		});
@@ -140,6 +140,10 @@ describe('Room Agent Router', () => {
 
 		it('extracts roomId from plain room path (not just agent)', () => {
 			expect(getRoomIdFromPath('/room/abc-def-123')).toBe('abc-def-123');
+		});
+
+		it('extracts roomId from legacy /chat compat path', () => {
+			expect(getRoomIdFromPath('/room/abc-def-123/chat')).toBe('abc-def-123');
 		});
 
 		it('returns null for non-room paths', () => {
