@@ -141,6 +141,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 37: Add goal_id column to space_workflow_runs for goal/mission association.
 	runMigration37(db);
+
+	// Migration 38: Add is_cyclic column to space_workflow_transitions.
+	runMigration38(db);
 }
 
 /**
@@ -2084,4 +2087,22 @@ function runMigration37(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_goal_id ON space_workflow_runs(goal_id)`
 	);
+}
+
+/**
+ * Migration 38: Add `is_cyclic` column to `space_workflow_transitions`.
+ *
+ * When a transition is marked as cyclic, following it increments `iterationCount`
+ * on the workflow run. This enables explicit cycle detection for iterative workflows
+ * without relying on heuristics that would misfire on DAG merge paths.
+ *
+ * Nullable INTEGER (SQLite boolean): 0 = not cyclic, 1 = cyclic, NULL = not cyclic.
+ */
+function runMigration38(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_transitions')) return;
+	try {
+		db.prepare(`SELECT is_cyclic FROM space_workflow_transitions LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_workflow_transitions ADD COLUMN is_cyclic INTEGER`);
+	}
 }

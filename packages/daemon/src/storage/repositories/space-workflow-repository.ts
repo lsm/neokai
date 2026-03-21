@@ -6,7 +6,7 @@
  * Storage layout:
  *   space_workflows             — id, space_id, name, description, start_step_id, config (JSON), layout (JSON), created_at, updated_at
  *   space_workflow_steps        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
- *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, created_at, updated_at
+ *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, is_cyclic, created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
  * The `config` column on space_workflow_steps stores: { instructions? }
@@ -63,6 +63,7 @@ interface TransitionRow {
 	to_step_id: string;
 	condition: string | null;
 	order_index: number;
+	is_cyclic: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -113,6 +114,7 @@ function rowToTransition(row: TransitionRow): WorkflowTransition {
 		to: row.to_step_id,
 		condition: condition ?? undefined,
 		order: row.order_index,
+		isCyclic: Boolean(row.is_cyclic),
 	};
 }
 
@@ -422,12 +424,13 @@ export class SpaceWorkflowRepository {
 	): void {
 		const transitionId = generateUUID();
 		const conditionJson = input.condition ? JSON.stringify(input.condition) : null;
+		const isCyclicValue = input.isCyclic !== undefined ? (input.isCyclic ? 1 : 0) : null;
 
 		this.db
 			.prepare(
 				`INSERT INTO space_workflow_transitions
-           (id, workflow_id, from_step_id, to_step_id, condition, order_index, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, workflow_id, from_step_id, to_step_id, condition, order_index, is_cyclic, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				transitionId,
@@ -436,6 +439,7 @@ export class SpaceWorkflowRepository {
 				input.to,
 				conditionJson,
 				input.order ?? index,
+				isCyclicValue,
 				now,
 				now
 			);

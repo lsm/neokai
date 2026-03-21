@@ -233,6 +233,11 @@ export class WorkflowExecutor {
 				);
 			}
 
+			case 'task_result': {
+				// Task 1.2 implements full evaluation — for now, always fail
+				return { passed: false, reason: 'task_result evaluation not yet implemented' };
+			}
+
 			default: {
 				const _exhaustive: never = condition.type;
 				return { passed: false, reason: `Unknown condition type: ${_exhaustive}` };

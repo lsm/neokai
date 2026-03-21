@@ -22,6 +22,7 @@ export const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
 	always: 'Automatic',
 	human: 'Human Approval',
 	condition: 'Shell Condition',
+	task_result: 'Task Result',
 };
 
 // ============================================================================

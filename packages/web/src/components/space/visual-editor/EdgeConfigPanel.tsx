@@ -46,10 +46,16 @@ const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
 	always: 'Always',
 	human: 'Human approval',
 	condition: 'Expression',
+	task_result: 'Task Result',
 };
 
 /** Explicit ordering for the condition type <select> options. */
-const CONDITION_TYPE_ORDER: WorkflowConditionType[] = ['always', 'human', 'condition'];
+const CONDITION_TYPE_ORDER: WorkflowConditionType[] = [
+	'always',
+	'human',
+	'condition',
+	'task_result',
+];
 
 export function EdgeConfigPanel({
 	transition,
