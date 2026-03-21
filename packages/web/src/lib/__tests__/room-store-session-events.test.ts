@@ -1,8 +1,9 @@
 /**
  * Tests for RoomStore session lifecycle event handlers
  *
- * Verifies that session.deleted and session.updated events are correctly
- * handled so the RoomContextPanel reflects live session state.
+ * Verifies that session.deleted and session.updated events trigger a room.get
+ * re-fetch so the RoomContextPanel always reflects the server's authoritative
+ * session list. This approach self-heals missed events during WebSocket gaps.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -73,14 +74,15 @@ import { roomStore } from '../room-store';
 const ROOM_ID = 'room-abc';
 const OTHER_ROOM_ID = 'room-xyz';
 
-function makeSessions(): SessionSummary[] {
-	return [
+function makeSessions(overrides: Partial<SessionSummary>[] = []): SessionSummary[] {
+	const base: SessionSummary[] = [
 		{ id: 'session-1', title: 'Session One', status: 'active', lastActiveAt: 1000 },
 		{ id: 'session-2', title: 'Session Two', status: 'active', lastActiveAt: 2000 },
 	];
+	return overrides.length > 0 ? base.map((s, i) => ({ ...s, ...(overrides[i] ?? {}) })) : base;
 }
 
-function makeOverview(): RoomOverview {
+function makeOverview(sessions?: SessionSummary[]): RoomOverview {
 	return {
 		room: {
 			id: ROOM_ID,
@@ -93,27 +95,30 @@ function makeOverview(): RoomOverview {
 			instructions: null,
 			config: {},
 		} as unknown as RoomOverview['room'],
-		sessions: makeSessions(),
+		sessions: sessions ?? makeSessions(),
 		activeTasks: [],
 		allTasks: [],
 	};
+}
+
+/** Count how many times hub.request was called with the given method */
+function countRequests(hub: MockHub, method: string): number {
+	return (hub.request.mock.calls as [string, ...unknown[]][]).filter(([m]) => m === method).length;
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('RoomStore — session lifecycle events', () => {
+describe('RoomStore — session lifecycle events (re-fetch approach)', () => {
 	let hub: MockHub;
 
 	beforeEach(async () => {
 		hub = createMockHub();
 
-		// Make getHub() resolve to our mock
 		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(hub as never);
 
-		// Default request mock: room.get returns overview, everything else resolves empty
 		hub.request.mockImplementation((method: string) => {
 			if (method === 'room.get') return Promise.resolve(makeOverview());
 			if (method === 'goal.list') return Promise.resolve({ goals: [] });
@@ -123,12 +128,10 @@ describe('RoomStore — session lifecycle events', () => {
 			return Promise.resolve({});
 		});
 
-		// Select the room to start subscriptions
 		await roomStore.select(ROOM_ID);
 	});
 
 	afterEach(async () => {
-		// Reset to null room to clear subscriptions
 		await roomStore.select(null);
 		vi.clearAllMocks();
 	});
@@ -138,39 +141,59 @@ describe('RoomStore — session lifecycle events', () => {
 	// -----------------------------------------------------------------------
 
 	describe('session.deleted event', () => {
-		it('removes the deleted session from sessions signal when roomId matches', () => {
-			expect(roomStore.sessions.value).toHaveLength(2);
+		it('triggers a room.get re-fetch when roomId matches', async () => {
+			const before = countRequests(hub, 'room.get');
 
 			hub.fire('session.deleted', { sessionId: 'session-1', roomId: ROOM_ID });
 
-			expect(roomStore.sessions.value).toHaveLength(1);
-			expect(roomStore.sessions.value[0].id).toBe('session-2');
+			await vi.waitFor(() => {
+				expect(countRequests(hub, 'room.get')).toBeGreaterThan(before);
+			});
 		});
 
-		it('removes the correct session leaving others intact', () => {
-			hub.fire('session.deleted', { sessionId: 'session-2', roomId: ROOM_ID });
+		it('updates sessions signal from server response after deletion', async () => {
+			// Server returns only session-2 after session-1 is deleted
+			hub.request.mockImplementation((method: string) => {
+				if (method === 'room.get')
+					return Promise.resolve(
+						makeOverview([
+							{ id: 'session-2', title: 'Session Two', status: 'active', lastActiveAt: 2000 },
+						])
+					);
+				if (method === 'goal.list') return Promise.resolve({ goals: [] });
+				if (method === 'room.runtime.state') return Promise.resolve({ state: 'stopped' });
+				if (method === 'room.runtime.models')
+					return Promise.resolve({ leaderModel: null, workerModel: null });
+				return Promise.resolve({});
+			});
 
-			expect(roomStore.sessions.value).toHaveLength(1);
-			expect(roomStore.sessions.value[0].id).toBe('session-1');
+			hub.fire('session.deleted', { sessionId: 'session-1', roomId: ROOM_ID });
+
+			await vi.waitFor(() => {
+				expect(roomStore.sessions.value).toHaveLength(1);
+				expect(roomStore.sessions.value[0].id).toBe('session-2');
+			});
 		});
 
-		it('ignores deletion events for a different room', () => {
+		it('does NOT trigger a re-fetch for a different room', async () => {
+			const before = countRequests(hub, 'room.get');
+
 			hub.fire('session.deleted', { sessionId: 'session-1', roomId: OTHER_ROOM_ID });
 
-			expect(roomStore.sessions.value).toHaveLength(2);
+			// Give any potential async re-fetch a chance to run
+			await new Promise((r) => setTimeout(r, 20));
+
+			expect(countRequests(hub, 'room.get')).toBe(before);
 		});
 
-		it('is a no-op when sessionId is not in the current room', () => {
-			hub.fire('session.deleted', { sessionId: 'session-unknown', roomId: ROOM_ID });
+		it('does NOT trigger a re-fetch when roomId is absent', async () => {
+			const before = countRequests(hub, 'room.get');
 
-			expect(roomStore.sessions.value).toHaveLength(2);
-		});
+			hub.fire('session.deleted', { sessionId: 'session-1' });
 
-		it('handles multiple sequential deletions', () => {
-			hub.fire('session.deleted', { sessionId: 'session-1', roomId: ROOM_ID });
-			hub.fire('session.deleted', { sessionId: 'session-2', roomId: ROOM_ID });
+			await new Promise((r) => setTimeout(r, 20));
 
-			expect(roomStore.sessions.value).toHaveLength(0);
+			expect(countRequests(hub, 'room.get')).toBe(before);
 		});
 	});
 
@@ -179,70 +202,59 @@ describe('RoomStore — session lifecycle events', () => {
 	// -----------------------------------------------------------------------
 
 	describe('session.updated event', () => {
-		it('updates the title of a session when roomId matches', () => {
-			hub.fire('session.updated', {
-				sessionId: 'session-1',
-				roomId: ROOM_ID,
-				title: 'Renamed Session',
-			});
+		it('triggers a room.get re-fetch when roomId matches', async () => {
+			const before = countRequests(hub, 'room.get');
 
-			const updated = roomStore.sessions.value.find((s) => s.id === 'session-1');
-			expect(updated?.title).toBe('Renamed Session');
+			hub.fire('session.updated', { sessionId: 'session-1', roomId: ROOM_ID, status: 'archived' });
+
+			await vi.waitFor(() => {
+				expect(countRequests(hub, 'room.get')).toBeGreaterThan(before);
+			});
 		});
 
-		it('updates the status of a session (e.g., archiving)', () => {
-			hub.fire('session.updated', {
-				sessionId: 'session-1',
-				roomId: ROOM_ID,
-				status: 'archived',
+		it('updates sessions signal from server response after update', async () => {
+			// Server returns session-1 with archived status
+			hub.request.mockImplementation((method: string) => {
+				if (method === 'room.get')
+					return Promise.resolve(
+						makeOverview([
+							{ id: 'session-1', title: 'Session One', status: 'archived', lastActiveAt: 1000 },
+							{ id: 'session-2', title: 'Session Two', status: 'active', lastActiveAt: 2000 },
+						])
+					);
+				if (method === 'goal.list') return Promise.resolve({ goals: [] });
+				if (method === 'room.runtime.state') return Promise.resolve({ state: 'stopped' });
+				if (method === 'room.runtime.models')
+					return Promise.resolve({ leaderModel: null, workerModel: null });
+				return Promise.resolve({});
 			});
 
-			const updated = roomStore.sessions.value.find((s) => s.id === 'session-1');
-			expect(updated?.status).toBe('archived');
+			hub.fire('session.updated', { sessionId: 'session-1', roomId: ROOM_ID, status: 'archived' });
+
+			await vi.waitFor(() => {
+				const s1 = roomStore.sessions.value.find((s) => s.id === 'session-1');
+				expect(s1?.status).toBe('archived');
+			});
 		});
 
-		it('preserves unchanged fields when doing a partial update', () => {
-			hub.fire('session.updated', {
-				sessionId: 'session-1',
-				roomId: ROOM_ID,
-				title: 'New Title',
-			});
+		it('does NOT trigger a re-fetch for a different room', async () => {
+			const before = countRequests(hub, 'room.get');
 
-			const updated = roomStore.sessions.value.find((s) => s.id === 'session-1');
-			expect(updated?.status).toBe('active'); // unchanged
-			expect(updated?.lastActiveAt).toBe(1000); // unchanged
+			hub.fire('session.updated', { sessionId: 'session-1', roomId: OTHER_ROOM_ID, title: 'X' });
+
+			await new Promise((r) => setTimeout(r, 20));
+
+			expect(countRequests(hub, 'room.get')).toBe(before);
 		});
 
-		it('ignores update events for a different room', () => {
-			hub.fire('session.updated', {
-				sessionId: 'session-1',
-				roomId: OTHER_ROOM_ID,
-				title: 'Should not apply',
-			});
+		it('does NOT trigger a re-fetch when roomId is absent', async () => {
+			const before = countRequests(hub, 'room.get');
 
-			const session = roomStore.sessions.value.find((s) => s.id === 'session-1');
-			expect(session?.title).toBe('Session One'); // unchanged
-		});
+			hub.fire('session.updated', { sessionId: 'session-1', title: 'X' });
 
-		it('is a no-op when sessionId is not in the current room', () => {
-			hub.fire('session.updated', {
-				sessionId: 'session-unknown',
-				roomId: ROOM_ID,
-				title: 'Ghost Update',
-			});
+			await new Promise((r) => setTimeout(r, 20));
 
-			expect(roomStore.sessions.value).toHaveLength(2);
-		});
-
-		it('updates lastActiveAt when provided', () => {
-			hub.fire('session.updated', {
-				sessionId: 'session-2',
-				roomId: ROOM_ID,
-				lastActiveAt: 9999,
-			});
-
-			const updated = roomStore.sessions.value.find((s) => s.id === 'session-2');
-			expect(updated?.lastActiveAt).toBe(9999);
+			expect(countRequests(hub, 'room.get')).toBe(before);
 		});
 	});
 
@@ -251,17 +263,18 @@ describe('RoomStore — session lifecycle events', () => {
 	// -----------------------------------------------------------------------
 
 	describe('subscription cleanup on room switch', () => {
-		it('stops responding to events after room is deselected', async () => {
-			// Deselect room
+		it('stops triggering re-fetches after room is deselected', async () => {
 			await roomStore.select(null);
 
-			// Reset sessions to empty (as doSelect clears them)
-			// Now fire an event — it should not crash or update anything
+			const before = countRequests(hub, 'room.get');
+
 			expect(() => {
 				hub.fire('session.deleted', { sessionId: 'session-1', roomId: ROOM_ID });
 			}).not.toThrow();
 
-			expect(roomStore.sessions.value).toHaveLength(0);
+			await new Promise((r) => setTimeout(r, 20));
+
+			expect(countRequests(hub, 'room.get')).toBe(before);
 		});
 	});
 });

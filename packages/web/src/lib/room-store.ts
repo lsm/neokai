@@ -362,42 +362,31 @@ class RoomStore {
 			this.cleanupFunctions.push(unsubRuntimeState);
 
 			// 5. Session lifecycle events (delete / update / archive)
+			// Re-fetch the authoritative session list from the server on any session change.
+			// This avoids manual array splicing and self-heals any events missed during
+			// WebSocket reconnect gaps.
 			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
 				'session.deleted',
 				(event) => {
 					if (event.roomId === roomId) {
-						this.sessions.value = this.sessions.value.filter((s) => s.id !== event.sessionId);
+						this.refresh().catch((err) => {
+							logger.error('Failed to refresh after session.deleted:', err);
+						});
 					}
 				}
 			);
 			this.cleanupFunctions.push(unsubSessionDeleted);
 
-			const unsubSessionUpdated = hub.onEvent<{
-				sessionId: string;
-				roomId?: string;
-				title?: string;
-				status?: string;
-				lastActiveAt?: number;
-			}>('session.updated', (event) => {
-				if (event.roomId === roomId) {
-					const idx = this.sessions.value.findIndex((s) => s.id === event.sessionId);
-					if (idx >= 0) {
-						const existing = this.sessions.value[idx];
-						this.sessions.value = [
-							...this.sessions.value.slice(0, idx),
-							{
-								...existing,
-								...(event.title !== undefined && { title: event.title }),
-								...(event.status !== undefined && { status: event.status }),
-								...(event.lastActiveAt !== undefined && {
-									lastActiveAt: event.lastActiveAt,
-								}),
-							},
-							...this.sessions.value.slice(idx + 1),
-						];
+			const unsubSessionUpdated = hub.onEvent<{ sessionId: string; roomId?: string }>(
+				'session.updated',
+				(event) => {
+					if (event.roomId === roomId) {
+						this.refresh().catch((err) => {
+							logger.error('Failed to refresh after session.updated:', err);
+						});
 					}
 				}
-			});
+			);
 			this.cleanupFunctions.push(unsubSessionUpdated);
 
 			// 6. Fetch initial state via RPC
