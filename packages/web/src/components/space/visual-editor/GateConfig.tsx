@@ -14,7 +14,7 @@ import type { WorkflowConditionType } from '@neokai/shared';
 
 export interface ConditionDraft {
 	type: WorkflowConditionType;
-	/** Shell expression for 'condition' type */
+	/** Expression: shell command for 'condition' type, match value for 'task_result' type */
 	expression?: string;
 }
 
