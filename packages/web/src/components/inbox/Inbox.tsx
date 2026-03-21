@@ -144,9 +144,7 @@ export function Inbox() {
 		<div class="flex flex-col h-full">
 			<div class="px-6 py-4 border-b border-dark-700 flex items-center justify-between">
 				<h1 class="text-lg font-semibold text-gray-100">Inbox</h1>
-				<span class="text-xs text-gray-500">
-					{count} awaiting review · approve or reject below
-				</span>
+				<span class="text-xs text-gray-500">{count} awaiting review · approve or reject below</span>
 			</div>
 			<div class="flex-1 overflow-y-auto">
 				{isLoading && (
