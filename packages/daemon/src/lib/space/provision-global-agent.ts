@@ -9,6 +9,7 @@
  */
 
 import type { McpServerConfig } from '@neokai/shared';
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type { SessionManager } from '../session-manager';
 import type { SpaceManager } from './managers/space-manager';
 import type { SpaceAgentManager } from './managers/space-agent-manager';
@@ -31,6 +32,8 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	spaceRuntimeService: SpaceRuntimeService;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Database instance passed through to GlobalSpacesToolsConfig for SpaceTaskManager creation. */
+	db: BunDatabase;
 	/** Shared mutable state for the active space context. Created externally so RPC handlers can use the same reference. */
 	state: GlobalSpacesState;
 }
@@ -53,6 +56,7 @@ export async function provisionGlobalSpacesAgent(
 		spaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
+		db,
 		state,
 	} = deps;
 
@@ -92,6 +96,7 @@ export async function provisionGlobalSpacesAgent(
 			workflowManager: spaceWorkflowManager,
 			taskRepo,
 			workflowRunRepo,
+			db,
 		},
 		state
 	);
