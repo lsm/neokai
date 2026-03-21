@@ -32,7 +32,7 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'home' | 'chats' | 'rooms' | 'projects' | 'spaces' | 'settings';
+export type NavSection = 'home' | 'chats' | 'rooms' | 'inbox' | 'projects' | 'spaces' | 'settings';
 export const navSectionSignal = signal<NavSection>('home');
 
 // Space navigation signals

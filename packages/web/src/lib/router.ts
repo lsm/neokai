@@ -29,6 +29,7 @@ const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
 const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
 const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
+const INBOX_ROUTE_PATTERN = /^\/inbox$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 /** Legacy: /room/:id/chat was removed — treat as plain room route for backwards compat */
 const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
@@ -511,6 +512,49 @@ export function navigateToRooms(): void {
 }
 
 /**
+ * Navigate to Inbox section
+ * Sets nav section to 'inbox' and updates URL to /inbox
+ */
+export function navigateToInbox(replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const currentPath = getCurrentPath();
+	if (currentPath === '/inbox') {
+		navSectionSignal.value = 'inbox';
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ path: '/inbox' }, '', '/inbox');
+
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		navSectionSignal.value = 'inbox';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Navigate to Settings section
  * Sets nav section to 'settings' and navigates home
  */
@@ -785,6 +829,15 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
+	} else if (INBOX_ROUTE_PATTERN.test(path)) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'inbox';
 	} else if (SPACES_ROUTE_PATTERN.test(path)) {
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -895,6 +948,15 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
+	} else if (INBOX_ROUTE_PATTERN.test(initialPath)) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'inbox';
 	} else if (SPACES_ROUTE_PATTERN.test(initialPath)) {
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
