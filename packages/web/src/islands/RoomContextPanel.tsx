@@ -19,6 +19,7 @@ import {
 	navigateToRoomTask,
 } from '../lib/router';
 import { currentRoomSessionIdSignal, currentRoomTaskIdSignal } from '../lib/signals';
+import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
 function formatRelativeTime(timestamp: number): string {
@@ -76,7 +77,6 @@ interface RoomContextPanelProps {
 export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) {
 	const sessions = roomStore.sessions.value;
 	const tasks = roomStore.tasks.value;
-	const goals = roomStore.goals.value;
 	const [showArchived, setShowArchived] = useState(false);
 	const [expandedGoals, setExpandedGoals] = useState<Set<string>>(() => new Set());
 	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
@@ -88,7 +88,8 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		[tasks]
 	);
 
-	// Goals data
+	// Goals data — show only active goals; count matches the rendered list
+	const activeGoals = roomStore.activeGoals.value;
 	const tasksByGoalId = roomStore.tasksByGoalId.value;
 
 	// Orphan tasks by tab — read signal .value directly (no useMemo) so Preact
@@ -162,8 +163,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				navigateToRoomSession(roomId, sessionId);
 				onNavigate?.();
 			} catch {
-				// createSession can fail if not connected or RPC errors — silently ignore
-				// since the user will see the session list unchanged as feedback.
+				toast.error('Failed to create session');
 			}
 		},
 		[roomId, onNavigate]
@@ -243,11 +243,11 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
 				{/* Goals section */}
-				<CollapsibleSection title="Goals" count={goals.length}>
-					{goals.length === 0 ? (
+				<CollapsibleSection title="Goals" count={activeGoals.length}>
+					{activeGoals.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No goals</div>
 					) : (
-						goals.map((goal) => {
+						activeGoals.map((goal) => {
 							const isExpanded = expandedGoals.has(goal.id);
 							const linkedTasks = tasksByGoalId.get(goal.id) ?? [];
 							return (

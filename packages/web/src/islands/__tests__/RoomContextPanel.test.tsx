@@ -21,12 +21,18 @@ const {
 	mockNavigateToRoom,
 	mockNavigateToRoomAgent,
 	mockNavigateToRoomTask,
+	mockToast,
 } = vi.hoisted(() => ({
 	mockCreateSession: vi.fn().mockResolvedValue('new-session-id'),
 	mockNavigateToRoomSession: vi.fn(),
 	mockNavigateToRoom: vi.fn(),
 	mockNavigateToRoomAgent: vi.fn(),
 	mockNavigateToRoomTask: vi.fn(),
+	mockToast: vi.fn(),
+}));
+
+vi.mock('../../lib/toast.ts', () => ({
+	toast: { error: mockToast },
 }));
 
 // -------------------------------------------------------
@@ -40,6 +46,7 @@ let mockCurrentRoomSessionIdSignal: ReturnType<typeof signal<string | null>>;
 let mockCurrentRoomTaskIdSignal: ReturnType<typeof signal<string | null>>;
 
 // Computed signals derived from the mocks
+let mockActiveGoals: ReturnType<typeof computed>;
 let mockTasksByGoalId: ReturnType<typeof computed>;
 let mockOrphanTasks: ReturnType<typeof computed>;
 let mockOrphanTasksActive: ReturnType<typeof computed>;
@@ -52,6 +59,8 @@ function initSignals() {
 	mockGoalsSignal = signal([]);
 	mockCurrentRoomSessionIdSignal = signal(null);
 	mockCurrentRoomTaskIdSignal = signal(null);
+
+	mockActiveGoals = computed(() => mockGoalsSignal.value.filter((g) => g.status === 'active'));
 
 	mockTasksByGoalId = computed(() => {
 		const taskMap = new Map();
@@ -98,7 +107,7 @@ vi.mock('../../lib/room-store.ts', () => ({
 		return {
 			tasks: mockTasksSignal,
 			sessions: mockSessionsSignal,
-			goals: mockGoalsSignal,
+			activeGoals: mockActiveGoals,
 			tasksByGoalId: mockTasksByGoalId,
 			orphanTasksActive: mockOrphanTasksActive,
 			orphanTasksReview: mockOrphanTasksReview,
@@ -244,16 +253,26 @@ describe('RoomContextPanel', () => {
 
 	// -- Goals section --
 
-	it('renders Goals section with count of all goals', () => {
+	it('renders Goals section with count of active goals only', () => {
 		mockGoalsSignal.value = [
 			makeGoal('g1', 'Goal 1'),
 			makeGoal('g2', 'Goal 2'),
 			makeGoal('g3', 'Archived Goal', [], 'archived'),
 		];
 		render(<RoomContextPanel roomId="room-1" />);
-		// The CollapsibleSection shows title and count matching total goals shown
 		expect(screen.getByText('Goals')).toBeTruthy();
-		expect(screen.getByText('(3)')).toBeTruthy();
+		// Count matches active goals (excludes archived)
+		expect(screen.getByText('(2)')).toBeTruthy();
+	});
+
+	it('does not render archived goals in the list', () => {
+		mockGoalsSignal.value = [
+			makeGoal('g1', 'Active Goal'),
+			makeGoal('g2', 'Archived Goal', [], 'archived'),
+		];
+		render(<RoomContextPanel roomId="room-1" />);
+		expect(screen.getByText('Active Goal')).toBeTruthy();
+		expect(screen.queryByText('Archived Goal')).toBeNull();
 	});
 
 	it('expands a goal to show linked tasks on click', () => {
@@ -409,6 +428,19 @@ describe('RoomContextPanel', () => {
 		expect(mockCreateSession).toHaveBeenCalledWith();
 		expect(mockNavigateToRoomSession).toHaveBeenCalledWith('room-1', 'new-session-id');
 		expect(onNavigate).toHaveBeenCalledOnce();
+	});
+
+	it('shows toast and does not navigate when createSession fails', async () => {
+		mockCreateSession.mockRejectedValue(new Error('not connected'));
+		render(<RoomContextPanel roomId="room-1" />);
+
+		const createBtn = screen.getByLabelText('Create session');
+		fireEvent.click(createBtn);
+
+		await vi.waitFor(() => {
+			expect(mockToast).toHaveBeenCalledWith('Failed to create session');
+		});
+		expect(mockNavigateToRoomSession).not.toHaveBeenCalled();
 	});
 
 	it('navigates to session on click and calls onNavigate', () => {
