@@ -165,6 +165,12 @@ export interface SpaceTask {
 	prCreatedAt?: number | null;
 	/** Archive timestamp (milliseconds since epoch) — orthogonal to status */
 	archivedAt?: number | null;
+	/**
+	 * ID of the Task Agent session that orchestrates this task's workflow execution.
+	 * Set when the task transitions from 'pending' to 'in_progress' and a Task Agent
+	 * session is created. Null when no Task Agent has been spawned yet.
+	 */
+	taskAgentSessionId?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Start timestamp (milliseconds since epoch) */
@@ -196,6 +202,11 @@ export interface CreateSpaceTaskParams {
 	status?: SpaceTaskStatus;
 	/** ID of planning task that created this task */
 	createdByTaskId?: string;
+	/**
+	 * ID of the Task Agent session that orchestrates this task's workflow execution.
+	 * Set when the task transitions from 'pending' to 'in_progress'.
+	 */
+	taskAgentSessionId?: string | null;
 }
 
 /**
@@ -221,6 +232,11 @@ export interface UpdateSpaceTaskParams {
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
 	inputDraft?: string | null;
+	/**
+	 * ID of the Task Agent session that orchestrates this task's workflow execution.
+	 * Set when spawning a Task Agent; null to clear the reference.
+	 */
+	taskAgentSessionId?: string | null;
 }
 
 // ============================================================================
