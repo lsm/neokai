@@ -1066,27 +1066,12 @@ describe('WorkflowExecutor', () => {
 
 	describe('goalId propagation', () => {
 		test('task created by advance() inherits goalId from run', async () => {
-			const steps = [
+			const { workflow } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
 				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
-			];
+			]);
 
-			const stepsData = steps.map((s) => ({
-				id: s.id,
-				name: s.name,
-				agentId: s.agentId,
-			}));
-
-			const transitions = [{ from: STEP_A, to: STEP_B, order: 0 }];
-
-			const workflow = workflowRepo.createWorkflow({
-				spaceId: SPACE_ID,
-				name: 'WF-goalId-test',
-				steps: stepsData,
-				transitions,
-				startStepId: STEP_A,
-			});
-
+			// Create run separately to set goalId
 			const run = runRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
