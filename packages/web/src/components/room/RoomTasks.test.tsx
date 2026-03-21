@@ -2,13 +2,26 @@
  * Tests for RoomTasks Component
  *
  * Tests task filter tabs, tab switching, task grouping by status,
- * empty states, click handling, and section rendering for all tabs.
+ * empty states, click handling, and section rendering for all tabs:
+ * Active (draft + pending + in_progress), Review (review + needs_attention),
+ * Done (completed + cancelled), Archived (archived, hidden by default).
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { TaskSummary } from '@neokai/shared';
-import { RoomTasks, selectedTabSignal } from './RoomTasks';
+import { RoomTasks, selectedTabSignal, getInitialTab } from './RoomTasks';
+
+// Mock toast to prevent side effects from toast.rejected() calls
+vi.mock('../../lib/toast.ts', () => ({
+	toast: {
+		rejected: vi.fn(),
+		approved: vi.fn(),
+		error: vi.fn(),
+		success: vi.fn(),
+		info: vi.fn(),
+	},
+}));
 
 describe('RoomTasks', () => {
 	afterEach(() => {
@@ -62,7 +75,7 @@ describe('RoomTasks', () => {
 			selectedTabSignal.value = 'active';
 		});
 
-		it('should show all four tabs with counts', () => {
+		it('should show Active, Review, Done tabs (Archived hidden when count is 0)', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
 				createTask('t2', 'review'),
@@ -75,24 +88,34 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Active');
 			expect(container.textContent).toContain('Review');
 			expect(container.textContent).toContain('Done');
-			expect(container.textContent).toContain('Needs Attention');
+			// Archived tab hidden when no archived tasks
+			expect(container.textContent).not.toContain('Archived');
+		});
+
+		it('should show Archived tab when there are archived tasks', () => {
+			const tasks = [createTask('t1', 'in_progress'), createTask('t2', 'archived')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Archived');
 		});
 
 		it('should show correct counts on tabs', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
 				createTask('t2', 'pending'),
-				createTask('t3', 'review'),
-				createTask('t4', 'completed'),
+				createTask('t3', 'draft'),
+				createTask('t4', 'review'),
 				createTask('t5', 'needs_attention'),
-				createTask('t6', 'cancelled'),
+				createTask('t6', 'completed'),
+				createTask('t7', 'cancelled'),
 			];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			// Active: 2 (in_progress + pending)
+			// Active: 3 (in_progress + pending + draft)
 			expect(container.textContent).toContain('Active');
-			expect(container.textContent).toContain('2');
+			expect(container.textContent).toContain('3');
 		});
 	});
 
@@ -219,6 +242,20 @@ describe('RoomTasks', () => {
 			expect(onTaskClick).not.toHaveBeenCalled();
 		});
 
+		it('should show needs_attention tasks under Review tab', () => {
+			const tasks = [
+				createTask('t1', 'review', { title: 'Review task' }),
+				createTask('t2', 'needs_attention', { title: 'Attention task', error: 'Something broke' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Awaiting Review');
+			expect(container.textContent).toContain('Needs Attention');
+			expect(container.textContent).toContain('Review task');
+			expect(container.textContent).toContain('Attention task');
+		});
+
 		it('should show empty state when no review tasks', () => {
 			const tasks = [createTask('t1', 'pending')];
 
@@ -264,106 +301,9 @@ describe('RoomTasks', () => {
 			expect(greenHeader).toBeTruthy();
 		});
 
-		it('should show empty state when no completed tasks', () => {
-			const tasks = [createTask('t1', 'pending')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('No completed tasks');
-		});
-	});
-
-	describe('Needs Attention Tab', () => {
-		beforeEach(() => {
-			selectedTabSignal.value = 'needs_attention';
-		});
-
-		it('should render needs attention section with red header', () => {
-			const tasks = [createTask('t1', 'needs_attention', { title: 'Broken task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const header = container.querySelector('h3.text-red-400');
-			expect(header).toBeTruthy();
-			expect(header?.textContent).toContain('Needs Attention (1)');
-		});
-
-		it('should show needs attention task titles', () => {
-			const tasks = [createTask('t1', 'needs_attention', { title: 'Broken task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('Broken task');
-		});
-
-		it('should have red background header for needs attention section', () => {
-			const tasks = [createTask('t1', 'needs_attention')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const redHeader = container.querySelector('.bg-red-900\\/20');
-			expect(redHeader).toBeTruthy();
-		});
-
-		it('should show error message for needs attention tasks with error', () => {
+		it('should show cancelled tasks under Done tab', () => {
 			const tasks = [
-				createTask('t1', 'needs_attention', {
-					title: 'Broken task',
-					error: 'Something went wrong',
-				}),
-			];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('Something went wrong');
-		});
-
-		it('should not show error message for needs attention tasks without error', () => {
-			const tasks = [createTask('t1', 'needs_attention', { title: 'Broken task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			// No error paragraph should appear
-			const errorEls = container.querySelectorAll('.text-red-400');
-			// Only the header elements should have text-red-400, no error paragraph
-			for (const el of Array.from(errorEls)) {
-				expect(el.tagName.toLowerCase()).not.toBe('p');
-			}
-		});
-
-		it('should render cancelled section with muted gray header', () => {
-			const tasks = [createTask('t1', 'cancelled', { title: 'Stopped task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const header = container.querySelector('.text-gray-500');
-			expect(header).toBeTruthy();
-			expect(header?.textContent).toContain('Cancelled (1)');
-		});
-
-		it('should show cancelled task titles', () => {
-			const tasks = [createTask('t1', 'cancelled', { title: 'Stopped task' })];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			expect(container.textContent).toContain('Stopped task');
-		});
-
-		it('should not show View details link for cancelled tasks', () => {
-			const onView = vi.fn();
-			const tasks = [createTask('t1', 'cancelled')];
-
-			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			);
-			expect(viewBtn).toBeFalsy();
-		});
-
-		it('should render cancelled separately from needs attention tasks', () => {
-			const tasks = [
-				createTask('t1', 'needs_attention', { title: 'Error task' }),
+				createTask('t1', 'completed', { title: 'Finished task' }),
 				createTask('t2', 'cancelled', { title: 'Stopped task' }),
 			];
 
@@ -372,16 +312,50 @@ describe('RoomTasks', () => {
 			const headers = container.querySelectorAll('h3');
 			const headerTexts = Array.from(headers).map((h) => h.textContent);
 
-			expect(headerTexts).toContain('Needs Attention (1)');
+			expect(headerTexts).toContain('Completed (1)');
 			expect(headerTexts).toContain('Cancelled (1)');
 		});
 
-		it('should show empty state when no needs attention or cancelled tasks', () => {
+		it('should show empty state when no completed or cancelled tasks', () => {
 			const tasks = [createTask('t1', 'pending')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			expect(container.textContent).toContain('No tasks needing attention');
+			expect(container.textContent).toContain('No completed tasks');
+		});
+	});
+
+	describe('Archived Tab', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'archived';
+		});
+
+		it('should render archived section with muted header', () => {
+			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const header = container.querySelector('h3.text-gray-500');
+			expect(header).toBeTruthy();
+			expect(header?.textContent).toContain('Archived (1)');
+		});
+
+		it('should show archived task titles', () => {
+			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Old task');
+		});
+
+		it('should auto-reset to active tab when no archived tasks exist', () => {
+			const tasks = [createTask('t1', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Auto-reset kicks in, shows active tab content instead of archived empty state
+			expect(container.textContent).toContain('Pending (1)');
+			expect(selectedTabSignal.value).toBe('active');
 		});
 	});
 
@@ -423,21 +397,21 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Completed (1)');
 		});
 
-		it('should switch to needs attention tab when clicked', () => {
+		it('should switch to archived tab when clicked', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
-				createTask('t2', 'needs_attention', { title: 'Needs attention task' }),
+				createTask('t2', 'archived', { title: 'Archived task' }),
 			];
 
 			// Set to active BEFORE render
 			selectedTabSignal.value = 'active';
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			// Click needs attention tab
-			clickTab(container, 'Needs Attention');
+			// Click archived tab
+			clickTab(container, 'Archived');
 
-			// Should see needs attention section
-			expect(container.textContent).toContain('Needs Attention (1)');
+			// Should see archived section
+			expect(container.textContent).toContain('Archived (1)');
 		});
 	});
 
@@ -637,7 +611,7 @@ describe('RoomTasks', () => {
 		});
 
 		it('should render PR button for needs_attention task with prUrl', () => {
-			selectedTabSignal.value = 'needs_attention';
+			selectedTabSignal.value = 'review';
 			const tasks = [
 				createTask('t1', 'needs_attention', {
 					prUrl: 'https://github.com/org/repo/pull/30',
@@ -695,7 +669,7 @@ describe('RoomTasks', () => {
 		});
 
 		it('should apply red left border to needs_attention tasks', () => {
-			selectedTabSignal.value = 'needs_attention';
+			selectedTabSignal.value = 'review';
 			const tasks = [createTask('t1', 'needs_attention')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
@@ -705,12 +679,22 @@ describe('RoomTasks', () => {
 		});
 
 		it('should apply dark gray left border to cancelled tasks', () => {
-			selectedTabSignal.value = 'needs_attention';
+			selectedTabSignal.value = 'done';
 			const tasks = [createTask('t1', 'cancelled')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
 			const item = container.querySelector('.border-l-gray-700');
+			expect(item).toBeTruthy();
+		});
+
+		it('should apply muted border to archived tasks', () => {
+			selectedTabSignal.value = 'archived';
+			const tasks = [createTask('t1', 'archived')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const item = container.querySelector('.border-l-gray-800');
 			expect(item).toBeTruthy();
 		});
 	});
@@ -767,7 +751,9 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
-			expect(container.querySelector('textarea')).toBeTruthy();
+			// Form wrapper should be expanded (max-h-48 replaces max-h-0)
+			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
+			expect(formWrapper?.classList.contains('max-h-48')).toBe(true);
 			expect(container.textContent).toContain('Confirm Reject');
 			expect(container.textContent).toContain('Cancel');
 		});
@@ -783,15 +769,16 @@ describe('RoomTasks', () => {
 				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
-			expect(container.querySelector('textarea')).toBeTruthy();
+			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
+			expect(formWrapper?.classList.contains('max-h-48')).toBe(true);
 
-			// Cancel
+			// Cancel — form should collapse (max-h-0)
 			const cancelBtn = Array.from(container.querySelectorAll('button')).find(
 				(b) => b.textContent?.trim() === 'Cancel'
 			) as HTMLButtonElement;
 			fireEvent.click(cancelBtn);
 
-			expect(container.querySelector('textarea')).toBeFalsy();
+			expect(formWrapper?.classList.contains('max-h-0')).toBe(true);
 		});
 
 		it('Confirm Reject button should be disabled when feedback is empty', () => {
@@ -836,7 +823,7 @@ describe('RoomTasks', () => {
 			expect(onReject).toHaveBeenCalledWith('task-99', 'Needs more work');
 		});
 
-		it('should close form after Confirm Reject is clicked', () => {
+		it('should collapse form after Confirm Reject is clicked', () => {
 			const onReject = vi.fn();
 			const tasks = [createTask('t1', 'review')];
 
@@ -856,7 +843,9 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(confirmBtn);
 
-			expect(container.querySelector('textarea')).toBeFalsy();
+			// Form should be collapsed (max-h-0)
+			const formWrapper = container.querySelector('.overflow-hidden.transition-all');
+			expect(formWrapper?.classList.contains('max-h-0')).toBe(true);
 		});
 
 		it('should NOT call onTaskClick when Reject button is clicked', () => {
@@ -948,6 +937,74 @@ describe('RoomTasks', () => {
 			expect(onApprove).toHaveBeenCalledWith('task-55');
 			expect(onTaskClick).not.toHaveBeenCalled();
 		});
+
+		it('should show "✓ Approved" on button and disable it immediately after click', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-99', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(approveBtn.textContent?.trim()).toContain('Approved');
+			expect(approveBtn.disabled).toBe(true);
+		});
+
+		it('should add opacity-40 to card after Approve is clicked', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-98', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			const fadedCard = container.querySelector('.opacity-40');
+			expect(fadedCard).toBeTruthy();
+		});
+
+		it('should add border-l-green-500 to card after Approve is clicked', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-97', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			const greenCard = container.querySelector('.border-l-green-500');
+			expect(greenCard).toBeTruthy();
+		});
+
+		it('should revert Approve button text to "Approve" after 300ms', async () => {
+			vi.useFakeTimers();
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-96', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(approveBtn.textContent?.trim()).toContain('Approved');
+
+			await act(async () => {
+				vi.advanceTimersByTime(310);
+			});
+			expect(approveBtn.textContent?.trim()).toBe('Approve');
+			expect(approveBtn.disabled).toBe(false);
+
+			vi.useRealTimers();
+		});
 	});
 
 	describe('Worker Summary (currentStep)', () => {
@@ -984,6 +1041,124 @@ describe('RoomTasks', () => {
 			// The review expanded section is not rendered for non-review tasks
 			const summaryEl = container.querySelector('p.italic');
 			expect(summaryEl).toBeFalsy();
+		});
+	});
+
+	describe('localStorage Migration (getInitialTab)', () => {
+		function mockStoredTab(value: string | null) {
+			vi.mocked(localStorage.getItem).mockImplementation((key) => {
+				if (key === 'neokai:room:taskFilterTab') return value;
+				return null;
+			});
+		}
+
+		it('should migrate "needs_attention" to "review"', () => {
+			mockStoredTab('needs_attention');
+			expect(getInitialTab()).toBe('review');
+		});
+
+		it('should migrate "failed" to "review"', () => {
+			mockStoredTab('failed');
+			expect(getInitialTab()).toBe('review');
+		});
+
+		it('should preserve valid tab values', () => {
+			mockStoredTab('active');
+			expect(getInitialTab()).toBe('active');
+
+			mockStoredTab('review');
+			expect(getInitialTab()).toBe('review');
+
+			mockStoredTab('done');
+			expect(getInitialTab()).toBe('done');
+
+			mockStoredTab('archived');
+			expect(getInitialTab()).toBe('archived');
+		});
+
+		it('should default to "active" for unknown values', () => {
+			mockStoredTab('garbage');
+			expect(getInitialTab()).toBe('active');
+		});
+
+		it('should default to "active" when no value stored', () => {
+			mockStoredTab(null);
+			expect(getInitialTab()).toBe('active');
+		});
+	});
+
+	describe('Tab Grouping Consistency', () => {
+		it('needs_attention tasks appear under review tab, not a separate tab', () => {
+			selectedTabSignal.value = 'review';
+			const tasks = [createTask('t1', 'needs_attention', { title: 'Migrated task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Needs Attention (1)');
+			expect(container.textContent).toContain('Migrated task');
+		});
+
+		it('cancelled tasks appear under done tab', () => {
+			selectedTabSignal.value = 'done';
+			const tasks = [createTask('t1', 'cancelled', { title: 'Cancelled task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Cancelled (1)');
+			expect(container.textContent).toContain('Cancelled task');
+		});
+
+		it('draft tasks appear under active tab', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'draft', { title: 'Draft task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Draft (1)');
+			expect(container.textContent).toContain('Draft task');
+		});
+
+		it('there is no needs_attention tab button in the tab bar', () => {
+			const tasks = [
+				createTask('t1', 'needs_attention'),
+				createTask('t2', 'in_progress'),
+				createTask('t3', 'review'),
+			];
+
+			selectedTabSignal.value = 'active';
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const tabBar = container.querySelector('.border-b.border-dark-700');
+			const tabButtons = tabBar?.querySelectorAll('button') ?? [];
+			const tabButtonLabels = Array.from(tabButtons).map((t) =>
+				t.textContent?.replace(/\d/g, '').trim()
+			);
+			expect(tabButtonLabels).not.toContain('Needs Attention');
+		});
+	});
+
+	describe('Archived Tab Auto-Reset', () => {
+		it('should auto-reset to active when archived tab selected but no archived tasks', () => {
+			selectedTabSignal.value = 'archived';
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Should show active tab content, not archived empty state
+			expect(container.textContent).toContain('In Progress');
+			expect(container.textContent).not.toContain('No archived tasks');
+			// Signal should be reset
+			expect(selectedTabSignal.value).toBe('active');
+		});
+
+		it('should stay on archived tab when archived tasks exist', () => {
+			selectedTabSignal.value = 'archived';
+			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Archived (1)');
+			expect(selectedTabSignal.value).toBe('archived');
 		});
 	});
 });

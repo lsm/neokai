@@ -13,6 +13,7 @@
 
 import { useState } from 'preact/hooks';
 import type { SpaceWorkflow, SpaceAgent } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowStepCard } from './WorkflowStepCard';
 import type { StepDraft, ConditionDraft } from './WorkflowStepCard';
@@ -59,7 +60,7 @@ export const TEMPLATES: WorkflowTemplate[] = [
 // ============================================================================
 
 function makeLocalId(): string {
-	return crypto.randomUUID();
+	return generateUUID();
 }
 
 function makeEmptyStep(): StepDraft {
@@ -322,7 +323,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 		try {
 			// Generate IDs for new steps
-			const stepIds = steps.map((s) => s.id ?? crypto.randomUUID());
+			const stepIds = steps.map((s) => s.id ?? generateUUID());
 
 			// Map from the display ID used in WorkflowRulesEditor (s.id ?? s.localId)
 			// to the final persisted step ID, so appliesTo references survive the save.
@@ -356,7 +357,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 			if (isEditing && workflow) {
 				// Update needs full WorkflowRule objects with IDs
 				const updateRules = filteredRuleDrafts.map((r) => ({
-					id: r.id ?? crypto.randomUUID(),
+					id: r.id ?? generateUUID(),
 					name: r.name.trim() || 'Untitled Rule',
 					content: r.content,
 					// Remap display IDs (localId for new steps) to final persisted step IDs

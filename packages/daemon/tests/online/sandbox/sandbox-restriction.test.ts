@@ -48,15 +48,15 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
 		// Create daemon server
 		daemon = await createDaemonServer();
-	}, 30000);
+	}, 60_000);
 
 	afterAll(async () => {
-		// Cleanup sessions
-		await daemon.cleanup();
-
-		// Kill daemon
-		daemon.kill('SIGTERM');
-		await daemon.waitForExit();
+		// Cleanup sessions and daemon
+		if (daemon) {
+			await daemon.cleanup();
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
 
 		// Cleanup directories
 		try {

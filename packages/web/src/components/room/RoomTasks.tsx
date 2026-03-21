@@ -2,31 +2,27 @@
  * RoomTasks Component
  *
  * Displays tasks with filter tabs for organization:
- * - Active: pending + in_progress
- * - Review: review status (awaiting human action)
- * - Done: completed
- * - Needs Attention: needs_attention + cancelled
+ * - Active: draft + pending + in_progress
+ * - Review: review + needs_attention (awaiting human action)
+ * - Done: completed + cancelled
+ * - Archived: archived (hidden by default, expandable)
  */
 
 import { useState } from 'preact/hooks';
 import { signal, effect } from '@preact/signals';
 import type { TaskSummary, TaskStatus } from '@neokai/shared';
+import { toast } from '../../lib/toast.ts';
 
 /** Tab filter types */
-export type TaskFilterTab = 'active' | 'review' | 'done' | 'needs_attention';
+export type TaskFilterTab = 'active' | 'review' | 'done' | 'archived';
 
-/** Get initial tab from localStorage */
-function getInitialTab(): TaskFilterTab {
+/** Get initial tab from localStorage - exported for testing */
+export function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
-	// Migrate old 'failed' tab value to 'needs_attention'
-	if (stored === 'failed') return 'needs_attention';
-	if (
-		stored === 'active' ||
-		stored === 'review' ||
-		stored === 'done' ||
-		stored === 'needs_attention'
-	) {
+	// Migrate old tab values: 'failed' and 'needs_attention' now live under 'review'
+	if (stored === 'failed' || stored === 'needs_attention') return 'review';
+	if (stored === 'active' || stored === 'review' || stored === 'done' || stored === 'archived') {
 		return stored;
 	}
 	return 'active';
@@ -54,11 +50,12 @@ interface RoomTasksProps {
 /** Get count of tasks for each filter tab */
 function getTabCounts(tasks: TaskSummary[]) {
 	return {
-		active: tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length,
-		review: tasks.filter((t) => t.status === 'review').length,
-		done: tasks.filter((t) => t.status === 'completed').length,
-		needs_attention: tasks.filter((t) => t.status === 'needs_attention' || t.status === 'cancelled')
-			.length,
+		active: tasks.filter(
+			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+		).length,
+		review: tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention').length,
+		done: tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled').length,
+		archived: tasks.filter((t) => t.status === 'archived').length,
 	};
 }
 
@@ -66,19 +63,23 @@ function getTabCounts(tasks: TaskSummary[]) {
 function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary[] {
 	switch (tab) {
 		case 'active':
-			return tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+			return tasks.filter(
+				(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+			);
 		case 'review':
-			return tasks.filter((t) => t.status === 'review');
+			return tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention');
 		case 'done':
-			return tasks.filter((t) => t.status === 'completed');
-		case 'needs_attention':
-			return tasks.filter((t) => t.status === 'needs_attention' || t.status === 'cancelled');
+			return tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled');
+		case 'archived':
+			return tasks.filter((t) => t.status === 'archived');
 	}
 }
 
 /** Map task status to a left border color class */
 function getStatusBorderColor(status: TaskStatus): string {
 	switch (status) {
+		case 'draft':
+			return 'border-l-gray-600';
 		case 'pending':
 			return 'border-l-gray-500';
 		case 'in_progress':
@@ -91,14 +92,23 @@ function getStatusBorderColor(status: TaskStatus): string {
 			return 'border-l-red-500';
 		case 'cancelled':
 			return 'border-l-gray-700';
+		case 'archived':
+			return 'border-l-gray-800';
 		default:
 			return 'border-l-transparent';
 	}
 }
 
 export function RoomTasks({ tasks, onTaskClick, onView, onReject, onApprove }: RoomTasksProps) {
-	const selectedTab = selectedTabSignal.value;
+	let selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
+
+	// Auto-reset to 'active' when archived tab is selected but no archived tasks exist
+	if (selectedTab === 'archived' && tabCounts.archived === 0) {
+		selectedTab = 'active';
+		selectedTabSignal.value = 'active';
+	}
+
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
 
 	const handleTabClick = (tab: TaskFilterTab) => {
@@ -138,13 +148,15 @@ export function RoomTasks({ tasks, onTaskClick, onView, onReject, onApprove }: R
 					onClick={() => handleTabClick('done')}
 					variant="green"
 				/>
-				<TabButton
-					label="Needs Attention"
-					count={tabCounts.needs_attention}
-					isActive={selectedTab === 'needs_attention'}
-					onClick={() => handleTabClick('needs_attention')}
-					variant="red"
-				/>
+				{tabCounts.archived > 0 && (
+					<TabButton
+						label="Archived"
+						count={tabCounts.archived}
+						isActive={selectedTab === 'archived'}
+						onClick={() => handleTabClick('archived')}
+						variant="gray"
+					/>
+				)}
 			</div>
 
 			{/* Task List */}
@@ -177,7 +189,7 @@ function TabButton({
 	count: number;
 	isActive: boolean;
 	onClick: () => void;
-	variant?: 'default' | 'purple' | 'green' | 'red';
+	variant?: 'default' | 'purple' | 'green' | 'red' | 'gray';
 }) {
 	const baseClasses =
 		'px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5';
@@ -195,6 +207,9 @@ function TabButton({
 		red: isActive
 			? 'text-red-400 border-b-2 border-red-400'
 			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
+		gray: isActive
+			? 'text-gray-500 border-b-2 border-gray-500'
+			: 'text-gray-500 hover:text-gray-400 border-b-2 border-transparent',
 	};
 
 	return (
@@ -209,7 +224,9 @@ function TabButton({
 								? 'bg-green-900/30'
 								: variant === 'red'
 									? 'bg-red-900/30'
-									: 'bg-dark-700'
+									: variant === 'gray'
+										? 'bg-dark-800'
+										: 'bg-dark-700'
 					}`}
 				>
 					{count}
@@ -232,11 +249,11 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 		},
 		done: {
 			title: 'No completed tasks',
-			description: 'Completed tasks will appear here',
+			description: 'Completed and cancelled tasks will appear here',
 		},
-		needs_attention: {
-			title: 'No tasks needing attention',
-			description: 'Tasks needing attention and cancelled tasks will appear here',
+		archived: {
+			title: 'No archived tasks',
+			description: 'Archived tasks will appear here',
 		},
 	};
 
@@ -270,14 +287,15 @@ function TaskList({
 }) {
 	const [rejectingTaskId, setRejectingTaskId] = useState<string | null>(null);
 
-	// For Active tab, group by in_progress and pending
-	// For Review tab - all are review status
-	// For Done tab - all are completed
-	// For Needs Attention tab - group by needs_attention and cancelled
+	// Active tab: group by in_progress, pending, draft
+	// Review tab: group by review and needs_attention
+	// Done tab: group by completed and cancelled
+	// Archived tab: all archived tasks
 
 	if (tab === 'active') {
 		const inProgress = tasks.filter((t) => t.status === 'in_progress');
 		const pending = tasks.filter((t) => t.status === 'pending');
+		const draft = tasks.filter((t) => t.status === 'draft');
 
 		return (
 			<div class="space-y-4">
@@ -305,78 +323,107 @@ function TaskList({
 						onSetRejectingTaskId={setRejectingTaskId}
 					/>
 				)}
+				{draft.length > 0 && (
+					<TaskGroup
+						title="Draft"
+						count={draft.length}
+						variant="gray"
+						tasks={draft}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
+					/>
+				)}
 			</div>
 		);
 	}
 
 	if (tab === 'review') {
+		const reviewTasks = tasks.filter((t) => t.status === 'review');
+		const needsAttention = tasks.filter((t) => t.status === 'needs_attention');
+
 		return (
 			<div class="space-y-4">
-				<TaskGroup
-					title="Awaiting Review"
-					count={tasks.length}
-					variant="purple"
-					tasks={tasks}
-					allTasks={allTasks}
-					onTaskClick={onTaskClick}
-					onView={onView}
-					onReject={onReject}
-					onApprove={onApprove}
-					rejectingTaskId={rejectingTaskId}
-					onSetRejectingTaskId={setRejectingTaskId}
-				/>
+				{reviewTasks.length > 0 && (
+					<TaskGroup
+						title="Awaiting Review"
+						count={reviewTasks.length}
+						variant="purple"
+						tasks={reviewTasks}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+						onView={onView}
+						onReject={onReject}
+						onApprove={onApprove}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
+					/>
+				)}
+				{needsAttention.length > 0 && (
+					<TaskGroup
+						title="Needs Attention"
+						count={needsAttention.length}
+						variant="red"
+						tasks={needsAttention}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+						showAlert
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
+					/>
+				)}
 			</div>
 		);
 	}
 
 	if (tab === 'done') {
+		const completed = tasks.filter((t) => t.status === 'completed');
+		const cancelled = tasks.filter((t) => t.status === 'cancelled');
+
 		return (
 			<div class="space-y-4">
-				<TaskGroup
-					title="Completed"
-					count={tasks.length}
-					variant="green"
-					tasks={tasks}
-					allTasks={allTasks}
-					onTaskClick={onTaskClick}
-					rejectingTaskId={rejectingTaskId}
-					onSetRejectingTaskId={setRejectingTaskId}
-				/>
+				{completed.length > 0 && (
+					<TaskGroup
+						title="Completed"
+						count={completed.length}
+						variant="green"
+						tasks={completed}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
+					/>
+				)}
+				{cancelled.length > 0 && (
+					<TaskGroup
+						title="Cancelled"
+						count={cancelled.length}
+						variant="gray"
+						tasks={cancelled}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
+					/>
+				)}
 			</div>
 		);
 	}
 
-	// Needs Attention tab
-	const needsAttention = tasks.filter((t) => t.status === 'needs_attention');
-	const cancelled = tasks.filter((t) => t.status === 'cancelled');
-
+	// Archived tab
 	return (
 		<div class="space-y-4">
-			{needsAttention.length > 0 && (
-				<TaskGroup
-					title="Needs Attention"
-					count={needsAttention.length}
-					variant="red"
-					tasks={needsAttention}
-					allTasks={allTasks}
-					onTaskClick={onTaskClick}
-					showAlert
-					rejectingTaskId={rejectingTaskId}
-					onSetRejectingTaskId={setRejectingTaskId}
-				/>
-			)}
-			{cancelled.length > 0 && (
-				<TaskGroup
-					title="Cancelled"
-					count={cancelled.length}
-					variant="gray"
-					tasks={cancelled}
-					allTasks={allTasks}
-					onTaskClick={onTaskClick}
-					rejectingTaskId={rejectingTaskId}
-					onSetRejectingTaskId={setRejectingTaskId}
-				/>
-			)}
+			<TaskGroup
+				title="Archived"
+				count={tasks.length}
+				variant="gray"
+				tasks={tasks}
+				allTasks={allTasks}
+				onTaskClick={onTaskClick}
+				rejectingTaskId={rejectingTaskId}
+				onSetRejectingTaskId={setRejectingTaskId}
+			/>
 		</div>
 	);
 }
@@ -507,6 +554,10 @@ function TaskItem({
 	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
 	const [feedback, setFeedback] = useState('');
+	// Approve animation: button shows "✓ Approved" for 300ms, card fades to opacity-40
+	const [buttonApproved, setButtonApproved] = useState(false);
+	const [cardFading, setCardFading] = useState(false);
+
 	const isClickable = !!onClick;
 	const isReview = task.status === 'review';
 	const showView = isReview && !!onView;
@@ -517,9 +568,12 @@ function TaskItem({
 	const isWorking = isReview && !!task.activeSession;
 	const isRejecting = rejectingTaskId === task.id;
 
+	// Compute border color: when approve animation active, switch to green
+	const borderColor = cardFading ? 'border-l-green-500' : getStatusBorderColor(task.status);
+
 	return (
 		<div
-			class={`px-4 py-3 border-l-2 ${getStatusBorderColor(task.status)} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+			class={`px-4 py-3 border-l-2 ${borderColor} transition-[opacity,border-color] duration-500 ${cardFading ? 'opacity-40' : ''} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
 			onClick={isClickable ? () => onClick(task.id) : undefined}
 		>
 			<div class="flex items-start justify-between">
@@ -573,11 +627,17 @@ function TaskItem({
 								<button
 									onClick={(e) => {
 										e.stopPropagation();
+										// Start approve animation: button text + card fade
+										setButtonApproved(true);
+										setCardFading(true);
 										onApprove(task.id);
+										// Reset button text after 300ms
+										setTimeout(() => setButtonApproved(false), 300);
 									}}
-									class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+									disabled={buttonApproved}
+									class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors disabled:cursor-default"
 								>
-									Approve
+									{buttonApproved ? '✓ Approved' : 'Approve'}
 								</button>
 							)}
 							{showReject && (
@@ -645,8 +705,12 @@ function TaskItem({
 					/>
 				</div>
 			)}
-			{isRejecting && (
-				<div class="mt-3 pt-3 border-t border-dark-700" onClick={(e) => e.stopPropagation()}>
+			{/* Reject form — always rendered; max-height controls collapse with transition-all duration-200 */}
+			<div
+				class={`overflow-hidden transition-all duration-200 ${isRejecting ? 'max-h-48' : 'max-h-0 pointer-events-none'}`}
+				onClick={(e) => e.stopPropagation()}
+			>
+				<div class="mt-3 pt-3 border-t border-dark-700">
 					<textarea
 						rows={2}
 						placeholder="Please provide feedback..."
@@ -669,6 +733,7 @@ function TaskItem({
 							onClick={(e) => {
 								e.stopPropagation();
 								onReject?.(task.id, feedback);
+								toast.rejected();
 								setFeedback('');
 								onSetRejectingTaskId?.(null);
 							}}
@@ -679,7 +744,7 @@ function TaskItem({
 						</button>
 					</div>
 				</div>
-			)}
+			</div>
 		</div>
 	);
 }

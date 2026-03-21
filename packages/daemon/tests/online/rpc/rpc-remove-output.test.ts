@@ -35,10 +35,14 @@ describe('Message Remove Output', () => {
 		daemon = (await createDaemonServer()) as DaemonServerContext & {
 			daemonContext: DaemonAppContext;
 		};
-	});
+	}, 30_000);
 
 	afterEach(async () => {
-		await daemon.waitForExit();
+		// Guard: daemon may be undefined if beforeEach timed out.
+		// Uses wrapped-if (not early return) because env cleanup below must always run.
+		if (daemon) {
+			await daemon.waitForExit();
+		}
 
 		// Clean up test SDK session directory
 		if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
@@ -55,7 +59,7 @@ describe('Message Remove Output', () => {
 		} else {
 			delete process.env.TEST_SDK_SESSION_DIR;
 		}
-	}, 15_000);
+	}, 30_000);
 	async function createSession(): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),

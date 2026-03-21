@@ -465,6 +465,23 @@ html {
 	animation: scaleIn 200ms ease-out;
 }
 
+@keyframes badgePop {
+	from {
+		transform: scale(0.5);
+	}
+	to {
+		transform: scale(1);
+	}
+}
+
+.animate-badge-pop {
+	animation: badgePop 150ms ease-out;
+}
+
+.animate-fadeIn-200 {
+	animation: fadeIn 200ms ease-in-out;
+}
+
 .animate-pulse-slow {
 	animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }

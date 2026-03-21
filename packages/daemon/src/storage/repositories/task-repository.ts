@@ -214,7 +214,7 @@ export class TaskRepository {
 	archiveTask(id: string): NeoTask | null {
 		const now = Date.now();
 		const stmt = this.db.prepare(
-			`UPDATE tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
+			`UPDATE tasks SET status = 'archived', archived_at = ?, active_session = NULL, updated_at = ? WHERE id = ?`
 		);
 		stmt.run(now, now, id);
 		return this.getTask(id);

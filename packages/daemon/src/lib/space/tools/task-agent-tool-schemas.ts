@@ -66,13 +66,21 @@ export type CheckStepStatusInput = z.infer<typeof CheckStepStatusSchema>;
 /**
  * Schema for `advance_workflow` input.
  * Advances the workflow to the next step after the current step completes.
+ * When a `task_result` transition condition is present on the outgoing transitions,
+ * supply `step_result` to evaluate it — e.g. `'passed'` or `'failed: <reason>'`.
  */
 export const AdvanceWorkflowSchema = z.object({
-	/** Optional result summary from the completed step, used for transition condition evaluation. */
+	/**
+	 * Result from the completed step, used for `task_result` transition condition evaluation.
+	 * Example values: `'passed'`, `'failed: tests failed'`, `'approved'`.
+	 * When evaluating a `task_result` condition, the executor matches this value
+	 * (prefix match) against the condition's `expression` field.
+	 */
 	step_result: z
 		.string()
 		.describe(
-			'Optional result or output summary from the completed step, used when evaluating transition conditions'
+			"Result of the completed step — used for 'task_result' condition evaluation. " +
+				"Example: 'passed' or 'failed: <reason>'. Prefix-match against the condition's expression."
 		)
 		.optional(),
 });
