@@ -82,6 +82,7 @@ interface MockAgentSession {
 	getProcessingState: () => AgentProcessingState;
 	getSDKMessageCount: () => number;
 	setRuntimeMcpServers: (servers: Record<string, unknown>) => void;
+	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
 	handleInterrupt: () => Promise<void>;
@@ -118,6 +119,7 @@ function makeMockSession(
 		setRuntimeMcpServers(servers) {
 			this._mcpServers = servers;
 		},
+		setRuntimeSystemPrompt(_systemPrompt: unknown) {},
 		async startStreamingQuery() {
 			this._startCalled = true;
 		},
@@ -1244,6 +1246,297 @@ describe('TaskAgentManager', () => {
 			expect(sessionId).toBeDefined();
 
 			fromInitSpy.mockRestore();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// rehydrate — session restoration on daemon restart
+	// -----------------------------------------------------------------------
+
+	describe('rehydrate', () => {
+		/**
+		 * Helper: seed a task with status in_progress and a pre-existing task agent session.
+		 * The session is stored in the mock DB with `type: 'space_task_agent'` so the
+		 * rehydrate filter correctly identifies it.
+		 */
+		async function seedInProgressTask(
+			c: TestCtx,
+			status: 'in_progress' | 'needs_attention' = 'in_progress'
+		) {
+			const task = await c.taskManager.createTask({
+				title: 'Rehydrate test task',
+				description: 'A task that was in progress before restart',
+				taskType: 'coding',
+				status,
+			});
+
+			const agentSessionId = `space:${c.spaceId}:task:${task.id}`;
+
+			// Persist the session ID on the task
+			c.taskRepo.updateTask(task.id, { taskAgentSessionId: agentSessionId });
+
+			// Seed the session in the mock DB with type: 'space_task_agent'
+			c.mockDb.createSession({ id: agentSessionId, type: 'space_task_agent' });
+
+			return { task, agentSessionId };
+		}
+
+		test('restores Task Agent session for an in_progress task', async () => {
+			const { task, agentSessionId } = await seedInProgressTask(ctx);
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task.id)).toBeDefined();
+			expect(ctx.createdSessions.has(agentSessionId)).toBe(true);
+		});
+
+		test('restores Task Agent session for a needs_attention task', async () => {
+			const { task, agentSessionId } = await seedInProgressTask(ctx, 'needs_attention');
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task.id)).toBeDefined();
+			expect(ctx.createdSessions.has(agentSessionId)).toBe(true);
+		});
+
+		test('rehydrated session has streaming query restarted', async () => {
+			const { agentSessionId } = await seedInProgressTask(ctx);
+
+			await ctx.manager.rehydrate();
+
+			const session = ctx.createdSessions.get(agentSessionId)!;
+			expect(session._startCalled).toBe(true);
+		});
+
+		test('re-orientation message is injected after rehydration', async () => {
+			const { agentSessionId } = await seedInProgressTask(ctx);
+
+			await ctx.manager.rehydrate();
+
+			const session = ctx.createdSessions.get(agentSessionId)!;
+			// At least one message enqueued (the re-orientation message)
+			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
+			const msgs = session._enqueuedMessages.map((m) => m.msg);
+			expect(msgs.some((m) => m.includes('resuming after a daemon restart'))).toBe(true);
+			expect(msgs.some((m) => m.includes('check_step_status'))).toBe(true);
+		});
+
+		test('MCP server is re-attached on rehydrated session', async () => {
+			const { agentSessionId } = await seedInProgressTask(ctx);
+
+			await ctx.manager.rehydrate();
+
+			const session = ctx.createdSessions.get(agentSessionId)!;
+			expect(Object.keys(session._mcpServers)).toContain('task-agent');
+		});
+
+		test('tasks without taskAgentSessionId are skipped', async () => {
+			// Create a task with no session ID set
+			const task = await ctx.taskManager.createTask({
+				title: 'No session task',
+				description: 'Should be skipped',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+
+			const sessionsBefore = ctx.createdSessions.size;
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+			expect(ctx.createdSessions.size).toBe(sessionsBefore);
+		});
+
+		test('completed/cancelled tasks are not rehydrated', async () => {
+			const completedTask = await ctx.taskManager.createTask({
+				title: 'Completed task',
+				description: '',
+				taskType: 'coding',
+				status: 'completed',
+			});
+			const agentSessionId = `space:${ctx.spaceId}:task:${completedTask.id}`;
+			ctx.taskRepo.updateTask(completedTask.id, { taskAgentSessionId: agentSessionId });
+			ctx.mockDb.createSession({ id: agentSessionId, type: 'space_task_agent' });
+
+			const cancelledTask = await ctx.taskManager.createTask({
+				title: 'Cancelled task',
+				description: '',
+				taskType: 'coding',
+				status: 'cancelled',
+			});
+			const agentSessionId2 = `space:${ctx.spaceId}:task:${cancelledTask.id}`;
+			ctx.taskRepo.updateTask(cancelledTask.id, { taskAgentSessionId: agentSessionId2 });
+			ctx.mockDb.createSession({ id: agentSessionId2, type: 'space_task_agent' });
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(completedTask.id)).toBeUndefined();
+			expect(ctx.manager.getTaskAgent(cancelledTask.id)).toBeUndefined();
+		});
+
+		test('sub-session tasks (UUID session IDs) are not rehydrated as Task Agents', async () => {
+			// A step task has a UUID sub-session ID — should NOT be treated as a Task Agent
+			const stepTask = await ctx.taskManager.createTask({
+				title: 'Step task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const uuidSubSessionId = '550e8400-e29b-41d4-a716-446655440000';
+			ctx.taskRepo.updateTask(stepTask.id, { taskAgentSessionId: uuidSubSessionId });
+			// Session has type 'worker', not 'space_task_agent'
+			ctx.mockDb.createSession({ id: uuidSubSessionId, type: 'worker' });
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(stepTask.id)).toBeUndefined();
+		});
+
+		test('skips if Task Agent session is already in the map (idempotent)', async () => {
+			const { task } = await seedInProgressTask(ctx);
+
+			// Spawn first
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const sessionsAfterSpawn = ctx.createdSessions.size;
+
+			// Rehydrate should see the task already in map and skip
+			await ctx.manager.rehydrate();
+
+			expect(ctx.createdSessions.size).toBe(sessionsAfterSpawn);
+		});
+
+		test('rehydrates multiple tasks independently', async () => {
+			const { task: task1 } = await seedInProgressTask(ctx);
+			const { task: task2 } = await seedInProgressTask(ctx, 'needs_attention');
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task1.id)).toBeDefined();
+			expect(ctx.manager.getTaskAgent(task2.id)).toBeDefined();
+		});
+
+		test('rebuilds subSessions map from workflow run step tasks', async () => {
+			// Seed a workflow run so we can test sub-session map rebuild
+			const wfId = 'wf-rehydrate-sub';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Rehydrate Sub', now, now);
+			const stepId = 'step-rehydrate-1';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_steps (id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, 0, null, ?, ?)`
+				)
+				.run(stepId, wfId, 'Step 1', ctx.agentId, now, now);
+			const wfRunId = 'run-rehydrate-sub';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_step_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			// Create main task for the run
+			const mainTask = await ctx.taskManager.createTask({
+				title: 'Main task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const mainSessionId = `space:${ctx.spaceId}:task:${mainTask.id}`;
+			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
+			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
+
+			// Create a step task with a UUID sub-session
+			const subSessionId = '550e8400-e29b-41d4-a716-sub-session-01';
+			const stepTask = await ctx.taskManager.createTask({
+				title: 'Step task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				workflowStepId: stepId,
+				taskAgentSessionId: subSessionId,
+			});
+			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+			// Mock AgentSession.restore to return a session for the sub-session
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				const session = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, session);
+				return session as unknown as AgentSession;
+			});
+
+			await ctx.manager.rehydrate();
+
+			// Sub-session should be in the subSessions map for the main task
+			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
+
+			restoreSpy.mockRestore();
+			// avoid unused var warning
+			void stepTask;
+		});
+
+		test('does not restart streaming for sub-sessions during rehydration', async () => {
+			// Sub-sessions in the map after rehydration should NOT have _startCalled = true
+			// (they are stubs that the Task Agent will re-spawn as needed)
+			const wfId = 'wf-rehydrate-no-start';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Sub No Start', now, now);
+			const wfRunId = 'run-rehydrate-no-start';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_step_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const mainTask = await ctx.taskManager.createTask({
+				title: 'Main task no-start',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const mainSessionId = `space:${ctx.spaceId}:task:${mainTask.id}`;
+			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
+			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
+
+			const subSessionId = '550e8400-e29b-41d4-a716-nostart-sub-01';
+			await ctx.taskManager.createTask({
+				title: 'Sub task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				taskAgentSessionId: subSessionId,
+			});
+			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				const session = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, session);
+				return session as unknown as AgentSession;
+			});
+
+			await ctx.manager.rehydrate();
+
+			// The sub-session stub should NOT have startStreamingQuery called
+			const subSession = ctx.createdSessions.get(subSessionId);
+			if (subSession) {
+				expect(subSession._startCalled).toBe(false);
+			}
+
+			restoreSpy.mockRestore();
 		});
 	});
 });

@@ -1034,7 +1034,7 @@ describe('SpaceRuntime', () => {
 	describe('Task Agent integration', () => {
 		/**
 		 * Minimal mock for TaskAgentManager — only implements the methods that
-		 * SpaceRuntime calls: isSpawning(), isTaskAgentAlive(), spawnTaskAgent().
+		 * SpaceRuntime calls: isSpawning(), isTaskAgentAlive(), spawnTaskAgent(), rehydrate().
 		 *
 		 * The default spawnTaskAgent mirrors the real TaskAgentManager's DB side-effect:
 		 * it writes taskAgentSessionId to the task row. SpaceRuntime relies on this
@@ -1046,6 +1046,7 @@ describe('SpaceRuntime', () => {
 				isSpawning?: (taskId: string) => boolean;
 				isTaskAgentAlive?: (taskId: string) => boolean;
 				spawnTaskAgent?: (task: unknown) => Promise<string>;
+				rehydrate?: () => Promise<void>;
 			} = {}
 		) {
 			const spawned: string[] = [];
@@ -1061,6 +1062,7 @@ describe('SpaceRuntime', () => {
 						taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 						return `session:${t.id}`;
 					}),
+				rehydrate: overrides.rehydrate ?? (async () => {}),
 				_spawned: spawned,
 			};
 		}

@@ -430,11 +430,15 @@ export class SpaceRuntime {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Rehydrates WorkflowExecutors from the DB for all in-progress workflow runs.
+	 * Rehydrates WorkflowExecutors from the DB for all in-progress workflow runs,
+	 * then rehydrates Task Agent sessions if a TaskAgentManager is configured.
 	 *
 	 * Called once at the start of the first executeTick(). Reconstructs
 	 * executors with the run's persisted currentStepId so the tick loop can
 	 * resume advancement from where it left off.
+	 *
+	 * Executor rehydration runs first so that SpaceRuntimeService executors are
+	 * ready when Task Agents try to use them via their MCP tools.
 	 *
 	 * Runs that reference a missing workflow are skipped silently.
 	 */
@@ -469,6 +473,13 @@ export class SpaceRuntime {
 				const executor = this.buildExecutor(workflow, run, space.id, space.workspacePath);
 				this.executors.set(run.id, executor);
 			}
+		}
+
+		// Rehydrate Task Agent sessions after executors are ready.
+		// Executors must be loaded first so Task Agents can use advance_workflow
+		// and other MCP tools that rely on the SpaceRuntimeService executor map.
+		if (this.config.taskAgentManager) {
+			await this.config.taskAgentManager.rehydrate();
 		}
 	}
 

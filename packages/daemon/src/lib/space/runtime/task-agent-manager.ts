@@ -427,6 +427,56 @@ export class TaskAgentManager {
 	// Public — cleanup
 	// -------------------------------------------------------------------------
 
+	// -------------------------------------------------------------------------
+	// Public — rehydration
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Rehydrate Task Agent sessions after a daemon restart.
+	 *
+	 * Queries `space_tasks` for tasks with status `in_progress` or `needs_attention`
+	 * that have a non-null `taskAgentSessionId`. For each such task that has a
+	 * `space_task_agent` session type in the DB, recreates the Task Agent session
+	 * (using `createTaskAgentInit()` + `AgentSession.fromInit()`), re-attaches the
+	 * MCP server and system prompt, restarts the streaming query, and injects a
+	 * re-orientation message so the agent resumes from where it left off.
+	 *
+	 * Sub-sessions are NOT fully rehydrated — the Task Agent will re-spawn them
+	 * via its MCP tools after receiving the re-orientation message. The in-memory
+	 * `subSessions` map is rebuilt from sub-session tasks found in the DB (so
+	 * cleanup works correctly), but their streaming queries are not restarted.
+	 *
+	 * This method is called from `SpaceRuntime.rehydrateExecutors()` after
+	 * WorkflowExecutors are loaded, so executors are ready when Task Agents run.
+	 */
+	async rehydrate(): Promise<void> {
+		const activeTasks = this.config.taskRepo.listActiveWithTaskAgentSession();
+
+		for (const task of activeTasks) {
+			const sessionId = task.taskAgentSessionId;
+			if (!sessionId) continue;
+
+			// Skip if already in the map (e.g. double rehydrate call)
+			if (this.taskAgentSessions.has(task.id)) continue;
+
+			// Only rehydrate tasks whose session is a space_task_agent session.
+			// Step sub-sessions (UUID) are stored on step tasks — skip those.
+			const dbSession = this.config.db.getSession(sessionId);
+			if (!dbSession || dbSession.type !== 'space_task_agent') continue;
+
+			try {
+				await this.rehydrateTaskAgent(task, sessionId);
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager.rehydrate: failed to rehydrate task ${task.id} (session ${sessionId}):`,
+					err
+				);
+			}
+		}
+
+		log.info(`TaskAgentManager.rehydrate: rehydrated ${this.taskAgentSessions.size} task agent(s)`);
+	}
+
 	/**
 	 * Stop and clean up all active Task Agent sessions and their sub-sessions.
 	 * Called on daemon shutdown to release all resources.
@@ -677,6 +727,146 @@ export class TaskAgentManager {
 		}
 		throw new Error(
 			`Could not find available session ID for base "${baseId}" after ${MAX_ATTEMPTS} attempts`
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// Private — rehydration helper
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Rehydrate a single Task Agent session after daemon restart.
+	 *
+	 * 1. Loads the associated Space, Workflow, and WorkflowRun from the DB.
+	 * 2. Recreates the AgentSession via `createTaskAgentInit()` + `AgentSession.fromInit()`
+	 *    — `fromInit()` loads the existing DB record without creating a duplicate.
+	 * 3. Re-attaches MCP server and system prompt (runtime-only, not persisted).
+	 * 4. Adds the session to `taskAgentSessions` before streaming starts.
+	 * 5. Restarts the streaming query so the SDK resumes from conversation history.
+	 * 6. Injects a re-orientation message so the agent checks its current state and
+	 *    continues from where it left off.
+	 * 7. Rebuilds the `subSessions` map from step tasks in the same workflow run.
+	 */
+	private async rehydrateTaskAgent(task: SpaceTask, sessionId: string): Promise<void> {
+		const taskId = task.id;
+		const spaceId = task.spaceId;
+
+		// --- Load Space
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space) {
+			log.warn(
+				`TaskAgentManager.rehydrate: space ${spaceId} not found for task ${taskId}, skipping`
+			);
+			return;
+		}
+
+		// --- Load Workflow and WorkflowRun (if applicable)
+		let workflow: SpaceWorkflow | null = null;
+		let workflowRun: SpaceWorkflowRun | null = null;
+		if (task.workflowRunId) {
+			workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
+			if (workflowRun) {
+				workflow = this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId);
+			}
+		}
+
+		// --- Recreate AgentSession using createTaskAgentInit() + fromInit()
+		// fromInit() gracefully handles an already-existing DB session (no duplicate created)
+		const init = createTaskAgentInit({
+			task,
+			space,
+			workflow,
+			workflowRun,
+			sessionId,
+			workspacePath: space.workspacePath,
+		});
+
+		const agentSession = AgentSession.fromInit(
+			init,
+			this.config.db,
+			this.config.messageHub,
+			this.config.daemonHub,
+			this.config.getApiKey,
+			this.config.defaultModel
+		);
+
+		// --- Build the SpaceTaskManager for this space
+		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
+
+		// --- Build and attach MCP server
+		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
+		const subSessionFactory = this.createSubSessionFactory(taskId);
+
+		const mcpServer = createTaskAgentMcpServer({
+			taskId,
+			space,
+			workflowRunId: workflowRun?.id ?? '',
+			workspacePath: space.workspacePath,
+			runtime,
+			workflowManager: this.config.spaceWorkflowManager,
+			taskRepo: this.config.taskRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			agentManager: this.config.spaceAgentManager,
+			taskManager,
+			sessionFactory: subSessionFactory,
+			messageInjector: (subSessionId, message) =>
+				this.injectSubSessionMessage(subSessionId, message),
+			onSubSessionComplete: (stepId, subSessionId) =>
+				this.handleSubSessionComplete(taskId, stepId, subSessionId),
+		});
+
+		agentSession.setRuntimeMcpServers({
+			'task-agent': mcpServer as unknown as McpServerConfig,
+		});
+
+		// Re-attach system prompt from the init (runtime-only, not persisted)
+		if (init.systemPrompt) {
+			agentSession.setRuntimeSystemPrompt(init.systemPrompt);
+		}
+
+		// --- Store in map before streaming start
+		this.taskAgentSessions.set(taskId, agentSession);
+
+		// --- Restart the streaming query (SDK resumes from conversation history in DB)
+		await agentSession.startStreamingQuery();
+
+		// --- Inject re-orientation message so the agent checks state and continues
+		const reorientMessage =
+			'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
+			'Please use `check_step_status` to determine the current state of your workflow and continue from where you left off.';
+		await this.injectMessageIntoSession(agentSession, reorientMessage);
+
+		// --- Rebuild subSessions map from step tasks in the same workflow run
+		// Sub-sessions are not fully rehydrated (no streaming restart) — the Task Agent
+		// will re-spawn them as needed after receiving the re-orientation message.
+		if (task.workflowRunId) {
+			const stepTasks = this.config.taskRepo.listByWorkflowRun(task.workflowRunId);
+			for (const stepTask of stepTasks) {
+				const subSessionId = stepTask.taskAgentSessionId;
+				if (!subSessionId || stepTask.id === taskId) continue;
+
+				// Only restore sessions with UUID-style IDs (sub-sessions, not Task Agent sessions)
+				const subDbSession = this.config.db.getSession(subSessionId);
+				if (!subDbSession || subDbSession.type === 'space_task_agent') continue;
+
+				const subSession = AgentSession.restore(
+					subSessionId,
+					this.config.db,
+					this.config.messageHub,
+					this.config.daemonHub,
+					this.config.getApiKey
+				);
+				if (!subSession) continue;
+
+				if (!this.subSessions.has(taskId)) {
+					this.subSessions.set(taskId, new Map());
+				}
+				this.subSessions.get(taskId)!.set(subSessionId, subSession);
+			}
+		}
+
+		log.info(
+			`TaskAgentManager.rehydrate: rehydrated task agent for task ${taskId} (session ${sessionId})`
 		);
 	}
 

@@ -280,6 +280,21 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * List all tasks that have an active Task Agent session.
+	 *
+	 * Returns tasks with status `in_progress` or `needs_attention` that have a
+	 * non-null `task_agent_session_id`. Used by `TaskAgentManager.rehydrate()` on
+	 * daemon restart to find Task Agent sessions that need to be restarted.
+	 */
+	listActiveWithTaskAgentSession(): SpaceTask[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'needs_attention') AND task_agent_session_id IS NOT NULL AND archived_at IS NULL`
+		);
+		const rows = stmt.all() as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
 	 * Get a task by its Task Agent session ID
 	 */
 	getTaskBySessionId(sessionId: string): SpaceTask | null {
