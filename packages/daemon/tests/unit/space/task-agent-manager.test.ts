@@ -230,6 +230,7 @@ interface TestCtx {
 	};
 	manager: TaskAgentManager;
 	createdSessions: Map<string, MockAgentSession>;
+	fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
 }
 
 function makeCtx(): TestCtx {
@@ -292,7 +293,7 @@ function makeCtx(): TestCtx {
 	};
 
 	// Spy on AgentSession.fromInit to return mock sessions
-	spyOn(AgentSession, 'fromInit').mockImplementation(
+	const fromInitSpy = spyOn(AgentSession, 'fromInit').mockImplementation(
 		(
 			init: unknown,
 			_db: unknown,
@@ -345,6 +346,7 @@ function makeCtx(): TestCtx {
 		mockDb,
 		manager,
 		createdSessions,
+		fromInitSpy,
 	};
 }
 
@@ -360,6 +362,7 @@ describe('TaskAgentManager', () => {
 	});
 
 	afterEach(() => {
+		ctx.fromInitSpy.mockRestore();
 		try {
 			rmSync(ctx.dir, { recursive: true, force: true });
 		} catch {
