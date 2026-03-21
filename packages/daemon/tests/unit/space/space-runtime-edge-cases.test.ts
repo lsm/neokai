@@ -269,6 +269,31 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(throwingSink.thrownEvents[0].kind).toBe('task_needs_attention');
 		});
 
+		test('tick does not crash when sink.notify() throws for workflow_run_needs_attention', async () => {
+			const throwingSink = new ThrowingNotificationSink();
+			const rt = makeRuntime({ notificationSink: throwingSink });
+
+			// Two-step workflow with a human gate — completing step 1 triggers the gate,
+			// which emits workflow_run_needs_attention
+			const wf = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: 'step-gate-throw-1', name: 'Plan', agentId: AGENT },
+					{ id: 'step-gate-throw-2', name: 'Code', agentId: AGENT },
+				],
+				[{ type: 'human' }]
+			);
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+
+			// Tick must complete without throwing even though the sink throws for the gate event
+			await expect(rt.executeTick()).resolves.toBeUndefined();
+
+			expect(throwingSink.thrownEvents).toHaveLength(1);
+			expect(throwingSink.thrownEvents[0].kind).toBe('workflow_run_needs_attention');
+		});
+
 		test('tick does not crash when sink.notify() throws for workflow_run_completed', async () => {
 			const throwingSink = new ThrowingNotificationSink();
 			const rt = makeRuntime({ notificationSink: throwingSink });
@@ -309,9 +334,12 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			// The second notification (run B) succeeded and was recorded
 			expect(flakySink.events).toHaveLength(1);
-			if (flakySink.events[0].kind === 'task_needs_attention') {
-				expect(flakySink.events[0].taskId).toBe(tasksB[0].id);
-			}
+			expect(flakySink.events[0].kind).toBe('task_needs_attention');
+			const evt = flakySink.events[0] as Extract<
+				SpaceNotificationEvent,
+				{ kind: 'task_needs_attention' }
+			>;
+			expect(evt.taskId).toBe(tasksB[0].id);
 		});
 
 		test('tick does not crash when sink.notify() throws for standalone task', async () => {
@@ -381,10 +409,13 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
 			expect(naEvents).toHaveLength(1);
-			if (naEvents[0].kind === 'task_needs_attention') {
-				expect(naEvents[0].reason).toBe('Final failure');
-				expect(naEvents[0].taskId).toBe(tasks[0].id);
-			}
+			expect(naEvents[0].kind).toBe('task_needs_attention');
+			const naEvt = naEvents[0] as Extract<
+				SpaceNotificationEvent,
+				{ kind: 'task_needs_attention' }
+			>;
+			expect(naEvt.reason).toBe('Final failure');
+			expect(naEvt.taskId).toBe(tasks[0].id);
 		});
 
 		test('standalone task rapid changes — only final needs_attention state generates notification', async () => {
@@ -410,9 +441,12 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
 			expect(naEvents).toHaveLength(1);
-			if (naEvents[0].kind === 'task_needs_attention') {
-				expect(naEvents[0].reason).toBe('Persistent error');
-			}
+			expect(naEvents[0].kind).toBe('task_needs_attention');
+			const naEvt = naEvents[0] as Extract<
+				SpaceNotificationEvent,
+				{ kind: 'task_needs_attention' }
+			>;
+			expect(naEvt.reason).toBe('Persistent error');
 		});
 
 		test('task goes needs_attention→completed between ticks — dedup key cleared, completion handled', async () => {
@@ -514,7 +548,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(taskIds).toContain(tasksB[0].id);
 		});
 
-		test('gate-blocked run (needs_attention status) is re-notified after restart via checkStandaloneTasks path', async () => {
+		test('gate-blocked run (needs_attention status) is NOT re-notified after restart — gate must be resolved manually', async () => {
 			// Build a two-step workflow with a human gate
 			const wf = buildLinearWorkflow(
 				SPACE_ID,
