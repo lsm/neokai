@@ -135,6 +135,9 @@ export function ContextPanel() {
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentRoomId = currentRoomIdSignal.value;
 
+	// Inbox takes full content width — no sidebar needed
+	if (navSection === 'inbox') return null;
+
 	// When a specific room is selected in the rooms section, show room-specific panel
 	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
 
