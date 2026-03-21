@@ -540,6 +540,29 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		const after = ctx.taskRepo.getTask(mainTask.id);
 		expect(after?.status).toBe('in_progress');
 	});
+
+	test('double-spawn for same step_id returns success on second call (idempotent session reuse)', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		// First spawn
+		const first = await handlers.spawn_step_agent({ step_id: wf.startStepId });
+		const firstParsed = JSON.parse(first.content[0].text);
+		expect(firstParsed.success).toBe(true);
+		const firstSessionId = firstParsed.sessionId;
+
+		// Second spawn for same step — the step task already has taskAgentSessionId set
+		// Handler should detect the existing session and return it without creating a new one
+		const second = await handlers.spawn_step_agent({ step_id: wf.startStepId });
+		const secondParsed = JSON.parse(second.content[0].text);
+
+		// Must not error out — should succeed or return existing session info
+		expect(secondParsed.success).toBe(true);
+		// The returned sessionId should be the same as the first (no duplicate sessions)
+		expect(secondParsed.sessionId).toBe(firstSessionId);
+	});
 });
 
 // ===========================================================================
@@ -693,10 +716,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 
 		// Simulate session completing without the completion callback updating DB
-		const extFactory = factory as ReturnType<typeof makeMockSessionFactory> & {
-			_setState: (id: string, state: SubSessionState) => void;
-		};
-		// Access private map via cast to trigger isComplete=true
+		// Override getProcessingState to report the session as complete
 		(
 			factory as unknown as { getProcessingState: (id: string) => SubSessionState }
 		).getProcessingState = (_id: string) => ({ isProcessing: false, isComplete: true });

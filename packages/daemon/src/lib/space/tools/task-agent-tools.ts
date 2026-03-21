@@ -31,6 +31,8 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { resolveAgentInit, buildCustomAgentTaskMessage } from '../agents/custom-agent';
+import { jsonResult } from './tool-result';
+import type { ToolResult } from './tool-result';
 import {
 	SpawnStepAgentSchema,
 	CheckStepStatusSchema,
@@ -45,6 +47,9 @@ import type {
 	ReportResultInput,
 	RequestHumanInputInput,
 } from './task-agent-tool-schemas';
+
+// Re-export for consumers that want the shared type
+export type { ToolResult };
 
 // ---------------------------------------------------------------------------
 // Sub-session state
@@ -101,9 +106,10 @@ export interface SubSessionFactory {
 export interface TaskAgentToolsConfig {
 	/** ID of the main SpaceTask this Task Agent is orchestrating. */
 	taskId: string;
-	/** ID of the Space this task belongs to. */
-	spaceId: string;
-	/** Full Space object — needed for agent init and task message building. */
+	/**
+	 * Full Space object — needed for agent init and task message building.
+	 * The space ID is available as `space.id`.
+	 */
 	space: Space;
 	/** ID of the active workflow run for this task. */
 	workflowRunId: string;
@@ -134,18 +140,6 @@ export interface TaskAgentToolsConfig {
 	 * The Task Agent handler registers this as the session completion callback.
 	 */
 	onSubSessionComplete: (stepId: string, sessionId: string) => Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-interface ToolResult {
-	content: Array<{ type: 'text'; text: string }>;
-}
-
-function jsonResult(data: unknown): ToolResult {
-	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
 // ---------------------------------------------------------------------------
@@ -184,9 +178,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * 4. Resolve the agent session init via resolveAgentInit()
 		 * 5. Create the sub-session via sessionFactory.create()
 		 * 6. Register completion callback (onSubSessionComplete) via sessionFactory.onComplete()
-		 * 7. Build and inject the task message via messageInjector
-		 * 8. Update the step task's active_session_id and the main task's currentStep
-		 * 9. Transition main task from pending → in_progress if not already in_progress
+		 * 7. Record the sub-session ID on the step task (BEFORE message injection, so
+		 *    check_step_status can track the session even if injection later fails)
+		 * 8. Transition main task from pending → in_progress if not already in_progress
+		 * 9. Build and inject the task context message via messageInjector
+		 *    (non-fatal if injection fails — sub-session is already running and trackable)
 		 */
 		async spawn_step_agent(args: SpawnStepAgentInput): Promise<ToolResult> {
 			const { step_id, instructions } = args;
@@ -224,11 +220,26 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Use the most recently created task for this step
+			// Use the most recently created task for this step.
 			const stepTask = stepTasks[stepTasks.length - 1];
 
-			// Ensure customAgentId is set — fall back to step.agentId for preset agents
-			// (WorkflowExecutor sets customAgentId to undefined for coder/general preset roles)
+			// Idempotency guard: if this step already has a tracked sub-session, return it
+			// without creating a duplicate. Prevents double-spawning from orphaning the first
+			// session when the Task Agent retries a spawn_step_agent call.
+			if (stepTask.taskAgentSessionId) {
+				return jsonResult({
+					success: true,
+					sessionId: stepTask.taskAgentSessionId,
+					stepId: step_id,
+					stepName: step.name,
+					taskId: stepTask.id,
+					alreadySpawned: true,
+				});
+			}
+
+			// Ensure customAgentId is set — fall back to step.agentId for preset agents.
+			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
+			// but those agents are still SpaceAgent records indexed by step.agentId.
 			const effectiveTask = {
 				...stepTask,
 				customAgentId: stepTask.customAgentId ?? step.agentId,
@@ -239,7 +250,10 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				effectiveTask.description = instructions;
 			}
 
-			// Generate a new session ID for the sub-session
+			// Generate a new session ID for the sub-session.
+			// Note: the factory may assign a different ID internally. All subsequent code
+			// uses `actualSessionId` returned by sessionFactory.create(), not subSessionId.
+			// The subSessionId is embedded in the init only so the SDK can pre-wire it.
 			const subSessionId = randomUUID();
 
 			// Resolve the agent session init
@@ -268,39 +282,14 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Failed to create sub-session: ${message}` });
 			}
 
-			// Register the completion callback — fires when the sub-session finishes
+			// Register the completion callback — fires when the sub-session finishes.
 			sessionFactory.onComplete(actualSessionId, async () => {
 				await onSubSessionComplete(step_id, actualSessionId);
 			});
 
-			// Build the task context message and inject it into the sub-session
-			try {
-				const agent = agentManager.getById(effectiveTask.customAgentId!);
-				if (agent) {
-					const taskMessage = buildCustomAgentTaskMessage({
-						customAgent: agent,
-						task: effectiveTask,
-						workflowRun: run,
-						workflow,
-						space,
-						sessionId: actualSessionId,
-						workspacePath,
-					});
-					await messageInjector(actualSessionId, taskMessage);
-				}
-			} catch (err) {
-				// Message injection failure is non-fatal — the sub-session will still run,
-				// just without the task context message. Log the issue but don't abort.
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({
-					success: false,
-					error: `Sub-session created (${actualSessionId}) but message injection failed: ${message}`,
-				});
-			}
-
-			// Store the sub-session ID on the step task for later lookup by check_step_status.
-			// We use taskAgentSessionId as the field to record which sub-session is executing
-			// this step task (semantically: the session "orchestrating" this step's work).
+			// Record the sub-session ID on the step task BEFORE message injection.
+			// This ensures check_step_status can locate and track the session even if
+			// the subsequent message injection fails.
 			taskRepo.updateTask(stepTask.id, {
 				taskAgentSessionId: actualSessionId,
 				currentStep: `Running agent for step: ${step.name}`,
@@ -318,6 +307,54 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			// Update main task's currentStep to reflect which step is being executed
 			taskRepo.updateTask(taskId, { currentStep: `Executing step: ${step.name}` });
+
+			// Build the task context message and inject it into the sub-session.
+			// This is non-fatal: if injection fails the sub-session still runs (and is
+			// already trackable via taskAgentSessionId recorded above), just without its
+			// initial task context. Return success with a warning field so the Task Agent
+			// can still poll check_step_status.
+			try {
+				// resolveAgentInit() already validated that the agent exists, so this
+				// getById() call should always succeed. If it somehow returns null after
+				// resolveAgentInit() passed, that is a data inconsistency worth surfacing.
+				const agent = agentManager.getById(effectiveTask.customAgentId!);
+				if (!agent) {
+					return jsonResult({
+						success: true,
+						sessionId: actualSessionId,
+						stepId: step_id,
+						stepName: step.name,
+						taskId: stepTask.id,
+						warning:
+							`Agent ${effectiveTask.customAgentId} not found when building task message — ` +
+							`sub-session is running without initial task context. This should not happen.`,
+					});
+				}
+				const taskMessage = buildCustomAgentTaskMessage({
+					customAgent: agent,
+					task: effectiveTask,
+					workflowRun: run,
+					workflow,
+					space,
+					sessionId: actualSessionId,
+					workspacePath,
+				});
+				await messageInjector(actualSessionId, taskMessage);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				// Return success:true because the sub-session was created, the completion
+				// callback is registered, and taskAgentSessionId is persisted. The Task Agent
+				// can still track completion via check_step_status. The warning informs it
+				// that the sub-session started without its initial task context message.
+				return jsonResult({
+					success: true,
+					sessionId: actualSessionId,
+					stepId: step_id,
+					stepName: step.name,
+					taskId: stepTask.id,
+					warning: `Message injection failed: ${message}. Sub-session is running without initial task context.`,
+				});
+			}
 
 			return jsonResult({
 				success: true,
@@ -399,8 +436,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Query the sub-session processing state
-			const state = sessionFactory.getProcessingState(stepTask.taskAgentSessionId!);
+			// Query the sub-session processing state.
+			// The guard above ensures taskAgentSessionId is non-null here.
+			const state = sessionFactory.getProcessingState(stepTask.taskAgentSessionId);
 			if (!state) {
 				return jsonResult({
 					success: true,
@@ -454,6 +492,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * 4. Call executor.advance() to evaluate transitions and move to next step
 		 * 5. Handle WorkflowGateError → return gate-blocked status (caller calls request_human_input)
 		 * 6. Return next step info (or terminal state)
+		 *
+		 * Note: AdvanceWorkflowInput includes a `step_result` field which is currently a
+		 * placeholder. WorkflowExecutor.advance() does not yet accept a result parameter;
+		 * transition conditions are evaluated against run.config (e.g. humanApproved).
+		 * The field is retained in the schema for forward compatibility but is not forwarded
+		 * to the executor in this implementation.
 		 */
 		async advance_workflow(_args: AdvanceWorkflowInput): Promise<ToolResult> {
 			const executor = runtime.getExecutor(workflowRunId);
@@ -517,11 +561,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				const { step: nextStep, tasks: newTasks } = await executor.advance();
 
 				if (newTasks.length === 0) {
-					// Terminal step reached — executor marked run as completed
+					// Terminal step reached — executor marked run as completed.
+					// `nextStep` is the step that was just completed (the terminal one).
 					return jsonResult({
 						success: true,
 						terminal: true,
-						completedStep: {
+						terminalStep: {
 							id: nextStep.id,
 							name: nextStep.name,
 						},
@@ -602,6 +647,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 *
 		 * Updates the main task status to `needs_attention` and stores the question
 		 * in the `currentStep` field so the human can see it in the UI.
+		 * The full question + context is stored in the `error` field for complete context.
 		 *
 		 * Gate re-engagement:
 		 * When the human responds (via space.task.sendMessage), the message is injected
@@ -617,8 +663,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 			}
 
-			// Only transition to needs_attention from valid states
-			// Valid transitions: in_progress → needs_attention, review → needs_attention
+			// Only transition to needs_attention from valid states.
+			// Valid transitions: in_progress → needs_attention, review → needs_attention.
 			const canTransition = mainTask.status === 'in_progress' || mainTask.status === 'review';
 
 			if (!canTransition) {
@@ -630,6 +676,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
+			// The `error` field stores the full question + context for complete diagnostic context.
+			// The `currentStep` field stores just the bare question for UI display — it is
+			// intentionally shorter than `error` to fit the summary display in the task list.
 			const questionWithContext = questionContext
 				? `${question}\n\nContext: ${questionContext}`
 				: question;
@@ -639,7 +688,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					error: questionWithContext,
 				});
 
-				// Update currentStep to surface the question visibly in the UI
+				// Update currentStep to the bare question for visible UI display
 				taskRepo.updateTask(taskId, { currentStep: question });
 
 				return jsonResult({
