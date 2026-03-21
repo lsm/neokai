@@ -27,6 +27,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 
 const CODING_PLANNER_STEP = 'tpl-coding-planner';
 const CODING_CODER_STEP = 'tpl-coding-coder';
+const CODING_VERIFY_STEP = 'tpl-coding-verify';
+const CODING_DONE_STEP = 'tpl-coding-done';
 
 const RESEARCH_PLANNER_STEP = 'tpl-research-planner';
 const RESEARCH_GENERAL_STEP = 'tpl-research-general';
@@ -40,17 +42,20 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
 /**
  * Coding Workflow
  *
- * Two-node graph: Planner → Coder.
- * - The Planner → Coder transition uses a `human` condition: a human must
- *   approve the plan before implementation begins.
- * - The Coder step has no outgoing transitions — it is the terminal node.
- *   The run completes when advance() is called from the Coder step.
+ * Four-node graph: Plan → Code → Verify → Done (with cycle).
+ * - Plan → Code: `human` condition — a human must approve the plan.
+ * - Code → Verify: `always` condition — automatically verify after coding.
+ * - Verify → Plan: `task_result` condition on 'failed' — loops back (cyclic).
+ * - Verify → Done: `task_result` condition on 'passed' — completes the workflow.
+ * - `maxIterations: 3` caps the number of Plan→Code→Verify cycles.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
-	description: 'Plan-first coding workflow. A human reviews the plan before implementation starts.',
+	description:
+		'Plan-first coding workflow with verification. A human reviews the plan, code is implemented, then verified. Loops back on failure.',
+	maxIterations: 3,
 	steps: [
 		{
 			id: CODING_PLANNER_STEP,
@@ -61,6 +66,18 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			id: CODING_CODER_STEP,
 			name: 'Code',
 			agentId: 'coder',
+		},
+		{
+			id: CODING_VERIFY_STEP,
+			name: 'Verify & Test',
+			agentId: 'general',
+			instructions:
+				'Review the completed work. Run tests, check for issues. Set result to "passed" if everything looks good, or "failed: <reason>" if problems are found.',
+		},
+		{
+			id: CODING_DONE_STEP,
+			name: 'Done',
+			agentId: 'general',
 		},
 	],
 	transitions: [
@@ -73,6 +90,39 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				description: 'Review and approve the plan before coding begins',
 			},
 			order: 0,
+		},
+		{
+			id: 'tpl-coding-code-to-verify',
+			from: CODING_CODER_STEP,
+			to: CODING_VERIFY_STEP,
+			condition: {
+				type: 'always',
+				description: 'Automatically verify after coding is complete',
+			},
+			order: 0,
+		},
+		{
+			id: 'tpl-coding-verify-to-plan',
+			from: CODING_VERIFY_STEP,
+			to: CODING_PLANNER_STEP,
+			condition: {
+				type: 'task_result',
+				expression: 'failed',
+				description: 'Loop back to planning when verification fails',
+			},
+			order: 0,
+			isCyclic: true,
+		},
+		{
+			id: 'tpl-coding-verify-to-done',
+			from: CODING_VERIFY_STEP,
+			to: CODING_DONE_STEP,
+			condition: {
+				type: 'task_result',
+				expression: 'passed',
+				description: 'Complete workflow when verification passes',
+			},
+			order: 1,
 		},
 	],
 	startStepId: CODING_PLANNER_STEP,
@@ -239,6 +289,7 @@ export function seedBuiltInWorkflows(
 			to: stepIdMap.get(t.to)!,
 			condition: t.condition,
 			order: t.order,
+			isCyclic: t.isCyclic,
 		}));
 
 		const startStepId = stepIdMap.get(template.startStepId)!;
@@ -252,6 +303,7 @@ export function seedBuiltInWorkflows(
 			startStepId,
 			rules: [],
 			tags: [...template.tags],
+			maxIterations: template.maxIterations,
 		});
 	}
 }
