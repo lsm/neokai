@@ -24,6 +24,7 @@ import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { toast } from '../../lib/toast.ts';
 import { copyToClipboard } from '../../lib/utils';
+import { ActionBar } from '../ui/ActionBar';
 import { Modal } from '../ui/Modal';
 import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
@@ -102,164 +103,6 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	draft: 'text-gray-500',
 	cancelled: 'text-gray-500',
 };
-
-interface HeaderReviewBarProps {
-	roomId: string;
-	taskId: string;
-	/** Task data for PR link display */
-	task?: NeoTask | null;
-	/** Called after approval to refresh the conversation */
-	onApproved: () => void;
-	/** Called after rejection to refresh the conversation */
-	onRejected: () => void;
-}
-
-function HeaderReviewBar({ roomId, taskId, task, onApproved, onRejected }: HeaderReviewBarProps) {
-	const { request } = useMessageHub();
-	const [approving, setApproving] = useState(false);
-	const [rejecting, setRejecting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const rejectModal = useModal();
-
-	const approveTask = async () => {
-		if (approving) return;
-		setApproving(true);
-		setError(null);
-		try {
-			await request('task.approve', { roomId, taskId });
-			// Approval changes group state; re-fetch conversation to pick up the approval message
-			onApproved();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to approve task');
-		} finally {
-			setApproving(false);
-		}
-	};
-
-	const rejectTask = async (feedback: string) => {
-		if (rejecting) return;
-		setRejecting(true);
-		setError(null);
-		try {
-			await request('task.reject', { roomId, taskId, feedback });
-			// Rejection changes group state; re-fetch conversation to pick up the rejection message
-			rejectModal.close();
-			onRejected();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to reject task');
-		} finally {
-			setRejecting(false);
-		}
-	};
-
-	return (
-		<>
-			<div class="border-b border-amber-700/30 bg-amber-900/20 px-4 py-2 flex items-center gap-3 flex-shrink-0">
-				{/* Review prompt */}
-				<div class="flex-1 flex items-center gap-2">
-					<span class="text-amber-400 text-sm font-medium">
-						Review the PR and approve or provide feedback below
-					</span>
-					{/* PR link button */}
-					{task?.prUrl && (
-						<a
-							href={task.prUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-300 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors"
-						>
-							<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
-								<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-							</svg>
-							<span>PR #{task.prNumber ?? '?'}</span>
-							<svg
-								class="w-3 h-3 text-gray-500"
-								fill="none"
-								stroke="currentColor"
-								viewBox="0 0 24 24"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-								/>
-							</svg>
-						</a>
-					)}
-				</div>
-				{/* Action buttons */}
-				<div class="flex items-center gap-2">
-					{/* Reject button */}
-					<button
-						class="py-1.5 px-4 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
-						onClick={rejectModal.open}
-						disabled={rejecting || approving}
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M6 18L18 6M6 6l12 12"
-							/>
-						</svg>
-						<span>Reject</span>
-					</button>
-					{/* Approve button */}
-					<button
-						class="py-1.5 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
-						onClick={approveTask}
-						disabled={approving || rejecting}
-					>
-						{approving ? (
-							<>
-								<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-									<circle
-										class="opacity-25"
-										cx="12"
-										cy="12"
-										r="10"
-										stroke="currentColor"
-										stroke-width="4"
-									/>
-									<path
-										class="opacity-75"
-										fill="currentColor"
-										d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-									/>
-								</svg>
-								<span>Approving…</span>
-							</>
-						) : (
-							<>
-								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M5 13l4 4L19 7"
-									/>
-								</svg>
-								<span>Approve</span>
-							</>
-						)}
-					</button>
-				</div>
-				{error && <span class="text-xs text-red-400">{error}</span>}
-			</div>
-			{/* Reject modal */}
-			<RejectModal
-				isOpen={rejectModal.isOpen}
-				onClose={rejectModal.close}
-				onConfirm={rejectTask}
-				title="Reject Task"
-				message="Please provide feedback explaining why this task is being rejected. The worker will receive this feedback and can address the issues."
-				isLoading={rejecting}
-			/>
-		</>
-	);
-}
 
 type HumanMessageTarget = 'worker' | 'leader';
 
@@ -661,6 +504,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// Task action modals
 	const completeModal = useModal();
 	const cancelModal = useModal();
+	const rejectModal = useModal();
+
+	// Review state — approve/reject for tasks awaiting human review
+	const [approving, setApproving] = useState(false);
+	const [rejecting, setRejecting] = useState(false);
+	const [reviewError, setReviewError] = useState<string | null>(null);
 
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
@@ -854,6 +703,61 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			setInterrupting(false);
 		}
 	};
+
+	// Approve handler for tasks awaiting human review
+	const approveReviewedTask = async () => {
+		if (approving) return;
+		setApproving(true);
+		setReviewError(null);
+		try {
+			await request('task.approve', { roomId, taskId });
+			setConversationKey((k) => k + 1);
+		} catch (err) {
+			setReviewError(err instanceof Error ? err.message : 'Failed to approve task');
+		} finally {
+			setApproving(false);
+		}
+	};
+
+	// Reject handler for tasks awaiting human review
+	const rejectReviewedTask = async (feedback: string) => {
+		if (rejecting) return;
+		setRejecting(true);
+		setReviewError(null);
+		try {
+			await request('task.reject', { roomId, taskId, feedback });
+			rejectModal.close();
+			setConversationKey((k) => k + 1);
+		} catch (err) {
+			setReviewError(err instanceof Error ? err.message : 'Failed to reject task');
+		} finally {
+			setRejecting(false);
+		}
+	};
+
+	// PR link element passed as meta to ActionBar when available
+	const reviewPrMeta = task?.prUrl ? (
+		<a
+			href={task.prUrl}
+			target="_blank"
+			rel="noopener noreferrer"
+			class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-300 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors"
+		>
+			<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
+				<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+			</svg>
+			<span>PR #{task.prNumber ?? '?'}</span>
+			<svg class="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width="2"
+					d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+				/>
+			</svg>
+		</a>
+	) : undefined;
+
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
@@ -987,15 +891,31 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</button>
 			</div>
 
-			{/* Header Review Bar - shown when awaiting human approval */}
+			{/* Action bar — shown when awaiting human review/approval */}
 			{group?.submittedForReview && (
-				<HeaderReviewBar
-					roomId={roomId}
-					taskId={taskId}
-					task={task}
-					onApproved={() => setConversationKey((k) => k + 1)}
-					onRejected={() => setConversationKey((k) => k + 1)}
-				/>
+				<>
+					<ActionBar
+						type="review"
+						title="Review the PR and approve or provide feedback below"
+						primaryAction={{
+							label: 'Approve',
+							onClick: approveReviewedTask,
+							loading: approving,
+							variant: 'approve',
+						}}
+						secondaryAction={{
+							label: 'Reject',
+							onClick: rejectModal.open,
+							disabled: rejecting || approving,
+						}}
+						meta={reviewPrMeta}
+					/>
+					{reviewError && (
+						<div class="px-4 py-1.5 bg-red-900/20 border-b border-red-800/30 flex-shrink-0">
+							<span class="text-xs text-red-400">{reviewError}</span>
+						</div>
+					)}
+				</>
 			)}
 
 			{/* Info panel */}
@@ -1167,6 +1087,15 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				isOpen={cancelModal.isOpen}
 				onClose={cancelModal.close}
 				onConfirm={cancelTask}
+			/>
+			{/* Reject dialog — for tasks awaiting human review */}
+			<RejectModal
+				isOpen={rejectModal.isOpen}
+				onClose={rejectModal.close}
+				onConfirm={rejectReviewedTask}
+				title="Reject Task"
+				message="Please provide feedback explaining why this task is being rejected. The worker will receive this feedback and can address the issues."
+				isLoading={rejecting}
 			/>
 		</div>
 	);
