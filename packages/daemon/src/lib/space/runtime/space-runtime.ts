@@ -631,6 +631,14 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Returns the cached SpaceTaskManager for a given space.
+	 * Public so that tool handlers (e.g. global-spaces-tools) can retry/cancel/reassign tasks.
+	 */
+	getTaskManagerForSpace(spaceId: string): SpaceTaskManager {
+		return this.getOrCreateTaskManager(spaceId);
+	}
+
+	/**
 	 * Returns the cached SpaceTaskManager for a space, creating it if needed.
 	 * Caching avoids creating a new manager + repository on every executor build.
 	 */
