@@ -19,6 +19,20 @@
  *   - advance_workflow      — Evaluate transitions from the current step and move to next
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
+ *
+ * ## Content interpolation
+ * All operator-supplied content (space.backgroundContext, space.instructions,
+ * task.description, agent names/descriptions, step instructions, workflow rules,
+ * and previousTaskSummaries) is interpolated directly into the prompt without
+ * sanitization. These are operator-controlled fields on a self-hosted tool, so
+ * no sanitization is needed — consistent with the approach in space-chat-agent.ts.
+ *
+ * ## Task context duplication
+ * Task details (title, priority, status, description, dependencies) appear in
+ * BOTH the system prompt (for persistent LLM context) and the initial message
+ * (for actionable task assignment). This intentional redundancy is a common LLM
+ * prompt pattern that improves context reliability. Do not remove one without
+ * removing the other.
  */
 
 import type {
@@ -72,14 +86,19 @@ function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
 }
 
 function formatTransition(t: WorkflowTransition): string {
-	const condition = t.condition
-		? t.condition.type === 'human'
-			? ' [HUMAN GATE]'
-			: t.condition.type === 'condition'
-				? ` [condition: ${t.condition.expression ?? '?'}]`
-				: ''
-		: '';
-	return `- \`${t.from}\` → \`${t.to}\`${condition}`;
+	let conditionLabel = '';
+	if (t.condition) {
+		if (t.condition.type === 'human') {
+			conditionLabel = ' [HUMAN GATE]';
+		} else if (t.condition.type === 'condition') {
+			conditionLabel = ` [condition: ${t.condition.expression ?? '?'}]`;
+		}
+		// 'always' transitions produce no label — they are unconditional, semantically
+		// identical to a transition with no condition object. Any future WorkflowConditionType
+		// values not handled here will also produce no label; add a branch above when new
+		// types are introduced.
+	}
+	return `- \`${t.from}\` → \`${t.to}\`${conditionLabel}`;
 }
 
 function formatRule(rule: WorkflowRule): string {
@@ -362,11 +381,23 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 	// ---- Start instruction --------------------------------------------------
 	parts.push(`\n---\n`);
 	if (context.workflow && context.workflow.steps.length > 0) {
+		// Normal case: workflow with steps — spawn the start step's agent.
 		parts.push(
 			`Begin executing the workflow now. Start by calling \`spawn_step_agent\` ` +
 				`for the start step (\`${context.workflow.startStepId}\`).`
 		);
+	} else if (context.workflow && context.workflow.steps.length === 0) {
+		// Degenerate case: workflow exists but defines no steps.
+		// spawn_step_agent requires a step_id, so there is nothing to execute.
+		// Surface this as an immediate failure rather than leaving the agent in
+		// an impossible state trying to spawn a step with no ID.
+		parts.push(
+			`**Warning:** The assigned workflow "${context.workflow.name}" has no steps defined. ` +
+				`There is nothing to execute. Call \`report_result\` immediately with ` +
+				`\`status: "failed"\` and a summary explaining that the workflow has no steps.`
+		);
 	} else {
+		// No workflow assigned — spawn the most appropriate agent directly.
 		parts.push(
 			`Begin executing the task now. Spawn the most appropriate agent using ` +
 				`\`spawn_step_agent\` and monitor its completion.`

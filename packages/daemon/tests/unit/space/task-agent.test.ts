@@ -415,6 +415,43 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('step-code');
 	});
 
+	test('rule with no appliesTo shows "(all steps)" scope', () => {
+		const ctx = makeContext({
+			workflow: makeWorkflow({
+				rules: [
+					{ id: 'r1', name: 'Global Rule', content: 'Follow conventions.', appliesTo: undefined },
+				],
+			}),
+		});
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('all steps');
+	});
+
+	test('rule with empty appliesTo array shows "(all steps)" scope', () => {
+		const ctx = makeContext({
+			workflow: makeWorkflow({
+				rules: [{ id: 'r1', name: 'Global Rule', content: 'Follow conventions.', appliesTo: [] }],
+			}),
+		});
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('all steps');
+	});
+
+	test('always condition transition produces no extra label', () => {
+		const ctx = makeContext({
+			workflow: makeWorkflow({
+				transitions: [
+					{ id: 't-always', from: 'step-plan', to: 'step-code', condition: { type: 'always' } },
+				],
+			}),
+		});
+		const msg = buildTaskAgentInitialMessage(ctx);
+		// The arrow line should appear without a bracketed condition label
+		expect(msg).toContain('`step-plan` → `step-code`');
+		expect(msg).not.toContain('[HUMAN GATE]');
+		expect(msg).not.toContain('[condition:');
+	});
+
 	test('includes workflow run details when present', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('run-1');
@@ -434,12 +471,40 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('No workflow is assigned');
 	});
 
-	test('handles workflow with no steps', () => {
+	test('handles workflow with no steps — body shows no steps message', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({ steps: [], transitions: [], startStepId: 'none' }),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('no steps defined');
+	});
+
+	test('handles workflow with no steps — start instruction directs to report_result failure', () => {
+		const ctx = makeContext({
+			workflow: makeWorkflow({
+				name: 'Empty Workflow',
+				steps: [],
+				transitions: [],
+				startStepId: 'none',
+			}),
+		});
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('report_result');
+		expect(msg).toContain('Empty Workflow');
+		expect(msg).toContain('no steps');
+	});
+
+	test('step with unresolvable agentId falls back to raw agent id', () => {
+		const ctx = makeContext({
+			workflow: makeWorkflow({
+				steps: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
+				transitions: [],
+				startStepId: 'step-orphan',
+			}),
+			availableAgents: [],
+		});
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('agent id: agent-missing');
 	});
 
 	test('handles workflow with no rules', () => {
