@@ -29,7 +29,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import { jsonResult } from './tool-result';
+import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 
 // ---------------------------------------------------------------------------
@@ -52,52 +52,6 @@ export interface SpaceAgentToolsConfig {
 	/** Space agent manager for reassign validation. */
 	spaceAgentManager: SpaceAgentManager;
 }
-
-/**
- * Common English stop words filtered out by suggest_workflow before keyword matching.
- * Hoisted to module scope so the Set is constructed once, not on every tool call.
- */
-const SUGGEST_WORKFLOW_STOP_WORDS = new Set([
-	'the',
-	'and',
-	'for',
-	'are',
-	'but',
-	'not',
-	'you',
-	'all',
-	'can',
-	'her',
-	'was',
-	'one',
-	'our',
-	'out',
-	'day',
-	'get',
-	'has',
-	'him',
-	'his',
-	'how',
-	'its',
-	'may',
-	'new',
-	'now',
-	'old',
-	'see',
-	'two',
-	'use',
-	'way',
-	'who',
-	'did',
-	'let',
-	'put',
-	'say',
-	'she',
-	'too',
-	'had',
-	'any',
-	'via',
-]);
 
 // ---------------------------------------------------------------------------
 // Tool handlers (separated for testability)

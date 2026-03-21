@@ -877,6 +877,47 @@ describe('createGlobalSpacesToolHandlers — cancel_task', () => {
 		expect(parsed.error).toContain(ctx.otherSpaceId);
 	});
 
+	test('returns error when cancelling a completed task (invalid transition)', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: null });
+
+		const createResult = await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Completed task',
+			description: 'Already done',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
+		ctx.taskRepo.updateTask(taskId, { status: 'completed' });
+
+		const result = await handlers.cancel_task({ task_id: taskId });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toBeDefined();
+	});
+
+	test('cancel_workflow_run: true on standalone task (no workflowRunId) is a no-op', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: null });
+
+		const createResult = await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Standalone task',
+			description: 'No workflow run',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		const result = await handlers.cancel_task({
+			task_id: taskId,
+			cancel_workflow_run: true,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('cancelled');
+		// No workflow run to cancel — should be null
+		expect(parsed.cancelledWorkflowRunId).toBeNull();
+	});
+
 	test('cascades cancellation to dependent pending tasks', async () => {
 		const handlers = makeHandlers(ctx, { activeSpaceId: null });
 

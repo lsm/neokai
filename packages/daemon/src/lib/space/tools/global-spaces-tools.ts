@@ -29,6 +29,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
+import type { ToolResult } from './tool-result';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -66,61 +68,6 @@ const AUTONOMY_LEVEL_VALUES = [
 	'supervised',
 	'semi_autonomous',
 ] as const satisfies readonly SpaceAutonomyLevel[];
-
-interface ToolResult {
-	content: Array<{ type: 'text'; text: string }>;
-}
-
-function jsonResult(data: unknown): ToolResult {
-	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
-}
-
-/**
- * Common English stop words filtered out by suggest_workflow before keyword matching.
- */
-const SUGGEST_WORKFLOW_STOP_WORDS = new Set([
-	'the',
-	'and',
-	'for',
-	'are',
-	'but',
-	'not',
-	'you',
-	'all',
-	'can',
-	'her',
-	'was',
-	'one',
-	'our',
-	'out',
-	'day',
-	'get',
-	'has',
-	'him',
-	'his',
-	'how',
-	'its',
-	'may',
-	'new',
-	'now',
-	'old',
-	'see',
-	'two',
-	'use',
-	'way',
-	'who',
-	'did',
-	'let',
-	'put',
-	'say',
-	'she',
-	'too',
-	'had',
-	'any',
-	'via',
-]);
-
-// ---------------------------------------------------------------------------
 // Tool handlers (separated for testability)
 // ---------------------------------------------------------------------------
 
@@ -141,7 +88,13 @@ export function createGlobalSpacesToolHandlers(
 		db,
 	} = config;
 
-	/** Cache of SpaceTaskManager instances keyed by spaceId (same getOrCreate pattern as SpaceRuntime). */
+	/**
+	 * Cache of SpaceTaskManager instances keyed by spaceId.
+	 * Follows the same getOrCreate pattern as SpaceRuntime.getOrCreateTaskManager().
+	 * Lifecycle: the cache is created once per createGlobalSpacesToolHandlers() call.
+	 * In practice createGlobalSpacesMcpServer() calls this exactly once per provisioning,
+	 * so there is no cross-call state sharing to worry about.
+	 */
 	const taskManagers = new Map<string, SpaceTaskManager>();
 
 	function getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
@@ -399,7 +352,10 @@ export function createGlobalSpacesToolHandlers(
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			// Validate the task belongs to the resolved space when a space context is available.
+			// Space ownership validation: when a space context is available (explicit space_id or
+			// activeSpaceId), reject cross-space access. When no context is available the Global
+			// Agent is operating cross-space and the check is intentionally skipped — task IDs are
+			// globally unique UUIDs and the Global Agent is trusted to use them responsibly.
 			const resolved = resolveSpaceId(args.space_id);
 			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
 				return jsonResult({
@@ -419,7 +375,8 @@ export function createGlobalSpacesToolHandlers(
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			// Validate space ownership when space context is available.
+			// Space ownership validation: when a context is available, enforce it. When absent,
+			// the Global Agent is operating cross-space and the check is intentionally skipped.
 			const resolved = resolveSpaceId(args.space_id);
 			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
 				return jsonResult({
@@ -446,7 +403,8 @@ export function createGlobalSpacesToolHandlers(
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			// Validate space ownership when space context is available.
+			// Space ownership validation: when a context is available, enforce it. When absent,
+			// the Global Agent is operating cross-space and the check is intentionally skipped.
 			const resolved = resolveSpaceId(args.space_id);
 			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
 				return jsonResult({
@@ -459,8 +417,12 @@ export function createGlobalSpacesToolHandlers(
 				const cancelled = await mgr.cancelTask(args.task_id);
 				let cancelledRun = null;
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
-					cancelledRun = task.workflowRunId;
+					// Guard against stale run IDs: updateStatus returns null when the run is
+					// not found, which would leave the task cancelled but the run untouched.
+					const updatedRun = workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
+					if (updatedRun) {
+						cancelledRun = task.workflowRunId;
+					}
 				}
 				return jsonResult({ success: true, task: cancelled, cancelledWorkflowRunId: cancelledRun });
 			} catch (err) {
@@ -479,7 +441,8 @@ export function createGlobalSpacesToolHandlers(
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			// Validate space ownership when space context is available.
+			// Space ownership validation: when a context is available, enforce it. When absent,
+			// the Global Agent is operating cross-space and the check is intentionally skipped.
 			const resolved = resolveSpaceId(args.space_id);
 			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
 				return jsonResult({
