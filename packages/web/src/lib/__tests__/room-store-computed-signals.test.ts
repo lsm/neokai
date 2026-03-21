@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for RoomStore computed signals:
  * - tasksByGoalId: Map of goal ID → linked TaskSummary[]
@@ -9,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
 
 // -------------------------------------------------------
 // Mocks
@@ -51,11 +51,11 @@ vi.mock('../connection-manager.ts', () => ({
 // Helpers
 // -------------------------------------------------------
 
-function makeTask(id: string, status: string, title = `Task ${id}`) {
-	return { id, title, status, priority: 'normal', progress: 0, dependsOn: [] };
+function makeTask(id: string, status: TaskStatus, title = `Task ${id}`): TaskSummary {
+	return { id, title, status, priority: 'normal', progress: 0, dependsOn: [], updatedAt: 0 };
 }
 
-function makeGoal(id: string, linkedTaskIds: string[] = []) {
+function makeGoal(id: string, linkedTaskIds: string[] = []): RoomGoal {
 	return {
 		id,
 		roomId: 'room-1',
@@ -63,8 +63,11 @@ function makeGoal(id: string, linkedTaskIds: string[] = []) {
 		description: '',
 		status: 'active',
 		priority: 'normal',
+		progress: 0,
 		linkedTaskIds,
 		metrics: {},
+		createdAt: 0,
+		updatedAt: 0,
 	};
 }
 
