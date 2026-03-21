@@ -204,6 +204,13 @@ export function RoomDashboard() {
 					tasks={tasks}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+					onReject={async (taskId, feedback) => {
+						try {
+							await roomStore.rejectTask(taskId, feedback);
+						} catch {
+							// Error handled by store
+						}
+					}}
 				/>
 			</div>
 

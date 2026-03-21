@@ -498,6 +498,29 @@ class RoomStore {
 		// Task state updates arrive via room.task.update events
 	}
 
+	/**
+	 * Reject a task in review status with feedback.
+	 */
+	async rejectTask(taskId: string, feedback: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ success: boolean }>('task.reject', {
+			roomId,
+			taskId,
+			feedback,
+		});
+
+		// Task state updates arrive via room.task.update events
+	}
+
 	// ========================================
 	// Session Methods
 	// ========================================

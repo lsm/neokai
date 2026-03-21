@@ -8,8 +8,9 @@
  * - Needs Attention: needs_attention + cancelled
  */
 
+import { useState } from 'preact/hooks';
 import { signal, effect } from '@preact/signals';
-import type { TaskSummary } from '@neokai/shared';
+import type { TaskSummary, TaskStatus } from '@neokai/shared';
 
 /** Tab filter types */
 export type TaskFilterTab = 'active' | 'review' | 'done' | 'needs_attention';
@@ -46,6 +47,7 @@ interface RoomTasksProps {
 	tasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onReject?: (taskId: string, feedback: string) => void;
 }
 
 /** Get count of tasks for each filter tab */
@@ -73,7 +75,27 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 	}
 }
 
-export function RoomTasks({ tasks, onTaskClick, onView }: RoomTasksProps) {
+/** Map task status to a left border color class */
+function getStatusBorderColor(status: TaskStatus): string {
+	switch (status) {
+		case 'pending':
+			return 'border-l-gray-500';
+		case 'in_progress':
+			return 'border-l-blue-500';
+		case 'review':
+			return 'border-l-amber-500';
+		case 'completed':
+			return 'border-l-green-500';
+		case 'needs_attention':
+			return 'border-l-red-500';
+		case 'cancelled':
+			return 'border-l-gray-700';
+		default:
+			return 'border-l-transparent';
+	}
+}
+
+export function RoomTasks({ tasks, onTaskClick, onView, onReject }: RoomTasksProps) {
 	const selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
@@ -134,6 +156,7 @@ export function RoomTasks({ tasks, onTaskClick, onView }: RoomTasksProps) {
 					tab={selectedTab}
 					onTaskClick={onTaskClick}
 					onView={onView}
+					onReject={onReject}
 				/>
 			)}
 		</div>
@@ -232,13 +255,17 @@ function TaskList({
 	tab,
 	onTaskClick,
 	onView,
+	onReject,
 }: {
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
 	tab: TaskFilterTab;
 	onTaskClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onReject?: (taskId: string, feedback: string) => void;
 }) {
+	const [rejectingTaskId, setRejectingTaskId] = useState<string | null>(null);
+
 	// For Active tab, group by in_progress and pending
 	// For Review tab - all are review status
 	// For Done tab - all are completed
@@ -258,6 +285,8 @@ function TaskList({
 						tasks={inProgress}
 						allTasks={allTasks}
 						onTaskClick={onTaskClick}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
 					/>
 				)}
 				{pending.length > 0 && (
@@ -268,6 +297,8 @@ function TaskList({
 						tasks={pending}
 						allTasks={allTasks}
 						onTaskClick={onTaskClick}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={setRejectingTaskId}
 					/>
 				)}
 			</div>
@@ -285,6 +316,9 @@ function TaskList({
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
 					onView={onView}
+					onReject={onReject}
+					rejectingTaskId={rejectingTaskId}
+					onSetRejectingTaskId={setRejectingTaskId}
 				/>
 			</div>
 		);
@@ -300,6 +334,8 @@ function TaskList({
 					tasks={tasks}
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
+					rejectingTaskId={rejectingTaskId}
+					onSetRejectingTaskId={setRejectingTaskId}
 				/>
 			</div>
 		);
@@ -320,6 +356,8 @@ function TaskList({
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
 					showAlert
+					rejectingTaskId={rejectingTaskId}
+					onSetRejectingTaskId={setRejectingTaskId}
 				/>
 			)}
 			{cancelled.length > 0 && (
@@ -330,6 +368,8 @@ function TaskList({
 					tasks={cancelled}
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
+					rejectingTaskId={rejectingTaskId}
+					onSetRejectingTaskId={setRejectingTaskId}
 				/>
 			)}
 		</div>
@@ -345,7 +385,10 @@ function TaskGroup({
 	allTasks,
 	onTaskClick,
 	onView,
+	onReject,
 	showAlert = false,
+	rejectingTaskId,
+	onSetRejectingTaskId,
 }: {
 	title: string;
 	count: number;
@@ -354,7 +397,10 @@ function TaskGroup({
 	allTasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onReject?: (taskId: string, feedback: string) => void;
 	showAlert?: boolean;
+	rejectingTaskId?: string | null;
+	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
 	const headerStyles: Record<string, string> = {
 		default: '',
@@ -415,6 +461,9 @@ function TaskGroup({
 						allTasks={allTasks}
 						onClick={onTaskClick}
 						onView={onView}
+						onReject={onReject}
+						rejectingTaskId={rejectingTaskId}
+						onSetRejectingTaskId={onSetRejectingTaskId}
 					/>
 				))}
 			</div>
@@ -435,22 +484,30 @@ function TaskItem({
 	allTasks,
 	onClick,
 	onView,
+	onReject,
+	rejectingTaskId,
+	onSetRejectingTaskId,
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
 	onClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onReject?: (taskId: string, feedback: string) => void;
+	rejectingTaskId?: string | null;
+	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
+	const [feedback, setFeedback] = useState('');
 	const isClickable = !!onClick;
 	const showView = task.status === 'review' && !!onView;
+	const showReject = task.status === 'review' && !!onReject;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
-
 	const isWorking = task.status === 'review' && !!task.activeSession;
+	const isRejecting = rejectingTaskId === task.id;
 
 	return (
 		<div
-			class={`px-4 py-3 ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+			class={`px-4 py-3 border-l-2 ${getStatusBorderColor(task.status)} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
 			onClick={isClickable ? () => onClick(task.id) : undefined}
 		>
 			<div class="flex items-start justify-between">
@@ -500,6 +557,22 @@ function TaskItem({
 							审阅
 						</button>
 					)}
+					{showReject && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								if (isRejecting) {
+									setFeedback('');
+									onSetRejectingTaskId?.(null);
+								} else {
+									onSetRejectingTaskId?.(task.id);
+								}
+							}}
+							class="px-2 py-1 text-xs font-medium text-red-400 bg-red-900/20 hover:bg-red-900/40 border border-red-700/50 rounded transition-colors"
+						>
+							Reject
+						</button>
+					)}
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
@@ -535,6 +608,41 @@ function TaskItem({
 						class="h-full bg-blue-500 transition-all duration-300"
 						style={{ width: `${task.progress}%` }}
 					/>
+				</div>
+			)}
+			{isRejecting && (
+				<div class="mt-3 pt-3 border-t border-dark-700" onClick={(e) => e.stopPropagation()}>
+					<textarea
+						rows={2}
+						placeholder="Please provide feedback..."
+						value={feedback}
+						onInput={(e) => setFeedback((e.target as HTMLTextAreaElement).value)}
+						class="w-full text-sm bg-dark-900 border border-dark-600 rounded px-3 py-2 text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-red-500/60"
+					/>
+					<div class="flex justify-end gap-2 mt-2">
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setFeedback('');
+								onSetRejectingTaskId?.(null);
+							}}
+							class="px-3 py-1.5 text-xs font-medium text-gray-400 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
+						>
+							Cancel
+						</button>
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onReject?.(task.id, feedback);
+								setFeedback('');
+								onSetRejectingTaskId?.(null);
+							}}
+							disabled={!feedback.trim()}
+							class="px-3 py-1.5 text-xs font-medium text-red-400 bg-red-900/20 hover:bg-red-900/30 border border-red-700/50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							Confirm Reject
+						</button>
+					</div>
 				</div>
 			)}
 		</div>
