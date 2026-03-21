@@ -476,6 +476,56 @@ describe('SpaceWorkflowRepository', () => {
 		expect(updated?.layout).toBeUndefined();
 	});
 
+	test('createWorkflow stores maxIterations', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Cyclic WF',
+			steps: [coderStep],
+			maxIterations: 3,
+		});
+		expect(wf.maxIterations).toBe(3);
+
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.maxIterations).toBe(3);
+	});
+
+	test('createWorkflow without maxIterations returns undefined', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'No Iterations WF',
+			steps: [coderStep],
+		});
+		expect(wf.maxIterations).toBeUndefined();
+	});
+
+	test('updateWorkflow sets maxIterations on an existing workflow', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF Iter',
+			steps: [coderStep],
+		});
+		expect(wf.maxIterations).toBeUndefined();
+
+		const updated = repo.updateWorkflow(wf.id, { maxIterations: 10 });
+		expect(updated?.maxIterations).toBe(10);
+
+		const fetched = repo.getWorkflow(wf.id)!;
+		expect(fetched.maxIterations).toBe(10);
+	});
+
+	test('updateWorkflow clears maxIterations when null is passed', () => {
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF Clear Iter',
+			steps: [coderStep],
+			maxIterations: 5,
+		});
+		expect(wf.maxIterations).toBe(5);
+
+		const updated = repo.updateWorkflow(wf.id, { maxIterations: null });
+		expect(updated?.maxIterations).toBeUndefined();
+	});
+
 	test('layout column contains raw JSON in the DB', () => {
 		const layout = { [coderStep.id!]: { x: 1, y: 2 } };
 		const wf = repo.createWorkflow({
