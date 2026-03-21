@@ -161,7 +161,8 @@ export class TaskRepository {
 			params.activeSession === undefined &&
 			(params.status === 'completed' ||
 				params.status === 'needs_attention' ||
-				params.status === 'cancelled')
+				params.status === 'cancelled' ||
+				params.status === 'archived')
 		) {
 			fields.push('active_session = ?');
 			values.push(null);
@@ -236,11 +237,11 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Count all active (non-completed, non-needs_attention, non-cancelled) tasks for a room
+	 * Count all active (non-completed, non-needs_attention, non-cancelled, non-archived) tasks for a room
 	 */
 	countActiveTasks(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled')`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled', 'archived')`
 		);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;

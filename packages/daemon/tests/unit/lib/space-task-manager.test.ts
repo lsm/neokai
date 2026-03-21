@@ -225,10 +225,28 @@ describe('SpaceTaskManager', () => {
 	});
 
 	describe('archiveTask', () => {
-		it('archives a task', async () => {
+		it('archives a completed task', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.setTaskStatus(task.id, 'completed');
 			const archived = await manager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
 			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('throws when archiving a task in pending status', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await expect(manager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'pending'"
+			);
+		});
+
+		it('throws when archiving a task in in_progress status', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await expect(manager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'in_progress'"
+			);
 		});
 	});
 

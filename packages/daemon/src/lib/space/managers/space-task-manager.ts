@@ -261,12 +261,20 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Archive a task
+	 * Archive a task - transitions to 'archived' status and sets archivedAt timestamp.
+	 * Validates that the current status allows transitioning to 'archived'.
 	 */
 	async archiveTask(taskId: string): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		if (!isValidSpaceTaskTransition(task.status, 'archived')) {
+			throw new Error(
+				`Cannot archive task in '${task.status}' status. ` +
+					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
+			);
 		}
 
 		const updated = this.taskRepo.archiveTask(taskId);
