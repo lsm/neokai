@@ -137,8 +137,12 @@ function makeMockHub() {
 			// spaceWorkflow handlers return wrapped { workflow }
 			if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
 			if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
-			// space.list returns array of spaces
-			if (method === 'space.list') return [makeSpace('s1'), makeSpace('s2')];
+			// space.listWithTasks returns array of spaces enriched with tasks
+			if (method === 'space.listWithTasks')
+				return [
+					{ ...makeSpace('s1'), tasks: [] },
+					{ ...makeSpace('s2'), tasks: [] },
+				];
 			return {};
 		}),
 	};
@@ -907,7 +911,7 @@ describe('SpaceStore — initGlobalList', () => {
 	it('fetches space list and populates spaces signal', async () => {
 		await spaceStore.initGlobalList();
 
-		expect(mockHub.request).toHaveBeenCalledWith('space.list', {});
+		expect(mockHub.request).toHaveBeenCalledWith('space.listWithTasks', {});
 		expect(spaceStore.spaces.value).toHaveLength(2);
 		expect(spaceStore.spaces.value[0].id).toBe('s1');
 		expect(spaceStore.spaces.value[1].id).toBe('s2');
@@ -1019,14 +1023,14 @@ describe('SpaceStore — refresh', () => {
 		// refresh() fire-and-forgets initGlobalList() via .catch(). The assertion passes
 		// because all mocks resolve synchronously (vi.fn async), so the microtask queue
 		// drains within the same await tick as refresh() itself.
-		expect(mockHub.request).toHaveBeenCalledWith('space.list', {});
+		expect(mockHub.request).toHaveBeenCalledWith('space.listWithTasks', {});
 	});
 
 	it('does not re-init global list when never initialized', async () => {
 		// globalListInitialized is false — never called initGlobalList
 		await spaceStore.refresh();
 
-		expect(mockHub.request).not.toHaveBeenCalledWith('space.list', expect.anything());
+		expect(mockHub.request).not.toHaveBeenCalledWith('space.listWithTasks', expect.anything());
 	});
 
 	it('re-fetches space overview when a space is selected', async () => {
