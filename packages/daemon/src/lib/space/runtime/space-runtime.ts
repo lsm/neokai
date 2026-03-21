@@ -172,6 +172,19 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Wire a TaskAgentManager into the runtime after construction.
+	 *
+	 * Called after construction to resolve the circular dependency:
+	 * SpaceRuntimeService is created first (so TaskAgentManager can reference it),
+	 * then TaskAgentManager is created, then it is injected back here.
+	 * Once set, the tick loop will use Task Agent sessions to drive workflow execution
+	 * instead of calling advance() directly.
+	 */
+	setTaskAgentManager(manager: TaskAgentManager): void {
+		this.config.taskAgentManager = manager;
+	}
+
+	/**
 	 * Safely calls notificationSink.notify(), catching and logging any errors.
 	 *
 	 * By interface contract, NotificationSink implementations should handle their

@@ -16,6 +16,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NotificationSink } from './notification-sink';
+import type { TaskAgentManager } from './task-agent-manager';
 import { SpaceRuntime } from './space-runtime';
 import { Logger } from '../../logger';
 
@@ -28,6 +29,15 @@ export interface SpaceRuntimeServiceConfig {
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
+	 *
+	 * When provided, the tick loop delegates task workflow execution to Task Agent
+	 * sessions instead of calling advance() directly. If not provided at construction
+	 * time (e.g. due to circular dependency resolution), use setTaskAgentManager()
+	 * after both objects have been created.
+	 */
+	taskAgentManager?: TaskAgentManager;
 	tickIntervalMs?: number;
 }
 
@@ -37,6 +47,19 @@ export class SpaceRuntimeService {
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		this.runtime = new SpaceRuntime(config);
+	}
+
+	/**
+	 * Wire a TaskAgentManager into the underlying SpaceRuntime after construction.
+	 *
+	 * Resolves the circular dependency: SpaceRuntimeService must exist before
+	 * TaskAgentManager (which takes it as a constructor argument), so the manager
+	 * is injected back here once both are created.
+	 *
+	 * Mirrors the setNotificationSink() pattern.
+	 */
+	setTaskAgentManager(manager: TaskAgentManager): void {
+		this.runtime.setTaskAgentManager(manager);
 	}
 
 	/** Start the underlying SpaceRuntime tick loop. */

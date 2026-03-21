@@ -241,7 +241,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub
 	);
 
-	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API
+	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
+	// Not started yet: TaskAgentManager is created next and injected before start().
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		spaceManager: deps.spaceManager,
@@ -250,7 +251,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
 	});
-	spaceRuntimeService.start();
 
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
@@ -269,6 +269,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
 	});
+
+	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
+	// Task Agent sessions for pending tasks. Resolves circular dependency:
+	// SpaceRuntimeService → SpaceRuntime needed TaskAgentManager, which in turn
+	// needed SpaceRuntimeService. Both are now created; inject via setter.
+	spaceRuntimeService.setTaskAgentManager(taskAgentManager);
+	spaceRuntimeService.start();
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
 	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db);
