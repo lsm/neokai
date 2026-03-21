@@ -11,7 +11,12 @@
 
 import { useMemo, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
-import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
+import {
+	navigateToRooms,
+	navigateToRoom,
+	navigateToRoomAgent,
+	navigateToRoomSession,
+} from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
@@ -71,7 +76,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	};
 
 	const handleRoomAgentClick = () => {
-		navigateToRoomSession(roomId, roomAgentSessionId);
+		navigateToRoomAgent(roomId);
 		onNavigate?.();
 	};
 
