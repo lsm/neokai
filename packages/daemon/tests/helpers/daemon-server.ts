@@ -517,6 +517,12 @@ async function createInProcessDaemonServer(
 	const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
 	const devProxy = devProxyLease.controller;
 
+	// Save originals for all custom env keys so they can be restored on teardown
+	const originalCustomEnv: Record<string, string | undefined> = {};
+	for (const key of Object.keys(customEnv)) {
+		originalCustomEnv[key] = process.env[key];
+	}
+
 	// Apply custom env vars
 	for (const [key, value] of Object.entries(customEnv)) {
 		process.env[key] = value;
@@ -666,6 +672,15 @@ async function createInProcessDaemonServer(
 					delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 				} else {
 					process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOauthToken;
+				}
+			}
+
+			// Restore custom env vars (always, not just in dev proxy mode)
+			for (const [key, original] of Object.entries(originalCustomEnv)) {
+				if (original === undefined) {
+					delete process.env[key];
+				} else {
+					process.env[key] = original;
 				}
 			}
 		},

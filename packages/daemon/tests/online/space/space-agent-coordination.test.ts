@@ -157,6 +157,21 @@ describe('Space Agent Coordination — Online Tests', () => {
 		daemon = await createDaemonServer({ env: { NEOKAI_ENABLE_SPACES_AGENT: '1' } });
 		// Track the global spaces session for cleanup
 		daemon.trackSession(GLOBAL_SPACES_SESSION_ID);
+
+		// provisionGlobalSpacesAgent is fire-and-forget inside setupRPCHandlers, so
+		// the spaces:global session may not yet exist when beforeEach returns.
+		// Poll session.get until the session is ready before proceeding to the test.
+		const deadline = Date.now() + SETUP_TIMEOUT;
+		while (Date.now() < deadline) {
+			try {
+				await daemon.messageHub.request('session.get', {
+					sessionId: GLOBAL_SPACES_SESSION_ID,
+				});
+				break; // session exists — ready to proceed
+			} catch {
+				await new Promise((resolve) => setTimeout(resolve, 200));
+			}
+		}
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
