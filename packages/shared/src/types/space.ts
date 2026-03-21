@@ -123,7 +123,8 @@ export type SpaceTaskStatus =
 	| 'review'
 	| 'completed'
 	| 'needs_attention'
-	| 'cancelled';
+	| 'cancelled'
+	| 'archived';
 
 /**
  * Space task priority
@@ -190,7 +191,7 @@ export interface SpaceTask {
 	prNumber?: number | null;
 	/** When PR was created/submitted (milliseconds since epoch) */
 	prCreatedAt?: number | null;
-	/** Archive timestamp (milliseconds since epoch) — orthogonal to status */
+	/** Archive timestamp (milliseconds since epoch) — derived from status='archived' */
 	archivedAt?: number | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.

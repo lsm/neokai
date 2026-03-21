@@ -265,10 +265,60 @@ describe('SpaceTaskRepository', () => {
 	});
 
 	describe('archiveTask', () => {
-		it('sets archivedAt timestamp', () => {
+		it('sets status to archived and stamps archivedAt', () => {
 			const task = repo.createTask({ spaceId, title: 'T', description: '' });
 			const archived = repo.archiveTask(task.id);
+			expect(archived!.status).toBe('archived');
 			expect(archived!.archivedAt).toBeDefined();
+			expect(archived!.archivedAt).toBeGreaterThan(0);
+		});
+
+		it('archived tasks are excluded from listBySpace by default', () => {
+			repo.createTask({ spaceId, title: 'Active', description: '' });
+			const toArchive = repo.createTask({ spaceId, title: 'Archived', description: '' });
+			repo.archiveTask(toArchive.id);
+
+			const tasks = repo.listBySpace(spaceId);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].title).toBe('Active');
+		});
+
+		it('archived tasks are excluded from listByStatus', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '', status: 'pending' });
+			repo.archiveTask(task.id);
+
+			const pending = repo.listByStatus(spaceId, 'pending');
+			expect(pending).toHaveLength(0);
+		});
+
+		it('archived tasks are excluded from listByWorkflowRun', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'WF Task',
+				description: '',
+				workflowRunId,
+			});
+			repo.archiveTask(task.id);
+
+			const tasks = repo.listByWorkflowRun(workflowRunId);
+			expect(tasks).toHaveLength(0);
+		});
+	});
+
+	describe('updateTask archived_at stamping', () => {
+		it('stamps archived_at when status is set to archived via updateTask', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, { status: 'archived' });
+			expect(updated!.status).toBe('archived');
+			expect(updated!.archivedAt).toBeDefined();
+			expect(updated!.archivedAt).toBeGreaterThan(0);
+		});
+
+		it('auto-clears active_session when status is set to archived', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { status: 'in_progress', activeSession: 'worker' });
+			const updated = repo.updateTask(task.id, { status: 'archived' });
+			expect(updated!.activeSession).toBeNull();
 		});
 	});
 

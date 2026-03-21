@@ -621,6 +621,101 @@ describe('TaskRepository', () => {
 		});
 	});
 
+	describe('archiveTask', () => {
+		it('should set status to archived and archived_at', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'Archive me',
+				description: '',
+			});
+
+			const archived = repository.archiveTask(task.id);
+			expect(archived).not.toBeNull();
+			expect(archived!.status).toBe('archived');
+			expect(archived!.archivedAt).toBeDefined();
+			expect(archived!.archivedAt).toBeGreaterThan(0);
+		});
+
+		it('should return null for non-existent task', () => {
+			const result = repository.archiveTask('nonexistent');
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('listTasks archive filtering', () => {
+		it('should exclude archived tasks by default', () => {
+			repository.createTask({ roomId: 'room-1', title: 'Active', description: '' });
+			const toArchive = repository.createTask({
+				roomId: 'room-1',
+				title: 'To archive',
+				description: '',
+			});
+			repository.archiveTask(toArchive.id);
+
+			const tasks = repository.listTasks('room-1');
+			expect(tasks.length).toBe(1);
+			expect(tasks[0].title).toBe('Active');
+		});
+
+		it('should include archived tasks when includeArchived is true', () => {
+			repository.createTask({ roomId: 'room-1', title: 'Active', description: '' });
+			const toArchive = repository.createTask({
+				roomId: 'room-1',
+				title: 'Archived',
+				description: '',
+			});
+			repository.archiveTask(toArchive.id);
+
+			const tasks = repository.listTasks('room-1', { includeArchived: true });
+			expect(tasks.length).toBe(2);
+		});
+
+		it('should filter by status = archived when includeArchived and status filter', () => {
+			repository.createTask({ roomId: 'room-1', title: 'Active', description: '' });
+			const toArchive = repository.createTask({
+				roomId: 'room-1',
+				title: 'Archived',
+				description: '',
+			});
+			repository.archiveTask(toArchive.id);
+
+			const tasks = repository.listTasks('room-1', {
+				includeArchived: true,
+				status: 'archived',
+			});
+			expect(tasks.length).toBe(1);
+			expect(tasks[0].status).toBe('archived');
+		});
+	});
+
+	describe('updateTask archived_at stamping', () => {
+		it('should stamp archived_at when status is set to archived via updateTask', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'T',
+				description: '',
+			});
+			const updated = repository.updateTask(task.id, { status: 'archived' });
+			expect(updated!.status).toBe('archived');
+			expect(updated!.archivedAt).toBeDefined();
+			expect(updated!.archivedAt).toBeGreaterThan(0);
+		});
+
+		it('should auto-clear active_session when status is set to archived', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'T',
+				description: '',
+			});
+			repository.updateTask(task.id, {
+				status: 'in_progress',
+				activeSession: 'worker',
+			});
+			const updated = repository.updateTask(task.id, { status: 'archived' });
+			expect(updated!.activeSession).toBeNull();
+		});
+	});
+
 	describe('PR fields', () => {
 		it('should default PR fields to undefined on creation', () => {
 			const task = repository.createTask({

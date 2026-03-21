@@ -249,7 +249,8 @@ export type TaskStatus =
 	| 'review'
 	| 'completed'
 	| 'needs_attention'
-	| 'cancelled';
+	| 'cancelled'
+	| 'archived';
 
 /**
  * Task priority
@@ -306,7 +307,7 @@ export interface NeoTask {
 	startedAt?: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
-	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
+	/** Archive timestamp (milliseconds since epoch) - derived from status='archived' */
 	archivedAt?: number | null;
 	/**
 	 * Which agent session is currently active (generating output).

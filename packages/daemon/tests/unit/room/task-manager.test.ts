@@ -16,7 +16,11 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { TaskManager, extractPrNumber } from '../../../src/lib/room/managers/task-manager';
+import {
+	TaskManager,
+	extractPrNumber,
+	VALID_STATUS_TRANSITIONS,
+} from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 describe('TaskManager', () => {
@@ -869,6 +873,111 @@ describe('TaskManager', () => {
 			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
 				'Invalid status transition'
 			);
+		});
+	});
+
+	describe('archived status transitions', () => {
+		it('should allow completed → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow cancelled → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow needs_attention → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow completed → in_progress reactivation', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+		});
+
+		it('should clear result and progress when reactivating a completed task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'previous result');
+
+			const completed = await taskManager.getTask(task.id);
+			expect(completed!.result).toBe('previous result');
+			expect(completed!.progress).toBe(100);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+			expect(reactivated.result).toBeUndefined();
+			expect(reactivated.progress).toBeUndefined();
+		});
+
+		it('should reject archived → any transition (true terminal)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			await taskManager.setTaskStatus(task.id, 'archived');
+
+			await expect(taskManager.setTaskStatus(task.id, 'in_progress')).rejects.toThrow(
+				'Invalid status transition'
+			);
+			await expect(taskManager.setTaskStatus(task.id, 'pending')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject pending → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject in_progress → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+	});
+
+	describe('VALID_STATUS_TRANSITIONS map', () => {
+		it('archived is a true terminal state with no transitions', () => {
+			expect(VALID_STATUS_TRANSITIONS.archived).toEqual([]);
+		});
+
+		it('completed allows reactivation and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.completed).toEqual(['in_progress', 'archived']);
+		});
+
+		it('cancelled allows restart and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.cancelled).toEqual(['pending', 'in_progress', 'archived']);
+		});
+
+		it('needs_attention allows restart, review, and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.needs_attention).toEqual([
+				'pending',
+				'in_progress',
+				'review',
+				'archived',
+			]);
 		});
 	});
 

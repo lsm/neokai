@@ -848,7 +848,7 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
 		expect(parsed.task.error ?? null).toBeNull();
 	});
 
-	test('resets a cancelled task to pending', async () => {
+	test('resets a cancelled task to in_progress (reactivation)', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Cancelled task',
 			description: 'Will be retried',
@@ -859,7 +859,7 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
 		const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.task.status).toBe('pending');
+		expect(parsed.task.status).toBe('in_progress');
 	});
 
 	test('updates description on retry when provided', async () => {

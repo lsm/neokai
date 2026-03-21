@@ -262,6 +262,7 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		draft: 'bg-dark-600 text-gray-400',
 		review: 'bg-purple-900/50 text-purple-300',
 		cancelled: 'bg-gray-800 text-gray-400',
+		archived: 'bg-gray-900 text-gray-600',
 	};
 	const label =
 		status === 'in_progress' ? 'active' : status === 'needs_attention' ? 'needs attention' : status;
