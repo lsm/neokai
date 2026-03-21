@@ -8,14 +8,22 @@
  * - Goals section header shows correct active goal count
  *
  * Setup: creates a room, stops the auto-started runtime (prevents agent processing),
- * then creates goals/tasks via RPC (accepted infrastructure pattern).
+ * then creates goals/tasks/sessions via RPC (accepted infrastructure pattern —
+ * same as room.create/room.delete in beforeEach/afterEach per CLAUDE.md).
  * Cleanup: deletes the room via RPC in afterEach.
  *
  * NOTE: Rooms auto-start a runtime on creation (room.created → createOrGetRuntime).
- * We stop the runtime immediately after room creation so the agent doesn't process
- * goals and create unexpected tasks during the test.
+ * We stop the runtime and wait until it is confirmed stopped before creating goals,
+ * so the agent cannot process goals and create unexpected extra tasks during the test.
+ *
+ * NOTE: The sessions list in the sidebar is populated via room.get on room load
+ * (fetchInitialState). It does NOT update reactively after session.create — the
+ * room.overview event is only emitted on task changes, not session creation. As a
+ * workaround, a session is pre-created in beforeEach so it is present when the room
+ * page first loads and fetchInitialState runs.
  */
 
+import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 
@@ -43,9 +51,10 @@ interface SetupResult {
 
 /**
  * Set a task's status via RPC, transitioning through intermediate states as needed.
+ * Infrastructure helper — called only from beforeEach setup, not from test actions.
  */
 async function setTaskStatus(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
+	page: Page,
 	roomId: string,
 	taskId: string,
 	targetStatus: TaskStatus
@@ -68,6 +77,8 @@ async function setTaskStatus(
 				await setStatus('completed');
 			} else if (status === 'cancelled') {
 				await setStatus('cancelled');
+			} else {
+				throw new Error(`Unhandled target status in setTaskStatus: ${status}`);
 			}
 		},
 		{ roomId, taskId, targetStatus }
@@ -76,13 +87,12 @@ async function setTaskStatus(
 
 /**
  * Set up a room with:
- * - The runtime stopped immediately (so agent doesn't process goals)
+ * - The runtime stopped and confirmed stopped (so agent doesn't process goals)
  * - 2 active goals (goalA with 1 linked pending task, goalB empty)
  * - 3 orphan tasks in active (in_progress), review, and completed statuses
+ * - 1 pre-created session so the Sessions section has content on initial load
  */
-async function setupRoomWithData(
-	page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<SetupResult> {
+async function setupRoomWithData(page: Page): Promise<SetupResult> {
 	await waitForWebSocketConnected(page);
 
 	const ids = await page.evaluate(async () => {
@@ -93,11 +103,23 @@ async function setupRoomWithData(
 		const roomRes = await hub.request('room.create', { name: 'E2E Sidebar Test Room' });
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
-		// Stop the runtime immediately so agent doesn't process goals and create extra tasks
-		try {
-			await hub.request('room.runtime.stop', { roomId });
-		} catch {
-			// Runtime may not have started yet — that's fine
+		// Stop the runtime and wait until it is actually stopped before creating goals.
+		// Rooms auto-start a runtime on creation (room.created → createOrGetRuntime),
+		// but the event is processed asynchronously, so we poll until the runtime is
+		// confirmed stopped rather than fire-and-forget.
+		for (let i = 0; i < 20; i++) {
+			try {
+				await hub.request('room.runtime.stop', { roomId });
+			} catch {
+				// Runtime may not exist yet — try again
+			}
+			const stateRes = await hub
+				.request('room.runtime.state', { roomId })
+				.catch(() => null as unknown);
+			const state = (stateRes as { state?: string } | null)?.state;
+			if (!state || state === 'stopped') break;
+			// Wait 100 ms before retrying
+			await new Promise((r) => setTimeout(r, 100));
 		}
 
 		// Create goal A (will have linked task)
@@ -107,10 +129,10 @@ async function setupRoomWithData(
 		});
 		const goalId = (goalRes as { goal: { id: string } }).goal.id;
 
-		// Create a second goal (no linked tasks, to test count = 2)
+		// Create a second goal (no linked tasks — used to verify count = 2)
 		await hub.request('goal.create', { roomId, title: 'Fix CI Pipeline' });
 
-		// Create linked task (stays pending)
+		// Create linked task (stays pending — no status transition needed)
 		const linkedTaskRes = await hub.request('task.create', {
 			roomId,
 			title: 'Add Login Page',
@@ -139,7 +161,10 @@ async function setupRoomWithData(
 		});
 		const orphanDoneId = (orphanDoneRes as { task: { id: string } }).task.id;
 
-		// Create a pre-existing session so the Sessions section has content to show
+		// Pre-create a session so the Sessions section has content when the room loads.
+		// The sessions signal populates via room.get (fetchInitialState) on room load —
+		// session.create does NOT emit a room.overview event, so the list won't update
+		// reactively after the page navigates to the room.
 		const sessionRes = await hub.request('session.create', {
 			roomId,
 			title: 'Pre-existing Session',
@@ -157,7 +182,7 @@ async function setupRoomWithData(
 		};
 	});
 
-	// Transition orphan tasks to their target statuses
+	// Transition orphan tasks to their target statuses (infrastructure — beforeEach only)
 	await setTaskStatus(page, ids.roomId, ids.orphanActiveId, 'in_progress');
 	await setTaskStatus(page, ids.roomId, ids.orphanReviewId, 'review');
 	await setTaskStatus(page, ids.roomId, ids.orphanDoneId, 'completed');
@@ -165,10 +190,7 @@ async function setupRoomWithData(
 	return ids;
 }
 
-async function deleteRoom(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	roomId: string
-): Promise<void> {
+async function deleteRoom(page: Page, roomId: string): Promise<void> {
 	if (!roomId) return;
 	try {
 		await page.evaluate(async (id) => {
@@ -182,26 +204,23 @@ async function deleteRoom(
 }
 
 /**
- * Navigate to the room and wait for the sidebar to be ready with goals loaded.
+ * Navigate to the room and wait for the sidebar to be fully ready:
+ * Goals section and Tasks section both visible, indicating the panel is mounted
+ * and the collapsible sections have rendered.
  */
-async function navigateToRoomAndWaitForSidebar(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	roomId: string
-): Promise<void> {
+async function navigateToRoomAndWaitForSidebar(page: Page, roomId: string): Promise<void> {
 	await page.goto(`/room/${roomId}`);
 	await waitForWebSocketConnected(page);
-	// Wait for the Goals section header to be visible
+	// Wait for both Goals and Tasks section headers to be visible
 	await expect(page.locator('button[aria-label="Goals section"]')).toBeVisible({ timeout: 10000 });
+	await expect(page.locator('button[aria-label="Tasks section"]')).toBeVisible({ timeout: 5000 });
 }
 
 /**
  * Scope a locator to the collapsible section with the given title.
  * Uses the aria-label on the section toggle button.
  */
-function getSidebarSection(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	sectionTitle: string
-) {
+function getSidebarSection(page: Page, sectionTitle: string) {
 	return page.locator('.collapsible-section').filter({
 		has: page.locator(`button[aria-label="${sectionTitle} section"]`),
 	});
@@ -221,6 +240,7 @@ test.describe('Room Sidebar Sections', () => {
 	};
 
 	test.beforeEach(async ({ page }) => {
+		// Navigate to root first to establish a connected page before making RPC calls
 		await page.goto('/');
 		setup = await setupRoomWithData(page);
 	});
@@ -245,26 +265,22 @@ test.describe('Room Sidebar Sections', () => {
 
 		const goalsSection = getSidebarSection(page, 'Goals');
 
-		// Wait for goals to load (may take a moment after fetchGoals)
+		// Wait for goals to load (fetchGoals is called asynchronously on room init)
 		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
 
-		// "Ship Auth Feature" goal should be visible in the Goals section
+		// "Ship Auth Feature" goal button is visible in the Goals section
 		const goalButton = goalsSection.locator('button').filter({ hasText: 'Ship Auth Feature' });
 		await expect(goalButton).toBeVisible({ timeout: 5000 });
 
-		// Linked task should NOT be visible yet (goal is collapsed by default)
+		// Linked task should NOT be visible yet (goal starts collapsed)
 		await expect(goalsSection.getByText('Add Login Page')).not.toBeVisible();
 
-		// Click the goal to expand it
+		// Click the goal to expand it — linked task should now appear
 		await goalButton.click();
-
-		// Linked task should now be visible
 		await expect(goalsSection.getByText('Add Login Page')).toBeVisible({ timeout: 5000 });
 
-		// Click the goal again to collapse it
+		// Click the goal again to collapse it — linked task should hide
 		await goalButton.click();
-
-		// Linked task should be hidden again
 		await expect(goalsSection.getByText('Add Login Page')).not.toBeVisible();
 	});
 
@@ -295,8 +311,8 @@ test.describe('Room Sidebar Sections', () => {
 		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
 
 		// We created 2 active goals: "Ship Auth Feature" and "Fix CI Pipeline"
-		// The count badge shows "(2)"
-		await expect(goalsSection.locator('text=(2)')).toBeVisible({ timeout: 5000 });
+		// The count badge in CollapsibleSection renders as "(2)"
+		await expect(goalsSection.getByText('(2)')).toBeVisible({ timeout: 5000 });
 	});
 
 	// ── Tasks: tab filtering ────────────────────────────────────────────────
@@ -306,7 +322,7 @@ test.describe('Room Sidebar Sections', () => {
 
 		const tasksSection = getSidebarSection(page, 'Tasks');
 
-		// "Orphan Active Task" (in_progress) should be visible in the active tab
+		// "Orphan Active Task" (in_progress) should be visible in the default active tab
 		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
 
 		// Review and done orphan tasks should NOT be visible under active tab
@@ -322,10 +338,10 @@ test.describe('Room Sidebar Sections', () => {
 		// Verify active tab shows the active task first
 		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
 
-		// Click the Review tab
+		// Click the Review tab — sidebar renders lowercase tab labels ("active"/"review"/"done")
 		await tasksSection
 			.locator('button')
-			.filter({ hasText: /^review$/i })
+			.filter({ hasText: /^review$/ })
 			.click();
 
 		// Only "Orphan Review Task" (review status) should be visible
@@ -344,10 +360,10 @@ test.describe('Room Sidebar Sections', () => {
 		// Verify active tab first
 		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
 
-		// Click the Done tab
+		// Click the Done tab — sidebar renders lowercase tab labels
 		await tasksSection
 			.locator('button')
-			.filter({ hasText: /^done$/i })
+			.filter({ hasText: /^done$/ })
 			.click();
 
 		// Only "Orphan Done Task" (completed) should be visible
@@ -366,10 +382,10 @@ test.describe('Room Sidebar Sections', () => {
 		// Start on Active tab: see in_progress orphan
 		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
 
-		// Switch to Review
+		// Switch to Review — sidebar uses lowercase tab labels
 		await tasksSection
 			.locator('button')
-			.filter({ hasText: /^review$/i })
+			.filter({ hasText: /^review$/ })
 			.click();
 		await expect(tasksSection.getByText('Orphan Review Task')).toBeVisible({ timeout: 5000 });
 		await expect(tasksSection.getByText('Orphan Active Task')).not.toBeVisible();
@@ -377,7 +393,7 @@ test.describe('Room Sidebar Sections', () => {
 		// Switch to Done
 		await tasksSection
 			.locator('button')
-			.filter({ hasText: /^done$/i })
+			.filter({ hasText: /^done$/ })
 			.click();
 		await expect(tasksSection.getByText('Orphan Done Task')).toBeVisible({ timeout: 5000 });
 		await expect(tasksSection.getByText('Orphan Review Task')).not.toBeVisible();
@@ -385,7 +401,7 @@ test.describe('Room Sidebar Sections', () => {
 		// Switch back to Active
 		await tasksSection
 			.locator('button')
-			.filter({ hasText: /^active$/i })
+			.filter({ hasText: /^active$/ })
 			.click();
 		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 5000 });
 		await expect(tasksSection.getByText('Orphan Done Task')).not.toBeVisible();
@@ -399,10 +415,10 @@ test.describe('Room Sidebar Sections', () => {
 		const sessionsToggle = page.locator('button[aria-label="Sessions section"]');
 		await expect(sessionsToggle).toBeVisible({ timeout: 8000 });
 
-		// Sessions section is collapsed by default (defaultExpanded=false)
+		// Sessions section is collapsed by default (defaultExpanded=false in CollapsibleSection)
 		await expect(sessionsToggle).toHaveAttribute('aria-expanded', 'false');
 
-		// The section body should not be rendered
+		// The section body should not be rendered when collapsed
 		await expect(
 			getSidebarSection(page, 'Sessions').locator('.collapsible-section-body')
 		).not.toBeVisible();
@@ -424,14 +440,15 @@ test.describe('Room Sidebar Sections', () => {
 	test('Sessions section: [+] create button is visible in section header', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		// The [+] create session button should always be visible (even when collapsed)
+		// The [+] create session button lives in the header right slot of CollapsibleSection
+		// and should be visible even when the section is collapsed
 		const createBtn = page.locator('button[aria-label="Create session"]');
 		await expect(createBtn).toBeVisible({ timeout: 8000 });
 	});
 
 	test('Sessions section: expand shows pre-existing sessions', async ({ page }) => {
-		// The setup pre-creates a session so the sessions list has content on load.
-		// The sessions list is populated via room.get on room load (fetchInitialState).
+		// The setup pre-creates a session titled "Pre-existing Session" so the sessions list
+		// has content when the room page first loads (sessions populate via fetchInitialState).
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
 		// Expand the Sessions section
@@ -439,11 +456,11 @@ test.describe('Room Sidebar Sections', () => {
 		await sessionsToggle.click();
 		await expect(sessionsToggle).toHaveAttribute('aria-expanded', 'true');
 
-		// The pre-existing session should be visible in the sessions section
+		// The pre-created session should be visible by its title
 		const sessionsSection = getSidebarSection(page, 'Sessions');
-		await expect(
-			sessionsSection.locator('.collapsible-section-body').getByRole('button').first()
-		).toBeVisible({ timeout: 10000 });
+		await expect(sessionsSection.getByText('Pre-existing Session')).toBeVisible({
+			timeout: 10000,
+		});
 
 		// "No sessions yet" message should not be showing
 		await expect(sessionsSection.getByText('No sessions yet')).not.toBeVisible();
@@ -454,13 +471,15 @@ test.describe('Room Sidebar Sections', () => {
 
 		const initialUrl = page.url();
 
-		// Click [+] to create a session
+		// Click [+] to create a session (UI action — no RPC)
 		await page.locator('button[aria-label="Create session"]').click();
 
 		// The page should navigate to the new session (URL changes from room dashboard)
 		await expect(page).not.toHaveURL(initialUrl, { timeout: 10000 });
 
-		// The main content should show the new session chat interface
-		await expect(page.locator('text=No messages yet')).toBeVisible({ timeout: 10000 });
+		// The main content should show the new session chat interface (empty state)
+		await expect(page.getByText('No messages yet', { exact: true })).toBeVisible({
+			timeout: 10000,
+		});
 	});
 });
