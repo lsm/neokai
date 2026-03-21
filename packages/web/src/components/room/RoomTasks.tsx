@@ -611,10 +611,7 @@ function TaskItem({
 				</div>
 			)}
 			{isRejecting && (
-				<div
-					class="mt-3 pt-3 border-t border-dark-700"
-					onClick={(e) => e.stopPropagation()}
-				>
+				<div class="mt-3 pt-3 border-t border-dark-700" onClick={(e) => e.stopPropagation()}>
 					<textarea
 						rows={2}
 						placeholder="Please provide feedback..."
