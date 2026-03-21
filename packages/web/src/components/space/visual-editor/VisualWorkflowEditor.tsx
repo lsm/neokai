@@ -20,10 +20,16 @@
  * provide a stable `key` prop to force remount when switching between workflows.
  */
 
-import { useState, useMemo, useCallback } from 'preact/hooks';
-import type { SpaceWorkflow, WorkflowTransition, WorkflowConditionType } from '@neokai/shared';
+import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
+import type {
+	SpaceWorkflow,
+	WorkflowStep,
+	WorkflowTransition,
+	WorkflowConditionType,
+} from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
-import { filterAgents } from '../WorkflowEditor';
+import { filterAgents, TEMPLATES } from '../WorkflowEditor';
+import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { StepDraft } from '../WorkflowStepCard';
@@ -36,7 +42,10 @@ import {
 	visualStateToUpdateParams,
 } from './serialization';
 import type { WorkflowNodeData } from './WorkflowCanvas';
-import { WorkflowCanvas } from './WorkflowCanvas';
+import { WorkflowCanvas, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './WorkflowCanvas';
+import { computeFitToView } from './CanvasToolbar';
+import { autoLayout } from './layout';
+import type { NodePosition } from './types';
 import { NodeConfigPanel } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 
@@ -102,7 +111,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showRules, setShowRules] = useState(false);
+	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
+
+	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
 
@@ -410,6 +422,85 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}
 
 	// ------------------------------------------------------------------
+	// Template
+	// ------------------------------------------------------------------
+
+	function applyTemplate(template: WorkflowTemplate) {
+		const localIds = template.stepRoles.map(() => crypto.randomUUID());
+		const firstLocalId = localIds[0];
+
+		const newNodes: VisualNode[] = template.stepRoles.map((role, i) => {
+			const found = agents.find(
+				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
+			);
+			return {
+				step: {
+					localId: localIds[i],
+					name: role.charAt(0).toUpperCase() + role.slice(1),
+					agentId: found?.id ?? '',
+					instructions: '',
+				},
+				position: { x: 0, y: 0 }, // overwritten by autoLayout below
+			};
+		});
+
+		// Linear chain of edges
+		const newEdges: VisualEdge[] = localIds.slice(0, -1).map((fromId, i) => ({
+			fromStepKey: fromId,
+			toStepKey: localIds[i + 1],
+			condition: undefined,
+		}));
+
+		// Compute positions via autoLayout
+		const layoutSteps: WorkflowStep[] = newNodes.map((n) => ({
+			id: n.step.localId,
+			name: n.step.name,
+			agentId: n.step.agentId,
+			instructions: n.step.instructions || undefined,
+		}));
+		const layoutTransitions: WorkflowTransition[] = newEdges.map((e, i) => ({
+			id: `t-${i}`,
+			from: e.fromStepKey,
+			to: e.toStepKey,
+			order: i,
+		}));
+
+		const positions = autoLayout(layoutSteps, layoutTransitions, firstLocalId);
+
+		const positionedNodes: VisualNode[] = newNodes.map((n) => ({
+			...n,
+			position: positions.get(n.step.localId) ?? n.position,
+		}));
+
+		setNodes(positionedNodes);
+		setEdges(newEdges);
+		setStartStepId(firstLocalId);
+		setSelectedNodeId(null);
+		setSelectedEdgeId(null);
+		setShowTemplates(false);
+		if (!name) setName(template.label);
+
+		// Fit viewport to the new layout
+		const container = canvasContainerRef.current;
+		if (container) {
+			const nodePositions: NodePosition = {};
+			for (const n of positionedNodes) {
+				nodePositions[n.step.localId] = {
+					x: n.position.x,
+					y: n.position.y,
+					width: DEFAULT_NODE_WIDTH,
+					height: DEFAULT_NODE_HEIGHT,
+				};
+			}
+			setViewportState(
+				computeFitToView(nodePositions, container.clientWidth, container.clientHeight)
+			);
+		} else {
+			setViewportState({ offsetX: 0, offsetY: 0, scale: 1 });
+		}
+	}
+
+	// ------------------------------------------------------------------
 	// Save
 	// ------------------------------------------------------------------
 
@@ -545,9 +636,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			)}
 
 			{/* ---- Canvas area ---- */}
-			<div class="flex-1 relative overflow-hidden bg-dark-950">
-				{/* Add Step toolbar button */}
-				<div class="absolute top-3 left-3 z-10" style={{ pointerEvents: 'auto' }}>
+			<div ref={canvasContainerRef} class="flex-1 relative overflow-hidden bg-dark-950">
+				{/* Add Step + Template toolbar */}
+				<div
+					class="absolute top-3 left-3 z-10 flex items-center gap-2"
+					style={{ pointerEvents: 'auto' }}
+				>
 					<button
 						onClick={addStep}
 						data-testid="add-step-button"
@@ -563,6 +657,57 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						</svg>
 						Add Step
 					</button>
+
+					{/* Template picker — only shown when creating a new workflow with no steps yet */}
+					{!isEditing && nodes.length === 0 && (
+						<div class="relative">
+							<button
+								onClick={() => setShowTemplates((v) => !v)}
+								data-testid="template-picker-button"
+								class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
+							>
+								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M4 6h16M4 10h16M4 14h8"
+									/>
+								</svg>
+								From Template
+								<svg
+									class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M19 9l-7 7-7-7"
+									/>
+								</svg>
+							</button>
+
+							{showTemplates && (
+								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
+									{TEMPLATES.map((t) => (
+										<button
+											key={t.label}
+											onClick={() => applyTemplate(t)}
+											data-testid="template-option"
+											data-template-label={t.label}
+											class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
+										>
+											<div class="text-xs font-medium text-gray-200">{t.label}</div>
+											<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
 				</div>
 
 				{/* Empty state overlay */}
