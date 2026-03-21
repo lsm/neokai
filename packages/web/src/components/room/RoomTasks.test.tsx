@@ -726,8 +726,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			);
 			expect(rejectBtn).toBeTruthy();
 		});
@@ -737,8 +737,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			);
 			expect(rejectBtn).toBeFalsy();
 		});
@@ -750,8 +750,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			);
 			expect(rejectBtn).toBeFalsy();
 		});
@@ -762,8 +762,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
@@ -779,15 +779,15 @@ describe('RoomTasks', () => {
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
 			// Open form
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 			expect(container.querySelector('textarea')).toBeTruthy();
 
 			// Cancel
-			const cancelBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Cancel'
+			const cancelBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Cancel'
 			) as HTMLButtonElement;
 			fireEvent.click(cancelBtn);
 
@@ -800,13 +800,13 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
-			const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Confirm Reject'
+			const confirmBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Confirm Reject'
 			) as HTMLButtonElement;
 			expect(confirmBtn.disabled).toBe(true);
 		});
@@ -818,8 +818,8 @@ describe('RoomTasks', () => {
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
 			// Open form
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
@@ -828,8 +828,8 @@ describe('RoomTasks', () => {
 			fireEvent.input(textarea, { target: { value: 'Needs more work' } });
 
 			// Confirm
-			const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Confirm Reject'
+			const confirmBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Confirm Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(confirmBtn);
 
@@ -843,16 +843,16 @@ describe('RoomTasks', () => {
 			const { container } = render(<RoomTasks tasks={tasks} onReject={onReject} />);
 
 			// Open form
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
 			// Type feedback and confirm
 			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 			fireEvent.input(textarea, { target: { value: 'Feedback here' } });
-			const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Confirm Reject'
+			const confirmBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Confirm Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(confirmBtn);
 
@@ -868,8 +868,8 @@ describe('RoomTasks', () => {
 				<RoomTasks tasks={tasks} onReject={onReject} onTaskClick={onTaskClick} />
 			);
 
-			const rejectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.trim() === 'Reject'
+			const rejectBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Reject'
 			) as HTMLButtonElement;
 			fireEvent.click(rejectBtn);
 
