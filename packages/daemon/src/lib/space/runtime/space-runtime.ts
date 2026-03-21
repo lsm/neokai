@@ -305,6 +305,7 @@ export class SpaceRuntime {
 			description,
 			currentStepId: workflow.startStepId,
 			goalId,
+			maxIterations: workflow.maxIterations,
 		});
 
 		const run = this.config.workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;

@@ -342,6 +342,34 @@ describe('SpaceRuntime', () => {
 			expect(runtime.getExecutor(run.id)).toBeDefined();
 		});
 
+		test('propagates workflow maxIterations to the created run', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `MaxIter Test ${Date.now()}`,
+				description: 'Test',
+				steps: [{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER }],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+				maxIterations: 3,
+			});
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			expect(run.maxIterations).toBe(3);
+		});
+
+		test('uses default maxIterations when workflow has none', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			expect(run.maxIterations).toBe(5);
+		});
+
 		test('throws for unknown workflow', async () => {
 			await expect(runtime.startWorkflowRun(SPACE_ID, 'nonexistent-wf-id', 'Run')).rejects.toThrow(
 				'Workflow not found'
