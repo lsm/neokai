@@ -135,6 +135,9 @@ export function ContextPanel() {
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentRoomId = currentRoomIdSignal.value;
 
+	// Inbox takes full content width — no sidebar needed
+	if (navSection === 'inbox') return null;
+
 	// When a specific room is selected in the rooms section, show room-specific panel
 	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
 
@@ -279,7 +282,6 @@ export function ContextPanel() {
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
-		navSection === 'inbox' ||
 		navSection === 'projects' ||
 		navSection === 'settings';
 
@@ -425,7 +427,6 @@ export function ContextPanel() {
 						onCreateSpace={() => setCreateSpaceOpen(true)}
 					/>
 				)}
-				{navSection === 'inbox' && <div class="p-4 text-gray-400 text-sm">Inbox</div>}
 				{navSection === 'projects' && (
 					<div class="flex-1 flex items-center justify-center p-6">
 						<div class="text-center">
