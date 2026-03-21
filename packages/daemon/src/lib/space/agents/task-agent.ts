@@ -219,7 +219,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`   - If it returns **terminal** (no outgoing transitions), call \`report_result\` to ` +
 			`complete the task.\n` +
 			`4. **Handle errors** — If a step agent errors, call \`report_result\` with ` +
-			`\`status: "failed"\` and the error details.`
+			`\`status: "cancelled"\` and the error details.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
@@ -414,7 +414,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 		parts.push(
 			`**Warning:** The assigned workflow "${context.workflow.name}" has no steps defined. ` +
 				`There is nothing to execute. Call \`report_result\` immediately with ` +
-				`\`status: "failed"\` and a summary explaining that the workflow has no steps.`
+				`\`status: "cancelled"\` and a summary explaining that the workflow has no steps.`
 		);
 	} else {
 		// No workflow assigned — spawn the most appropriate agent directly.
