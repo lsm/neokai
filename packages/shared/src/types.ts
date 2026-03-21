@@ -56,6 +56,7 @@ export type {
  * - 'leader': Leader agent session (Room Runtime)
  * - 'general': General-purpose agent session (Room Runtime)
  * - 'lobby': Instance-level agent session
+ * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
  */
 export type SessionType =
 	| 'worker'
@@ -65,7 +66,8 @@ export type SessionType =
 	| 'leader'
 	| 'general'
 	| 'lobby'
-	| 'spaces_global';
+	| 'spaces_global'
+	| 'space_task_agent';
 
 /**
  * Context for room/lobby/space sessions
@@ -539,7 +541,8 @@ export interface SessionMetadata {
 		| 'general'
 		| 'worker'
 		| 'lobby'
-		| 'spaces_global';
+		| 'spaces_global'
+		| 'space_task_agent';
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */

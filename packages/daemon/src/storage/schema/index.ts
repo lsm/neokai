@@ -41,7 +41,7 @@ export function createTables(db: BunDatabase): void {
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent')),
         session_context TEXT
       )
     `);
