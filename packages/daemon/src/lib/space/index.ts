@@ -40,6 +40,8 @@ export type {
 	TaskTimeoutEvent,
 	WorkflowRunCompletedEvent,
 } from './runtime/notification-sink';
+export { SessionNotificationSink, formatEventMessage } from './runtime/session-notification-sink';
+export type { SessionNotificationSinkConfig } from './runtime/session-notification-sink';
 export { SpaceRuntimeService } from './runtime/space-runtime-service';
 export type { SpaceRuntimeServiceConfig } from './runtime/space-runtime-service';
 
