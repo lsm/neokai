@@ -1026,6 +1026,51 @@ describe('TaskAgentManager', () => {
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 
+		test('saves with "saved" status when session is interrupted (next_turn deferred)', async () => {
+			// 'interrupted' is included in isBusy for next_turn delivery.
+			// A next_turn message to an interrupted session should be deferred, not sent
+			// blindly — the session may restart on its own or receive a current_turn message.
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const session = ctx.createdSessions.get(sessionId)!;
+
+			session._processingState = { status: 'interrupted' } as AgentProcessingState;
+
+			const savedStatuses: string[] = [];
+			const enqueuedBefore = session._enqueuedMessages.length;
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				_msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedStatuses.push(status);
+				return 'msg-id';
+			};
+
+			await callInjectMessage(ctx.manager, session, 'check in', 'next_turn');
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			expect(savedStatuses).toEqual(['saved']);
+			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
+		});
+
+		test('enqueues immediately for current_turn when session is interrupted (restartable)', async () => {
+			// An interrupted session can accept a current_turn message: ensureQueryStarted
+			// restarts the query and the message is enqueued normally.
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const session = ctx.createdSessions.get(sessionId)!;
+
+			session._processingState = { status: 'interrupted' } as AgentProcessingState;
+			const msgsBefore = session._enqueuedMessages.length;
+
+			await callInjectMessage(ctx.manager, session, 'restart signal', 'current_turn');
+
+			expect(session._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
+		});
+
 		test('enqueues immediately for next_turn when session is idle', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
@@ -1142,6 +1187,26 @@ describe('TaskAgentManager', () => {
 			);
 
 			expect(ctx.manager.isSpawning(task.id)).toBe(false);
+		});
+
+		test('cleanupAll stops all active task agent sessions', async () => {
+			const task1 = await makeTask(ctx.taskManager);
+			const task2 = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task1, ctx.space, null, null);
+			await ctx.manager.spawnTaskAgent(task2, ctx.space, null, null);
+
+			expect(ctx.manager.isTaskAgentAlive(task1.id)).toBe(true);
+			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(true);
+
+			await ctx.manager.cleanupAll();
+
+			expect(ctx.manager.isTaskAgentAlive(task1.id)).toBe(false);
+			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(false);
+		});
+
+		test('cleanupAll is a no-op when no sessions are active', async () => {
+			// Should not throw
+			await expect(ctx.manager.cleanupAll()).resolves.toBeUndefined();
 		});
 
 		test('can retry spawn after error', async () => {

@@ -63,6 +63,8 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
+import { TaskAgentManager } from '../space/runtime/task-agent-manager';
+import { setupSpaceTaskSendMessageHandler } from './space-task-message-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -92,6 +94,7 @@ export type RPCHandlerCleanup = () => void;
 export interface RPCHandlerSetupResult {
 	cleanup: RPCHandlerCleanup;
 	spaceRuntimeService: SpaceRuntimeService;
+	taskAgentManager: TaskAgentManager;
 }
 
 /**
@@ -249,6 +252,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	});
 	spaceRuntimeService.start();
 
+	// Task Agent Manager — manages Task Agent session lifecycle for space tasks
+	const taskAgentManager = new TaskAgentManager({
+		db: deps.db,
+		sessionManager: deps.sessionManager,
+		spaceManager: deps.spaceManager,
+		spaceAgentManager: deps.spaceAgentManager,
+		spaceWorkflowManager,
+		spaceRuntimeService,
+		taskRepo: spaceTaskRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		daemonHub: deps.daemonHub,
+		messageHub: deps.messageHub,
+		getApiKey: () => deps.authManager.getCurrentApiKey(),
+		defaultModel: deps.config.defaultModel,
+	});
+
+	// space.task.sendMessage — inject a message into a Task Agent session
+	setupSpaceTaskSendMessageHandler(deps.messageHub, taskAgentManager);
+
 	// Space export/import handlers
 	setupSpaceExportImportHandlers(
 		deps.messageHub,
@@ -326,5 +348,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			spaceRuntimeService.stop();
 		},
 		spaceRuntimeService,
+		taskAgentManager,
 	};
 }
