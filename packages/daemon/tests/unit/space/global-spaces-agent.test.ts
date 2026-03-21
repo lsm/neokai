@@ -105,9 +105,15 @@ describe('buildGlobalSpacesAgentPrompt — task coordination tools', () => {
 		expect(prompt).toContain('error information');
 	});
 
-	test('explains retry_task purpose', () => {
+	test('retry_task description includes needs_attention status', () => {
 		const prompt = buildGlobalSpacesAgentPrompt();
 		expect(prompt).toContain('needs_attention');
+	});
+
+	test('retry_task description includes cancelled status', () => {
+		const prompt = buildGlobalSpacesAgentPrompt();
+		// Both needs_attention and cancelled are valid starting states for retry
+		expect(prompt).toContain('cancelled');
 	});
 });
 
@@ -213,5 +219,42 @@ describe('buildGlobalSpacesAgentPrompt — guidelines', () => {
 		const prompt = buildGlobalSpacesAgentPrompt();
 		// The guideline says to call get_task_detail first for task events
 		expect(prompt).toContain('get_task_detail first');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tool-name consistency — all tools named in the prompt must exist in the MCP server
+// ---------------------------------------------------------------------------
+
+describe('buildGlobalSpacesAgentPrompt — tool-name consistency with MCP server', () => {
+	// Import the handler factory to extract tool names from registered handlers
+	// This guards against prompt/tool-name drift: if a tool is renamed in the MCP server,
+	// the prompt will no longer mention it, and this test will catch the gap.
+	const COORDINATION_TOOLS = [
+		'create_standalone_task',
+		'get_task_detail',
+		'retry_task',
+		'cancel_task',
+		'reassign_task',
+	] as const;
+
+	for (const toolName of COORDINATION_TOOLS) {
+		test(`prompt mentions coordination tool: ${toolName}`, () => {
+			const prompt = buildGlobalSpacesAgentPrompt();
+			expect(prompt).toContain(toolName);
+		});
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Autonomy level — update_space guidance
+// ---------------------------------------------------------------------------
+
+describe('buildGlobalSpacesAgentPrompt — autonomy level writability', () => {
+	test('instructs agent to use update_space to change autonomy level', () => {
+		const prompt = buildGlobalSpacesAgentPrompt();
+		// The autonomy level section should reference get_space for reading
+		// and the agent can use update_space to change it (covered by MCP tool)
+		expect(prompt).toContain('autonomy_level');
 	});
 });

@@ -70,9 +70,9 @@ export function buildGlobalSpacesAgentPrompt(): string {
 			`ad-hoc work that does not fit an existing workflow structure.\n` +
 			`- **\`get_task_detail\`** — Retrieve full task details including agent output, PR status, ` +
 			`and error information. Use this before deciding how to handle a failed or stuck task.\n` +
-			`- **\`retry_task\`** — Reset a failed or needs_attention task back to pending, optionally ` +
-			`with an updated description. Use this when the failure was transient or when you want to ` +
-			`give the task a fresh start with clarified instructions.\n` +
+			`- **\`retry_task\`** — Reset a \`needs_attention\` or \`cancelled\` task back to pending, ` +
+			`optionally with an updated description. Use this when the failure was transient or when ` +
+			`you want to give the task a fresh start with clarified instructions.\n` +
 			`- **\`cancel_task\`** — Cancel a task and optionally cancel its entire workflow run. Use ` +
 			`this when the task is no longer needed or when the failure is unrecoverable.\n` +
 			`- **\`reassign_task\`** — Change the assigned agent for a task before it starts or after ` +
@@ -116,7 +116,7 @@ export function buildGlobalSpacesAgentPrompt(): string {
 			`or when you are uncertain, escalate to the human. Human gates in workflows always require ` +
 			`human input regardless of autonomy level.\n` +
 			`\nAlways check the space's \`autonomy_level\` via \`get_space\` before taking autonomous ` +
-			`coordination actions.`
+			`coordination actions. You can change a space's \`autonomy_level\` via \`update_space\`.`
 	);
 
 	sections.push(

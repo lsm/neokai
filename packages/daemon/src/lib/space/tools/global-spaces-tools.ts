@@ -15,6 +15,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type {
 	SpaceTaskStatus,
+	SpaceTaskType,
 	SpaceAutonomyLevel,
 	CreateSpaceParams,
 	UpdateSpaceParams,
@@ -336,6 +337,106 @@ export function createGlobalSpacesToolHandlers(
 				workflows: scored.map((s) => s.workflow),
 			});
 		},
+
+		// ---- Task coordination tools ----
+
+		async create_standalone_task(args: {
+			space_id?: string;
+			title: string;
+			description?: string;
+			task_type?: SpaceTaskType;
+			custom_agent_id?: string;
+		}): Promise<ToolResult> {
+			const resolved = resolveSpaceId(args.space_id);
+			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
+			try {
+				const taskManager = runtime.getTaskManagerForSpace(resolved.spaceId);
+				const task = await taskManager.createTask({
+					title: args.title,
+					description: args.description ?? '',
+					taskType: args.task_type ?? 'coding',
+					customAgentId: args.custom_agent_id,
+				});
+				return jsonResult({ success: true, space_id: resolved.spaceId, task });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			return jsonResult({ success: true, task });
+		},
+
+		async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			try {
+				const taskManager = runtime.getTaskManagerForSpace(task.spaceId);
+				const retried = await taskManager.retryTask(args.task_id, {
+					description: args.description,
+				});
+				return jsonResult({ success: true, task: retried });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async cancel_task(args: {
+			task_id: string;
+			cancel_workflow_run?: boolean;
+		}): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			try {
+				const taskManager = runtime.getTaskManagerForSpace(task.spaceId);
+				const cancelled = await taskManager.cancelTask(args.task_id);
+				const result: { success: boolean; task: unknown; workflow_run_cancelled?: boolean } = {
+					success: true,
+					task: cancelled,
+				};
+				if (args.cancel_workflow_run && task.workflowRunId) {
+					await workflowRunRepo.updateRun(task.workflowRunId, { status: 'cancelled' });
+					result.workflow_run_cancelled = true;
+				}
+				return jsonResult(result);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async reassign_task(args: {
+			task_id: string;
+			custom_agent_id: string | null;
+			assigned_agent?: 'coder' | 'general';
+		}): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			try {
+				const taskManager = runtime.getTaskManagerForSpace(task.spaceId);
+				const reassigned = await taskManager.reassignTask(
+					args.task_id,
+					args.custom_agent_id,
+					args.assigned_agent
+				);
+				return jsonResult({ success: true, task: reassigned });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -393,7 +494,7 @@ export function createGlobalSpacesMcpServer(
 		),
 		tool(
 			'update_space',
-			'Update space metadata (name, description, instructions, etc.).',
+			'Update space metadata (name, description, instructions, autonomy level, etc.).',
 			{
 				space_id: z.string().describe('ID of the space to update'),
 				name: z.string().optional().describe('New name'),
@@ -404,7 +505,9 @@ export function createGlobalSpacesMcpServer(
 				autonomy_level: z
 					.enum(AUTONOMY_LEVEL_VALUES)
 					.optional()
-					.describe('New autonomy level for the Space Agent'),
+					.describe(
+						'Autonomy level for the Space Agent: supervised (ask human before acting) or semi_autonomous (act on simple cases, escalate when uncertain)'
+					),
 			},
 			(args) => handlers.update_space(args)
 		),
@@ -504,6 +607,74 @@ export function createGlobalSpacesMcpServer(
 					.describe('Description of the work to match against workflow names and descriptions'),
 			},
 			(args) => handlers.suggest_workflow(args)
+		),
+
+		// Task coordination tools
+		tool(
+			'create_standalone_task',
+			'Create a task outside any workflow. Use for ad-hoc work that does not fit an existing workflow.',
+			{
+				space_id: z
+					.string()
+					.optional()
+					.describe('Target space ID (defaults to the active space context)'),
+				title: z.string().describe('Short title for the task'),
+				description: z.string().optional().describe('Detailed description of the work'),
+				task_type: z
+					.enum(['planning', 'coding', 'review'])
+					.optional()
+					.describe('Task type (defaults to coding)'),
+				custom_agent_id: z.string().optional().describe('ID of a custom agent to assign'),
+			},
+			(args) => handlers.create_standalone_task(args)
+		),
+		tool(
+			'get_task_detail',
+			'Get full task details including agent output, PR status, and error information. Call this before deciding how to handle a failed task.',
+			{
+				task_id: z.string().describe('ID of the task to retrieve'),
+			},
+			(args) => handlers.get_task_detail(args)
+		),
+		tool(
+			'retry_task',
+			'Reset a needs_attention or cancelled task back to pending so it can be picked up again. Optionally update the description.',
+			{
+				task_id: z.string().describe('ID of the task to retry'),
+				description: z
+					.string()
+					.optional()
+					.describe('Updated task description (clarified instructions for the retry)'),
+			},
+			(args) => handlers.retry_task(args)
+		),
+		tool(
+			'cancel_task',
+			'Cancel a task. Optionally cancel its entire workflow run.',
+			{
+				task_id: z.string().describe('ID of the task to cancel'),
+				cancel_workflow_run: z
+					.boolean()
+					.optional()
+					.describe('Also cancel the workflow run this task belongs to'),
+			},
+			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'reassign_task',
+			'Change the assigned agent for a task. Only works for tasks in pending, needs_attention, or cancelled status.',
+			{
+				task_id: z.string().describe('ID of the task to reassign'),
+				custom_agent_id: z
+					.string()
+					.nullable()
+					.describe('ID of the custom agent to assign, or null to clear the custom assignment'),
+				assigned_agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.describe('Preset agent role to assign'),
+			},
+			(args) => handlers.reassign_task(args)
 		),
 	];
 
