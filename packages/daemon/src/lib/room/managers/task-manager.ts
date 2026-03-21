@@ -30,7 +30,7 @@ export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 	review: ['completed', 'needs_attention', 'in_progress'],
 	completed: ['in_progress', 'archived'], // Reactivate or archive
 	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
-	cancelled: ['pending', 'in_progress', 'archived'], // Restart or archive
+	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
 };
 

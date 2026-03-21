@@ -895,6 +895,15 @@ describe('TaskManager', () => {
 			expect(archived.status).toBe('archived');
 		});
 
+		it('should allow cancelled → completed transition (e.g. PR merged after cancellation)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const completed = await taskManager.setTaskStatus(task.id, 'completed');
+			expect(completed.status).toBe('completed');
+		});
+
 		it('should allow needs_attention → archived transition', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
@@ -1087,8 +1096,13 @@ describe('TaskManager', () => {
 			expect(VALID_STATUS_TRANSITIONS.completed).toEqual(['in_progress', 'archived']);
 		});
 
-		it('cancelled allows restart and archival', () => {
-			expect(VALID_STATUS_TRANSITIONS.cancelled).toEqual(['pending', 'in_progress', 'archived']);
+		it('cancelled allows restart, completion, and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.cancelled).toEqual([
+				'pending',
+				'in_progress',
+				'completed',
+				'archived',
+			]);
 		});
 
 		it('needs_attention allows restart, review, and archival', () => {
