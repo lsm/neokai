@@ -278,7 +278,6 @@ function makeConfig(
 ): TaskAgentToolsConfig {
 	return {
 		taskId,
-		spaceId: ctx.spaceId,
 		space: ctx.space,
 		workflowRunId,
 		workspacePath: ctx.space.workspacePath,
@@ -1288,17 +1287,14 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 
 describe('createTaskAgentMcpServer', () => {
 	let ctx: TestCtx;
-	let cleanup: (() => void)[];
 
 	beforeEach(() => {
 		ctx = makeCtx();
-		cleanup = [];
 	});
 
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
-		for (const fn of cleanup) fn();
 	});
 
 	// ---------------------------------------------------------------------------
@@ -1340,35 +1336,37 @@ describe('createTaskAgentMcpServer', () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['spawn_step_agent'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('spawn');
+		expect(entry.description).toContain("Start a sub-session for a workflow step's assigned agent");
 	});
 
 	test('check_step_status has correct description', async () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['check_step_status'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('status');
+		expect(entry.description).toContain('Poll the status of a running step agent sub-session');
 	});
 
 	test('advance_workflow has correct description', async () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['advance_workflow'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('next step');
+		expect(entry.description).toContain('Advance the workflow to the next step');
 	});
 
 	test('report_result has correct description', async () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['report_result'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('completed');
+		expect(entry.description).toContain('Mark the task as completed, failed, or cancelled');
 	});
 
 	test('request_human_input has correct description', async () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['request_human_input'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('human');
+		expect(entry.description).toContain(
+			'Pause workflow execution and surface a question to the human user'
+		);
 	});
 
 	test('each registered tool has an inputSchema', async () => {
@@ -1388,43 +1386,42 @@ describe('createTaskAgentMcpServer', () => {
 	});
 
 	// ---------------------------------------------------------------------------
-	// Handler delegation
+	// Handler delegation — invoke via the MCP server's registered handler
 	// ---------------------------------------------------------------------------
 
-	test('check_step_status handler returns not_found when no tasks exist', async () => {
-		const { wf, server } = await makeServerCtx();
-		// Call handler via the handler objects directly to confirm delegation works
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, 'nonexistent-task', 'nonexistent-run', makeMockSessionFactory())
-		);
-		const result = await handlers.check_step_status({ step_id: wf.steps[0].id });
+	test('check_step_status registered handler returns not_found for an unknown step', async () => {
+		const { server } = await makeServerCtx();
+		// Invoke through the server's registered handler to verify the wiring
+		const handler = server.instance._registeredTools['check_step_status'].handler;
+		const result = await handler({ step_id: 'step-that-does-not-exist' }, {});
 		const parsed = JSON.parse(result.content[0].text);
-		// No task found for step, and it's in a non-existent run => not_found
 		expect(parsed.taskStatus).toBe('not_found');
-		// The server reference confirms the factory wired them up
-		expect(server.instance._registeredTools['check_step_status']).toBeDefined();
 	});
 
-	test('report_result handler is delegated — task not found returns error', async () => {
-		const { server } = await makeServerCtx();
-		// Use a fresh config pointing at a nonexistent taskId to trigger the error path
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, 'no-such-task', 'no-such-run', makeMockSessionFactory())
-		);
-		const result = await handlers.report_result({ status: 'completed', summary: 'done' });
+	test('report_result registered handler returns error for unknown task', async () => {
+		// Build a server whose config references a non-existent taskId
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, 'no-such-task', run.id, factory);
+		const server = createTaskAgentMcpServer(config);
+
+		const handler = server.instance._registeredTools['report_result'].handler;
+		const result = await handler({ status: 'completed', summary: 'done' }, {});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('no-such-task');
-		expect(server.instance._registeredTools['report_result']).toBeDefined();
 	});
 
-	test('request_human_input is delegated — rejects unknown task', async () => {
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, 'no-such-task', 'no-such-run', makeMockSessionFactory())
-		);
-		const result = await handlers.request_human_input({
-			question: 'Are you sure?',
-		});
+	test('request_human_input registered handler returns error for unknown task', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, 'no-such-task', run.id, factory);
+		const server = createTaskAgentMcpServer(config);
+
+		const handler = server.instance._registeredTools['request_human_input'].handler;
+		const result = await handler({ question: 'Are you sure?' }, {});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('no-such-task');
