@@ -640,6 +640,22 @@ describe('TaskRepository', () => {
 			const result = repository.archiveTask('nonexistent');
 			expect(result).toBeNull();
 		});
+
+		it('should clear active_session when archiving', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'Active session task',
+				description: '',
+			});
+			repository.updateTask(task.id, {
+				status: 'in_progress',
+				activeSession: 'worker',
+			});
+
+			const archived = repository.archiveTask(task.id);
+			expect(archived!.status).toBe('archived');
+			expect(archived!.activeSession).toBeNull();
+		});
 	});
 
 	describe('listTasks archive filtering', () => {
@@ -685,6 +701,95 @@ describe('TaskRepository', () => {
 			});
 			expect(tasks.length).toBe(1);
 			expect(tasks[0].status).toBe('archived');
+		});
+	});
+
+	describe('archiveTask dual-field verification', () => {
+		it('should set both status and archived_at atomically', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'Dual check',
+				description: '',
+			});
+			expect(task.archivedAt).toBeUndefined();
+			expect(task.status).toBe('pending');
+
+			const beforeArchive = Date.now();
+			const archived = repository.archiveTask(task.id);
+
+			expect(archived!.status).toBe('archived');
+			expect(archived!.archivedAt).toBeGreaterThanOrEqual(beforeArchive);
+			expect(archived!.archivedAt).toBeLessThanOrEqual(Date.now());
+		});
+
+		it('should update updated_at when archiving', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'T',
+				description: '',
+			});
+			const originalUpdatedAt = task.updatedAt;
+
+			const archived = repository.archiveTask(task.id);
+			expect(archived!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
+		});
+	});
+
+	describe('listTasks archive filtering edge cases', () => {
+		it('should not return archived tasks when filtering by non-archived status', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'T',
+				description: '',
+			});
+			repository.archiveTask(task.id);
+
+			const tasks = repository.listTasks('room-1', { status: 'pending' });
+			expect(tasks.length).toBe(0);
+		});
+
+		it('should return empty when all tasks are archived and includeArchived is false', () => {
+			const t1 = repository.createTask({ roomId: 'room-1', title: 'T1', description: '' });
+			const t2 = repository.createTask({ roomId: 'room-1', title: 'T2', description: '' });
+			repository.archiveTask(t1.id);
+			repository.archiveTask(t2.id);
+
+			const tasks = repository.listTasks('room-1');
+			expect(tasks.length).toBe(0);
+		});
+
+		it('should return all tasks when all are archived and includeArchived is true', () => {
+			const t1 = repository.createTask({ roomId: 'room-1', title: 'T1', description: '' });
+			const t2 = repository.createTask({ roomId: 'room-1', title: 'T2', description: '' });
+			repository.archiveTask(t1.id);
+			repository.archiveTask(t2.id);
+
+			const tasks = repository.listTasks('room-1', { includeArchived: true });
+			expect(tasks.length).toBe(2);
+		});
+
+		it('should exclude archived tasks from countActiveTasks', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'T',
+				description: '',
+			});
+			expect(repository.countActiveTasks('room-1')).toBe(1);
+
+			repository.archiveTask(task.id);
+			expect(repository.countActiveTasks('room-1')).toBe(0);
+		});
+
+		it('should count archived tasks with countTasksByStatus', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'T',
+				description: '',
+			});
+			repository.archiveTask(task.id);
+
+			expect(repository.countTasksByStatus('room-1', 'archived')).toBe(1);
+			expect(repository.countTasksByStatus('room-1', 'pending')).toBe(0);
 		});
 	});
 
