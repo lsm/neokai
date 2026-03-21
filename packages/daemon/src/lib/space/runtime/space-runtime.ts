@@ -27,6 +27,7 @@ import type {
 	WorkflowRule,
 	WorkflowStep,
 } from '@neokai/shared';
+import { resolveStepAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -355,20 +356,28 @@ export class SpaceRuntime {
 
 	/**
 	 * Resolve the appropriate SpaceTaskType (and optional customAgentId) for
-	 * a workflow step, based on the assigned agent's role.
+	 * a workflow step, based on the primary agent's role.
+	 *
+	 * For multi-agent steps (agents[] format), the first entry is used as the primary agent
+	 * for task-type resolution. Individual sub-tasks for each agent are created by the executor.
 	 *
 	 * Mapping rules:
 	 *   agent.role === 'planner'          → taskType: 'planning',  customAgentId: undefined
 	 *   agent.role === 'coder'|'general'  → taskType: 'coding',    customAgentId: undefined
-	 *   any other role (custom)           → taskType: 'coding',    customAgentId: step.agentId
-	 *   agent not found                   → taskType: 'coding',    customAgentId: step.agentId
+	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
+	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
 	resolveTaskTypeForStep(step: WorkflowStep): ResolvedTaskType {
-		const agent = this.config.spaceAgentManager.getById(step.agentId);
+		// Use the first resolved agent as the primary for task-type resolution.
+		const stepAgents = resolveStepAgents(step);
+		const primaryAgentId = stepAgents[0]?.agentId;
+		const agent = primaryAgentId
+			? this.config.spaceAgentManager.getById(primaryAgentId)
+			: undefined;
 
 		if (!agent) {
 			// Unknown agent → treat as custom coding agent
-			return { taskType: 'coding', customAgentId: step.agentId };
+			return { taskType: 'coding', customAgentId: primaryAgentId };
 		}
 
 		if (agent.role === 'planner') {
@@ -380,7 +389,7 @@ export class SpaceRuntime {
 		}
 
 		// Custom role
-		return { taskType: 'coding', customAgentId: step.agentId };
+		return { taskType: 'coding', customAgentId: primaryAgentId };
 	}
 
 	/**

@@ -257,7 +257,11 @@ export function seedBuiltInWorkflows(
 	// Pre-validate: resolve every role needed across ALL templates before
 	// persisting anything. This guarantees all-or-nothing behaviour.
 	const templates = getBuiltInWorkflows();
-	const neededRoles = new Set<string>(templates.flatMap((t) => t.steps.map((s) => s.agentId)));
+	const neededRoles = new Set<string>(
+		templates
+			.flatMap((t) => t.steps.map((s) => s.agentId))
+			.filter((r): r is string => r !== undefined)
+	);
 	const resolvedIds = new Map<string, string>();
 	for (const role of neededRoles) {
 		const agentId = resolveAgentId(role);
@@ -281,7 +285,7 @@ export function seedBuiltInWorkflows(
 		const steps = template.steps.map((s) => ({
 			id: stepIdMap.get(s.id)!,
 			name: s.name,
-			agentId: resolvedIds.get(s.agentId)!,
+			agentId: resolvedIds.get(s.agentId ?? '')!,
 			instructions: s.instructions,
 		}));
 

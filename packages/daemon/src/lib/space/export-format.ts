@@ -188,9 +188,13 @@ export function exportWorkflow(
 		agentIdToName.set(agent.id, agent.name);
 	}
 
-	// Export steps — strip `id`, remap agentId UUID → agent name
+	// Export steps — strip `id`, remap agentId UUID → agent name.
+	// NOTE: Multi-agent steps (agents[] format) are exported using the primary agentId for
+	// backward compatibility. Full multi-agent export/import support is deferred to Milestone 5.
 	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		const agentRef = agentIdToName.get(step.agentId) ?? step.agentId;
+		// Prefer agentId; for multi-agent steps fall back to the first agents[] entry.
+		const primaryAgentId = step.agentId ?? step.agents?.[0]?.agentId ?? '';
+		const agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
 		const exported: ExportedWorkflowStep = { agentRef, name: step.name };
 		if (step.instructions !== undefined) exported.instructions = step.instructions;
 		return exported;
