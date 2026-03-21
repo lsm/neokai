@@ -140,12 +140,16 @@ describe('Task Lifecycle RPC Integration', () => {
 				result: 'Task done successfully',
 			})) as { task: NeoTask };
 			expect(completedResult.task.status).toBe('completed');
+			const completedAt = completedResult.task.completedAt;
+			expect(completedAt).toBeGreaterThan(0);
 
-			// Reactivation clears result and progress
+			// Reactivation clears result and progress but retains completedAt (repository
+			// only sets started_at on in_progress; it never erases completed_at).
 			const reactivated = await setStatus(roomId, task.id, 'in_progress');
 			expect(reactivated.result).toBeUndefined();
 			expect(reactivated.progress).toBeUndefined();
 			expect(reactivated.archivedAt).toBeUndefined();
+			expect(reactivated.completedAt).toBe(completedAt);
 		});
 
 		test('reactivated task has no archivedAt after coming back from completed', async () => {
@@ -348,6 +352,7 @@ describe('Task Lifecycle RPC Integration', () => {
 			})) as { task: NeoTask };
 
 			expect(result.task.status).toBe('archived');
+			expect(result.task.archivedAt).toBeGreaterThan(0);
 		});
 
 		test('task.archive rejects in_progress task', async () => {
