@@ -616,6 +616,14 @@ export class SpaceRuntime {
 						});
 					}
 				}
+				// Prune dedup entries for all tasks in this run so the set doesn't
+				// grow unboundedly. Once a run is terminal its tasks will never
+				// reappear in stepTasks, so the normal per-tick pruning loop
+				// (processRunTick) would never clear them otherwise.
+				for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
+					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+					this.notifiedTaskSet.delete(`${task.id}:timeout`);
+				}
 				this.executors.delete(runId);
 				this.executorMeta.delete(runId);
 			}
