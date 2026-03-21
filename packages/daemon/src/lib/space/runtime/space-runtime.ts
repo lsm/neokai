@@ -161,6 +161,26 @@ export class SpaceRuntime {
 		this.notifiedTaskSet.clear();
 	}
 
+	/**
+	 * Safely calls notificationSink.notify(), catching and logging any errors.
+	 *
+	 * By interface contract, NotificationSink implementations should handle their
+	 * own errors internally (see SessionNotificationSink). However, to prevent a
+	 * poorly-written or custom sink from crashing the tick loop, SpaceRuntime
+	 * wraps all notify() calls in this guard.
+	 *
+	 * Errors are logged at warn level and the tick continues normally.
+	 */
+	private async safeNotify(event: Parameters<NotificationSink['notify']>[0]): Promise<void> {
+		try {
+			await this.notificationSink.notify(event);
+		} catch (err) {
+			log.warn(
+				`[SpaceRuntime] NotificationSink.notify() threw for event "${event.kind}": ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Lifecycle — start / stop
 	// -------------------------------------------------------------------------
@@ -532,7 +552,7 @@ export class SpaceRuntime {
 				const dedupKey = `${task.id}:needs_attention`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
 					this.notifiedTaskSet.add(dedupKey);
-					await this.notificationSink.notify({
+					await this.safeNotify({
 						kind: 'task_needs_attention',
 						spaceId: meta.spaceId,
 						taskId: task.id,
@@ -556,7 +576,7 @@ export class SpaceRuntime {
 					const dedupKey = `${task.id}:timeout`;
 					if (!this.notifiedTaskSet.has(dedupKey)) {
 						this.notifiedTaskSet.add(dedupKey);
-						await this.notificationSink.notify({
+						await this.safeNotify({
 							kind: 'task_timeout',
 							spaceId: meta.spaceId,
 							taskId: task.id,
@@ -589,7 +609,7 @@ export class SpaceRuntime {
 			}
 			// Gate blocked: run status already set to 'needs_attention' by the executor.
 			// Emit notification so the Space Agent session is informed.
-			await this.notificationSink.notify({
+			await this.safeNotify({
 				kind: 'workflow_run_needs_attention',
 				spaceId: meta.spaceId,
 				runId,
@@ -618,7 +638,7 @@ export class SpaceRuntime {
 				if (run?.status === 'completed') {
 					const meta = this.executorMeta.get(runId);
 					if (meta) {
-						await this.notificationSink.notify({
+						await this.safeNotify({
 							kind: 'workflow_run_completed',
 							spaceId: meta.spaceId,
 							runId,
@@ -699,7 +719,7 @@ export class SpaceRuntime {
 				const dedupKey = `${task.id}:needs_attention`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
 					this.notifiedTaskSet.add(dedupKey);
-					await this.notificationSink.notify({
+					await this.safeNotify({
 						kind: 'task_needs_attention',
 						spaceId: space.id,
 						taskId: task.id,
@@ -720,7 +740,7 @@ export class SpaceRuntime {
 						const dedupKey = `${task.id}:timeout`;
 						if (!this.notifiedTaskSet.has(dedupKey)) {
 							this.notifiedTaskSet.add(dedupKey);
-							await this.notificationSink.notify({
+							await this.safeNotify({
 								kind: 'task_timeout',
 								spaceId: space.id,
 								taskId: task.id,
