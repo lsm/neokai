@@ -10,16 +10,16 @@ Three phases, each building on the previous:
 
 1. **Flexible Session Group Model** -- Redesign schema for N members with freeform roles, wire TaskAgentManager to persist groups, add events for frontend reactivity.
 2. **Multi-Agent Workflow Steps** -- Allow workflow steps to specify multiple agents for parallel execution, update executor and editor.
-3. **Cross-Agent Messaging** -- Enable agents within a group to communicate, starting with Task Agent mediated routing and adding direct peer messaging.
+3. **Cross-Agent Messaging with Declared Topology** -- Enable agents within a group to communicate via declared `channels` on workflow steps. Direct agent-to-agent messaging along declared channels is the primary model; Task Agent mediated routing is a fallback for undeclared paths.
 
 ## Milestones
 
 1. **Schema and Type Updates** -- New migration adding `task_id`, `agent_id`, `status` columns; update shared types to freeform roles; update repository CRUD.
 2. **TaskAgentManager Group Persistence** -- Wire `spawnTaskAgent()` and `createSubSession()` to create/update session groups and members; emit events via DaemonHub.
 3. **Frontend Session Group Reactivity** -- Add `sessionGroups` signal to SpaceStore, subscribe to group events, display active agents in SpaceTaskPane.
-4. **Multi-Agent Workflow Steps (Types and Executor)** -- Extend `WorkflowStep` with `agents` array, update `WorkflowExecutor.advance()` to create multiple tasks per step, update step completion logic.
-5. **Multi-Agent Export/Import and Visual Editor** -- Update `ExportedWorkflowStep` for multi-agent format, update visual workflow editor to show/edit multiple agents per step.
-6. **Cross-Agent Messaging** -- Implement Task Agent mediated messaging and direct peer-to-peer MCP tools within groups.
+4. **Multi-Agent Workflow Steps (Types, Channels, and Executor)** -- Extend `WorkflowStep` with `agents` array and `channels` topology declaration, update `WorkflowExecutor.advance()` to create multiple tasks per step, resolve channel topology at step start.
+5. **Multi-Agent Export/Import and Visual Editor** -- Update `ExportedWorkflowStep` for multi-agent + channels format, update visual workflow editor to show agents and draw directed channel edges between them.
+6. **Cross-Agent Messaging with Channel Enforcement** -- Implement channel-validated direct messaging as the primary model, Task Agent mediated routing as fallback for undeclared channels.
 
 ## Cross-Milestone Dependencies
 
@@ -27,14 +27,14 @@ Three phases, each building on the previous:
 - Milestone 3 depends on Milestone 2 (events must be emitted before frontend can subscribe).
 - Milestone 4 depends on Milestone 1 (needs freeform types and updated repository).
 - Milestone 5 depends on Milestone 4 (export/import and editor need the `agents` array type).
-- Milestone 6 depends on Milestones 2 and 4 (needs group persistence and multi-agent steps).
+- Milestone 6 depends on Milestones 2 and 4 (needs group persistence, multi-agent steps, and channel topology types).
 - Milestone 3 and Milestone 4 can proceed in parallel once their respective dependencies (2 and 1) are complete.
 
 ## Key Sequencing Decisions
 
 - All schema changes (Phase 1 + Phase 2) go in a single new migration (next available migration number, determined at implementation time) since Space is pre-production and consolidation avoids unnecessary ALTER TABLEs.
 - Backward compatibility: `WorkflowStep.agentId` is kept; `agents` array is additive. Resolution: if `agents` is provided, use it; else fall back to `agentId`. If both are provided, `agents` takes precedence (and a warning is logged).
-- Cross-agent messaging starts with Task Agent mediated (Option C) as it leverages existing coordinator architecture, then adds direct peer tools.
+- **Messaging topology is first-class**: `WorkflowStep.channels` declares directed communication links between agents. The declared channels *are* the workflow graph — they define who can talk to whom. Direct agent-to-agent messaging along declared channels is the primary model. Task Agent mediated routing (`request_peer_input`) is a fallback for undeclared paths or when the Task Agent needs to coordinate.
 - Event names follow existing codebase convention: `spaceSessionGroup.created`, `spaceSessionGroup.memberAdded`, `spaceSessionGroup.memberUpdated` (camelCase without domain separator dots, matching `spaceAgent.created`, `spaceWorkflow.created`).
 
 ## Key Design Decisions
@@ -45,6 +45,30 @@ When one parallel task in a multi-agent step fails while others are still runnin
 - **Step status**: The step is marked `failed` if ANY parallel task fails, once all tasks reach a terminal state (completed or failed).
 - **Result aggregation**: The Task Agent receives completion/failure callbacks for each task individually and can decide whether to retry failed tasks or advance with partial results.
 - **Retry**: Retry is per-task, not per-step. The Task Agent can re-spawn a failed agent without re-running successful ones.
+
+### Messaging Topology as First-Class Workflow Primitive (Phase 2 + 3)
+The `channels` field on `WorkflowStep` declares the directed messaging topology for that step. The channels collaboratively define the whole workflow graph — they are not an afterthought but a core part of workflow design.
+
+**Type definition:**
+```ts
+interface WorkflowChannel {
+  from: string;            // agentRole or '*' (wildcard = any agent in step)
+  to: string | string[];   // agentRole(s) or '*'
+  direction: 'one-way' | 'bidirectional';
+  label?: string;          // optional semantic label, e.g. 'review-feedback'
+}
+```
+
+**Supported topology patterns:**
+- **`A → B`** (one-way): A can send to B, B cannot reply via this channel. Modeled as `{from: 'A', to: 'B', direction: 'one-way'}`.
+- **`A ↔ B`** (bidirectional): Full duplex between A and B. Modeled as `{from: 'A', to: 'B', direction: 'bidirectional'}`.
+- **`A → (B, C, D)`** (fan-out/broadcast): A sends to multiple agents. Modeled as `{from: 'A', to: ['B', 'C', 'D'], direction: 'one-way'}`.
+- **`* → B`** (sink): Any agent can send to B. Modeled as `{from: '*', to: 'B', direction: 'one-way'}`.
+- **`A → *`** (broadcast-all): A can send to all agents. Modeled as `{from: 'A', to: '*', direction: 'one-way'}`.
+
+**Enforcement:** The `send_feedback` MCP tool validates against declared channels before routing. If no channel permits the direction, the message is rejected. The channel topology is resolved at step-start time and passed to each agent session's tool context so agents know their permitted communication paths.
+
+**Fallback:** When no channels are declared on a step (or when a message doesn't match any channel), the Task Agent mediated `request_peer_input` tool remains available as a fallback — the Task Agent can relay messages at its discretion.
 
 ### `request_peer_input` Response Mechanism (Phase 3)
 The `request_peer_input` tool uses an **async injection pattern**, NOT a blocking request/response:
@@ -71,4 +95,4 @@ The `WorkflowStepAgent.count` field (spawn N instances of same agent) is **defer
 
 ## Estimated Task Count
 
-26 tasks across 6 milestones.
+29 tasks across 6 milestones.
