@@ -913,6 +913,21 @@ describe('TaskManager', () => {
 			expect(reactivated.status).toBe('in_progress');
 		});
 
+		it('should clear result and progress when reactivating a completed task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'previous result');
+
+			const completed = await taskManager.getTask(task.id);
+			expect(completed!.result).toBe('previous result');
+			expect(completed!.progress).toBe(100);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+			expect(reactivated.result).toBeUndefined();
+			expect(reactivated.progress).toBeUndefined();
+		});
+
 		it('should reject archived → any transition (true terminal)', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);

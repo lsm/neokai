@@ -324,6 +324,22 @@ describe('SpaceTaskManager', () => {
 			expect(retried.status).toBe('in_progress');
 		});
 
+		it('clears stale result and progress when retrying a completed task', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.completeTask(task.id, 'previous result');
+
+			// Verify fields are set before retry
+			const completed = await manager.getTask(task.id);
+			expect(completed!.result).toBe('previous result');
+			expect(completed!.progress).toBe(100);
+
+			const retried = await manager.retryTask(task.id);
+			expect(retried.status).toBe('in_progress');
+			expect(retried.result).toBeUndefined();
+			expect(retried.progress).toBeUndefined();
+		});
+
 		it('updates description when provided', async () => {
 			const task = await manager.createTask({ title: 'T', description: 'original' });
 			await manager.startTask(task.id);

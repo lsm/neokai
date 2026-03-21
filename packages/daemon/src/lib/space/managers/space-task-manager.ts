@@ -3,7 +3,7 @@
  *
  * Handles:
  * - Creating space tasks with dependency validation
- * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review -> archived)
  * - Task assignment and progress tracking
  */
 
@@ -128,13 +128,13 @@ export class SpaceTaskManager {
 			updates.error = options.error;
 		}
 
-		// Clear error/result/progress when restarting from a failed/cancelled state.
-		// For needs_attention: allowed targets are pending, in_progress, review.
-		// For cancelled: allowed targets are pending, in_progress (review is not valid from cancelled).
+		// Clear error/result/progress when restarting from a terminal/failed state.
+		// Covers needs_attention, cancelled, and completed → reactivation transitions.
 		if (
 			(task.status === 'needs_attention' &&
 				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
-			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress'))
+			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress')) ||
+			(task.status === 'completed' && newStatus === 'in_progress')
 		) {
 			updates.error = null;
 			updates.result = null;
@@ -323,7 +323,8 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Retry a failed or cancelled task by resetting it to pending.
+	 * Retry a failed, cancelled, or completed task.
+	 * Completed/cancelled tasks are reactivated to in_progress; needs_attention tasks reset to pending.
 	 * Optionally updates the description on retry.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
@@ -345,7 +346,6 @@ export class SpaceTaskManager {
 		const targetStatus: SpaceTaskStatus =
 			task.status === 'completed' || task.status === 'cancelled' ? 'in_progress' : 'pending';
 		// Transition first — if this fails, the description is untouched (no partial state)
-		// setTaskStatus handles clearing error/result/progress on transition
 		const retried = await this.setTaskStatus(taskId, targetStatus);
 
 		// Apply optional description update after successful status transition

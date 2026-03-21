@@ -4,7 +4,7 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review -> archived)
  * - Task assignment to sessions
  */
 
@@ -214,12 +214,12 @@ export class TaskManager {
 			}
 		}
 
-		// Clear error/result when restarting from needs_attention/cancelled, or when reviving
-		// a needs_attention task to review. The 'review' case only applies to 'needs_attention' since
-		// 'cancelled → review' is not a valid transition (worktree is cleaned up).
+		// Clear error/result/progress when restarting from a terminal/failed state.
+		// Covers needs_attention, cancelled, and completed → reactivation transitions.
 		if (
-			(task.status === 'needs_attention' || task.status === 'cancelled') &&
-			(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')
+			((task.status === 'needs_attention' || task.status === 'cancelled') &&
+				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
+			(task.status === 'completed' && newStatus === 'in_progress')
 		) {
 			// Use null to explicitly clear these fields in the database
 			updates.error = null;
