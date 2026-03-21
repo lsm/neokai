@@ -28,6 +28,7 @@ import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import {
 	createTaskAgentToolHandlers,
+	createTaskAgentMcpServer,
 	type SubSessionFactory,
 	type SubSessionState,
 	type TaskAgentToolsConfig,
@@ -277,7 +278,6 @@ function makeConfig(
 ): TaskAgentToolsConfig {
 	return {
 		taskId,
-		spaceId: ctx.spaceId,
 		space: ctx.space,
 		workflowRunId,
 		workspacePath: ctx.space.workspacePath,
@@ -1278,5 +1278,168 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 			summary: 'Both steps done.',
 		});
 		expect(JSON.parse(report.content[0].text).success).toBe(true);
+	});
+});
+
+// ===========================================================================
+// createTaskAgentMcpServer — MCP server factory
+// ===========================================================================
+
+describe('createTaskAgentMcpServer', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	// ---------------------------------------------------------------------------
+	// Helper: build a minimal config + run for MCP server tests
+	// ---------------------------------------------------------------------------
+
+	async function makeServerCtx() {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, mainTask.id, run.id, factory);
+		const server = createTaskAgentMcpServer(config);
+		return { wf, run, mainTask, factory, config, server };
+	}
+
+	// ---------------------------------------------------------------------------
+	// Tool registration
+	// ---------------------------------------------------------------------------
+
+	test('returns an object with type "sdk" and name "task-agent"', async () => {
+		const { server } = await makeServerCtx();
+		expect(server.type).toBe('sdk');
+		expect(server.name).toBe('task-agent');
+	});
+
+	test('registers all 5 expected tools', async () => {
+		const { server } = await makeServerCtx();
+		const registered = Object.keys(server.instance._registeredTools).sort();
+		expect(registered).toEqual([
+			'advance_workflow',
+			'check_step_status',
+			'report_result',
+			'request_human_input',
+			'spawn_step_agent',
+		]);
+	});
+
+	test('spawn_step_agent has correct description', async () => {
+		const { server } = await makeServerCtx();
+		const entry = server.instance._registeredTools['spawn_step_agent'];
+		expect(entry).toBeDefined();
+		expect(entry.description).toContain("Start a sub-session for a workflow step's assigned agent");
+	});
+
+	test('check_step_status has correct description', async () => {
+		const { server } = await makeServerCtx();
+		const entry = server.instance._registeredTools['check_step_status'];
+		expect(entry).toBeDefined();
+		expect(entry.description).toContain('Poll the status of a running step agent sub-session');
+	});
+
+	test('advance_workflow has correct description', async () => {
+		const { server } = await makeServerCtx();
+		const entry = server.instance._registeredTools['advance_workflow'];
+		expect(entry).toBeDefined();
+		expect(entry.description).toContain('Advance the workflow to the next step');
+	});
+
+	test('report_result has correct description', async () => {
+		const { server } = await makeServerCtx();
+		const entry = server.instance._registeredTools['report_result'];
+		expect(entry).toBeDefined();
+		expect(entry.description).toContain('Mark the task as completed, failed, or cancelled');
+	});
+
+	test('request_human_input has correct description', async () => {
+		const { server } = await makeServerCtx();
+		const entry = server.instance._registeredTools['request_human_input'];
+		expect(entry).toBeDefined();
+		expect(entry.description).toContain(
+			'Pause workflow execution and surface a question to the human user'
+		);
+	});
+
+	test('each registered tool has an inputSchema', async () => {
+		const { server } = await makeServerCtx();
+		const toolNames = [
+			'spawn_step_agent',
+			'check_step_status',
+			'advance_workflow',
+			'report_result',
+			'request_human_input',
+		];
+		for (const name of toolNames) {
+			const entry = server.instance._registeredTools[name];
+			expect(entry).toBeDefined();
+			expect(entry.inputSchema).toBeDefined();
+		}
+	});
+
+	// ---------------------------------------------------------------------------
+	// Handler delegation — invoke via the MCP server's registered handler
+	// ---------------------------------------------------------------------------
+
+	test('check_step_status registered handler returns not_found for an unknown step', async () => {
+		const { server } = await makeServerCtx();
+		// Invoke through the server's registered handler to verify the wiring
+		const handler = server.instance._registeredTools['check_step_status'].handler;
+		const result = await handler({ step_id: 'step-that-does-not-exist' }, {});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.taskStatus).toBe('not_found');
+	});
+
+	test('report_result registered handler returns error for unknown task', async () => {
+		// Build a server whose config references a non-existent taskId
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, 'no-such-task', run.id, factory);
+		const server = createTaskAgentMcpServer(config);
+
+		const handler = server.instance._registeredTools['report_result'].handler;
+		const result = await handler({ status: 'completed', summary: 'done' }, {});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('no-such-task');
+	});
+
+	test('request_human_input registered handler returns error for unknown task', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, 'no-such-task', run.id, factory);
+		const server = createTaskAgentMcpServer(config);
+
+		const handler = server.instance._registeredTools['request_human_input'].handler;
+		const result = await handler({ question: 'Are you sure?' }, {});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('no-such-task');
+	});
+
+	test('creating multiple servers from same config yields independent instances', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const config = makeConfig(ctx, mainTask.id, run.id, factory);
+
+		const server1 = createTaskAgentMcpServer(config);
+		const server2 = createTaskAgentMcpServer(config);
+
+		// Each call returns a distinct server instance
+		expect(server1.instance).not.toBe(server2.instance);
+		// Both register all 5 tools
+		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(5);
+		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(5);
 	});
 });
