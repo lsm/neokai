@@ -29,8 +29,16 @@ Break this into 6 milestones working bottom-up: store/computed additions first, 
 
 - Milestone 2 (router) and Milestone 1 (store) are independent and can run in parallel.
 - Milestone 3 (component redesign) depends on both Milestone 1 and Milestone 2.
-- Milestone 4 (Room.tsx integration) depends on Milestone 2 and Milestone 3.
+- Milestone 4 (Room.tsx integration) depends on Milestone 2 and Milestone 3. Note: Task 4.1 is an integration validation task — its output may be a passing typecheck/test run plus minor wiring fixes rather than a large code PR. If no code changes are needed, the PR should document the verification performed.
 - Milestone 5 (unit tests) depends on Milestones 1-3.
 - Milestone 6 (E2E tests) depends on Milestone 4.
 
-## Estimated Total Tasks: 11
+## Estimated Total Tasks: 10
+
+## Key Design Decisions
+
+- **`draft` and `pending` task statuses** are included in the "Active" tab filter bucket alongside `in_progress`. This ensures no tasks silently vanish from the sidebar.
+- **`isDashboardSelected`** must be true ONLY when both `currentRoomSessionIdSignal.value === null` AND `currentRoomTaskIdSignal.value === null`. Selecting a task or the Room Agent must NOT highlight the Dashboard.
+- **Room Agent page-load path**: When `initializeRouter` parses `/room/:roomId/agent`, it must set `currentRoomSessionIdSignal` to the synthetic `room:chat:${roomId}` value. Without this, the Room Agent chat will not render on page refresh (Room.tsx requires a non-null `sessionViewId`). This couples the clean URL to the synthetic ID mechanism — accepted as pragmatic technical debt.
+- **Mobile drawer**: All navigation actions in the redesigned panel must still call `onNavigate?.()` to close the mobile drawer, preserving existing mobile behavior.
+- **Goal-task linkage in E2E setup**: Use `goal.create` RPC to create goals, `task.create` to create tasks, then `goal.linkTask` RPC (`{ roomId, goalId, taskId }`) to link tasks to goals. The `goal.create` handler does NOT accept `linkedTaskIds` directly — linkage is always done via `goal.linkTask`.

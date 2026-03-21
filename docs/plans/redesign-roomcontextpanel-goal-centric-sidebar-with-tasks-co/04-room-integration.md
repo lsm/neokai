@@ -2,13 +2,13 @@
 
 ## Goal
 
-Ensure the `Room.tsx` component correctly handles the new Room Agent URL route and that all sidebar navigation targets drive the correct main content views.
+Ensure the `Room.tsx` component correctly handles the new Room Agent URL route and that all sidebar navigation targets drive the correct main content views. This is an integration validation task — its output may be minor wiring fixes plus a passing typecheck, or it may require no code changes if Milestones 2 and 3 work correctly end-to-end.
 
 ## Tasks
 
-### Task 4.1: Update Room.tsx to Handle Room Agent Route
+### Task 4.1: Validate and Fix Room.tsx Integration with New Routes
 
-**Description:** The Room Agent view currently relies on `sessionViewId` being the synthetic `room:chat:<roomId>` string. With the new `/room/:roomId/agent` route, `MainContent.tsx` passes `roomSessionId` signal which is set by the router. Verify this works end-to-end, and if the synthetic session ID approach needs adjustment, update accordingly. Also clean up any references to the removed back button.
+**Description:** Verify the end-to-end flow from new sidebar navigation to main content rendering. Fix any wiring issues found. The `Room.tsx` component renders `TaskView`, `ChatContainer`, or the tabbed dashboard based on `sessionViewId`/`taskViewId` props. Ensure the new Room Agent route, task navigation, and dashboard selection all produce the correct rendering.
 
 **Agent type:** coder
 
@@ -17,7 +17,7 @@ Ensure the `Room.tsx` component correctly handles the new Room Agent URL route a
 **Subtasks:**
 1. Run `bun install` at the worktree root.
 2. Verify in `packages/web/src/islands/MainContent.tsx` that the `roomSessionId` signal (from `currentRoomSessionIdSignal`) correctly passes the synthetic `room:chat:<roomId>` value to the `Room` component's `sessionViewId` prop when navigating via the agent URL. The `navigateToRoomAgent` function (from Milestone 2) sets `currentRoomSessionIdSignal` to the synthetic ID, so `Room.tsx` should already receive it as `sessionViewId` and render `ChatContainer`.
-3. Test the flow manually or with a quick sanity check: navigating to `/room/<uuid>/agent` should show the Room Agent chat. Confirm the `isRoomAgentSelected` logic in `RoomContextPanel` still correctly highlights the Room Agent button when viewing the agent URL.
+3. Verify by running `bun run typecheck` and reviewing the signal flow: navigating to `/room/<uuid>/agent` should result in `sessionViewId` being the synthetic ID, which causes Room.tsx to render `ChatContainer`. If the flow is broken, fix the signal wiring.
 4. In `packages/web/src/islands/ContextPanel.tsx`, verify that `RoomContextPanel` is still rendered correctly when a room is selected (the `onNavigate` prop from `ContextPanel` should still close the mobile drawer).
 5. Run `bun run typecheck`, `bun run lint`, `bun run format`.
 
@@ -26,4 +26,4 @@ Ensure the `Room.tsx` component correctly handles the new Room Agent URL route a
 - The Room Agent sidebar item is highlighted when viewing the agent route.
 - All sidebar navigation items (Dashboard, Room Agent, goal tasks, orphan tasks, sessions) correctly switch the main content.
 - TypeScript compiles without errors.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+- If code changes were needed, they must be on a feature branch with a GitHub PR created via `gh pr create`. If no changes were needed, document the verification performed in the PR description.

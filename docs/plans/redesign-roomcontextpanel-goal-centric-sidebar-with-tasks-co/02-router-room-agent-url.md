@@ -22,7 +22,11 @@ Make the Room Agent view URL-addressable at `/room/:roomId/agent` so it survives
    - Add `getRoomAgentFromPath(path: string): string | null` that extracts the roomId if the path matches the agent route pattern.
    - Add `navigateToRoomAgent(roomId: string, replace = false): void` that pushes `/room/:roomId/agent` to history and sets `currentRoomIdSignal`, `currentRoomSessionIdSignal` to the synthetic `room:chat:<roomId>` value, and clears `currentRoomTaskIdSignal`.
    - Update `getRoomIdFromPath` to also check the agent route pattern.
-   - Update the `handleRouteChange` / `initializeRouter` function to recognize the agent route on page load / popstate, setting signals accordingly.
+   - **CRITICAL — page-load path**: Update the `handleRouteChange` / `initializeRouter` function to recognize the agent route on page load / popstate. When the agent route is detected, it MUST set:
+     - `currentRoomIdSignal` to the extracted `roomId`
+     - `currentRoomSessionIdSignal` to the synthetic ``room:chat:${roomId}`` value (NOT null)
+     - `currentRoomTaskIdSignal` to `null`
+   - Without setting the synthetic session ID on page load, Room.tsx will not render `ChatContainer` (it requires a non-null `sessionViewId`), causing a blank screen on refresh.
 3. In `packages/web/src/islands/RoomContextPanel.tsx`, update `handleRoomAgentClick` to call `navigateToRoomAgent(roomId)` instead of `navigateToRoomSession(roomId, roomAgentSessionId)`.
 4. Run `bun run typecheck` to verify no type errors.
 5. Run `bun run lint` and `bun run format`.

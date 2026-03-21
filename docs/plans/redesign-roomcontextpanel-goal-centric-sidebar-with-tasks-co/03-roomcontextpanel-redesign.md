@@ -22,12 +22,14 @@ Fully rewrite `RoomContextPanel.tsx` to implement the new goal-centric sidebar l
    - Clicking the header toggles the section body visibility.
    - Use local `useState` for expand/collapse state.
    - Style: header text should be `text-xs font-semibold text-gray-500 uppercase tracking-wider`, consistent with existing sidebar styling.
-3. Run `bun run typecheck`, `bun run lint`, `bun run format`.
+3. Ensure the component is importable without knip dead-export warnings. Either add it to the barrel export in `packages/web/src/components/room/index.ts` (if one exists) or verify that direct file imports are allowed by the knip configuration.
+4. Run `bun run typecheck`, `bun run lint`, `bun run format`.
 
 **Acceptance criteria:**
 - `CollapsibleSection` renders with expand/collapse toggle.
 - Default expansion state is configurable.
 - `headerRight` slot renders inline with the section title.
+- No knip dead-export warnings for the new component.
 - TypeScript compiles without errors.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
@@ -68,8 +70,10 @@ Fully rewrite `RoomContextPanel.tsx` to implement the new goal-centric sidebar l
      - Each session clickable, navigating to `/room/:roomId/session/:sessionId`.
      - Session rows show status dot, title, and relative time.
    - **Selection highlighting**: The currently active item (based on `currentRoomSessionIdSignal` and `currentRoomTaskIdSignal`) should have a highlighted background (`bg-dark-700`).
+   - **`isDashboardSelected` logic** (CRITICAL): Must be `currentRoomSessionIdSignal.value === null && currentRoomTaskIdSignal.value === null`. The current code only checks `selectedSessionId === null`, which would incorrectly highlight Dashboard when a task is selected (since task navigation sets session ID to null). Both signals must be null for Dashboard to be selected.
+   - **Mobile drawer**: Every navigation action (Dashboard click, Room Agent click, task click, session click) must call `onNavigate?.()` to close the mobile drawer. The existing `onNavigate` prop from `ContextPanel` must be preserved.
 3. Import and use `navigateToRoomAgent` from `router.ts` for the Room Agent button.
-4. Import computed signals (`tasksByGoalId`, `orphanTasksActive`, etc.) from `roomStore`.
+4. Import both `currentRoomSessionIdSignal` and `currentRoomTaskIdSignal` from signals. The current `RoomContextPanel.tsx` only imports `currentRoomSessionIdSignal` — the task signal import must be added explicitly.
 5. Run `bun run typecheck`, `bun run lint`, `bun run format`.
 
 **Acceptance criteria:**
@@ -80,5 +84,7 @@ Fully rewrite `RoomContextPanel.tsx` to implement the new goal-centric sidebar l
 - Back button is removed.
 - All navigation targets produce correct URLs.
 - Current selection is visually highlighted.
+- Dashboard is NOT highlighted when a task or Room Agent is selected (`isDashboardSelected` checks both signals are null).
+- Mobile drawer closes on every navigation action (`onNavigate?.()` called).
 - TypeScript compiles without errors.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.

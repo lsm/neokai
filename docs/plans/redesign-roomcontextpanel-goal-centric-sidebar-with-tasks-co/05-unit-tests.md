@@ -19,7 +19,7 @@ Add unit tests covering the new computed signals, router route parsing, and the 
 2. Create `packages/web/src/lib/room-store.test.ts` (or add to existing test file if one exists):
    - Test `tasksByGoalId`: Set `roomStore.goals` and `roomStore.tasks` with known data where some tasks are in goal `linkedTaskIds`. Verify the computed Map has the correct entries.
    - Test `orphanTasks`: Verify tasks not in any goal's `linkedTaskIds` appear in this signal.
-   - Test `orphanTasksActive`: Verify only orphan tasks with status `in_progress` are included.
+   - Test `orphanTasksActive`: Verify orphan tasks with status `draft`, `pending`, or `in_progress` are included (all three statuses).
    - Test `orphanTasksReview`: Verify orphan tasks with status `review` or `needs_attention` are included.
    - Test `orphanTasksDone`: Verify orphan tasks with status `completed` or `cancelled` are included.
    - Test reactivity: Changing `tasks` or `goals` signals updates the computed signals.
@@ -62,11 +62,13 @@ Add unit tests covering the new computed signals, router route parsing, and the 
 
 **Subtasks:**
 1. Run `bun install` at the worktree root.
-2. Create or update `packages/web/src/islands/__tests__/RoomContextPanel.test.tsx`:
+2. Update `packages/web/src/islands/__tests__/RoomContextPanel.test.tsx`. **IMPORTANT:** An existing test file covers the old "New Session" button behavior — these tests WILL break after the component rewrite (the button moves to Sessions section header and becomes an icon). The existing tests must be migrated/rewritten, not just supplemented with new ones. Failure to do so will produce failing tests on `make test-web`.
+   - Remove or rewrite existing tests that reference the old "New Session" button in the top-level layout.
    - Test that the "All Rooms" back button is NOT rendered.
    - Test that Dashboard and Room Agent pinned items are rendered.
+   - Test that Dashboard is NOT highlighted when `currentRoomTaskIdSignal` is set (verifies `isDashboardSelected` logic).
    - Test Goals section: renders with correct goal count, goals are listed, expanding a goal shows linked tasks.
-   - Test Tasks section: renders orphan tasks, tab filter switches between Active/Review/Done views.
+   - Test Tasks section: renders orphan tasks, tab filter switches between Active/Review/Done views. Verify `draft`/`pending` tasks appear under "Active" tab.
    - Test Sessions section: renders with session count, has create button in header, defaults to collapsed.
    - Test selection highlighting: when `currentRoomTaskIdSignal` is set, the corresponding task item has the highlighted style.
 3. Mock `roomStore` signals and `router` navigation functions appropriately for the test environment.
