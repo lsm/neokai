@@ -497,15 +497,35 @@ describe('Session RPC Handlers', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('broadcasts session.updated event', async () => {
+		it('broadcasts session.updated event on session channel', async () => {
 			const handler = messageHubData.handlers.get('session.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ sessionId: 'session-123', title: 'New Title' }, {});
 
-			expect(messageHubData.hub.event).toHaveBeenCalledWith('session.updated', expect.any(Object), {
-				channel: 'session:session-123',
-			});
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({ sessionId: 'session-123', title: 'New Title' }),
+				{ channel: 'session:session-123' }
+			);
+		});
+
+		it('also broadcasts session.updated on room channel when session has a roomId', async () => {
+			const handler = messageHubData.handlers.get('session.update');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				context: { roomId: 'room-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123', title: 'New Title' }, {});
+
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({ sessionId: 'session-123', roomId: 'room-abc' }),
+				{ channel: 'room:room-abc' }
+			);
 		});
 	});
 
@@ -520,17 +540,44 @@ describe('Session RPC Handlers', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('broadcasts session.deleted event', async () => {
+		it('broadcasts session.deleted only on room channel (not global) when session has roomId', async () => {
 			const handler = messageHubData.handlers.get('session.delete');
 			expect(handler).toBeDefined();
 
+			const { agentSession } = createMockAgentSession({
+				context: { roomId: 'room-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(agentSession);
+
 			await handler!({ sessionId: 'session-123' }, {});
 
+			// Verify room-channel broadcast fires
 			expect(messageHubData.hub.event).toHaveBeenCalledWith(
 				'session.deleted',
-				{ sessionId: 'session-123' },
+				expect.objectContaining({ sessionId: 'session-123', roomId: 'room-abc' }),
+				{ channel: 'room:room-abc' }
+			);
+			// Global broadcast must NOT come from this handler (session-lifecycle.ts handles it)
+			expect(messageHubData.hub.event).not.toHaveBeenCalledWith(
+				'session.deleted',
+				expect.anything(),
 				{ channel: 'global' }
 			);
+		});
+
+		it('does not broadcast any event when session has no roomId', async () => {
+			const handler = messageHubData.handlers.get('session.delete');
+			expect(handler).toBeDefined();
+
+			// Default mock session has no context.roomId
+			const calls = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls;
+			const before = calls.length;
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			const after = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.length;
+			// No broadcasts from RPC handler; global broadcast is handled by session-lifecycle.ts
+			expect(after - before).toBe(0);
 		});
 	});
 
@@ -561,6 +608,67 @@ describe('Session RPC Handlers', () => {
 			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
 				'Session not found'
 			);
+		});
+
+		it('broadcasts session.updated with status archived on session channel after archiving', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({ sessionId: 'session-123', status: 'archived' }),
+				{ channel: 'session:session-123' }
+			);
+		});
+
+		it('broadcasts session.updated on room channel when session belongs to a room', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+				context: { roomId: 'room-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({
+					sessionId: 'session-123',
+					status: 'archived',
+					roomId: 'room-abc',
+				}),
+				{ channel: 'room:room-abc' }
+			);
+		});
+
+		it('does not broadcast on room channel when session has no roomId', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			// Default mock session has no context.roomId
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const before = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.length;
+			await handler!({ sessionId: 'session-123' }, {});
+			const after = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.length;
+
+			// Only one broadcast: session:{id} channel; no room channel
+			expect(after - before).toBe(1);
+			const calls = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.slice(before);
+			expect(calls[0][2]).toEqual({ channel: 'session:session-123' });
 		});
 	});
 

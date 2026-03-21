@@ -59,6 +59,8 @@ interface GoalEventPayload {
 
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
+import { navigateToRoom } from './router';
+import { currentRoomSessionIdSignal } from './signals';
 import { toast } from './toast';
 
 const logger = new Logger('kai:web:roomstore');
@@ -361,7 +363,47 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Fetch initial state via RPC
+			// 5. Session lifecycle events (delete / status change)
+			// Re-fetch the authoritative session list from the server on meaningful session
+			// changes. This avoids manual array splicing and self-heals events missed during
+			// WebSocket reconnect gaps.
+			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
+				'session.deleted',
+				(event) => {
+					if (event.roomId !== roomId) return;
+					this.refresh()
+						.then(() => {
+							// If the user is currently viewing the deleted session, navigate
+							// back to the room dashboard so they don't land on a dead view.
+							const activeSessionId = currentRoomSessionIdSignal.value;
+							if (activeSessionId && !this.sessions.value.some((s) => s.id === activeSessionId)) {
+								navigateToRoom(roomId);
+							}
+						})
+						.catch((err) => {
+							logger.error('Failed to refresh after session.deleted:', err);
+						});
+				}
+			);
+			this.cleanupFunctions.push(unsubSessionDeleted);
+
+			// session.updated: only refresh when a status field is present.
+			// Draft saves (useInputDraft, ~250 ms debounce) only carry title/inputDraft —
+			// no status — so this guard keeps RPC calls at zero during typing.
+			const unsubSessionUpdated = hub.onEvent<{
+				sessionId: string;
+				roomId?: string;
+				status?: string;
+			}>('session.updated', (event) => {
+				if (event.roomId !== roomId) return;
+				if (event.status === undefined) return;
+				this.refresh().catch((err) => {
+					logger.error('Failed to refresh after session.updated:', err);
+				});
+			});
+			this.cleanupFunctions.push(unsubSessionUpdated);
+
+			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
