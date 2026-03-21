@@ -37,7 +37,14 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { Space, SpaceTask, SpaceWorkflow, SpaceWorkflowRun, MessageHub } from '@neokai/shared';
+import type {
+	Space,
+	SpaceTask,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	MessageHub,
+	McpServerConfig,
+} from '@neokai/shared';
 import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
@@ -267,7 +274,7 @@ export class TaskAgentManager {
 			// createTaskAgentMcpServer returns { server, cleanup } which satisfies the
 			// runtime shape used inside AgentSession.setRuntimeMcpServers().
 			agentSession.setRuntimeMcpServers({
-				'task-agent': mcpServer as unknown as import('@neokai/shared').McpServerConfig,
+				'task-agent': mcpServer as unknown as McpServerConfig,
 			});
 
 			// --- Persist taskAgentSessionId on the SpaceTask
@@ -318,10 +325,6 @@ export class TaskAgentManager {
 		sessionId: string,
 		init: AgentSessionInit
 	): Promise<string> {
-		// Override sessionId in init with the one we generated — the tool handler
-		// generates a UUID but we override it here to ensure consistent naming.
-		// However, to keep the interface simple we use the init's sessionId directly
-		// since the task agent tool already sets it.
 		const subSession = AgentSession.fromInit(
 			init,
 			this.config.db,
@@ -747,10 +750,8 @@ export class TaskAgentManager {
 		return task?.workflowRunId ?? null;
 	}
 
-	/** Returns the space ID for a task by resolving via the task agent session. */
+	/** Returns the space ID for a task by reading it from the task repository. */
 	private getSpaceIdForTask(taskId: string): string | null {
-		const session = this.taskAgentSessions.get(taskId);
-		if (!session) return null;
-		return (session.session.context as { spaceId?: string } | undefined)?.spaceId ?? null;
+		return this.config.taskRepo.getTask(taskId)?.spaceId ?? null;
 	}
 }

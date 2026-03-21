@@ -774,6 +774,139 @@ describe('TaskAgentManager', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// handleSubSessionComplete — downstream effects
+	// -----------------------------------------------------------------------
+
+	describe('handleSubSessionComplete', () => {
+		/** Helper to call the private method directly via type cast */
+		function callHandleSubSessionComplete(
+			manager: TaskAgentManager,
+			taskId: string,
+			stepId: string,
+			subSessionId: string
+		): Promise<void> {
+			return (
+				manager as unknown as {
+					handleSubSessionComplete: (
+						taskId: string,
+						stepId: string,
+						subSessionId: string
+					) => Promise<void>;
+				}
+			).handleSubSessionComplete(taskId, stepId, subSessionId);
+		}
+
+		test('marks matching step task as completed', async () => {
+			// Seed a workflow, workflow step, and workflow run (needed to satisfy FK constraints)
+			const wfRunId = 'wf-run-complete-test';
+			const wfId = 'wf-id-complete-test';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'Test WF', now, now);
+			const stepId = 'step-complete-1';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_steps (id, workflow_id, name, description, order_index, created_at, updated_at)
+           VALUES (?, ?, ?, '', 0, ?, ?)`
+				)
+				.run(stepId, wfId, 'Step 1', now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_step_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			// Create parent task with a workflow run ID
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Parent task',
+				description: 'Orchestrator task',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+
+			// Create the step task with matching workflowRunId, workflowStepId, taskAgentSessionId
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`;
+			const stepTask = await ctx.taskManager.createTask({
+				title: 'Step task',
+				description: 'A step task',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				workflowStepId: stepId,
+				taskAgentSessionId: subSessionId,
+			});
+
+			// Spawn the Task Agent so getSpaceIdForTask and taskAgentSessions work
+			await ctx.manager.spawnTaskAgent(
+				{ ...parentTask, workflowRunId: wfRunId },
+				ctx.space,
+				null,
+				null
+			);
+
+			await callHandleSubSessionComplete(ctx.manager, parentTask.id, stepId, subSessionId);
+
+			// Step task should now be 'completed'
+			const updated = ctx.taskRepo.getTask(stepTask.id);
+			expect(updated?.status).toBe('completed');
+		});
+
+		test('injects [STEP_COMPLETE] notification into Task Agent session', async () => {
+			const stepId = 'step-notify-1';
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Parent task',
+				description: 'Orchestrator task',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+
+			const taskAgentSessionId = await ctx.manager.spawnTaskAgent(
+				parentTask,
+				ctx.space,
+				null,
+				null
+			);
+			const taskAgentSession = ctx.createdSessions.get(taskAgentSessionId)!;
+			const msgsBefore = taskAgentSession._enqueuedMessages.length;
+
+			await callHandleSubSessionComplete(
+				ctx.manager,
+				parentTask.id,
+				stepId,
+				`space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`
+			);
+
+			// Task Agent should have received a [STEP_COMPLETE] message
+			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
+			const lastMsg =
+				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
+			expect(lastMsg.msg).toContain('[STEP_COMPLETE]');
+			expect(lastMsg.msg).toContain(stepId);
+		});
+
+		test('does not throw when no matching step task exists', async () => {
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Parent task',
+				description: 'Orchestrator task',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			await ctx.manager.spawnTaskAgent(parentTask, ctx.space, null, null);
+
+			// Should not throw even with no matching step task
+			await expect(
+				callHandleSubSessionComplete(ctx.manager, parentTask.id, 'nonexistent-step', 'session-xyz')
+			).resolves.toBeUndefined();
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// Message injection
 	// -----------------------------------------------------------------------
 
