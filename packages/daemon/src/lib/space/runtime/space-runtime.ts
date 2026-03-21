@@ -364,7 +364,7 @@ export class SpaceRuntime {
 	 *   agent not found                   → taskType: 'coding',    customAgentId: step.agentId
 	 */
 	resolveTaskTypeForStep(step: WorkflowStep): ResolvedTaskType {
-		const agent = this.config.spaceAgentManager.getById(step.agentId);
+		const agent = step.agentId ? this.config.spaceAgentManager.getById(step.agentId) : undefined;
 
 		if (!agent) {
 			// Unknown agent → treat as custom coding agent

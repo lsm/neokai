@@ -408,7 +408,7 @@ export class SpaceWorkflowRepository {
 				workflowId,
 				input.name,
 				'',
-				input.agentId,
+				input.agentId ?? '',
 				index,
 				JSON.stringify(stepCfg),
 				now,

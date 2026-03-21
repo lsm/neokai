@@ -190,7 +190,8 @@ export function exportWorkflow(
 
 	// Export steps — strip `id`, remap agentId UUID → agent name
 	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		const agentRef = agentIdToName.get(step.agentId) ?? step.agentId;
+		const resolvedAgentId = step.agentId ?? '';
+		const agentRef = agentIdToName.get(resolvedAgentId) ?? resolvedAgentId;
 		const exported: ExportedWorkflowStep = { agentRef, name: step.name };
 		if (step.instructions !== undefined) exported.instructions = step.instructions;
 		return exported;
