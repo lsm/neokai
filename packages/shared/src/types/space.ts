@@ -485,8 +485,11 @@ export interface UpdateSpaceAgentParams {
  * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
  * - `condition`: A user-supplied shell expression; the transition fires when it exits with code 0.
  *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
+ * - `task_result`: Matches against the `result` field of the most recently completed task on the
+ *   current step. The transition fires when the task result starts with or equals the condition's
+ *   `expression` value (e.g., `'passed'`, `'failed'`).
  */
-export type WorkflowConditionType = 'always' | 'human' | 'condition';
+export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 /**
  * A condition that guards a workflow transition.
@@ -496,9 +499,13 @@ export interface WorkflowCondition {
 	/** Condition type. */
 	type: WorkflowConditionType;
 	/**
-	 * Shell expression to evaluate for the `condition` type.
-	 * The transition fires when the expression exits with code 0.
-	 * No allowlist is applied — users are responsible for the expression content.
+	 * Expression to evaluate for the `condition` and `task_result` types.
+	 *
+	 * - For `condition`: a shell expression; the transition fires when it exits with code 0.
+	 *   No allowlist is applied — users are responsible for the expression content.
+	 * - For `task_result`: the match value to compare against the completed task's `result`
+	 *   field (e.g., `'passed'`, `'failed'`). The transition fires when the task result
+	 *   starts with or equals this value.
 	 */
 	expression?: string;
 	/** Human-readable description of what this condition checks */
@@ -533,6 +540,12 @@ export interface WorkflowTransition {
 	condition?: WorkflowCondition;
 	/** Sort order among transitions with the same `from` step. Lower = evaluated first. */
 	order?: number;
+	/**
+	 * When `true`, following this transition increments `iterationCount` on the run.
+	 * Used for cycle detection in iterative workflows — avoids heuristic-based detection
+	 * that would misfire on DAG merge paths.
+	 */
+	isCyclic?: boolean;
 }
 
 /**
@@ -767,6 +780,11 @@ export interface ExportedWorkflowTransition {
 	condition?: WorkflowCondition;
 	/** Sort order among transitions with the same source step. Lower = evaluated first. */
 	order?: number;
+	/**
+	 * When `true`, following this transition increments `iterationCount` on the run.
+	 * Used for cycle detection in iterative workflows.
+	 */
+	isCyclic?: boolean;
 }
 
 /**

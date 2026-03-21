@@ -14,6 +14,9 @@
  * - Switching away from 'condition' type clears expression
  * - Switching to 'condition' type preserves existing expression
  * - Editing expression calls onUpdateCondition with updated expression
+ * - Shows expression input for 'task_result' type with "Match value" label
+ * - Editing task_result expression calls onUpdateCondition with 'task_result' type (not 'condition')
+ * - Switching from 'condition' to 'task_result' preserves expression
  * - Clicking delete button calls onDelete with transition id
  * - Clicking close button calls onClose
  */
@@ -176,6 +179,46 @@ describe('EdgeConfigPanel', () => {
 		const input = getByTestId('condition-expression') as HTMLInputElement;
 		fireEvent.input(input, { target: { value: 'new-expr' } });
 		expect(onUpdateCondition).toHaveBeenCalledWith('trans-1', 'condition', 'new-expr');
+	});
+
+	it('shows expression input for task_result type with Match value label', () => {
+		const { getByTestId, getByText } = render(
+			<EdgeConfigPanel
+				{...makeProps(makeTransition({ condition: { type: 'task_result', expression: 'passed' } }))}
+			/>
+		);
+		expect(getByTestId('condition-expression')).toBeTruthy();
+		expect(getByText('Match value')).toBeTruthy();
+	});
+
+	it('editing task_result expression calls onUpdateCondition with task_result type', () => {
+		const onUpdateCondition = vi.fn();
+		const { getByTestId } = render(
+			<EdgeConfigPanel
+				{...makeProps(
+					makeTransition({ condition: { type: 'task_result', expression: 'passed' } }),
+					{ onUpdateCondition }
+				)}
+			/>
+		);
+		const input = getByTestId('condition-expression') as HTMLInputElement;
+		fireEvent.input(input, { target: { value: 'failed' } });
+		expect(onUpdateCondition).toHaveBeenCalledWith('trans-1', 'task_result', 'failed');
+	});
+
+	it('switching from condition to task_result preserves expression', () => {
+		const onUpdateCondition = vi.fn();
+		const { getByTestId } = render(
+			<EdgeConfigPanel
+				{...makeProps(
+					makeTransition({ condition: { type: 'condition', expression: 'test -f out.txt' } }),
+					{ onUpdateCondition }
+				)}
+			/>
+		);
+		const select = getByTestId('condition-type-select') as HTMLSelectElement;
+		fireEvent.change(select, { target: { value: 'task_result' } });
+		expect(onUpdateCondition).toHaveBeenCalledWith('trans-1', 'task_result', 'test -f out.txt');
 	});
 
 	it('clicking delete button calls onDelete with transition id', () => {

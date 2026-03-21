@@ -35,7 +35,7 @@ import type {
 
 const workflowConditionSchema = z
 	.object({
-		type: z.enum(['always', 'human', 'condition']),
+		type: z.enum(['always', 'human', 'condition', 'task_result']),
 		expression: z.string().optional(),
 		description: z.string().optional(),
 		maxRetries: z.number().int().nonnegative().optional(),
@@ -46,6 +46,13 @@ const workflowConditionSchema = z
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: "'condition' type requires a non-empty expression",
+				path: ['expression'],
+			});
+		}
+		if (val.type === 'task_result' && (!val.expression || !val.expression.trim())) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "'task_result' type requires a non-empty expression (match value)",
 				path: ['expression'],
 			});
 		}
@@ -62,6 +69,7 @@ const exportedWorkflowTransitionSchema = z.object({
 	toStep: z.string().min(1),
 	condition: workflowConditionSchema.optional(),
 	order: z.number().int().optional(),
+	isCyclic: z.boolean().optional(),
 });
 
 const exportedWorkflowRuleSchema = z.object({
@@ -195,6 +203,7 @@ export function exportWorkflow(
 		const exported: ExportedWorkflowTransition = { fromStep, toStep };
 		if (t.condition !== undefined) exported.condition = t.condition;
 		if (t.order !== undefined) exported.order = t.order;
+		if (t.isCyclic !== undefined) exported.isCyclic = t.isCyclic;
 		return exported;
 	});
 

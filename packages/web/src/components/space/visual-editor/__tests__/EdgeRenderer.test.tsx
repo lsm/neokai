@@ -185,8 +185,8 @@ describe('EdgeRenderer — rendering', () => {
 		const { container } = renderEdges();
 		const defs = container.querySelector('defs');
 		expect(defs).not.toBeNull();
-		// Should have 4 markers: always, human, condition, selected
-		expect(defs!.querySelectorAll('marker')).toHaveLength(4);
+		// Should have 5 markers: always, human, condition, task_result, selected
+		expect(defs!.querySelectorAll('marker')).toHaveLength(5);
 	});
 
 	it('uses testid data-testid="edge-{id}" on each group', () => {

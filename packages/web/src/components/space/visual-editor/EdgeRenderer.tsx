@@ -42,6 +42,7 @@ export const EDGE_COLORS: Record<WorkflowConditionType, string> = {
 	always: '#3b82f6', // blue-500
 	human: '#facc15', // yellow-400
 	condition: '#c084fc', // purple-400
+	task_result: '#f97316', // orange-500
 };
 
 export const NORMAL_STROKE_WIDTH = 1.5;
