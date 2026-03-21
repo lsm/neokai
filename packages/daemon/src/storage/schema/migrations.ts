@@ -1674,9 +1674,8 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
 	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
-	);
+	// Note: idx_space_tasks_task_agent_session_id is created by migration 32,
+	// which first adds the column via ALTER TABLE for existing databases.
 
 	// -------------------------------------------------------------------------
 	// space_session_groups
