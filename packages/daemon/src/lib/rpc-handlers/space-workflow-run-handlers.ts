@@ -39,6 +39,7 @@ export function setupSpaceWorkflowRunHandlers(
 			workflowId?: string;
 			title: string;
 			description?: string;
+			goalId?: string;
 		};
 
 		if (!params.spaceId) throw new Error('spaceId is required');
@@ -73,7 +74,8 @@ export function setupSpaceWorkflowRunHandlers(
 			params.spaceId,
 			workflowId,
 			params.title,
-			params.description
+			params.description,
+			params.goalId
 		);
 
 		daemonHub

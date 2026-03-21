@@ -320,7 +320,8 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'My Run',
-				'Some context'
+				'Some context',
+				undefined
 			);
 			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.created', {
 				sessionId: 'global',
@@ -336,6 +337,7 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'Auto',
+				undefined,
 				undefined
 			);
 		});
@@ -350,7 +352,23 @@ describe('space-workflow-run-handlers', () => {
 				'space-1',
 				'workflow-1',
 				'Explicit WF',
+				undefined,
 				undefined
+			);
+		});
+
+		it('passes goalId through to startWorkflowRun', async () => {
+			await call('spaceWorkflowRun.start', {
+				spaceId: 'space-1',
+				title: 'Goal Run',
+				goalId: 'goal-rpc-123',
+			});
+			expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
+				'space-1',
+				'workflow-1',
+				'Goal Run',
+				undefined,
+				'goal-rpc-123'
 			);
 		});
 	});
