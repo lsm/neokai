@@ -361,6 +361,45 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
+			// 5. Session lifecycle events
+			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
+				'session.deleted',
+				(event) => {
+					if (event.roomId === roomId) {
+						this.sessions.value = this.sessions.value.filter((s) => s.id !== event.sessionId);
+					}
+				}
+			);
+			this.cleanupFunctions.push(unsubSessionDeleted);
+
+			const unsubSessionUpdated = hub.onEvent<{
+				sessionId: string;
+				roomId?: string;
+				title?: string;
+				status?: string;
+				lastActiveAt?: number;
+			}>('session.updated', (event) => {
+				if (event.roomId === roomId) {
+					const idx = this.sessions.value.findIndex((s) => s.id === event.sessionId);
+					if (idx >= 0) {
+						const existing = this.sessions.value[idx];
+						this.sessions.value = [
+							...this.sessions.value.slice(0, idx),
+							{
+								...existing,
+								...(event.title !== undefined && { title: event.title }),
+								...(event.status !== undefined && { status: event.status }),
+								...(event.lastActiveAt !== undefined && {
+									lastActiveAt: event.lastActiveAt,
+								}),
+							},
+							...this.sessions.value.slice(idx + 1),
+						];
+					}
+				}
+			});
+			this.cleanupFunctions.push(unsubSessionUpdated);
+
 			// 5. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
