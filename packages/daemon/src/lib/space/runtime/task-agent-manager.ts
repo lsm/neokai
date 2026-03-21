@@ -452,6 +452,9 @@ export class TaskAgentManager {
 	async rehydrate(): Promise<void> {
 		const activeTasks = this.config.taskRepo.listActiveWithTaskAgentSession();
 
+		let attempted = 0;
+		let failed = 0;
+
 		for (const task of activeTasks) {
 			const sessionId = task.taskAgentSessionId;
 			if (!sessionId) continue;
@@ -464,9 +467,11 @@ export class TaskAgentManager {
 			const dbSession = this.config.db.getSession(sessionId);
 			if (!dbSession || dbSession.type !== 'space_task_agent') continue;
 
+			attempted++;
 			try {
 				await this.rehydrateTaskAgent(task, sessionId);
 			} catch (err) {
+				failed++;
 				log.warn(
 					`TaskAgentManager.rehydrate: failed to rehydrate task ${task.id} (session ${sessionId}):`,
 					err
@@ -474,7 +479,10 @@ export class TaskAgentManager {
 			}
 		}
 
-		log.info(`TaskAgentManager.rehydrate: rehydrated ${this.taskAgentSessions.size} task agent(s)`);
+		const succeeded = attempted - failed;
+		log.info(
+			`TaskAgentManager.rehydrate: attempted=${attempted} succeeded=${succeeded} failed=${failed}`
+		);
 	}
 
 	/**
@@ -738,8 +746,9 @@ export class TaskAgentManager {
 	 * Rehydrate a single Task Agent session after daemon restart.
 	 *
 	 * 1. Loads the associated Space, Workflow, and WorkflowRun from the DB.
-	 * 2. Recreates the AgentSession via `createTaskAgentInit()` + `AgentSession.fromInit()`
-	 *    — `fromInit()` loads the existing DB record without creating a duplicate.
+	 * 2. Restores the AgentSession via `AgentSession.restore()` — the session
+	 *    already exists in the DB; `restore()` skips fingerprint comparison and
+	 *    avoids any risk of invalidating `sdkSessionId` across restarts.
 	 * 3. Re-attaches MCP server and system prompt (runtime-only, not persisted).
 	 * 4. Adds the session to `taskAgentSessions` before streaming starts.
 	 * 5. Restarts the streaming query so the SDK resumes from conversation history.
@@ -770,30 +779,28 @@ export class TaskAgentManager {
 			}
 		}
 
-		// --- Recreate AgentSession using createTaskAgentInit() + fromInit()
-		// fromInit() gracefully handles an already-existing DB session (no duplicate created)
-		const init = createTaskAgentInit({
-			task,
-			space,
-			workflow,
-			workflowRun,
+		// --- Restore the existing AgentSession from DB via restore().
+		// restore() is the correct path for daemon-restart rehydration of an already-persisted
+		// session: it skips fingerprint comparison and avoids invalidating sdkSessionId
+		// (which would break conversation continuity for tasks resuming mid-execution).
+		const agentSession = AgentSession.restore(
 			sessionId,
-			workspacePath: space.workspacePath,
-		});
-
-		const agentSession = AgentSession.fromInit(
-			init,
 			this.config.db,
 			this.config.messageHub,
 			this.config.daemonHub,
-			this.config.getApiKey,
-			this.config.defaultModel
+			this.config.getApiKey
 		);
+		if (!agentSession) {
+			log.warn(
+				`TaskAgentManager.rehydrate: session ${sessionId} not found in DB for task ${taskId}, skipping`
+			);
+			return;
+		}
 
 		// --- Build the SpaceTaskManager for this space
 		const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 
-		// --- Build and attach MCP server
+		// --- Build and attach MCP server (runtime-only, not persisted)
 		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
 		const subSessionFactory = this.createSubSessionFactory(taskId);
 
@@ -819,7 +826,16 @@ export class TaskAgentManager {
 			'task-agent': mcpServer as unknown as McpServerConfig,
 		});
 
-		// Re-attach system prompt from the init (runtime-only, not persisted)
+		// Re-attach system prompt (runtime-only, not persisted).
+		// Generated fresh from createTaskAgentInit() so it reflects the current task/workflow state.
+		const init = createTaskAgentInit({
+			task,
+			space,
+			workflow,
+			workflowRun,
+			sessionId,
+			workspacePath: space.workspacePath,
+		});
 		if (init.systemPrompt) {
 			agentSession.setRuntimeSystemPrompt(init.systemPrompt);
 		}
@@ -830,10 +846,14 @@ export class TaskAgentManager {
 		// --- Restart the streaming query (SDK resumes from conversation history in DB)
 		await agentSession.startStreamingQuery();
 
-		// --- Inject re-orientation message so the agent checks state and continues
-		const reorientMessage =
-			'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-			'Please use `check_step_status` to determine the current state of your workflow and continue from where you left off.';
+		// --- Inject re-orientation message so the agent checks state and continues.
+		// For workflow tasks: ask the agent to use check_step_status to resume workflow execution.
+		// For standalone tasks (no workflowRunId): ask the agent to check status and continue.
+		const reorientMessage = task.workflowRunId
+			? 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
+				'Please use `check_step_status` to determine the current state of your workflow and continue from where you left off.'
+			: 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
+				'Please check the current task status and continue from where you left off.';
 		await this.injectMessageIntoSession(agentSession, reorientMessage);
 
 		// --- Rebuild subSessions map from step tasks in the same workflow run

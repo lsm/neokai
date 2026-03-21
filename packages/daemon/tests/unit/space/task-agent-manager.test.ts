@@ -306,6 +306,18 @@ function makeCtx(): TestCtx {
 		}
 	);
 
+	// Spy on AgentSession.restore to return mock sessions for rehydration tests.
+	// rehydrateTaskAgent() uses restore() (not fromInit()) to reload persisted sessions.
+	spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+		// Only restore if the session exists in the mock DB
+		if (!mockDb.getSession(sessionId)) return null;
+		const existing = createdSessions.get(sessionId);
+		if (existing) return existing as unknown as AgentSession;
+		const mockSession = makeMockSession(sessionId);
+		createdSessions.set(sessionId, mockSession);
+		return mockSession as unknown as AgentSession;
+	});
+
 	const manager = new TaskAgentManager({
 		db: mockDb as unknown as import('../../../src/storage/database.ts').Database,
 		sessionManager:
@@ -1308,7 +1320,8 @@ describe('TaskAgentManager', () => {
 			expect(session._startCalled).toBe(true);
 		});
 
-		test('re-orientation message is injected after rehydration', async () => {
+		test('re-orientation message is injected after rehydration (standalone task)', async () => {
+			// Standalone task has no workflowRunId — re-orientation uses generic resume message
 			const { agentSessionId } = await seedInProgressTask(ctx);
 
 			await ctx.manager.rehydrate();
@@ -1318,7 +1331,82 @@ describe('TaskAgentManager', () => {
 			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
 			const msgs = session._enqueuedMessages.map((m) => m.msg);
 			expect(msgs.some((m) => m.includes('resuming after a daemon restart'))).toBe(true);
+			// Standalone tasks get a generic re-orientation — no check_step_status reference
+			expect(msgs.some((m) => m.includes('check_step_status'))).toBe(false);
+			expect(msgs.some((m) => m.includes('current task status'))).toBe(true);
+		});
+
+		test('re-orientation message for workflow task contains check_step_status', async () => {
+			// Seed a workflow run
+			const wfId = 'wf-reorient-workflow';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Reorient', now, now);
+			const wfRunId = 'run-reorient-workflow';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_step_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const task = await ctx.taskManager.createTask({
+				title: 'Workflow task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const agentSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: agentSessionId });
+			ctx.mockDb.createSession({ id: agentSessionId, type: 'space_task_agent' });
+
+			await ctx.manager.rehydrate();
+
+			const session = ctx.createdSessions.get(agentSessionId)!;
+			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
+			const msgs = session._enqueuedMessages.map((m) => m.msg);
+			expect(msgs.some((m) => m.includes('resuming after a daemon restart'))).toBe(true);
+			// Workflow tasks should reference check_step_status to resume the workflow
 			expect(msgs.some((m) => m.includes('check_step_status'))).toBe(true);
+		});
+
+		test('restore returning null skips task and does not add to map', async () => {
+			// Seed task whose session is in the mock DB (so filter passes) but restore returns null
+			const task = await ctx.taskManager.createTask({
+				title: 'Restore-null task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const agentSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: agentSessionId });
+			ctx.mockDb.createSession({ id: agentSessionId, type: 'space_task_agent' });
+
+			// Override restore to return null for this session only
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				if (sessionId === agentSessionId) return null;
+				// Fallback for any other session
+				if (!ctx.mockDb.getSession(sessionId)) return null;
+				const mockSession = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, mockSession);
+				return mockSession as unknown as AgentSession;
+			});
+
+			const sessionsBefore = ctx.createdSessions.size;
+			await ctx.manager.rehydrate();
+
+			// Task agent should NOT have been added to the map
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+			// No new sessions should have been created for this task
+			expect(ctx.createdSessions.has(agentSessionId)).toBe(false);
+			expect(ctx.createdSessions.size).toBe(sessionsBefore);
+
+			restoreSpy.mockRestore();
 		});
 
 		test('MCP server is re-attached on rehydrated session', async () => {
