@@ -24,9 +24,10 @@ Add a `goalId` field to `SpaceTask` so that tasks can be associated with a goal/
    - Add `goalId?: string` to `SpaceTask` interface.
    - Add `goalId?: string` to `CreateSpaceTaskParams` interface.
    - Add `goalId?: string | null` to `UpdateSpaceTaskParams` interface.
-2. In `packages/daemon/src/storage/schema/migrations.ts`, add migration 35 (or next after milestone 2's migration):
+2. In `packages/daemon/src/storage/schema/migrations.ts`, add **migration 35** (assigned in overview migration number plan):
    - `ALTER TABLE space_tasks ADD COLUMN goal_id TEXT`
-   - `CREATE INDEX idx_space_tasks_goal_id ON space_tasks(goal_id)` for efficient lookups.
+   - `CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)` for efficient lookups.
+   - Use the try/catch + SELECT probe pattern consistent with migrations 30, 32, 33.
    - Register in `runMigrations()`.
 3. In `packages/daemon/src/storage/repositories/space-task-repository.ts`:
    - Update `createTask()` INSERT statement to include `goal_id`.
@@ -56,7 +57,7 @@ Add a `goalId` field to `SpaceTask` so that tasks can be associated with a goal/
 **Subtasks:**
 1. In `packages/shared/src/types/space.ts`, add `goalId?: string` to `SpaceWorkflowRun` type and `CreateWorkflowRunParams`.
 2. Update `SpaceWorkflowRunRepository`:
-   - Add migration for `goal_id` column on `space_workflow_runs` (can combine with milestone 2 migration if in same PR, or add as migration 36).
+   - Add **migration 36** for `goal_id` column on `space_workflow_runs` (assigned in overview migration number plan). Use the try/catch + SELECT probe pattern.
    - Update `createRun()` to persist `goal_id`.
    - Update `rowToRun()` to read `goal_id`.
 3. In `WorkflowExecutor`, accept a `goalId` from the run and pass it to `taskManager.createTask()` in `followTransition()`.

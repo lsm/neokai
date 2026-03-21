@@ -51,9 +51,11 @@ Add a `task_result` condition type to the workflow transition system. This condi
    - Return `{ passed: true }` on match, `{ passed: false, reason: 'Task result "..." does not match "..."' }` on mismatch.
 3. Remove the `default: never` exhaustive check error for the old type set (it should now include `task_result`).
 4. Update `getConditionContext()` to accept an optional `taskResult` parameter and include it in the returned context.
-5. Update the `advance()` method: before evaluating transitions, query the tasks for the current step in this run (via `this.taskManager`) and extract the `result` field from the most recently completed task. Pass this as `taskResult` in the condition context.
-6. Since `advance()` needs to query tasks by `workflowRunId + workflowStepId`, add a method or use the existing `taskManager` to find the latest completed task for the current step. The `SpaceTaskManager` wraps `SpaceTaskRepository` which has `listByWorkflowRun()` -- filter by `workflowStepId` and `status === 'completed'`, then take the last one by `completedAt`.
+5. Update the `advance()` method signature to accept an optional `options?: { stepResult?: string }` parameter. Before evaluating transitions, query the tasks for the current step in this run (via `this.taskManager`) and extract the `result` field from the most recently completed task. If the DB task result is null/empty but `options.stepResult` is provided, use it as fallback. Pass the resolved result as `taskResult` in the condition context.
+6. Since `advance()` needs to query tasks by `workflowRunId + workflowStepId`, use the existing `taskManager` / `SpaceTaskRepository.listByWorkflowRun()` — filter in-memory by `workflowStepId` and `status === 'completed'`, then take the last one by `completedAt`. Note: this does a full run task scan, which is acceptable for typical workflow sizes. If performance becomes an issue later, a targeted query can be added.
 7. Run `bun run typecheck` to confirm the exhaustive check is satisfied.
+
+**Important:** The `advance()` signature change in subtask 5 is critical for Task 1.3 (wiring `step_result` from the tool handler). Task 1.3 will pass `stepResult` through this options parameter. The current `advance()` takes no arguments — this is the foundational change.
 
 **Acceptance criteria:**
 - `evaluateCondition()` handles `task_result` with prefix matching on `context.taskResult`.
@@ -67,22 +69,28 @@ Add a `task_result` condition type to the workflow transition system. This condi
 
 ---
 
-### Task 1.3: Wire step_result through advance_workflow tool handler
+### Task 1.3: Wire step_result through advance_workflow tool handler and update Task Agent prompt
 
-**Description:** Forward the `step_result` argument from the `advance_workflow` MCP tool to the executor so that Task Agents can explicitly provide a result for transition evaluation. This serves as a fallback/override when the task's `result` field is not set.
+**Description:** Forward the `step_result` argument from the `advance_workflow` MCP tool to the executor so that Task Agents can explicitly provide a result for transition evaluation. Also update the Task Agent system prompt to instruct the LLM to pass `step_result` when calling `advance_workflow`.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. In `packages/daemon/src/lib/space/tools/task-agent-tools.ts`, update the `advance_workflow` handler to read `args.step_result`.
-2. If `step_result` is provided, pass it to the executor's advance method. Since `advance()` auto-reads the task result from DB (Task 1.2), the tool-provided `step_result` should serve as an override: if the task's DB `result` field is null/empty but `step_result` is provided, use it. If both exist, prefer the DB task result (it is the authoritative source).
-3. Update the `advance()` method signature (or add an options parameter) to accept an optional `stepResult` override that takes precedence when the DB task has no result.
-4. Update the `AdvanceWorkflowSchema` JSDoc in `task-agent-tool-schemas.ts` to clarify that `step_result` is used for `task_result` condition evaluation.
+1. In `packages/daemon/src/lib/space/tools/task-agent-tools.ts`, update the `advance_workflow` handler:
+   - Remove the underscore prefix from `_args` (currently `async advance_workflow(_args: AdvanceWorkflowInput)` — the args are entirely unused).
+   - Read `args.step_result` and pass it to `executor.advance({ stepResult: args.step_result })` using the options parameter added in Task 1.2.
+   - Remove or update the comment block (lines 506–510) that describes `step_result` as a placeholder — it is now functional.
+2. Update the `AdvanceWorkflowSchema` JSDoc in `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts` to clarify that `step_result` is used for `task_result` condition evaluation and should always be provided after completing a verify/review step.
+3. In `packages/daemon/src/lib/space/agents/task-agent.ts`, update the Task Agent system prompt (`buildTaskAgentSystemPrompt`) to include an instruction like:
+   - "When calling `advance_workflow` after a step that evaluates results (e.g., verify, review, or test steps), always include the `step_result` field with a value starting with 'passed' if the work is acceptable, or 'failed: <reason>' if issues were found."
+   - This is essential for the `task_result` condition to work end-to-end — without it, the LLM will omit `step_result` and result-based transitions will silently fail.
+4. Run `bun run typecheck`.
 
 **Acceptance criteria:**
-- `advance_workflow` tool forwards `step_result` to the executor.
-- DB task result takes precedence; `step_result` is used as fallback when DB result is absent.
+- `advance_workflow` tool forwards `step_result` to the executor via `advance({ stepResult })`.
+- DB task result takes precedence; `step_result` is used as fallback when DB result is absent (precedence logic is in `advance()` from Task 1.2).
 - Existing advance behavior is unchanged when `step_result` is not provided.
+- Task Agent system prompt instructs the LLM to pass `step_result` on verify/review steps.
 
 **Depends on:** Task 1.2
 

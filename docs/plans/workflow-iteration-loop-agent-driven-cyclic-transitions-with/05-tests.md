@@ -122,32 +122,39 @@ Comprehensive test coverage for all new functionality: `task_result` condition e
 
 ### Task 5.5: Integration test for end-to-end cyclic workflow
 
-**Description:** Test a complete workflow run with a verify step that fails once (triggering a loop back) then passes on the second attempt, completing the workflow.
+**Description:** Test a complete workflow run with a verify step that fails once (triggering a loop back) then passes on the second attempt, completing the workflow. This test requires a real in-memory SQLite database (not mocked objects) to verify the full DB round-trip — follow the pattern used in existing `space-runtime.test.ts`.
 
 **Agent type:** coder
 
 **Subtasks:**
-1. Create a test file `packages/daemon/tests/unit/space/workflow-iteration-loop.test.ts` (or add to the existing executor test file).
-2. Set up a 3-step cyclic workflow: Plan -> Code -> Verify, with Verify -> Plan on `task_result: 'failed'` and Verify -> Done on `task_result: 'passed'`. Set `maxIterations: 3`.
+1. Create a test file `packages/daemon/tests/unit/space/workflow-iteration-loop.test.ts` with a real DB fixture (use `createTestDatabase()` or the pattern from `space-runtime.test.ts`).
+2. Set up a 4-step cyclic workflow: Plan -> Code -> Verify -> Done, with:
+   - Plan -> Code: `human` condition (requires approval)
+   - Code -> Verify: `always` condition
+   - Verify -> Plan: `task_result` condition, expression `'failed'`, order 0
+   - Verify -> Done: `task_result` condition, expression `'passed'`, order 1
+   - Set `maxIterations: 3`.
 3. Test scenario:
    - Start the workflow run. Verify initial task is for Plan step.
    - Simulate Plan task completion (update status to 'completed').
-   - Advance (with human approval for Plan -> Code gate). Verify task for Code step is created.
+   - Advance with human approval for the Plan -> Code gate (this is the only `human` gate in the workflow — Code -> Verify and Verify transitions do not have human gates). Verify task for Code step is created.
    - Simulate Code task completion.
    - Advance. Verify task for Verify step is created.
    - Simulate Verify task completion with result `'failed: tests are broken'`.
-   - Advance. Verify the transition loops back to Plan and creates a new Plan task. Verify `iterationCount` is 1.
-   - Simulate Plan(2) -> Code(2) -> Verify(2) completion with result `'passed'`.
+   - Advance. Verify the transition loops back to Plan and creates a new Plan task. Verify `iterationCount` is 1 (one logical cycle).
+   - Simulate Plan(2) completion, advance with human approval, simulate Code(2) completion, advance to create Verify(2).
+   - Simulate Verify(2) task completion with result `'passed'`.
    - Advance. Verify the workflow reaches Done (terminal) and run status is `'completed'`.
-   - Verify total `iterationCount` is 1 (only one loop back occurred).
-4. Verify the full task audit trail: Plan(1), Code(1), Verify(1), Plan(2), Code(2), Verify(2) -- 6 tasks under the same run.
+   - Verify total `iterationCount` is still 1 (only one loop-back occurred — the second pass through Plan/Code/Verify is forward progress within iteration 2, not a new cycle).
+4. Verify the full task audit trail: Plan(1), Code(1), Verify(1), Plan(2), Code(2), Verify(2) — 6 tasks under the same run.
 5. Run tests.
 
 **Acceptance criteria:**
 - Full cycle executes correctly: fail -> loop -> pass -> complete.
-- Iteration count reflects the actual number of loops.
-- All tasks are under the same workflow run with correct step IDs.
+- `iterationCount` is 1 (one logical cycle = one loop-back from Verify to Plan).
+- All 6 tasks are under the same workflow run with correct step IDs.
 - Run status is `'completed'` at the end.
+- Test uses a real DB, not mocked objects.
 
 **Depends on:** Tasks 1.2, 2.2, 4.1
 
