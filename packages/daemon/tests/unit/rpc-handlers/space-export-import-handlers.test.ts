@@ -106,6 +106,7 @@ function createSchema(db: Database): void {
 			to_step_id TEXT NOT NULL,
 			condition TEXT,
 			order_index INTEGER NOT NULL DEFAULT 0,
+			is_cyclic INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
