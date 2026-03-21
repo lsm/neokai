@@ -337,6 +337,19 @@ describe('RoomContextPanel', () => {
 		expect(screen.queryByText('Orphan Done')).toBeNull();
 	});
 
+	it('shows draft and pending tasks under Active tab', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Draft Task', 'draft'),
+			makeTask('t2', 'Pending Task', 'pending'),
+			makeTask('t3', 'Done Task', 'completed'),
+		];
+		render(<RoomContextPanel roomId="room-1" />);
+		// draft and pending should appear under Active tab (default)
+		expect(screen.getByText('Draft Task')).toBeTruthy();
+		expect(screen.getByText('Pending Task')).toBeTruthy();
+		expect(screen.queryByText('Done Task')).toBeNull();
+	});
+
 	it('switches to Review tab to show review orphan tasks', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Active Task', 'in_progress'),
@@ -402,6 +415,17 @@ describe('RoomContextPanel', () => {
 		expect(screen.getByText('Sessions')).toBeTruthy();
 		// But session content should not be visible (collapsed)
 		expect(screen.queryByText('Session 1')).toBeNull();
+	});
+
+	it('renders Sessions section with session count badge', () => {
+		mockSessionsSignal.value = [
+			makeSession('s1', 'Session 1'),
+			makeSession('s2', 'Session 2'),
+			makeSession('s3', 'Session 3'),
+		];
+		render(<RoomContextPanel roomId="room-1" />);
+		// Count badge should reflect non-archived sessions
+		expect(screen.getByText('(3)')).toBeTruthy();
 	});
 
 	it('expands Sessions section when header is clicked', () => {
