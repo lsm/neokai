@@ -934,10 +934,67 @@ describe('TaskManager', () => {
 			await taskManager.completeTask(task.id, 'done');
 			await taskManager.setTaskStatus(task.id, 'archived');
 
-			await expect(taskManager.setTaskStatus(task.id, 'in_progress')).rejects.toThrow(
+			const allStatuses = [
+				'draft',
+				'pending',
+				'in_progress',
+				'review',
+				'completed',
+				'needs_attention',
+				'cancelled',
+				'archived',
+			] as const;
+			for (const status of allStatuses) {
+				await expect(taskManager.setTaskStatus(task.id, status)).rejects.toThrow(
+					'Invalid status transition'
+				);
+			}
+		});
+
+		it('should allow cancelled → pending transition (restart)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const restarted = await taskManager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+		});
+
+		it('should allow cancelled → in_progress transition (reactivation)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+		});
+
+		it('should allow needs_attention → pending transition (restart)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const restarted = await taskManager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+		});
+
+		it('should reject review → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
+
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
 				'Invalid status transition'
 			);
-			await expect(taskManager.setTaskStatus(task.id, 'pending')).rejects.toThrow(
+		});
+
+		it('should reject draft → archived transition', async () => {
+			const task = await taskManager.createTask({
+				title: 'T',
+				description: '',
+				status: 'draft',
+			});
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
 				'Invalid status transition'
 			);
 		});
