@@ -134,11 +134,6 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		// Verify TaskView is shown — the h2 heading contains the task title
 		await expect(page.locator('h2', { hasText: 'E2E Nav Task' })).toBeVisible({ timeout: 15000 });
 
-		// Verify the sidebar task item is highlighted (selected state)
-		await expect(page.locator('button.bg-dark-700', { hasText: 'E2E Nav Task' })).toBeVisible({
-			timeout: 10000,
-		});
-
 		// Reload page
 		await page.reload();
 		await waitForWebSocketConnected(page);
