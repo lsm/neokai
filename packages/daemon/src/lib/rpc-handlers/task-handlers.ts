@@ -802,6 +802,22 @@ export function setupTaskHandlers(
 		if (target !== 'worker' && target !== 'leader') {
 			throw new Error(`Invalid target: ${target}`);
 		}
+		// Cross-room ownership check: verify the task belongs to this room.
+		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
+		}
+
+		// Archived tasks are truly terminal — no messaging allowed. Check this before the runtime
+		// lookup so the error is consistent regardless of whether a runtime is active.
+		if (task.status === 'archived') {
+			throw new Error(
+				`Task ${params.taskId} is archived and cannot receive messages. Archive is a terminal state.`
+			);
+		}
+
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.sendHumanMessage');
 		}
@@ -809,14 +825,6 @@ export function setupTaskHandlers(
 		const runtime = runtimeService.getRuntime(params.roomId);
 		if (!runtime) {
 			throw new Error(`No runtime found for room: ${params.roomId}`);
-		}
-
-		// Cross-room ownership check: verify the task belongs to this room.
-		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
-		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
-		if (!task) {
-			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
 		}
 
 		// needs_attention, completed, and cancelled tasks: auto-reactivate via reviveTaskForMessage.
