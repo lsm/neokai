@@ -186,11 +186,7 @@ function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
 	};
 }
 
-async function makeTask(
-	_db: BunDatabase,
-	_spaceId: string,
-	taskManager: SpaceTaskManager
-): Promise<SpaceTask> {
+async function makeTask(taskManager: SpaceTaskManager): Promise<SpaceTask> {
 	return taskManager.createTask({
 		title: 'Test task',
 		description: 'A test task',
@@ -371,7 +367,7 @@ describe('TaskAgentManager', () => {
 
 	describe('spawnTaskAgent', () => {
 		test('creates Task Agent session and returns session ID', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			expect(sessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
@@ -379,7 +375,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('starts streaming query after creation', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -387,7 +383,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('sets MCP server on the session', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -395,7 +391,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('persists taskAgentSessionId on the SpaceTask', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const updatedTask = ctx.taskRepo.getTask(task.id);
@@ -403,7 +399,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('injects initial message into session', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -418,7 +414,7 @@ describe('TaskAgentManager', () => {
 
 	describe('spawnTaskAgent — idempotency', () => {
 		test('returns same session ID on second call', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const id1 = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const id2 = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -426,7 +422,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('only creates one session on second call', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const countBefore = ctx.createdSessions.size;
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
@@ -441,13 +437,13 @@ describe('TaskAgentManager', () => {
 
 	describe('session ID generation', () => {
 		test('uses base ID when no collision', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			expect(sessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
 		});
 
 		test('appends monotonic suffix when base ID already in DB', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const baseId = `space:${ctx.spaceId}:task:${task.id}`;
 
 			// Pre-create the base ID in the mock DB to simulate restart collision
@@ -468,7 +464,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('isSpawning is false after spawn completes', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			expect(ctx.manager.isSpawning(task.id)).toBe(false);
 		});
@@ -484,13 +480,13 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('returns true after successful spawn', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			expect(ctx.manager.isTaskAgentAlive(task.id)).toBe(true);
 		});
 
 		test('returns true when session is idle', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
 			session._processingState = { status: 'idle' } as AgentProcessingState;
@@ -498,7 +494,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('returns true when session is processing', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
 			session._processingState = { status: 'processing' } as AgentProcessingState;
@@ -516,7 +512,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('returns session after spawn', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			expect(ctx.manager.getTaskAgent(task.id)).toBeDefined();
 		});
@@ -528,7 +524,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('returns sub-session after createSubSession', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const init = {
@@ -560,7 +556,7 @@ describe('TaskAgentManager', () => {
 
 	describe('createSubSession', () => {
 		test('creates session and starts streaming query', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-42`;
@@ -575,7 +571,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('returns the provided session ID', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-99`;
@@ -594,7 +590,7 @@ describe('TaskAgentManager', () => {
 
 	describe('SubSessionFactory (created via spawnTaskAgent)', () => {
 		test('getProcessingState returns null for unknown session', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			// Access factory indirectly by testing getSubSession
@@ -613,7 +609,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('getProcessingState returns not-started for fresh session', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:s1`;
@@ -636,7 +632,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('getProcessingState returns complete when session has messages and is idle', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:s2`;
@@ -669,7 +665,7 @@ describe('TaskAgentManager', () => {
 
 	describe('completion callbacks', () => {
 		test('onComplete fires when DaemonHub emits session.updated with idle status', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-fire`;
@@ -706,7 +702,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('onComplete fires at most once even if idle emitted multiple times', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-once`;
@@ -745,7 +741,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('onComplete does not fire for session with no SDK messages (not started yet)', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-nostart`;
@@ -789,7 +785,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('enqueues message into session queue', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
 			const messagesBefore = session._enqueuedMessages.length;
@@ -810,7 +806,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('enqueues message into sub-session queue', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:inject-step`;
@@ -833,7 +829,7 @@ describe('TaskAgentManager', () => {
 
 	describe('cleanup', () => {
 		test('removes Task Agent session from map', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			expect(ctx.manager.getTaskAgent(task.id)).toBeDefined();
 
@@ -842,7 +838,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('marks task agent session as cleaned up', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
 
@@ -851,7 +847,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('calls SessionManager.deleteSession for task agent session', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			await ctx.manager.cleanup(task.id);
@@ -859,7 +855,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('also cleans up sub-sessions', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
 			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:cleanup-step`;
@@ -880,7 +876,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('session alive check returns false after cleanup', async () => {
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			await ctx.manager.cleanup(task.id);
 			expect(ctx.manager.isTaskAgentAlive(task.id)).toBe(false);
@@ -898,7 +894,7 @@ describe('TaskAgentManager', () => {
 				throw new Error('SDK init failed');
 			});
 
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 			await expect(ctx.manager.spawnTaskAgent(task, ctx.space, null, null)).rejects.toThrow(
 				'SDK init failed'
 			);
@@ -929,7 +925,7 @@ describe('TaskAgentManager', () => {
 					}
 				);
 
-			const task = await makeTask(ctx.bunDb, ctx.spaceId, ctx.taskManager);
+			const task = await makeTask(ctx.taskManager);
 
 			// First attempt fails
 			await expect(ctx.manager.spawnTaskAgent(task, ctx.space, null, null)).rejects.toThrow(

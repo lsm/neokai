@@ -177,18 +177,31 @@ export class TaskAgentManager {
 		if (this.spawningTasks.has(taskId)) {
 			// Poll until the session appears — the concurrently running spawn will
 			// complete shortly and add it to taskAgentSessions.
+			const CONCURRENT_SPAWN_TIMEOUT_MS = 30_000;
+			const deadline = Date.now() + CONCURRENT_SPAWN_TIMEOUT_MS;
 			return new Promise((resolve, reject) => {
 				const interval = setInterval(() => {
 					const session = this.taskAgentSessions.get(taskId);
 					if (session) {
 						clearInterval(interval);
 						resolve(session.session.id);
+						return;
 					}
 					// Also stop if it's no longer spawning (spawn failed)
 					if (!this.spawningTasks.has(taskId)) {
 						clearInterval(interval);
 						reject(
 							new Error(`Concurrent spawn for task ${taskId} failed before session was created`)
+						);
+						return;
+					}
+					// Timeout guard — prevents indefinite polling if first spawn hangs
+					if (Date.now() >= deadline) {
+						clearInterval(interval);
+						reject(
+							new Error(
+								`Concurrent spawn for task ${taskId} timed out after ${CONCURRENT_SPAWN_TIMEOUT_MS}ms`
+							)
 						);
 					}
 				}, 50);
@@ -201,7 +214,7 @@ export class TaskAgentManager {
 			// --- Generate session ID with collision avoidance on restart
 			const spaceId = space.id;
 			const baseSessionId = `space:${spaceId}:task:${taskId}`;
-			const sessionId = await this.resolveSessionId(baseSessionId);
+			const sessionId = this.resolveSessionId(baseSessionId);
 
 			// --- Create AgentSessionInit
 			const init = createTaskAgentInit({
@@ -248,6 +261,11 @@ export class TaskAgentManager {
 					this.handleSubSessionComplete(taskId, stepId, subSessionId),
 			});
 
+			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
+			// object is structurally compatible at runtime — the AgentSession only reads
+			// the `server` property for the live Server instance. The cast is safe because
+			// createTaskAgentMcpServer returns { server, cleanup } which satisfies the
+			// runtime shape used inside AgentSession.setRuntimeMcpServers().
 			agentSession.setRuntimeMcpServers({
 				'task-agent': mcpServer as unknown as import('@neokai/shared').McpServerConfig,
 			});
@@ -412,10 +430,16 @@ export class TaskAgentManager {
 	 * via SessionManager.deleteSession(), and clears in-memory maps.
 	 */
 	async cleanup(taskId: string): Promise<void> {
+		// Collect the exact session IDs that belong to this task so that
+		// the callback/listener cleanup in steps 3 & 4 uses precise matches
+		// rather than a fragile substring check.
+		const sessionIdsToClean = new Set<string>();
+
 		// 1. Cleanup sub-sessions first
 		const stepMap = this.subSessions.get(taskId);
 		if (stepMap) {
 			for (const [subSessionId, session] of stepMap) {
+				sessionIdsToClean.add(subSessionId);
 				await this.stopAndDeleteSession(subSessionId, session);
 			}
 			this.subSessions.delete(taskId);
@@ -424,20 +448,23 @@ export class TaskAgentManager {
 		// 2. Cleanup Task Agent session
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
-			await this.stopAndDeleteSession(taskAgentSession.session.id, taskAgentSession);
+			const agentSessionId = taskAgentSession.session.id;
+			sessionIdsToClean.add(agentSessionId);
+			await this.stopAndDeleteSession(agentSessionId, taskAgentSession);
 			this.taskAgentSessions.delete(taskId);
 		}
 
-		// 3. Remove any dangling completion callbacks
-		for (const [sessionId] of this.completionCallbacks) {
-			if (sessionId.includes(taskId)) {
-				this.completionCallbacks.delete(sessionId);
-			}
+		// 3. Remove any dangling completion callbacks for known session IDs.
+		// We use the exact session IDs collected above (sub-sessions + task agent)
+		// rather than a substring match to avoid false positives.
+		for (const sessionId of sessionIdsToClean) {
+			this.completionCallbacks.delete(sessionId);
 		}
 
-		// 4. Remove session listeners
-		for (const [sessionId, unsub] of this.sessionListeners) {
-			if (sessionId.includes(taskId)) {
+		// 4. Remove session listeners for known session IDs
+		for (const sessionId of sessionIdsToClean) {
+			const unsub = this.sessionListeners.get(sessionId);
+			if (unsub) {
 				unsub();
 				this.sessionListeners.delete(sessionId);
 			}
@@ -614,21 +641,24 @@ export class TaskAgentManager {
 	 * If the base ID exists (e.g., from a previous crashed attempt), appends a
 	 * monotonic suffix until an unused ID is found.
 	 */
-	private async resolveSessionId(baseId: string): Promise<string> {
+	private resolveSessionId(baseId: string): string {
 		// Check if base ID is already free
 		if (!this.config.db.getSession(baseId)) {
 			return baseId;
 		}
 
-		// Append monotonic suffix starting from 1
-		let attempt = 1;
-		while (true) {
+		// Append monotonic suffix starting from 1; cap at 100 to avoid an
+		// unbounded loop if the DB is in an unexpected state.
+		const MAX_ATTEMPTS = 100;
+		for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 			const candidateId = `${baseId}:${attempt}`;
 			if (!this.config.db.getSession(candidateId)) {
 				return candidateId;
 			}
-			attempt++;
 		}
+		throw new Error(
+			`Could not find available session ID for base "${baseId}" after ${MAX_ATTEMPTS} attempts`
+		);
 	}
 
 	// -------------------------------------------------------------------------
