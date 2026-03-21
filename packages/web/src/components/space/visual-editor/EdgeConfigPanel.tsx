@@ -72,7 +72,8 @@ export function EdgeConfigPanel({
 			// don't persist a stale expression string under a non-expression condition.
 			// Note: the parent is responsible for preserving the expression across
 			// two-way type switches if that behaviour is desired.
-			onUpdateCondition(id, type, type === 'condition' ? condition.expression : undefined);
+			const preserveExpression = type === 'condition' || type === 'task_result';
+			onUpdateCondition(id, type, preserveExpression ? condition.expression : undefined);
 		},
 		[id, condition.expression, onUpdateCondition]
 	);
@@ -80,9 +81,9 @@ export function EdgeConfigPanel({
 	const handleExpressionChange = useCallback(
 		(e: Event) => {
 			const expression = (e.target as HTMLInputElement).value;
-			onUpdateCondition(id, 'condition', expression);
+			onUpdateCondition(id, condition.type, expression);
 		},
-		[id, onUpdateCondition]
+		[id, condition.type, onUpdateCondition]
 	);
 
 	const handleDelete = useCallback(() => {
