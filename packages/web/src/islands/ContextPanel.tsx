@@ -427,7 +427,7 @@ export function ContextPanel() {
 						onCreateSpace={() => setCreateSpaceOpen(true)}
 					/>
 				)}
-		{navSection === 'projects' && (
+				{navSection === 'projects' && (
 					<div class="flex-1 flex items-center justify-center p-6">
 						<div class="text-center">
 							<div class="text-4xl mb-3">📁</div>
