@@ -352,7 +352,7 @@ export class SpaceTaskManager {
 	 */
 	async reassignTask(
 		taskId: string,
-		customAgentId: string | null,
+		customAgentId: string | null | undefined,
 		assignedAgent?: 'coder' | 'general'
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
@@ -367,7 +367,11 @@ export class SpaceTaskManager {
 			);
 		}
 
-		const updates: UpdateSpaceTaskParams = { customAgentId };
+		const updates: UpdateSpaceTaskParams = {};
+		// Only update customAgentId when explicitly provided (undefined = leave as-is)
+		if (customAgentId !== undefined) {
+			updates.customAgentId = customAgentId;
+		}
 		if (assignedAgent !== undefined) {
 			updates.assignedAgent = assignedAgent;
 		}

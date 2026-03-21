@@ -1061,6 +1061,27 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		expect(parsed.task.assignedAgent).toBe('general');
 	});
 
+	test('does not clear existing customAgentId when only assigned_agent is changed', async () => {
+		// Create task with a custom agent assigned
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Has custom agent',
+			description: 'Custom agent must be preserved',
+			custom_agent_id: ctx.agentId,
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+		// Reassign only the agent type — custom_agent_id not provided
+		const result = await makeHandlers(ctx).reassign_task({
+			task_id: taskId,
+			assigned_agent: 'general',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.assignedAgent).toBe('general');
+		// customAgentId must NOT have been cleared
+		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+	});
+
 	test('clears custom agent when custom_agent_id is null', async () => {
 		const createResult = await makeHandlers(ctx).create_standalone_task({
 			title: 'Clear agent',

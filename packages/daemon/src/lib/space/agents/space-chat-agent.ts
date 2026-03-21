@@ -12,17 +12,21 @@
  * The prompt references the following tools by name. They must be registered in the
  * MCP server(s) composed with this agent's session at runtime:
  *
- *   Workflow tools (provided by createSpaceAgentMcpServer in space-agent-tools.ts):
- *     - list_workflows
- *     - start_workflow_run
- *     - suggest_workflow
- *     - get_workflow_detail
- *
- *   Task tools (to be provided by a separate space-task MCP server in a future task):
- *     - create_task
- *
- * When the space-task MCP server is wired up, the caller should compose both MCP
- * servers and pass the combined tool set to the chat agent session.
+ *   All tools are provided by createSpaceAgentMcpServer in space-agent-tools.ts:
+ *     Workflow tools:
+ *       - list_workflows
+ *       - start_workflow_run
+ *       - get_workflow_run
+ *       - change_plan
+ *       - get_workflow_detail
+ *       - suggest_workflow
+ *     Task tools:
+ *       - list_tasks
+ *       - create_standalone_task
+ *       - get_task_detail
+ *       - retry_task
+ *       - cancel_task
+ *       - reassign_task
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */

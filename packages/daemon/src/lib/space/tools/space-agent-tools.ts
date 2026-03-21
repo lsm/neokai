@@ -448,10 +448,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					}
 				}
 
-				const customAgentId = args.custom_agent_id !== undefined ? args.custom_agent_id : null;
+				// Pass args.custom_agent_id as-is (including undefined) so the manager
+				// only updates that field when it was explicitly provided.
 				const task = await taskManager.reassignTask(
 					args.task_id,
-					customAgentId,
+					args.custom_agent_id,
 					args.assigned_agent
 				);
 				return jsonResult({ success: true, task });
