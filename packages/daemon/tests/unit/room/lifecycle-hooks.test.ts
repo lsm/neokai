@@ -983,6 +983,9 @@ describe('runLeaderCompleteGate — PR merge validation (all roles)', () => {
 	});
 
 	test('PASSES when PR is MERGED for coder tasks', async () => {
+		// Note: approved=false means checkLeaderRootRepoSynced skips sync (pre-approval phase).
+		// In production, complete_task is gated on approved=true by the state machine before
+		// this hook runs — so these tests exercise the non-approved code path only.
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
@@ -995,6 +998,7 @@ describe('runLeaderCompleteGate — PR merge validation (all roles)', () => {
 	});
 
 	test('PASSES when PR is MERGED for general tasks', async () => {
+		// Note: approved=false — root sync is skipped (see coder test above for explanation).
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research', exitCode: 0 },
 			'gh pr view feat/research --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
@@ -1604,14 +1608,14 @@ describe('checkLeaderRootRepoSynced', () => {
 		expect(calls.length).toBe(0);
 	});
 
-	test('passes when fetch and pull both succeed', async () => {
+	test('passes when fetch and update-ref both succeed', async () => {
 		const opts = mockRunner({
 			'git symbolic-ref refs/remotes/origin/HEAD': {
 				stdout: 'refs/remotes/origin/main',
 				exitCode: 0,
 			},
 			'git fetch origin': { stdout: '', exitCode: 0 },
-			'git pull origin main': { stdout: 'Already up to date.', exitCode: 0 },
+			'git update-ref refs/heads/main origin/main': { stdout: '', exitCode: 0 },
 		});
 		const result = await checkLeaderRootRepoSynced(
 			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
@@ -1637,22 +1641,22 @@ describe('checkLeaderRootRepoSynced', () => {
 		expect(result.bounceMessage).toContain('git fetch origin');
 	});
 
-	test('fails when git pull fails', async () => {
+	test('fails when git update-ref fails', async () => {
 		const opts = mockRunner({
 			'git symbolic-ref refs/remotes/origin/HEAD': {
 				stdout: 'refs/remotes/origin/dev',
 				exitCode: 0,
 			},
 			'git fetch origin': { stdout: '', exitCode: 0 },
-			'git pull origin dev': { stdout: 'error: merge conflict', exitCode: 1 },
+			'git update-ref refs/heads/dev origin/dev': { stdout: '', exitCode: 1 },
 		});
 		const result = await checkLeaderRootRepoSynced(
 			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
 			opts
 		);
 		expect(result.pass).toBe(false);
-		expect(result.reason).toContain('git pull origin dev');
-		expect(result.bounceMessage).toContain('git pull origin dev');
+		expect(result.reason).toContain('refs/heads/dev');
+		expect(result.bounceMessage).toContain('refs/heads/dev');
 	});
 
 	test('passes fail-open when default branch cannot be determined', async () => {
@@ -1670,7 +1674,7 @@ describe('checkLeaderRootRepoSynced', () => {
 			'git symbolic-ref refs/remotes/origin/HEAD': { stdout: '', exitCode: 1 },
 			'git rev-parse --verify origin/main': { stdout: 'abc123', exitCode: 0 },
 			'git fetch origin': { stdout: '', exitCode: 0 },
-			'git pull origin main': { stdout: 'Already up to date.', exitCode: 0 },
+			'git update-ref refs/heads/main origin/main': { stdout: '', exitCode: 0 },
 		});
 		const result = await checkLeaderRootRepoSynced(
 			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
@@ -1690,7 +1694,8 @@ describe('checkLeaderRootRepoSynced', () => {
 					return { stdout: 'refs/remotes/origin/main', exitCode: 0 };
 				}
 				if (key === 'git fetch origin') return { stdout: '', exitCode: 0 };
-				if (key === 'git pull origin main') return { stdout: '', exitCode: 0 };
+				if (key === 'git update-ref refs/heads/main origin/main')
+					return { stdout: '', exitCode: 0 };
 				return { stdout: '', exitCode: 1 };
 			},
 		};
@@ -1720,7 +1725,8 @@ describe('checkLeaderRootRepoSynced', () => {
 					return { stdout: 'refs/remotes/origin/main', exitCode: 0 };
 				}
 				if (key === 'git fetch origin') return { stdout: '', exitCode: 0 };
-				if (key === 'git pull origin main') return { stdout: '', exitCode: 0 };
+				if (key === 'git update-ref refs/heads/main origin/main')
+					return { stdout: '', exitCode: 0 };
 				return { stdout: '', exitCode: 1 };
 			},
 		};
@@ -1751,7 +1757,7 @@ describe('runLeaderCompleteGate — root repo sync after PR merge', () => {
 				exitCode: 0,
 			},
 			'git fetch origin': { stdout: '', exitCode: 0 },
-			'git pull origin main': { stdout: 'Already up to date.', exitCode: 0 },
+			'git update-ref refs/heads/main origin/main': { stdout: '', exitCode: 0 },
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
@@ -1801,7 +1807,7 @@ describe('runLeaderCompleteGate — root repo sync after PR merge', () => {
 				if (key === 'git symbolic-ref refs/remotes/origin/HEAD')
 					return { stdout: 'refs/remotes/origin/dev', exitCode: 0 };
 				if (key === 'git fetch origin') return { stdout: '', exitCode: 0 };
-				if (key === 'git pull origin dev') return { stdout: '', exitCode: 0 };
+				if (key === 'git update-ref refs/heads/dev origin/dev') return { stdout: '', exitCode: 0 };
 				return { stdout: '', exitCode: 1 };
 			},
 		};
@@ -1824,7 +1830,8 @@ describe('runLeaderCompleteGate — root repo sync after PR merge', () => {
 		expect(prCheckCall?.cwd).toBe('/tmp/task-worktree');
 		// Root sync commands run in rootWorkspacePath
 		const syncCalls = calls.filter(
-			(c) => c.args.includes('fetch') || c.args.includes('pull') || c.args.includes('symbolic-ref')
+			(c) =>
+				c.args.includes('fetch') || c.args.includes('update-ref') || c.args.includes('symbolic-ref')
 		);
 		expect(syncCalls.length).toBeGreaterThan(0);
 		for (const call of syncCalls) {
@@ -1854,9 +1861,9 @@ describe('runLeaderCompleteGate — root repo sync after PR merge', () => {
 			opts
 		);
 		expect(result.pass).toBe(true);
-		// Sync commands (fetch, pull, symbolic-ref) must NOT have been called
+		// Sync commands (fetch, update-ref, symbolic-ref) must NOT have been called
 		const syncCalled = calls.some(
-			(c) => c.includes('fetch') || c.includes('pull') || c.includes('symbolic-ref')
+			(c) => c.includes('fetch') || c.includes('update-ref') || c.includes('symbolic-ref')
 		);
 		expect(syncCalled).toBe(false);
 	});
