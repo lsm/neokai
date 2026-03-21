@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { TaskSummary } from '@neokai/shared';
-import { RoomTasks, selectedTabSignal } from './RoomTasks';
+import { RoomTasks, selectedTabSignal, getInitialTab } from './RoomTasks';
 
 describe('RoomTasks', () => {
 	afterEach(() => {
@@ -337,12 +337,14 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Old task');
 		});
 
-		it('should show empty state when no archived tasks', () => {
+		it('should auto-reset to active tab when no archived tasks exist', () => {
 			const tasks = [createTask('t1', 'pending')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			expect(container.textContent).toContain('No archived tasks');
+			// Auto-reset kicks in, shows active tab content instead of archived empty state
+			expect(container.textContent).toContain('Pending (1)');
+			expect(selectedTabSignal.value).toBe('active');
 		});
 	});
 
@@ -958,6 +960,49 @@ describe('RoomTasks', () => {
 		});
 	});
 
+	describe('localStorage Migration (getInitialTab)', () => {
+		function mockStoredTab(value: string | null) {
+			vi.mocked(localStorage.getItem).mockImplementation((key) => {
+				if (key === 'neokai:room:taskFilterTab') return value;
+				return null;
+			});
+		}
+
+		it('should migrate "needs_attention" to "review"', () => {
+			mockStoredTab('needs_attention');
+			expect(getInitialTab()).toBe('review');
+		});
+
+		it('should migrate "failed" to "review"', () => {
+			mockStoredTab('failed');
+			expect(getInitialTab()).toBe('review');
+		});
+
+		it('should preserve valid tab values', () => {
+			mockStoredTab('active');
+			expect(getInitialTab()).toBe('active');
+
+			mockStoredTab('review');
+			expect(getInitialTab()).toBe('review');
+
+			mockStoredTab('done');
+			expect(getInitialTab()).toBe('done');
+
+			mockStoredTab('archived');
+			expect(getInitialTab()).toBe('archived');
+		});
+
+		it('should default to "active" for unknown values', () => {
+			mockStoredTab('garbage');
+			expect(getInitialTab()).toBe('active');
+		});
+
+		it('should default to "active" when no value stored', () => {
+			mockStoredTab(null);
+			expect(getInitialTab()).toBe('active');
+		});
+	});
+
 	describe('Tab Grouping Consistency', () => {
 		it('needs_attention tasks appear under review tab, not a separate tab', () => {
 			selectedTabSignal.value = 'review';
@@ -969,7 +1014,7 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Migrated task');
 		});
 
-		it('cancelled tasks appear under done tab, not needs_attention tab', () => {
+		it('cancelled tasks appear under done tab', () => {
 			selectedTabSignal.value = 'done';
 			const tasks = [createTask('t1', 'cancelled', { title: 'Cancelled task' })];
 
@@ -1005,6 +1050,31 @@ describe('RoomTasks', () => {
 				t.textContent?.replace(/\d/g, '').trim()
 			);
 			expect(tabButtonLabels).not.toContain('Needs Attention');
+		});
+	});
+
+	describe('Archived Tab Auto-Reset', () => {
+		it('should auto-reset to active when archived tab selected but no archived tasks', () => {
+			selectedTabSignal.value = 'archived';
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Should show active tab content, not archived empty state
+			expect(container.textContent).toContain('In Progress');
+			expect(container.textContent).not.toContain('No archived tasks');
+			// Signal should be reset
+			expect(selectedTabSignal.value).toBe('active');
+		});
+
+		it('should stay on archived tab when archived tasks exist', () => {
+			selectedTabSignal.value = 'archived';
+			const tasks = [createTask('t1', 'archived', { title: 'Old task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Archived (1)');
+			expect(selectedTabSignal.value).toBe('archived');
 		});
 	});
 });

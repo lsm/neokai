@@ -15,8 +15,8 @@ import type { TaskSummary, TaskStatus } from '@neokai/shared';
 /** Tab filter types */
 export type TaskFilterTab = 'active' | 'review' | 'done' | 'archived';
 
-/** Get initial tab from localStorage */
-function getInitialTab(): TaskFilterTab {
+/** Get initial tab from localStorage - exported for testing */
+export function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
 	// Migrate old tab values: 'failed' and 'needs_attention' now live under 'review'
@@ -99,8 +99,15 @@ function getStatusBorderColor(status: TaskStatus): string {
 }
 
 export function RoomTasks({ tasks, onTaskClick, onView, onReject, onApprove }: RoomTasksProps) {
-	const selectedTab = selectedTabSignal.value;
+	let selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
+
+	// Auto-reset to 'active' when archived tab is selected but no archived tasks exist
+	if (selectedTab === 'archived' && tabCounts.archived === 0) {
+		selectedTab = 'active';
+		selectedTabSignal.value = 'active';
+	}
+
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
 
 	const handleTabClick = (tab: TaskFilterTab) => {
