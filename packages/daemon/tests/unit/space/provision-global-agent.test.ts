@@ -258,31 +258,20 @@ describe('provisionGlobalSpacesAgent', () => {
 	test('creates the session before calling setNotificationSink (order check)', async () => {
 		const callOrder: string[] = [];
 
+		let getCount = 0;
+		const stub = makeAgentSessionStub();
 		const sessionManager = {
 			createCalls: 0,
-			getSessionAsync: mock(async () => {
-				let count = 0;
-				return async () => {
-					count++;
-					return count === 1 ? null : makeAgentSessionStub();
-				};
+			getSessionAsync: mock(async (_id: string) => {
+				getCount++;
+				if (getCount === 1) return null;
+				return stub;
 			}),
 			createSession: mock(async () => {
 				callOrder.push('createSession');
 				sessionManager.createCalls++;
 			}),
 		} as unknown as SessionManager & { createCalls: number };
-
-		// Reimplement getSessionAsync manually to capture order
-		let getCount = 0;
-		const stub = makeAgentSessionStub();
-		(
-			sessionManager as unknown as { getSessionAsync: (id: string) => Promise<unknown> }
-		).getSessionAsync = mock(async (_id: string) => {
-			getCount++;
-			if (getCount === 1) return null;
-			return stub;
-		});
 
 		const spyService = new SpySpaceRuntimeService({
 			db,
@@ -324,6 +313,22 @@ describe('provisionGlobalSpacesAgent', () => {
 		expect(callOrder.indexOf('createSession')).toBeLessThan(
 			callOrder.indexOf('setNotificationSink')
 		);
+	});
+
+	test('throws and does NOT wire sink when session creation fails', async () => {
+		const sessionManager = {
+			createCalls: 0,
+			getSessionAsync: mock(async () => null), // always null → triggers create
+			createSession: mock(async () => {
+				throw new Error('DB write failed');
+			}),
+		} as unknown as SessionManager & { createCalls: number };
+
+		const deps = buildDeps(db, { sessionManager });
+
+		await expect(provisionGlobalSpacesAgent(deps)).rejects.toThrow('DB write failed');
+		// Sink must NOT be wired — spaceRuntimeService keeps NullNotificationSink
+		expect(deps.spyService.sinkCalls).toHaveLength(0);
 	});
 
 	test('wires sink even when session already exists (daemon restart path)', async () => {
@@ -393,5 +398,56 @@ describe('provisionGlobalSpacesAgent', () => {
 		expect(call.sessionId).toBe('spaces:global');
 		expect(call.message).toContain('[TASK_EVENT]');
 		expect(call.opts?.deliveryMode).toBe('next_turn');
+	});
+
+	// -------------------------------------------------------------------------
+	// Startup race fix: notifiedTaskSet cleared when sink is wired
+	// -------------------------------------------------------------------------
+
+	test('startup race: tasks notified via NullNotificationSink before wiring are re-notified after setNotificationSink', async () => {
+		// This test guards against the startup race where:
+		// 1. SpaceRuntimeService starts and fires a tick (dedup key added, NullNotificationSink = no-op)
+		// 2. provisionGlobalSpacesAgent runs and wires the real sink
+		// 3. The task should still notify on the next tick (dedup set was cleared by setNotificationSink)
+		const SPACE_ID = 'space-race-fix';
+		const AGENT_ID = 'agent-race-fix';
+		const STEP_ID = 'step-race-fix';
+
+		seedSpaceRow(db, SPACE_ID);
+		seedAgentRow(db, AGENT_ID, SPACE_ID);
+
+		const sessionFactory = makeMockSessionFactory();
+		const deps = buildDeps(db, { sessionFactory });
+
+		const runtime = deps.spyService.getSharedRuntime();
+
+		// Create a workflow run with a needs_attention task
+		const workflowManager = deps.spaceWorkflowManager as SpaceWorkflowManager;
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: 'Race Fix Workflow',
+			description: '',
+			steps: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
+			transitions: [],
+			startStepId: STEP_ID,
+			rules: [],
+			tags: [],
+		});
+		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Race Run');
+		const taskRepo = deps.taskRepo as SpaceTaskRepository;
+		taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Pre-wiring failure' });
+
+		// Simulate an early tick BEFORE provisioning — fires on NullNotificationSink, dedup key added
+		await runtime.executeTick();
+		// No real sink yet, so no injected calls
+		expect(sessionFactory.calls).toHaveLength(0);
+
+		// Now provision (wires the real sink — clears notifiedTaskSet)
+		await provisionGlobalSpacesAgent(deps);
+
+		// Fire a tick AFTER provisioning — task should re-notify because dedup was cleared
+		await runtime.executeTick();
+		expect(sessionFactory.calls.length).toBeGreaterThanOrEqual(1);
+		expect(sessionFactory.calls[0].message).toContain('[TASK_EVENT]');
 	});
 });

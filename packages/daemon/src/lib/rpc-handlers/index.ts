@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, MessageDeliveryMode } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
@@ -289,7 +289,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			injectMessage: (
 				sessionId: string,
 				message: string,
-				opts?: { deliveryMode?: import('@neokai/shared').MessageDeliveryMode }
+				opts?: { deliveryMode?: MessageDeliveryMode }
 			) => deps.sessionManager.injectMessage(sessionId, message, opts),
 			hasSession: (sessionId: string) => deps.sessionManager.getSession(sessionId) !== null,
 			// Remaining SessionFactory methods are not needed for notification injection

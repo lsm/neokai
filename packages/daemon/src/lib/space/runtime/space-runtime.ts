@@ -150,6 +150,10 @@ export class SpaceRuntime {
 	 */
 	setNotificationSink(sink: NotificationSink): void {
 		this.notificationSink = sink;
+		// Clear the dedup set so tasks that fired on NullNotificationSink before the real
+		// sink was wired (e.g. ticks that ran before provisioning completed at daemon startup)
+		// get a chance to re-notify on the next tick.
+		this.notifiedTaskSet.clear();
 	}
 
 	// -------------------------------------------------------------------------
