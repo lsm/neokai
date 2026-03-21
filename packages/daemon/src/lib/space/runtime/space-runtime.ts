@@ -654,6 +654,11 @@ export class SpaceRuntime {
 	 * is never notified twice in a row. Dedup keys are cleared when the task leaves the
 	 * flagged state, allowing re-notification if the task cycles back into it.
 	 *
+	 * Dedup cleanup includes archived tasks (fetched via includeArchived=true) to prevent
+	 * notifiedTaskSet from accumulating stale keys for tasks that were archived while in
+	 * a flagged state. Archived tasks can never re-enter needs_attention or in_progress,
+	 * so their dedup keys are always safe to remove.
+	 *
 	 * Restart contract: because `notifiedTaskSet` is in-memory only, tasks already in
 	 * `needs_attention` at daemon startup will re-notify once on the first tick. This is
 	 * intentional — the Space Agent session is new after restart and needs to be informed
@@ -663,26 +668,29 @@ export class SpaceRuntime {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 
 		for (const space of spaces) {
-			// Fetch all non-archived standalone tasks for this space in a single query.
-			// Filtering by workflowRunId === undefined identifies tasks that are not
-			// associated with any workflow run (i.e., standalone tasks).
-			const standaloneTasks = this.config.taskRepo
-				.listBySpace(space.id)
-				.filter((t) => !t.workflowRunId);
+			// Fetch all standalone tasks including archived ones for the dedup cleanup pass.
+			// Using listStandaloneBySpace pushes workflow_run_id IS NULL into SQL so only
+			// standalone tasks are returned — no JS-side filtering needed.
+			// includeArchived=true ensures archived tasks have their dedup keys cleared and
+			// do not accumulate as stale entries in notifiedTaskSet indefinitely.
+			const allStandalone = this.config.taskRepo.listStandaloneBySpace(space.id, true);
+			const activeStandalone = allStandalone.filter((t) => !t.archivedAt);
 
 			// Dedup cleanup: clear keys for tasks that have left their flagged state.
-			// This mirrors the per-tick cleanup done in processRunTick() for workflow tasks.
-			for (const task of standaloneTasks) {
-				if (task.status !== 'needs_attention') {
+			// Archived tasks always get their keys cleared — they can never re-enter a
+			// flagged state, so keeping their keys would be a permanent memory leak.
+			for (const task of allStandalone) {
+				const archived = !!task.archivedAt;
+				if (archived || task.status !== 'needs_attention') {
 					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
 				}
-				if (task.status !== 'in_progress') {
+				if (archived || task.status !== 'in_progress') {
 					this.notifiedTaskSet.delete(`${task.id}:timeout`);
 				}
 			}
 
-			// Emit task_needs_attention for standalone tasks in needs_attention state.
-			for (const task of standaloneTasks) {
+			// Emit task_needs_attention for active standalone tasks in needs_attention state.
+			for (const task of activeStandalone) {
 				if (task.status !== 'needs_attention') continue;
 				const dedupKey = `${task.id}:needs_attention`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
@@ -697,11 +705,11 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Timeout detection for standalone in_progress tasks.
+			// Timeout detection for active standalone in_progress tasks.
 			const taskTimeoutMs = space.config?.taskTimeoutMs;
 			if (taskTimeoutMs !== undefined) {
 				const now = Date.now();
-				for (const task of standaloneTasks) {
+				for (const task of activeStandalone) {
 					if (task.status !== 'in_progress' || !task.startedAt) continue;
 					const elapsedMs = now - task.startedAt;
 					if (elapsedMs > taskTimeoutMs) {

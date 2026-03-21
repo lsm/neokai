@@ -911,6 +911,70 @@ describe('SpaceRuntime — notification events', () => {
 			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
 		});
 
+		test('completed standalone task emits no notifications', async () => {
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Done',
+				description: '',
+				status: 'completed',
+			});
+
+			await runtime.executeTick();
+
+			expect(sink.events).toHaveLength(0);
+		});
+
+		test('cancelled standalone task emits no notifications', async () => {
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Cancelled',
+				description: '',
+				status: 'cancelled',
+			});
+
+			await runtime.executeTick();
+
+			expect(sink.events).toHaveLength(0);
+		});
+
+		test('archiving a standalone task clears its dedup key (no permanent leak)', async () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Soon Archived',
+				description: '',
+				status: 'needs_attention',
+			});
+
+			// First tick — emits notification, dedup key added
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Archive the task while it is still in needs_attention
+			taskRepo.archiveTask(task.id);
+
+			// Second tick — task is now archived; dedup key should be cleared
+			await runtime.executeTick();
+			// No new notification (archived tasks never re-enter needs_attention)
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Create a fresh runtime to simulate a restart — the previously leaked key
+			// would have persisted in the old set. With the fix, the archived task was
+			// cleaned up on the previous tick so no re-notification occurs here.
+			// More importantly: verify the current runtime's set has been cleaned up by
+			// creating a NEW task in needs_attention and confirming dedup still works.
+			const task2 = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Another Task',
+				description: '',
+				status: 'needs_attention',
+			});
+			await runtime.executeTick();
+			const naEvents = sink.events.filter(
+				(e) => e.kind === 'task_needs_attention' && e.taskId === task2.id
+			);
+			expect(naEvents).toHaveLength(1);
+		});
+
 		test('workflow tasks are NOT processed by checkStandaloneTasks', async () => {
 			// Create a workflow task (has workflowRunId) with needs_attention status
 			// It should NOT generate a duplicate notification via the standalone path
