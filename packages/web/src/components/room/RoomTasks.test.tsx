@@ -152,56 +152,56 @@ describe('RoomTasks', () => {
 			expect(header?.textContent).toContain('Review');
 		});
 
-		it('should show 审阅 button for review tasks when onView is provided', () => {
+		it('should show View details link for review tasks when onView is provided', () => {
 			const onView = vi.fn();
 			const tasks = [createTask('t1', 'review', { title: 'Review me' })];
 
 			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			);
 			expect(viewBtn).toBeTruthy();
 		});
 
-		it('should NOT show 审阅 button when onView is not provided', () => {
+		it('should NOT show View details link when onView is not provided', () => {
 			const tasks = [createTask('t1', 'review')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			);
 			expect(viewBtn).toBeFalsy();
 		});
 
-		it('should call onView with task id when 审阅 button is clicked', () => {
+		it('should call onView with task id when View details link is clicked', () => {
 			const onView = vi.fn();
 			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
 
 			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			) as HTMLButtonElement;
 			fireEvent.click(viewBtn);
 
 			expect(onView).toHaveBeenCalledWith('task-42');
 		});
 
-		it('should NOT show 审阅 button for non-review tasks', () => {
+		it('should NOT show View details link for non-review tasks', () => {
 			const onView = vi.fn();
 			const tasks = [createTask('t1', 'in_progress')];
 
 			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			);
 			expect(viewBtn).toBeFalsy();
 		});
 
-		it('should NOT call onTaskClick when 审阅 button is clicked (stopPropagation)', () => {
+		it('should NOT call onTaskClick when View details link is clicked (stopPropagation)', () => {
 			const onView = vi.fn();
 			const onTaskClick = vi.fn();
 			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
@@ -211,7 +211,7 @@ describe('RoomTasks', () => {
 			);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			) as HTMLButtonElement;
 			fireEvent.click(viewBtn);
 
@@ -349,14 +349,14 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Stopped task');
 		});
 
-		it('should not show 审阅 button for cancelled tasks', () => {
+		it('should not show View details link for cancelled tasks', () => {
 			const onView = vi.fn();
 			const tasks = [createTask('t1', 'cancelled')];
 
 			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('审阅')
+				b.textContent?.includes('View details')
 			);
 			expect(viewBtn).toBeFalsy();
 		});
@@ -874,6 +874,116 @@ describe('RoomTasks', () => {
 			fireEvent.click(rejectBtn);
 
 			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+	});
+	describe('Approve Button', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'review';
+		});
+
+		it('should show Approve button for review tasks when onApprove is provided', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			);
+			expect(approveBtn).toBeTruthy();
+		});
+
+		it('should NOT show Approve button when onApprove is not provided', () => {
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			);
+			expect(approveBtn).toBeFalsy();
+		});
+
+		it('should call onApprove with task id when Approve button is clicked', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('task-77', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(onApprove).toHaveBeenCalledWith('task-77');
+		});
+
+		it('should NOT show Approve button for non-review tasks', () => {
+			selectedTabSignal.value = 'active';
+			const onApprove = vi.fn();
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			);
+			expect(approveBtn).toBeFalsy();
+		});
+
+		it('should NOT call onTaskClick when Approve button is clicked (stopPropagation)', () => {
+			const onApprove = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-55', 'review')];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onApprove={onApprove} onTaskClick={onTaskClick} />
+			);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent?.trim() === 'Approve'
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(onApprove).toHaveBeenCalledWith('task-55');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Worker Summary (currentStep)', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'review';
+		});
+
+		it('should show currentStep as worker summary for review tasks', () => {
+			const tasks = [
+				createTask('t1', 'review', { currentStep: 'Implementing authentication module' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Implementing authentication module');
+		});
+
+		it('should NOT show worker summary when currentStep is not set', () => {
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// No italic summary element
+			const summaryEl = container.querySelector('p.italic');
+			expect(summaryEl).toBeFalsy();
+		});
+
+		it('should NOT show worker summary for non-review tasks with currentStep', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'in_progress', { currentStep: 'Should not appear' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// The review expanded section is not rendered for non-review tasks
+			const summaryEl = container.querySelector('p.italic');
+			expect(summaryEl).toBeFalsy();
 		});
 	});
 });

@@ -48,6 +48,7 @@ interface RoomTasksProps {
 	onTaskClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
+	onApprove?: (taskId: string) => void;
 }
 
 /** Get count of tasks for each filter tab */
@@ -95,7 +96,7 @@ function getStatusBorderColor(status: TaskStatus): string {
 	}
 }
 
-export function RoomTasks({ tasks, onTaskClick, onView, onReject }: RoomTasksProps) {
+export function RoomTasks({ tasks, onTaskClick, onView, onReject, onApprove }: RoomTasksProps) {
 	const selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
@@ -157,6 +158,7 @@ export function RoomTasks({ tasks, onTaskClick, onView, onReject }: RoomTasksPro
 					onTaskClick={onTaskClick}
 					onView={onView}
 					onReject={onReject}
+					onApprove={onApprove}
 				/>
 			)}
 		</div>
@@ -256,6 +258,7 @@ function TaskList({
 	onTaskClick,
 	onView,
 	onReject,
+	onApprove,
 }: {
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
@@ -263,6 +266,7 @@ function TaskList({
 	onTaskClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
+	onApprove?: (taskId: string) => void;
 }) {
 	const [rejectingTaskId, setRejectingTaskId] = useState<string | null>(null);
 
@@ -317,6 +321,7 @@ function TaskList({
 					onTaskClick={onTaskClick}
 					onView={onView}
 					onReject={onReject}
+					onApprove={onApprove}
 					rejectingTaskId={rejectingTaskId}
 					onSetRejectingTaskId={setRejectingTaskId}
 				/>
@@ -386,6 +391,7 @@ function TaskGroup({
 	onTaskClick,
 	onView,
 	onReject,
+	onApprove,
 	showAlert = false,
 	rejectingTaskId,
 	onSetRejectingTaskId,
@@ -398,6 +404,7 @@ function TaskGroup({
 	onTaskClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
+	onApprove?: (taskId: string) => void;
 	showAlert?: boolean;
 	rejectingTaskId?: string | null;
 	onSetRejectingTaskId?: (id: string | null) => void;
@@ -462,6 +469,7 @@ function TaskGroup({
 						onClick={onTaskClick}
 						onView={onView}
 						onReject={onReject}
+						onApprove={onApprove}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={onSetRejectingTaskId}
 					/>
@@ -485,6 +493,7 @@ function TaskItem({
 	onClick,
 	onView,
 	onReject,
+	onApprove,
 	rejectingTaskId,
 	onSetRejectingTaskId,
 }: {
@@ -493,16 +502,19 @@ function TaskItem({
 	onClick?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
+	onApprove?: (taskId: string) => void;
 	rejectingTaskId?: string | null;
 	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
 	const [feedback, setFeedback] = useState('');
 	const isClickable = !!onClick;
-	const showView = task.status === 'review' && !!onView;
-	const showReject = task.status === 'review' && !!onReject;
+	const isReview = task.status === 'review';
+	const showView = isReview && !!onView;
+	const showReject = isReview && !!onReject;
+	const showApprove = isReview && !!onApprove;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
-	const isWorking = task.status === 'review' && !!task.activeSession;
+	const isWorking = isReview && !!task.activeSession;
 	const isRejecting = rejectingTaskId === task.id;
 
 	return (
@@ -546,36 +558,59 @@ function TaskItem({
 							<span>PR #{task.prNumber ?? '?'}</span>
 						</a>
 					)}
-					{showView && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onView(task.id);
-							}}
-							class="px-2 py-1 text-xs font-medium text-amber-400 bg-amber-900/20 hover:bg-amber-900/40 border border-amber-700/50 rounded transition-colors"
-						>
-							审阅
-						</button>
-					)}
-					{showReject && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								if (isRejecting) {
-									setFeedback('');
-									onSetRejectingTaskId?.(null);
-								} else {
-									onSetRejectingTaskId?.(task.id);
-								}
-							}}
-							class="px-2 py-1 text-xs font-medium text-red-400 bg-red-900/20 hover:bg-red-900/40 border border-red-700/50 rounded transition-colors"
-						>
-							Reject
-						</button>
-					)}
-					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
+					{isClickable && !isReview && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
+			{/* Review: auto-expanded action section */}
+			{isReview && (
+				<div class="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+					{task.currentStep && (
+						<p class="text-xs text-gray-400 italic line-clamp-2">{task.currentStep}</p>
+					)}
+					{(showApprove || showReject || showView) && (
+						<div class="flex items-center gap-2">
+							{showApprove && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onApprove(task.id);
+									}}
+									class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+								>
+									Approve
+								</button>
+							)}
+							{showReject && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										if (isRejecting) {
+											setFeedback('');
+											onSetRejectingTaskId?.(null);
+										} else {
+											onSetRejectingTaskId?.(task.id);
+										}
+									}}
+									class="px-3 py-1.5 text-xs font-medium text-red-400 border border-red-700/50 hover:bg-red-900/20 rounded-lg transition-colors"
+								>
+									Reject
+								</button>
+							)}
+							{showView && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onView(task.id);
+									}}
+									class="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors"
+								>
+									View details →
+								</button>
+							)}
+						</div>
+					)}
+				</div>
+			)}
 			{task.status === 'needs_attention' && task.error && (
 				<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={task.error}>
 					{task.error}
