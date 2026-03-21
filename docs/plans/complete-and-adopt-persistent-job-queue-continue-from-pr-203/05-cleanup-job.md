@@ -46,26 +46,30 @@ Add a self-scheduling `job_queue.cleanup` job that runs daily to remove old comp
 
 ---
 
-### Task 5.2: Verify stale job reclamation on restart
+### Task 5.2: Verify stale job reclamation on restart (with eager reclaim)
 
-**Description:** Add tests verifying that jobs stuck in `processing` status are reclaimed after daemon restart, ensuring no jobs are permanently lost.
+**Description:** Add tests verifying that jobs stuck in `processing` status are reclaimed **immediately** on daemon restart (via the eager `reclaimStale()` added in Task 1.2), ensuring no 60-second delay for crash recovery.
+
+**Note on timing:** `JobQueueProcessor.checkStaleJobs()` has a `STALE_CHECK_INTERVAL = 60_000ms` that normally delays reclamation. However, Task 1.2 added an eager `reclaimStale()` call in `start()` — this test must verify that eager reclamation works correctly, not just the periodic check.
 
 **Agent type:** coder
 
 **Subtasks:**
 1. Create `packages/daemon/tests/unit/storage/job-queue-stale-reclamation.test.ts`
 2. Test scenarios:
-   - Enqueue a job, mark it as processing (simulate mid-execution crash)
+   - Enqueue a job, mark it as processing with a `startedAt` older than `staleThresholdMs` (simulate mid-execution crash)
    - Create a new `JobQueueProcessor`, start it
-   - Verify the stale job is reclaimed after `staleThresholdMs`
+   - Verify the stale job is reclaimed **immediately on startup** (within the first poll tick, not after 60s)
    - Verify reclaimed job is re-processed by its handler
 3. Test that non-stale processing jobs are NOT reclaimed (within threshold)
-4. Run tests
+4. Test that the eager reclaim on startup does not interfere with jobs that are genuinely still processing (started recently)
+5. Run tests
 
 **Acceptance criteria:**
-- Stale jobs (processing for longer than threshold) are reclaimed
+- Stale jobs are reclaimed **immediately on startup** (not after 60s delay)
 - Reclaimed jobs are re-processed
 - Non-stale processing jobs left alone
+- Tests verify the eager reclaim path specifically
 - Tests pass
 
 **Depends on:** Task 1.2

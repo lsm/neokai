@@ -73,7 +73,7 @@ Replace the fire-and-forget `pendingBackgroundTasks` Set in `SessionManager` wit
    - Update `cleanup()` to remove the pendingBackgroundTasks drain logic (lines 361-376) -- the job processor handles draining
 2. In `packages/daemon/src/app.ts`:
    - Pass `jobQueue` and `jobProcessor` to `SessionManager` constructor
-   - Call `sessionManager.start()` after sessionManager creation but before `jobProcessor.start()`
+   - Call `sessionManager.start()` after sessionManager creation but before `jobProcessor.start()`. Per the startup ordering in `00-overview.md`, `sessionManager.start()` is step 1, `jobProcessor.start()` is step 5. Ensure the handler registration happens before the processor starts so that any pending `session.title_generation` jobs from a previous run are processed correctly on restart.
 3. Update existing `SessionManager` unit tests to account for constructor changes
 4. Add unit test verifying `enqueue` is called instead of direct title generation
 5. Run `bun run check` and all daemon tests

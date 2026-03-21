@@ -33,8 +33,8 @@ Replace the `setInterval`-based polling loop in `GitHubPollingService` with self
    - Add a guard: if `this.isPolling` is true, skip (reuse existing mutex)
 3. Create `packages/daemon/src/lib/job-handlers/github-poll.handler.ts`:
    - Handler calls `pollingService.triggerPoll()`
-   - In a `finally` block, check for existing pending/processing `github.poll` jobs using `jobQueue.listJobs({ queue: QUEUES.GITHUB_POLL, status: ['pending', 'processing'], limit: 1000 })`
-   - Only enqueue next poll job (with `runAt: Date.now() + intervalMs`) if no future-scheduled pending job exists (i.e., no job with `runAt > now`)
+   - In a `finally` block, check for existing pending `github.poll` jobs using `jobQueue.listJobs({ queue: QUEUES.GITHUB_POLL, status: ['pending'], limit: 10 })`
+   - Only enqueue next poll job (with `runAt: Date.now() + intervalMs`) if **no pending job exists at all** — not just "no future-scheduled job". A pending job with `runAt` in the past means it's ready to run and the chain is alive; enqueuing another would create a duplicate. The check is simply: `if (pendingJobs.length === 0) { enqueue next }`
    - Return `{ polled: true, nextRunAt }` on success
 4. Create unit test `packages/daemon/tests/unit/job-handlers/github-poll-handler.test.ts`:
    - Mock `GitHubPollingService.triggerPoll()`
@@ -95,22 +95,26 @@ Replace the `setInterval`-based polling loop in `GitHubPollingService` with self
 
 **Description:** Create an online test verifying GitHub polling works end-to-end through the job queue, including self-scheduling and recovery after restart.
 
+**Note on GitHub API mocking:** The dev proxy (`NEOKAI_USE_DEV_PROXY=1`) only intercepts Anthropic API calls, not GitHub REST API calls. For this test, the focus is on verifying the **job queue mechanics** (enqueue, process, self-schedule, dedup) rather than actual GitHub API responses. The test should mock or stub the `GitHubPollingService.triggerPoll()` method to avoid real GitHub API calls, or configure the GitHub service with a test repository that doesn't require authentication.
+
 **Agent type:** coder
 
 **Subtasks:**
 1. Create `packages/daemon/tests/online/features/github-poll-job.test.ts`
 2. Use `createDaemonServer()` with GitHub config enabled
-3. Verify:
+3. Mock or stub `GitHubPollingService.triggerPoll()` to avoid real GitHub API calls — the test verifies job queue mechanics, not GitHub API integration
+4. Verify:
    - `github.poll` job is enqueued on startup
    - Job transitions through pending -> processing -> completed
    - Next poll job is automatically scheduled
    - No duplicate poll jobs exist simultaneously
-4. Run with `NEOKAI_USE_DEV_PROXY=1`
+5. Run with `NEOKAI_USE_DEV_PROXY=1`
 
 **Acceptance criteria:**
 - Online test verifies end-to-end GitHub polling via job queue
 - Self-scheduling chain is verified
 - Dedup is verified (no duplicate pending jobs)
+- Test does not make real GitHub API calls
 - Test runs with dev proxy
 
 **Depends on:** Task 3.2
