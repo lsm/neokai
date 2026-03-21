@@ -16,11 +16,10 @@
  *    - `probe_supervised_escalation`  → escalation text (supervised mode)
  *    - `probe_semi_autonomous_get_detail` → tool_use: get_task_detail
  *    - `probe_semi_autonomous_retry`  → tool_use: retry_task
- * 5. Semi-autonomous tool-use mocks use `stop_reason: "tool_use"` so the SDK
- *    dispatches the tool call and records the tool_use block in SDK messages.
- *    A "tool_result" body-matcher mock (ordered first in mocks.json) intercepts
- *    the follow-up API call and returns `end_turn` text, preventing an infinite
- *    loop. Tests then assert on the recorded tool_use blocks.
+ * 5. Semi-autonomous mocks use `stop_reason: "end_turn"` with a `tool_use`
+ *    block in the response content. The SDK records the tool_use block in the
+ *    assistant message without dispatching a follow-up API call. Tests assert
+ *    on the recorded tool_use blocks.
  *
  * ## What these tests verify
  *
