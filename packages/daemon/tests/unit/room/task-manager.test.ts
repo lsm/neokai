@@ -855,7 +855,7 @@ describe('TaskManager', () => {
 			expect(revived.error).toBeUndefined();
 		});
 
-		it('should reject cancelled → review transition (worktree is cleaned up on cancel)', async () => {
+		it('should reject cancelled → review transition (not a valid reactivation path)', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
 			await taskManager.cancelTask(task.id);

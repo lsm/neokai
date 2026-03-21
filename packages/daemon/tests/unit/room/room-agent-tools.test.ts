@@ -1023,7 +1023,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should return error for cancelled task (worktree is gone, restart required)', async () => {
+		it('should auto-reactivate cancelled task and deliver message (preserving group history)', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
@@ -1039,21 +1039,70 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to cancelled state
+			// Move to cancelled state with a group that has completedAt set
 			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.cancelTask(taskId);
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
+			);
+			// Cancelled task should be auto-reactivated and message delivered
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('cancelled');
+			expect(result.message).toContain('in_progress');
+
+			// Task should now be in_progress
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+
+			// Group history is PRESERVED — no resetGroupForRestart, reviveTaskForMessage keeps context
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
+		});
+
+		it('should roll back cancelled task when reviveTaskForMessage fails (group state preserved)', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to cancelled state with a group that has completedAt set
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
 			await taskManager.cancelTask(taskId);
 
 			const result = parseResult(
 				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
 			);
-			// Cancelled tasks cannot receive messages — workspace is cleaned up
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('cancelled');
-			expect(result.error).toContain('set_task_status');
 
-			// Task should remain cancelled (no revive attempted)
+			// Task status should be rolled back to cancelled
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('cancelled');
+
+			// Group state should be untouched — no metadata was wiped during the failed attempt
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
 		});
 
 		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {
@@ -1272,6 +1321,39 @@ describe('Room Agent Tools', () => {
 			expect(groupAfter).not.toBeNull();
 			expect(groupAfter!.completedAt).toBeNull();
 			expect(groupAfter!.submittedForReview).toBe(false);
+		});
+
+		it('should reset old completed group when restarting task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress, insert a group, and mark it completed via the repo
+			// so that completedAt is non-null before reactivation
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			expect(groupInserted).not.toBeNull();
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.completeTask(taskId, 'Done');
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			// Reactivate the completed task
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+
+			// resetGroupForRestart should have cleared completedAt and reset metadata
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
+			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
 		it('should succeed when group is already gone', async () => {
