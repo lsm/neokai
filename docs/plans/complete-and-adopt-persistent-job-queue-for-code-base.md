@@ -25,7 +25,7 @@ The database-backed persistent job queue (`JobQueueRepository` + `JobQueueProces
 - `GitHubPollingService` still uses `setInterval` for polling; in-memory etag/state only
 - `event-normalizer.ts` uses `crypto.randomUUID()` for event IDs (non-deterministic)
 - GitHub webhook handler processes events directly (no job enqueue)
-- `RoomRuntime` still uses `setInterval` heartbeat (line ~305) + `queueMicrotask` tick scheduling (lines ~2021 and ~3180) — 19 `scheduleTick()` call sites throughout the 3233-line file
+- `RoomRuntime` still uses `setInterval` heartbeat (line ~305) + `queueMicrotask` tick scheduling (lines ~2021 and ~3180) — 24 `scheduleTick()` call sites throughout the 3233-line file
 - `stopRuntime()` in `RoomRuntimeService` calls `runtime.stop()` but does NOT call `this.runtimes.delete(roomId)` — heartbeat liveness guard requires this fix
 - No `github_processed_events` or `github_poll_state` DB tables
 
@@ -84,13 +84,14 @@ Initialize and start the `JobQueueProcessor` in `packages/daemon/src/app.ts`. Th
 
 3. **Startup ordering**: Handler registration (`start()` methods for `SessionManager`, `RoomRuntimeService`, `GitHubService`) must be called **before** `jobQueueProcessor.start()`, so all handlers are registered before the processor begins dequeuing jobs. `setupRPCHandlers` runs first (constructing `RoomRuntimeService`), then the subsystem `start()` methods register their handlers, then `jobQueueProcessor.start()` begins polling. Note: `roomRuntimeService.start()` is fire-and-forget (called with `.catch()` inside `setupRPCHandlers`) and the recovery pass may not be complete when the processor starts. The tick handler in Task 4 addresses this with a re-enqueue-on-miss strategy.
 
-4. **Shutdown ordering**: The current `cleanup()` sequence is `messageHub.cleanup()` → `liveQueries.dispose()` → `rpcHandlerCleanup()` → `gitHubService.stop()` → `await sessionManager.cleanup()`. Add `await jobQueueProcessor.stop()` **before** both `messageHub.cleanup()` and `rpcHandlerCleanup()`. In-flight job handlers that call `notifyChange()` (which routes through `ReactiveDatabase` → `messageHub`) must complete before `messageHub` is torn down. The corrected cleanup sequence is:
+4. **Shutdown ordering**: The current `cleanup()` sequence is `messageHub.cleanup()` → `liveQueries.dispose()` → `rpcHandlerCleanup()` → `gitHubService.stop()` → `await taskAgentManager.cleanupAll()` → `await sessionManager.cleanup()`. Add `await jobQueueProcessor.stop()` **before** both `messageHub.cleanup()` and `rpcHandlerCleanup()`. In-flight job handlers that call `notifyChange()` (which routes through `ReactiveDatabase` → `messageHub`) must complete before `messageHub` is torn down. The corrected cleanup sequence is:
    ```typescript
    await jobQueueProcessor.stop(); // drain all in-flight job handlers first
    messageHub.cleanup();           // safe: no in-flight jobs remain
    liveQueries.dispose();
    rpcHandlerCleanup();            // stops RoomRuntimeService (clears runtimes map)
    if (gitHubService) gitHubService.stop();
+   await taskAgentManager.cleanupAll();
    await sessionManager.cleanup();
    ```
 
@@ -125,6 +126,7 @@ b. `JobQueueProcessor` has no `getRepo()` accessor. Rather than adding one, inje
    liveQueries.dispose();
    rpcHandlerCleanup();            // stops RoomRuntimeService (via rpc-handlers cleanup)
    if (gitHubService) gitHubService.stop();
+   await taskAgentManager.cleanupAll();
    await sessionManager.cleanup();
    ```
 7. Define queue name constants in `packages/daemon/src/lib/job-queue-constants.ts` with the idempotency strategy documented in comments:
@@ -381,14 +383,14 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
 
 **`RoomRuntime` has two tick trigger paths** — both must be migrated:
 1. `setInterval(() => this.tick(), this.tickInterval)` at line ~305 — periodic heartbeat. Default interval is 30 seconds (`this.tickInterval = config.tickInterval ?? 30_000` at line ~263).
-2. `scheduleTick()` at line ~3179 (method definition): `queueMicrotask(() => this.tick())` — event-driven immediate trigger. There are **19 call sites** of `scheduleTick()` throughout the 3233-line file. All 19 call sites must be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`.
+2. `scheduleTick()` at line ~3179 (method definition): `queueMicrotask(() => this.tick())` — event-driven immediate trigger. There are **24 call sites** of `scheduleTick()` throughout the 3233-line file. All 24 call sites must be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`.
 3. Tick mutex drain at line ~2021: inside `tick()`'s `finally` block — `if (this.tickQueued) { this.tickQueued = false; queueMicrotask(() => this.tick()); }`. This `queueMicrotask` must also be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId)`.
 4. Recovery paths via `runtime-recovery.ts`: that file calls `runtime.onWorkerTerminalState()` and `runtime.onLeaderTerminalState()`, which internally call `this.scheduleTick()`. No changes are needed to `runtime-recovery.ts` itself — replacing `scheduleTick()` in `room-runtime.ts` automatically covers the recovery paths.
 
 **`jobQueueProcessor` and `jobQueueRepo` injection**: `RoomRuntimeService` receives them via the `deps` object passed to `setupRPCHandlers` (wired in Task 1). No refactoring of `RoomRuntimeService` out of `setupRPCHandlers` is required. `RoomRuntime` instances (created by `RoomRuntimeService`) need `jobQueueRepo` to call `enqueueRoomTick()` from within instance methods; add `jobQueueRepo: JobQueueRepository` to the `RoomRuntimeConfig` interface (defined at `room-runtime.ts` line ~115).
 
 **Migration approach**:
-- Remove `setInterval`, `tickTimer` field, `scheduleTick()` method, and all `queueMicrotask` calls from `RoomRuntime`. This includes all 19 `scheduleTick()` call sites, the `scheduleTick()` method definition at line ~3179, and the tick mutex drain `queueMicrotask` at line ~2021. All must be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`. **IMPORTANT: the `tickLocked` and `tickQueued` mutex fields must be RETAINED.** With `maxConcurrent: 3`, two `room.tick` jobs for the same `roomId` can run concurrently (dedup is check-then-act, documented as an accepted race); the mutex prevents concurrent `executeTick()` calls within a single runtime. Only the scheduling mechanism (`queueMicrotask`, `setInterval`) is replaced — the in-process tick mutex stays.
+- Remove `setInterval`, `tickTimer` field, `scheduleTick()` method, and all `queueMicrotask` calls from `RoomRuntime`. This includes all 24 `scheduleTick()` call sites, the `scheduleTick()` method definition at line ~3179, and the tick mutex drain `queueMicrotask` at line ~2021. All must be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`. **IMPORTANT: the `tickLocked` and `tickQueued` mutex fields must be RETAINED.** With `maxConcurrent: 3`, two `room.tick` jobs for the same `roomId` can run concurrently (dedup is check-then-act, documented as an accepted race); the mutex prevents concurrent `executeTick()` calls within a single runtime. Only the scheduling mechanism (`queueMicrotask`, `setInterval`) is replaced — the in-process tick mutex stays.
 - No `scheduleHeartbeat()` method exists in `RoomRuntimeService` — no removal needed.
 - **Fix `stopRuntime()` and add `stoppedRooms` tracking**: The current `stopRuntime()` in `room-runtime-service.ts` calls `runtime.stop()` but does NOT call `this.runtimes.delete(roomId)`. This means `this.runtimes.has(roomId)` returns `true` even after an individual room stop, making the heartbeat liveness check in the `finally` block ineffective for individual room stops (only effective on full shutdown via `runtimes.clear()`). Required changes to `RoomRuntimeService`:
   1. Add `private stoppedRooms: Set<string> = new Set()` field.
@@ -531,7 +533,7 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
 The re-enqueue-on-miss tick handler avoids the risk of processing a tick after `runtimes` is cleared, because `jobQueueProcessor.stop()` drains all in-flight jobs before `rpcHandlerCleanup()` runs.
 
 **Acceptance criteria**:
-- `setInterval`, `tickTimer`, `scheduleTick()` method definition (at ~line 3179), and all `queueMicrotask` calls (all 19 `scheduleTick()` call sites throughout the file, plus the tick mutex drain at line ~2021) removed from `RoomRuntime`. `tickLocked` and `tickQueued` mutex fields are **retained** — they prevent concurrent `executeTick()` under `maxConcurrent: 3` when the check-then-enqueue race allows two `room.tick` jobs for the same room to run simultaneously.
+- `setInterval`, `tickTimer`, `scheduleTick()` method definition (at ~line 3179), and all `queueMicrotask` calls (all 24 `scheduleTick()` call sites throughout the file, plus the tick mutex drain at line ~2021) removed from `RoomRuntime`. `tickLocked` and `tickQueued` mutex fields are **retained** — they prevent concurrent `executeTick()` under `maxConcurrent: 3` when the check-then-enqueue race allows two `room.tick` jobs for the same room to run simultaneously.
 - All `scheduleTick()` call sites in `room-runtime.ts` replaced with `enqueueRoomTick()` (recovery paths in `runtime-recovery.ts` are automatically covered since they call `onWorkerTerminalState`/`onLeaderTerminalState` which call `scheduleTick()`).
 - `jobQueueRepo` added to `RoomRuntimeConfig` interface (line ~115).
 - All `room.tick` jobs enqueued with `maxRetries: 0` (both `enqueueRoomTick` helper and direct enqueues): prevents job multiplication from retry + finally interaction.
@@ -664,7 +666,7 @@ Tasks 2, 3, and 4 are independent and can run in parallel after Task 1 is merged
 | `packages/daemon/src/lib/github/polling-service.ts` | Task 3 |
 | `packages/daemon/src/lib/github/github-service.ts` | Task 3 |
 | `packages/daemon/src/lib/github/webhook-handler.ts` | Task 3 |
-| `packages/daemon/src/lib/room/runtime/room-runtime.ts` | Task 4 — 3233 lines; setInterval at ~305; scheduleTick() definition at ~3179 (19 call sites); queueMicrotask tick mutex drain at ~2021; tickInterval defaults to 30_000ms at ~263 |
+| `packages/daemon/src/lib/room/runtime/room-runtime.ts` | Task 4 — 3233 lines; setInterval at ~305; scheduleTick() definition at ~3179 (24 call sites); queueMicrotask tick mutex drain at ~2021; tickInterval defaults to 30_000ms at ~263 |
 | `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` | Task 4 |
 | `packages/daemon/src/lib/room/runtime/runtime-recovery.ts` | Task 4 — no direct changes; covered by `scheduleTick()` replacement in `room-runtime.ts` |
 | `docs/adr/0002-job-queue-migration.md` | Reference ADR |
