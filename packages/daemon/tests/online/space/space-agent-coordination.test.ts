@@ -2,8 +2,8 @@
  * Space Agent Coordination — Online Tests with Dev Proxy
  *
  * Tests verify that the Space Agent session correctly processes [TASK_EVENT]
- * notifications and that the mocked LLM responses match the expected behavior
- * based on the space's autonomy level.
+ * notifications and that the mocked LLM responses include the expected tool
+ * calls or escalation text based on the space's autonomy level.
  *
  * ## How it works
  *
@@ -14,23 +14,33 @@
  * 4. Mock responses are selected by body content matching on a unique "probe phrase"
  *    embedded in the [TASK_EVENT] `reason` field:
  *    - `probe_supervised_escalation`      → escalation text (supervised mode)
- *    - `probe_semi_autonomous_get_detail` → text describing intent to get_task_detail
- *    - `probe_semi_autonomous_retry`      → text describing intent to retry autonomously
- * 5. All probe mocks use `stop_reason: "end_turn"` with distinctive text responses.
- *    Tests assert on text content rather than tool_use blocks, because SDK behavior
- *    for tool_use blocks varies with stop_reason and the dev proxy cannot reliably
- *    distinguish an initial probe API call from a follow-up tool-result API call
- *    using body-content substring matching.
+ *    - `probe_semi_autonomous_get_detail` → tool_use: get_task_detail
+ *    - `probe_semi_autonomous_retry`      → tool_use: retry_task
+ * 5. Semi-autonomous probe mocks use `stop_reason: "tool_use"` so the SDK
+ *    dispatches the tool call and records the tool_use block in SDK messages.
+ *    Follow-up API calls (which include a `tool_result` message in history) are
+ *    intercepted by `bodyFragment`-based mocks listed BEFORE the probe mocks.
+ *    `bodyFragment` performs structural JSON subset matching on the parsed body,
+ *    so it only fires when the messages array actually contains a `tool_result`
+ *    block with the specific `tool_use_id` — not on the initial probe call.
+ *    (Note: `.JsonContains` substring matching was not usable here because the
+ *    dev proxy serializes the entire request body, causing accidental matches on
+ *    the initial probe call as well.)
  *
  * ## What these tests verify
  *
  * These tests verify **mock routing correctness** — that the probe phrase
  * embedded in the [TASK_EVENT] reason field causes the dev proxy to return the
  * expected mock for that scenario. They also verify that the SDK correctly
- * records the mocked text responses in the session's SDK messages.
+ * records the mocked tool_use blocks in the session's SDK messages.
  *
  * What they do NOT verify: that a real LLM would make the same tool choice.
  * That requires live API testing (NEOKAI_USE_DEV_PROXY unset).
+ *
+ * Note: The mocked tool calls use `task_id: "PLACEHOLDER_TASK_ID"` which does
+ * not exist in the database, so the tool handler returns `{ success: false }`.
+ * The test only verifies that the tool was dispatched (tool_use block recorded
+ * in SDK messages), not that the tool executed successfully.
  *
  * ## Running
  *
@@ -154,6 +164,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 		// NEOKAI_ENABLE_SPACES_AGENT=1 opts in to spaces:global provisioning in test mode.
 		// Without it, the daemon skips provisioning when NODE_ENV=test to avoid side-effects
 		// on other test suites that don't need the global spaces agent.
+		// Each test gets a fresh daemon with its own database — no cross-test session state.
 		daemon = await createDaemonServer({ env: { NEOKAI_ENABLE_SPACES_AGENT: '1' } });
 		// Track the global spaces session for cleanup
 		daemon.trackSession(GLOBAL_SPACES_SESSION_ID);
@@ -245,7 +256,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 	);
 
 	test(
-		'task_needs_attention: agent responds with intent to assess via get_task_detail in semi_autonomous mode',
+		'task_needs_attention: agent calls get_task_detail to assess the situation',
 		async () => {
 			// 1. Create a semi_autonomous space and task
 			const space = await createTestSpace(
@@ -257,11 +268,13 @@ describe('Space Agent Coordination — Online Tests', () => {
 				daemon,
 				space.id,
 				'Detail assessment task',
-				'A task to verify get_task_detail intent'
+				'A task to verify get_task_detail tool call'
 			);
 
 			// 2. Embed the probe phrase "probe_semi_autonomous_get_detail" in the reason.
-			//    The dev proxy returns a mocked text response describing get_task_detail intent.
+			//    The dev proxy returns a mocked response with a get_task_detail tool_use block.
+			//    The follow-up API call (after SDK dispatches the tool) is intercepted by the
+			//    bodyFragment mock that matches on tool_use_id "toolu_get_detail_probe_001".
 			const eventMessage = formatEventMessage(
 				{
 					kind: 'task_needs_attention',
@@ -277,9 +290,9 @@ describe('Space Agent Coordination — Online Tests', () => {
 			await sendMessage(daemon, GLOBAL_SPACES_SESSION_ID, eventMessage);
 			await waitForIdle(daemon, GLOBAL_SPACES_SESSION_ID, IDLE_TIMEOUT);
 
-			// 4. Verify the agent's response describes the get_task_detail assessment intent.
-			//    The mock returns distinctive text when "probe_semi_autonomous_get_detail" is
-			//    matched, confirming correct mock routing for this probe phrase.
+			// 4. Verify the agent's response includes a get_task_detail tool_use block.
+			//    The SDK records the tool_use block in the assistant message content when
+			//    stop_reason is "tool_use" — confirming the agent dispatched the tool.
 			const { sdkMessages } = await waitForSdkMessages(daemon, GLOBAL_SPACES_SESSION_ID, {
 				minCount: 2,
 				timeout: 5000,
@@ -288,18 +301,17 @@ describe('Space Agent Coordination — Online Tests', () => {
 			const assistantMsgs = getAssistantMessages(sdkMessages);
 			expect(assistantMsgs.length).toBeGreaterThan(0);
 
-			const responseText = extractAssistantText(assistantMsgs);
+			const toolUses = extractToolUses(assistantMsgs);
+			const getDetailUses = toolUses.filter((t) => t.name === 'get_task_detail');
 
-			// The mocked response text contains "get_task_detail" and "semi-autonomous" —
-			// verify the probe phrase routed to the correct mock
-			expect(responseText.toLowerCase()).toMatch(/get.task.detail|get.*detail/i);
-			expect(responseText.toLowerCase()).toMatch(/semi.autonomous/i);
+			// The mocked response routes to get_task_detail; SDK records the tool_use block
+			expect(getDetailUses.length).toBeGreaterThan(0);
 		},
 		TEST_TIMEOUT
 	);
 
 	test(
-		'semi_autonomous mode: agent responds with intent to retry task autonomously',
+		'semi_autonomous mode: agent calls retry_task autonomously without human approval',
 		async () => {
 			// 1. Create a semi_autonomous space and task
 			const space = await createTestSpace(
@@ -311,11 +323,13 @@ describe('Space Agent Coordination — Online Tests', () => {
 				daemon,
 				space.id,
 				'Autonomous retry task',
-				'A task to verify retry intent in semi-autonomous mode'
+				'A task to verify retry_task autonomous behavior'
 			);
 
 			// 2. Embed the probe phrase "probe_semi_autonomous_retry" in the reason.
-			//    The dev proxy returns a mocked text response describing retry intent.
+			//    The dev proxy returns a mocked response with a retry_task tool_use block.
+			//    The follow-up API call (after SDK dispatches the tool) is intercepted by the
+			//    bodyFragment mock that matches on tool_use_id "toolu_retry_probe_001".
 			const eventMessage = formatEventMessage(
 				{
 					kind: 'task_needs_attention',
@@ -331,9 +345,10 @@ describe('Space Agent Coordination — Online Tests', () => {
 			await sendMessage(daemon, GLOBAL_SPACES_SESSION_ID, eventMessage);
 			await waitForIdle(daemon, GLOBAL_SPACES_SESSION_ID, IDLE_TIMEOUT);
 
-			// 4. Verify the mocked response describes autonomous retry intent.
-			//    The mock returns distinctive text when "probe_semi_autonomous_retry" is
-			//    matched, confirming correct mock routing for this probe phrase.
+			// 4. Verify the mocked LLM response includes a retry_task tool_use block.
+			//    The SDK records the tool_use block in the assistant message content when
+			//    stop_reason is "tool_use" — confirming the agent dispatched the tool
+			//    autonomously without waiting for human approval.
 			const { sdkMessages } = await waitForSdkMessages(daemon, GLOBAL_SPACES_SESSION_ID, {
 				minCount: 2,
 				timeout: 5000,
@@ -342,13 +357,16 @@ describe('Space Agent Coordination — Online Tests', () => {
 			const assistantMsgs = getAssistantMessages(sdkMessages);
 			expect(assistantMsgs.length).toBeGreaterThan(0);
 
-			// The mocked response text contains "semi-autonomous" and "retry" —
-			// verify the probe phrase routed to the correct mock and not the escalation mock
+			const toolUses = extractToolUses(assistantMsgs);
+			const retryUses = toolUses.filter((t) => t.name === 'retry_task');
+
+			// The mocked response routes to retry_task; SDK records the tool_use block —
+			// representing the semi_autonomous agent attempting to retry autonomously
+			expect(retryUses.length).toBeGreaterThan(0);
+
+			// Also verify the agent's text explains its autonomous reasoning
 			const responseText = extractAssistantText(assistantMsgs);
 			expect(responseText.toLowerCase()).toMatch(/semi.autonomous|retry|autonomous/i);
-
-			// Semi-autonomous retry must not contain escalation/approval language
-			expect(responseText.toLowerCase()).not.toMatch(/\bneed your approval\b/i);
 		},
 		TEST_TIMEOUT
 	);

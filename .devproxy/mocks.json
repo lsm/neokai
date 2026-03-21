@@ -1,6 +1,112 @@
 {
 	"mocks": [
 		{
+			"comment": "Space agent - follow-up after get_task_detail tool execution. Uses bodyFragment (structural JSON subset matching) to match when messages contain a tool_result with the specific tool_use_id returned by the get_task_detail probe mock. bodyFragment is more precise than .JsonContains: it matches structurally, so it only fires when the messages array actually contains a tool_result block with this ID — not on the initial probe call. ORDERING: must appear before the probe_semi_autonomous_get_detail mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": [
+								{
+									"type": "tool_result",
+									"tool_use_id": "toolu_get_detail_probe_001"
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent get_task_detail follow-up)"
+					}
+				],
+				"body": {
+					"id": "msg_space_followup_detail_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Task details retrieved. Assessing the situation."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 15,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - follow-up after retry_task tool execution. Uses bodyFragment to match when messages contain a tool_result with the specific tool_use_id returned by the retry_task probe mock. ORDERING: must appear before the probe_semi_autonomous_retry mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": [
+								{
+									"type": "tool_result",
+									"tool_use_id": "toolu_retry_probe_001"
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent retry_task follow-up)"
+					}
+				],
+				"body": {
+					"id": "msg_space_followup_retry_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Task retry initiated. Monitoring for progress."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 15,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
 			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason)",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
@@ -47,7 +153,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: responds with intent to call get_task_detail (probe phrase; stop_reason end_turn with text-only response — tests assert on the distinctive response text, not tool dispatch, since SDK tool_use recording behavior varies with stop_reason)",
+			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches structurally on the tool_result with tool_use_id 'toolu_get_detail_probe_001')",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -76,15 +182,23 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED SEMI-AUTONOMOUS] A task needs attention. I am in semi-autonomous mode and will use get_task_detail to assess the situation before deciding how to proceed autonomously."
+							"text": "A task needs attention. Let me get the full details before deciding how to proceed."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_get_detail_probe_001",
+							"name": "get_task_detail",
+							"input": {
+								"task_id": "PLACEHOLDER_TASK_ID"
+							}
 						}
 					],
 					"model": "claude-haiku-20250307",
-					"stop_reason": "end_turn",
+					"stop_reason": "tool_use",
 					"stop_sequence": null,
 					"usage": {
 						"input_tokens": 200,
-						"output_tokens": 40,
+						"output_tokens": 80,
 						"cache_creation_input_tokens": 0,
 						"cache_read_input_tokens": 0,
 						"service_tier": "standard"
@@ -93,7 +207,7 @@
 			}
 		},
 		{
-			"comment": "Space agent - semi_autonomous: responds with intent to call retry_task (probe phrase; stop_reason end_turn with text-only response — tests assert on the distinctive response text, not tool dispatch)",
+			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; stop_reason tool_use so SDK dispatches the tool and records the tool_use block in SDK messages; follow-up intercepted by the bodyFragment mock above which matches structurally on the tool_result with tool_use_id 'toolu_retry_probe_001')",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST",
@@ -122,15 +236,23 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED SEMI-AUTONOMOUS] I am in semi-autonomous mode. I will retry this failed task autonomously without waiting for human approval."
+							"text": "I am in semi-autonomous mode. I will retry this failed task autonomously without waiting for human approval."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_retry_probe_001",
+							"name": "retry_task",
+							"input": {
+								"task_id": "PLACEHOLDER_TASK_ID"
+							}
 						}
 					],
 					"model": "claude-haiku-20250307",
-					"stop_reason": "end_turn",
+					"stop_reason": "tool_use",
 					"stop_sequence": null,
 					"usage": {
 						"input_tokens": 200,
-						"output_tokens": 30,
+						"output_tokens": 80,
 						"cache_creation_input_tokens": 0,
 						"cache_read_input_tokens": 0,
 						"service_tier": "standard"
@@ -315,7 +437,7 @@
 			}
 		},
 		{
-			"comment": "CATCH-ALL for beta messages — must be last. All probe-specific mocks above must precede this entry.",
+			"comment": "CATCH-ALL for beta messages — must be last. All probe-specific and follow-up mocks must precede this entry.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST"
