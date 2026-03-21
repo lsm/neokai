@@ -9,20 +9,27 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, screen } from '@testing-library/preact';
+import { render, cleanup, screen, fireEvent, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockNavigateToHome, mockNavigateToRoomTask, mockNavigateToRoom, mockToastSuccess } =
-	vi.hoisted(() => ({
-		mockNavigateToHome: vi.fn(),
-		mockNavigateToRoomTask: vi.fn(),
-		mockNavigateToRoom: vi.fn(),
-		mockToastSuccess: vi.fn(),
-	}));
+const {
+	mockNavigateToHome,
+	mockNavigateToRoomTask,
+	mockNavigateToRoom,
+	mockToastSuccess,
+	mockRoomStoreSelect,
+} = vi.hoisted(() => ({
+	mockNavigateToHome: vi.fn(),
+	mockNavigateToRoomTask: vi.fn(),
+	mockNavigateToRoom: vi.fn(),
+	mockToastSuccess: vi.fn(),
+	// Hoisted so it stays the same reference across all mock accesses
+	mockRoomStoreSelect: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('../../lib/router', () => ({
 	navigateToHome: mockNavigateToHome,
@@ -84,7 +91,7 @@ vi.mock('../../lib/room-store', () => ({
 			get autoCompletedNotifications() {
 				return mockAutoCompletedNotificationsSignal;
 			},
-			select: vi.fn().mockResolvedValue(undefined),
+			select: mockRoomStoreSelect,
 			createGoal: vi.fn(),
 			updateGoal: vi.fn(),
 			deleteGoal: vi.fn(),
@@ -163,6 +170,8 @@ describe('Room', () => {
 	beforeEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		// Re-apply the resolved value since clearAllMocks resets mockImplementation
+		mockRoomStoreSelect.mockResolvedValue(undefined);
 		initRoomStoreSignals();
 	});
 
@@ -233,8 +242,64 @@ describe('Room', () => {
 		});
 	});
 
+	describe('roomStore lifecycle', () => {
+		it('calls roomStore.select with roomId on mount', async () => {
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+
+			expect(mockRoomStoreSelect).toHaveBeenCalledWith(roomId);
+		});
+
+		it('calls roomStore.select(null) on unmount', async () => {
+			const { unmount } = render(<Room roomId={roomId} />);
+			await act(async () => {
+				unmount();
+			});
+
+			expect(mockRoomStoreSelect).toHaveBeenCalledWith(null);
+		});
+	});
+
+	describe('Tab navigation', () => {
+		it('renders Context tab content when Context tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			// Default is overview (dashboard)
+			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+
+			fireEvent.click(screen.getByText('Context'));
+			expect(screen.getByTestId('room-context')).toBeTruthy();
+			expect(screen.queryByTestId('room-dashboard')).toBeNull();
+		});
+
+		it('renders Agents tab content when Agents tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Agents'));
+			expect(screen.getByTestId('room-agents')).toBeTruthy();
+		});
+
+		it('renders Missions tab content when Missions tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Missions'));
+			expect(screen.getByTestId('goals-editor')).toBeTruthy();
+		});
+
+		it('renders Settings tab content when Settings tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Settings'));
+			expect(screen.getByTestId('room-settings')).toBeTruthy();
+		});
+	});
+
 	describe('Error and loading states', () => {
 		it('renders loading skeleton during initial load', () => {
+			// initialLoad state starts as true and only flips after roomStore.select() resolves
+			// (async microtask). render() is synchronous so initialLoad is still true here,
+			// making the skeleton assertion safe without needing act().
 			mockLoadingSignal.value = true;
 			mockRoomSignal.value = null;
 			render(<Room roomId={roomId} />);
