@@ -38,7 +38,8 @@ describe('Message Remove Output', () => {
 	}, 30_000);
 
 	afterEach(async () => {
-		// Guard: daemon may be undefined if beforeEach timed out or failed
+		// Guard: daemon may be undefined if beforeEach timed out.
+		// Uses wrapped-if (not early return) because env cleanup below must always run.
 		if (daemon) {
 			await daemon.waitForExit();
 		}

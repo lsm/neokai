@@ -323,7 +323,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 
 				const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 					minCount: 1,
-					timeout: PER_ATTEMPT_TIMEOUT,
+					timeout: 10_000, // Messages should be ready shortly after idle
 				});
 				const assistantMessages = sdkMessages.filter(
 					(m) => (m as { type?: string }).type === 'assistant'
@@ -337,6 +337,8 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 				return; // Success, exit retry loop
 			}
 		},
+		// Budget: attempt1 timeout (60s) + overhead (~5s) + attempt2 idle (60s)
+		// + sdkMessages (10s) = ~135s. 150s TEST_TIMEOUT provides margin.
 		TEST_TIMEOUT
 	);
 
