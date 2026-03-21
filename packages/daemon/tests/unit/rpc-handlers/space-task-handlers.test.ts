@@ -288,6 +288,168 @@ describe('space-task-handlers', () => {
 		});
 	});
 
+	// ─── spaceTask.archive (via spaceTask.update status: 'archived') ─────────────
+
+	describe('spaceTask.archive via spaceTask.update', () => {
+		it('archives a completed task via status transition and emits space.task.updated', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			setup(mockSpace, completedTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...completedTask,
+				status: 'archived' as const,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'archived',
+			});
+
+			expect((result as SpaceTask).status).toBe('archived');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
+				result: undefined,
+				error: undefined,
+			});
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				task: expect.objectContaining({ status: 'archived' }),
+			});
+		});
+
+		it('archives a cancelled task via status transition', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			setup(mockSpace, cancelledTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...cancelledTask,
+				status: 'archived' as const,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'archived',
+			});
+
+			expect((result as SpaceTask).status).toBe('archived');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
+				result: undefined,
+				error: undefined,
+			});
+		});
+
+		it('propagates invalid-transition error when archiving from in_progress', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			setup(mockSpace, inProgressTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
+				new Error("Invalid status transition from 'in_progress' to 'archived'. Allowed: none")
+			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'archived',
+				})
+			).rejects.toThrow('Invalid status transition');
+		});
+	});
+
+	// ─── reactivation via spaceTask.update ─────────────────────────────────────
+
+	describe('spaceTask.reactivate via spaceTask.update', () => {
+		it('reactivates a completed task to in_progress and emits space.task.updated', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			setup(mockSpace, completedTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...completedTask,
+				status: 'in_progress' as const,
+				result: undefined,
+				progress: undefined,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+			});
+
+			expect((result as SpaceTask).status).toBe('in_progress');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+				result: undefined,
+				error: undefined,
+			});
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				task: expect.objectContaining({ status: 'in_progress' }),
+			});
+		});
+
+		it('reactivates a cancelled task to in_progress', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			setup(mockSpace, cancelledTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...cancelledTask,
+				status: 'in_progress' as const,
+				error: undefined,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+			});
+
+			expect((result as SpaceTask).status).toBe('in_progress');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+				result: undefined,
+				error: undefined,
+			});
+		});
+
+		it('reactivates a cancelled task to pending', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			setup(mockSpace, cancelledTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...cancelledTask,
+				status: 'pending' as const,
+				error: undefined,
+				progress: undefined,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'pending',
+			});
+
+			expect((result as SpaceTask).status).toBe('pending');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'pending', {
+				result: undefined,
+				error: undefined,
+			});
+		});
+
+		it('propagates invalid-transition error when reactivating an archived task', async () => {
+			const archivedTask = { ...mockTask, status: 'archived' as const };
+			setup(mockSpace, archivedTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
+				new Error("Invalid status transition from 'archived' to 'in_progress'. Allowed: none")
+			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'in_progress',
+				})
+			).rejects.toThrow('Invalid status transition');
+		});
+	});
+
 	// ─── spaceTask.update ──────────────────────────────────────────────────────
 
 	describe('spaceTask.update', () => {
