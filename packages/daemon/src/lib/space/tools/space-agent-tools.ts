@@ -27,6 +27,8 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import { jsonResult } from './tool-result';
+import type { ToolResult } from './tool-result';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -43,18 +45,6 @@ export interface SpaceAgentToolsConfig {
 	taskRepo: SpaceTaskRepository;
 	/** Workflow run repository for listing and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-interface ToolResult {
-	content: Array<{ type: 'text'; text: string }>;
-}
-
-function jsonResult(data: unknown): ToolResult {
-	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
 /**
