@@ -2,7 +2,7 @@
  * Space Creation E2E Tests
  *
  * Verifies:
- * - Navigating to the Spaces section
+ * - Navigating to the Spaces section (Home header + Create Space button visible)
  * - "Create Space" dialog opens
  * - Workspace path field is required
  * - Name auto-suggests from workspace path
@@ -61,20 +61,9 @@ test.describe('Space Creation UX', () => {
 		await spacesButton.click();
 
 		// ContextPanel should show the Spaces home view with "Home" header and "Create Space" button
-		await expect(page.locator('text=Home')).toBeVisible({ timeout: 5000 });
-		await expect(
-			page.getByRole('button', { name: 'Create Space', exact: true }).first()
-		).toBeVisible({ timeout: 5000 });
-	});
-
-	test('shows "Create Space" button in Spaces section', async ({ page }) => {
-		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
-		await spacesButton.click();
-
-		// Header CTA button
-		await expect(
-			page.getByRole('button', { name: 'Create Space', exact: true }).first()
-		).toBeVisible({
+		// The header "Home" button is inside the context panel (not the NavRail icon)
+		await expect(page.locator('.border-b >> text=Home')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -83,7 +72,7 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 
-		const createButton = page.getByRole('button', { name: 'Create Space', exact: true }).first();
+		const createButton = page.getByRole('button', { name: 'Create Space', exact: true });
 		await expect(createButton).toBeVisible({ timeout: 5000 });
 		await createButton.click();
 
@@ -95,7 +84,7 @@ test.describe('Space Creation UX', () => {
 	test('workspace path is required — shows error on empty submit', async ({ page }) => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).first().click();
+		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
 		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
 		// Submit without filling workspace path
@@ -109,7 +98,7 @@ test.describe('Space Creation UX', () => {
 	test('auto-suggests name from workspace path', async ({ page }) => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).first().click();
+		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
 		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
 		// Type a workspace path
@@ -126,7 +115,7 @@ test.describe('Space Creation UX', () => {
 
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).first().click();
+		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
 		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
 		// Fill workspace path with the server's workspace root (guaranteed to exist)
@@ -161,7 +150,7 @@ test.describe('Space Creation UX', () => {
 	test('dialog can be closed with Cancel button', async ({ page }) => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).first().click();
+		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
 		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
 		// Click Cancel
