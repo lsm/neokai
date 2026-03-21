@@ -736,7 +736,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	};
 
 	// PR link element passed as meta to ActionBar when available
-	const reviewPrMeta = task.prUrl ? (
+	const reviewPrMeta = task?.prUrl ? (
 		<a
 			href={task.prUrl}
 			target="_blank"

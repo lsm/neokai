@@ -36,14 +36,18 @@ export function HeaderReviewBar({
 	const { request } = useMessageHub();
 	const [approving, setApproving] = useState(false);
 	const [rejecting, setRejecting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 	const rejectModal = useModal();
 
 	const approveTask = async () => {
 		if (approving) return;
 		setApproving(true);
+		setError(null);
 		try {
 			await request('task.approve', { roomId, taskId });
 			onApproved();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to approve task');
 		} finally {
 			setApproving(false);
 		}
@@ -52,10 +56,13 @@ export function HeaderReviewBar({
 	const rejectTask = async (feedback: string) => {
 		if (rejecting) return;
 		setRejecting(true);
+		setError(null);
 		try {
 			await request('task.reject', { roomId, taskId, feedback });
 			rejectModal.close();
 			onRejected();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to reject task');
 		} finally {
 			setRejecting(false);
 		}
@@ -106,6 +113,11 @@ export function HeaderReviewBar({
 				}}
 				meta={prLinkMeta}
 			/>
+			{error && (
+				<div class="px-4 py-1.5 bg-red-900/20 border-b border-red-800/30 flex-shrink-0">
+					<span class="text-xs text-red-400">{error}</span>
+				</div>
+			)}
 			<RejectModal
 				isOpen={rejectModal.isOpen}
 				onClose={rejectModal.close}
