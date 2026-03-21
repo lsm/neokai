@@ -210,6 +210,16 @@ describe('space-handlers', () => {
 				call('space.create', { workspacePath: '/tmp/test', name: 'Dup' })
 			).rejects.toThrow('A space already exists');
 		});
+
+		it('throws when autonomyLevel is invalid', async () => {
+			await expect(
+				call('space.create', {
+					workspacePath: '/tmp/x',
+					name: 'X',
+					autonomyLevel: 'fully_autonomous',
+				})
+			).rejects.toThrow('Invalid autonomyLevel: fully_autonomous');
+		});
 	});
 
 	// ─── space.list ────────────────────────────────────────────────────────────
@@ -286,6 +296,12 @@ describe('space-handlers', () => {
 			await expect(call('space.update', { id: 'bad-id', name: 'X' })).rejects.toThrow(
 				'Space not found'
 			);
+		});
+
+		it('throws when autonomyLevel is invalid', async () => {
+			await expect(
+				call('space.update', { id: 'space-1', autonomyLevel: 'fully_autonomous' })
+			).rejects.toThrow('Invalid autonomyLevel: fully_autonomous');
 		});
 	});
 

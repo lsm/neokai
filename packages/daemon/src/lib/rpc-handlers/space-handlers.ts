@@ -20,8 +20,6 @@ import type {
 	SpaceTask,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
-
-const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = ['supervised', 'semi_autonomous'];
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -33,6 +31,7 @@ import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
 const log = new Logger('space-handlers');
+const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = ['supervised', 'semi_autonomous'];
 
 export interface SpaceOverviewResult {
 	space: Space;
