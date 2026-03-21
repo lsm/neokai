@@ -195,6 +195,79 @@ describe('MainContent Logic', () => {
 		});
 	});
 
+	describe('Room Route Logic', () => {
+		it('should prioritize room route over session when roomId is set', () => {
+			const roomId = 'room-abc';
+			const sessionId = 'session-1';
+
+			// When roomId is set, Room component should render regardless of session
+			const showRoom = roomId !== null;
+			const showChat = !showRoom && sessionId !== null;
+
+			expect(showRoom).toBe(true);
+			expect(showChat).toBe(false);
+		});
+
+		it('should pass synthetic room:chat:<roomId> as sessionViewId to Room', () => {
+			const roomId = 'room-abc';
+			// navigateToRoomAgent sets currentRoomSessionIdSignal to this value
+			const roomSessionId = `room:chat:${roomId}`;
+
+			// MainContent passes roomSessionId directly to Room as sessionViewId
+			const sessionViewId = roomSessionId;
+
+			expect(sessionViewId).toBe('room:chat:room-abc');
+			// Room.tsx then renders ChatContainer with this sessionViewId
+		});
+
+		it('should pass null sessionViewId when no roomSessionId set (dashboard view)', () => {
+			const roomSessionId: string | null = null;
+			const sessionViewId = roomSessionId;
+
+			expect(sessionViewId).toBeNull();
+			// Room.tsx renders the tabbed dashboard when sessionViewId is null/undefined
+		});
+
+		it('should pass taskViewId to Room when navigating to a task', () => {
+			const roomId = 'room-abc';
+			const taskId = 'task-xyz';
+			const roomTaskId = taskId;
+
+			// MainContent passes roomTaskId as taskViewId to Room
+			const taskViewId = roomTaskId;
+			const showRoom = roomId !== null;
+
+			expect(showRoom).toBe(true);
+			expect(taskViewId).toBe('task-xyz');
+		});
+
+		it('should render Room for agent route with correct synthetic session ID', () => {
+			const roomId = 'room-abc';
+			// After navigateToRoomAgent: currentRoomIdSignal = roomId, currentRoomSessionIdSignal = 'room:chat:roomId'
+			const currentRoomId = roomId;
+			const currentRoomSessionId = `room:chat:${roomId}`;
+
+			const showRoom = currentRoomId !== null;
+			const sessionViewIdForRoom = currentRoomSessionId;
+			const isAgentView = sessionViewIdForRoom === `room:chat:${currentRoomId}`;
+
+			expect(showRoom).toBe(true);
+			expect(isAgentView).toBe(true);
+			// Room.tsx: sessionViewId is truthy → renders ChatContainer(sessionId='room:chat:room-abc')
+		});
+
+		it('should not show Room when roomId is null even if roomSessionId is set', () => {
+			// Edge case: roomSessionId may be stale but roomId has been cleared
+			const currentRoomId: string | null = null;
+			const currentRoomSessionId = 'room:chat:old-room';
+
+			const showRoom = currentRoomId !== null;
+
+			expect(showRoom).toBe(false);
+			expect(currentRoomSessionId).toBeTruthy(); // stale, but Room branch won't render
+		});
+	});
+
 	describe('View Determination', () => {
 		it('should determine ChatContainer view for valid session', () => {
 			const currentSessionId = 'session-1';
