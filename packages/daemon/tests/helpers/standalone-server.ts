@@ -11,12 +11,12 @@
  * The SDK reads these environment variables directly.
  */
 
-const PORT = parseInt(process.env.PORT || '19400', 10);
+const PORT = parseInt(process.env.PORT || '0', 10);
 
 import { createDaemonApp } from '../../src/app';
 
 async function main() {
-	const { cleanup } = await createDaemonApp({
+	const { cleanup, server } = await createDaemonApp({
 		config: {
 			host: '127.0.0.1',
 			port: PORT,
@@ -50,7 +50,9 @@ async function main() {
 		process.exit(0);
 	});
 
-	console.error(`[DAEMON-SERVER] Running on port ${PORT}, PID: ${process.pid}`);
+	// Log actual bound port (not the requested port) so the parent process
+	// can parse it when using port 0 (OS-assigned).
+	console.error(`[DAEMON-SERVER] Running on port ${server.port}, PID: ${process.pid}`);
 }
 
 main().catch((error) => {
