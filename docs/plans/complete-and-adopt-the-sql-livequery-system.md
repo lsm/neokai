@@ -40,7 +40,7 @@ This requirement is not repeated in individual acceptance criteria below.
    - `session_group_messages` — written by `SessionGroupRepository.appendMessage()` (same)
    - `goals` — written by `GoalManager` and `GoalRepository` (both take raw `BunDatabase`). The
      `METHOD_TABLE_MAP` entries for goal operations are inert because `GoalManager` never calls
-     the `Database` facade (`goal-manager.ts:25`).
+     the `Database` facade.
    - _Note: `session_group_members` is also written directly in `SessionGroupRepository` but no
      planned LiveQuery subscribes to it; excluded from scope._
 
@@ -50,7 +50,7 @@ This requirement is not repeated in individual acceptance criteria below.
 
 ### Key constraint: `room.task.update` and `goal.created` drive agent scheduling
 
-`room-runtime-service.ts:337–345` subscribes to both `room.task.update` and `goal.created` on
+`room-runtime-service.ts` subscribes to both `room.task.update` and `goal.created` on
 `daemonHub` to call `scheduleTick()`. `room-runtime.ts` emits `room.task.update` from ~14 internal
 write sites. These runtime-layer emits must not be removed.
 
@@ -121,8 +121,8 @@ This applies to every call site that uses `beginTransaction()`, including `Sessi
 
 **Files to modify:**
 - `packages/daemon/src/lib/room/managers/task-manager.ts` — inject `ReactiveDatabase`; call
-  `reactiveDb.notifyChange('tasks')` after every write, including the raw `db.prepare` call at
-  `task-manager.ts:208–210` (inside `updateDraftTask`, where `assigned_agent` is set via a raw
+  `reactiveDb.notifyChange('tasks')` after every write, including the raw `db.prepare` call
+  inside `updateDraftTask` (where `assigned_agent` is set via a raw
   prepare statement that bypasses `TaskRepository.updateTask`). Also explicitly cover the two
   delegation methods: `promoteDraftTasks()` (delegates to `TaskRepository.promoteDraftTasksByCreator`)
   and `removeDraftTask()` (delegates to `TaskRepository.deleteTask`) — both result in raw writes
@@ -138,25 +138,25 @@ This applies to every call site that uses `beginTransaction()`, including `Sessi
   it to `GoalRepository`; do **not** call `notifyChange` in `GoalManager` itself (repository is
   the canonical layer).
 
-  _Note on GoalManager injection chain:_ `GoalManager` internally creates a `GoalRepository` at
-  `goal-manager.ts:28`. The injection strategy is to pass `ReactiveDatabase` into `GoalManager`'s
-  constructor, which in turn passes it to `GoalRepository`. The three `GoalManager` construction
-  sites are: `packages/daemon/src/lib/rpc-handlers/index.ts:74`,
-  `packages/daemon/src/lib/room/runtime/room-runtime-service.ts:242`, and
-  `packages/daemon/src/storage/index.ts:77` (direct `GoalRepository` construction there; also needs
+  _Note on GoalManager injection chain:_ `GoalManager` internally creates a `GoalRepository` in
+  its constructor. The injection strategy is to pass `ReactiveDatabase` into `GoalManager`'s
+  constructor, which in turn passes it to `GoalRepository`. The `GoalManager` construction
+  sites include: `packages/daemon/src/lib/rpc-handlers/index.ts`,
+  `packages/daemon/src/lib/room/runtime/room-runtime-service.ts`, and
+  `packages/daemon/src/storage/index.ts` (direct `GoalRepository` construction there; also needs
   updating). All test construction sites also need updating.
 
 - **Thread `reactiveDb` through dependency interfaces:** To reach the factory closures and runtime
   service, `reactiveDb: ReactiveDatabase` must be added to two interfaces and the corresponding
   call sites in `app.ts`:
   - Add `reactiveDb: ReactiveDatabase` to `RPCHandlerDependencies`
-    (`packages/daemon/src/lib/rpc-handlers/index.ts:46–55`).
+    (in `packages/daemon/src/lib/rpc-handlers/index.ts`).
   - Add `reactiveDb: ReactiveDatabase` to `RoomRuntimeServiceConfig`
-    (`packages/daemon/src/lib/room/runtime/room-runtime-service.ts:35–44`).
-  - Update `packages/daemon/src/app.ts` to pass `reactiveDb` in the `setupRPCHandlers` call
-    (line 196). `reactiveDb` is already available on `DaemonAppContext` at `app.ts:86`.
+    (in `packages/daemon/src/lib/room/runtime/room-runtime-service.ts`).
+  - Update `packages/daemon/src/app.ts` to pass `reactiveDb` in the `setupRPCHandlers` call.
+    `reactiveDb` is already available on `DaemonAppContext`.
   - Inside `setupRPCHandlers` in `packages/daemon/src/lib/rpc-handlers/index.ts`, pass
-    `deps.reactiveDb` to the `new RoomRuntimeService({...})` constructor at line 105.
+    `deps.reactiveDb` to the `new RoomRuntimeService({...})` constructor.
     `RoomRuntimeService` is **not** constructed in `app.ts`; it is constructed inside
     `setupRPCHandlers`, which receives `reactiveDb` via the extended `RPCHandlerDependencies`.
 - Update all construction sites of these four classes to pass `reactiveDb`.
@@ -173,8 +173,8 @@ This applies to every call site that uses `beginTransaction()`, including `Sessi
 - Every `beginTransaction()` call is paired with a `try/catch` that calls `abortTransaction()` on
   failure; `transactionDepth` never gets stuck above zero after an error.
 - `reactiveDb: ReactiveDatabase` added to `RPCHandlerDependencies` and `RoomRuntimeServiceConfig`;
-  `app.ts` passes `reactiveDb` to `setupRPCHandlers` (line 196); `rpc-handlers/index.ts` passes
-  `deps.reactiveDb` to the `RoomRuntimeService` constructor (line 105).
+  `app.ts` passes `reactiveDb` to `setupRPCHandlers`; `rpc-handlers/index.ts` passes
+  `deps.reactiveDb` to the `RoomRuntimeService` constructor.
 - All existing tests still pass.
 - New unit tests verify reactive integration for each table.
 
@@ -417,19 +417,25 @@ and disconnect paths established in Task 2.
 
 **Merge ordering:** Merging Task 3 independently before Task 4 is safe. The only change is
 removing `emitTaskUpdate()` from `task.fail`. The frontend's `room.task.update` listener in
-`room-store.ts:223` still receives `room.task.update` via the preserved runtime-layer emits in
+`room-store.ts` still receives `room.task.update` via the preserved runtime-layer emits in
 `room-runtime.ts` (~14 sites). Task 3 does **not** remove goal-handler emits — those are removed
 atomically in Task 4 alongside the frontend LiveQuery adoption.
 
 #### Emit site to remove (RPC handler layer only)
 
-- **`task-handlers.ts`**: Remove the `emitTaskUpdate()` call from `task.fail` (line 171).
-  - Note: `task.create` does **not** call `emitTaskUpdate()`; no change needed there. Verify
-    that no other handlers in `task-handlers.ts` call `emitTaskUpdate()` before considering the
-    removal complete.
+- **`task-handlers.ts`**: Remove the `emitTaskUpdate()` call from `task.fail` (in the `task.fail`
+  handler). Find it by searching for `emitTaskUpdate` inside the `task.fail` handler block.
+  - Note: `task.create` does **not** call `emitTaskUpdate()`; no change needed there.
   - **Keep `emitRoomOverview()` calls**: `room.overview` is emitted only from `task-handlers.ts`
     (confirmed by codebase audit). Task 4 retains the `room.overview` frontend listener for
     room/session metadata. Removing `emitRoomOverview` would make that listener permanently dead.
+
+**Why only `task.fail` and not the other seven `emitTaskUpdate` calls in `task-handlers.ts`:**
+The remaining seven calls (`task.cancel` ×2, `task.archive`, `task.setStatus` ×3, `task.sendMessage`)
+are intentionally preserved in Task 3. The frontend still relies on `room.task.update` via
+`hub.onEvent('room.task.update', ...)` until Task 4 replaces it with LiveQuery. Removing all handler
+emits now would create a window where task mutations from RPC handlers are invisible to the UI.
+Task 4 addresses the complete removal — see "Post-Task 4 dead code" below.
 
 #### Emit sites preserved in this task
 
@@ -439,10 +445,10 @@ atomically in Task 4 alongside the frontend LiveQuery adoption.
 - `packages/daemon/src/lib/room/runtime/room-runtime.ts` — all `emitTaskUpdate`/`emitTaskUpdateById`
   calls (~14 sites). Drive `scheduleTick()` via `room-runtime-service.ts`.
 - `packages/daemon/src/lib/room/tools/room-agent-tools.ts` — task/goal emit calls. These emits
-  drive scheduling via `room-runtime-service.ts:344`. After Task 4 removes the frontend
+  drive scheduling via `room-runtime-service.ts`. After Task 4 removes the frontend
   `room.task.update` listener, these emits continue to serve scheduling but are no longer the
   UI update path. Do not remove them.
-- `packages/daemon/src/lib/room/runtime/room-runtime.ts:159-170` — `emitGoalProgressForTask`.
+- `packages/daemon/src/lib/room/runtime/room-runtime.ts` — `emitGoalProgressForTask`.
 
 **Tests:**
 - Integration test: RPC `task.fail` no longer produces a handler-layer `room.task.update` daemonHub
@@ -473,42 +479,61 @@ regression window where goal updates go undelivered.
 
 #### Daemon-side changes (goal-handlers.ts)
 
-Remove goal event emits that are now superseded by LiveQuery delta delivery. There are exactly five
-`emitGoalUpdated()` call sites in `goal-handlers.ts`; all five must be removed:
-1. `goal.update` handler (line 203) — replaced by `goals.byRoom` LiveQuery delta.
-2. `goal.needsHuman` handler (line 222) — marks goal as needing human input; delta covers this.
-3. `goal.reactivate` handler (line 241) — reactivates a paused goal; delta covers this.
-4. `goal.linkTask` handler (line 264) — also remove the paired `emitGoalProgressUpdated` call
-   (line 265); both covered by `goals.byRoom` LiveQuery delta.
-5. `goal.delete` handler (line 285) — deletion surfaces via LiveQuery `removed` array.
+Remove goal event emits that are now superseded by LiveQuery delta delivery. There are **eight**
+`emitGoalUpdated()` call sites in `goal-handlers.ts`; all eight must be removed. Find them by
+searching for `emitGoalUpdated(` in the file:
+1. `goal.update` handler — replaced by `goals.byRoom` LiveQuery delta.
+2. `goal.needsHuman` handler — marks goal as needing human input; delta covers this.
+3. `goal.reactivate` handler — reactivates a paused goal; delta covers this.
+4. `goal.linkTask` handler — also remove the paired `emitGoalProgressUpdated` call in the same
+   handler; both covered by `goals.byRoom` LiveQuery delta.
+5. `goal.delete` handler — deletion surfaces via LiveQuery `removed` array.
+6. `goal.setSchedule` handler — schedule changes modify the goal row; delta covers this.
+7. `goal.pauseSchedule` handler — pausing schedule modifies the goal row; delta covers this.
+8. `goal.resumeSchedule` handler — resuming schedule modifies the goal row; delta covers this.
 
 Additional removal:
-- `goal.progressUpdated` emits — progress changes modify the goal row; the `goals.byRoom`
+- All `emitGoalProgressUpdated` calls — progress changes modify the goal row; the `goals.byRoom`
   LiveQuery delta includes all changed columns and delivers the update. Note: the frontend currently
   has no `goal.progressUpdated` listener in `room-store.ts` (updates were silently dropped); the
   LiveQuery approach now delivers them correctly for the first time.
-- `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts:344`
+- `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts`
   but is never actually emitted anywhere in the current codebase (confirmed by grep); no action
   required, but verify during implementation.
 
-**Keep `goal.created` emits** — `room-runtime-service.ts:338` subscribes to `goal.created` on
+**Keep `goal.created` emits** — `room-runtime-service.ts` subscribes to `goal.created` on
 `daemonHub` to trigger scheduling. Removing this emit would silently break goal-creation scheduling.
+
+#### Post-Task 4 dead code: remaining `emitTaskUpdate` calls in task-handlers.ts
+
+After Task 4 removes the frontend `hub.onEvent('room.task.update', ...)` listener, the seven
+remaining `emitTaskUpdate()` calls in `task-handlers.ts` (`task.cancel` ×2, `task.archive`,
+`task.setStatus` ×3, `task.sendMessage`) become dead code from the frontend's perspective. However,
+they are **intentionally retained** in this plan scope because:
+- `room-runtime-service.ts` subscribes to `room.task.update` on `daemonHub` to drive
+  `scheduleTick()`. These handler-layer emits supplement the ~14 runtime-layer emits.
+- Removing them requires verifying that every task mutation covered by a handler-layer emit is also
+  covered by a runtime-layer emit, which is a separate audit task.
+- The overhead of dead broadcast delivery is negligible in a single-user deployment.
+
+A follow-up task can audit and remove these handler-layer emits after confirming runtime-layer
+coverage is complete. This is tracked as known post-plan cleanup, not a gap.
 
 #### Frontend-side changes (room-store.ts)
 
 **What to replace:**
 - `hub.onEvent('room.task.update', ...)` — replace with `liveQuery.subscribe` using `tasks.byRoom`.
-- Goal event listeners in `room-store.ts:255–299`:
+- Goal event listeners in `room-store.ts` (search for `hub.onEvent('goal.`):
   - `goal.created` — replaced by `goals.byRoom` LiveQuery.
   - `goal.updated` — replaced by `goals.byRoom` LiveQuery.
   - `goal.completed` — replaced by `goals.byRoom` LiveQuery.
   - `goal.progressUpdated` — no listener exists today; LiveQuery now delivers these correctly.
 - The `this.tasks.value = overview.allTasks ?? overview.activeTasks` assignment inside the
-  `hub.onEvent('room.overview', ...)` callback (`room-store.ts:217`) — LiveQuery snapshot is
-  now the canonical source for task state.
+  `hub.onEvent('room.overview', ...)` callback — LiveQuery snapshot is now the canonical source
+  for task state.
 - The `this.tasks.value = overview.allTasks ?? overview.activeTasks` assignment inside
-  `fetchInitialState` (`room-store.ts:334`) — stop populating `tasks.value` from the `room.get`
-  RPC response; tasks are now loaded via the `liveQuery.snapshot` delivered on subscribe.
+  `fetchInitialState` — stop populating `tasks.value` from the `room.get` RPC response; tasks
+  are now loaded via the `liveQuery.snapshot` delivered on subscribe.
 - Tests in `packages/web/src/lib/__tests__/room-store-review.test.ts` that fire `room.task.update`
   events directly — rewrite to use `liveQuery.snapshot`/`liveQuery.delta`.
 
@@ -523,17 +548,18 @@ Additional removal:
 after Task 4. No other code path (event handler, RPC response) should overwrite these signals.
 In addition to the two `tasks.value` writes already identified, the following optimistic/refetch
 writes must also be removed:
-- `room-store.ts:417` — direct `this.tasks.value` append after `task.create` RPC response.
+- Direct `this.tasks.value` append after `task.create` RPC response (search for
+  `this.tasks.value = [...this.tasks.value, task]` in `room-store.ts`).
   LiveQuery delta will deliver the new task; remove the optimistic append.
-- `room-store.ts:499` — `this.goals.value = response.goals ?? []` inside `fetchGoals()`, which
-  is called by `createGoal`, `updateGoal`, `deleteGoal`, and `linkTaskToGoal` after each
-  mutation. Remove the `this.goals.value` assignment from `fetchGoals()` (the method may still
-  be called for other purposes, but must not overwrite the signal). LiveQuery delta delivers all
-  goal mutations. If `fetchGoals()` is only used for the refetch pattern, it can be removed
-  entirely after Task 4.
+- `this.goals.value = response.goals ?? []` inside `fetchGoals()` (search for `fetchGoals` in
+  `room-store.ts`), which is called by `createGoal`, `updateGoal`, `deleteGoal`, and
+  `linkTaskToGoal` after each mutation. Remove the `this.goals.value` assignment from
+  `fetchGoals()` (the method may still be called for other purposes, but must not overwrite the
+  signal). LiveQuery delta delivers all goal mutations. If `fetchGoals()` is only used for the
+  refetch pattern, it can be removed entirely after Task 4.
 
 **Review-status toast notification:** The current `room.task.update` handler shows a toast when a
-known task transitions to `review` status (`room-store.ts:230–238`):
+known task transitions to `review` status (search for `toast.info` in `room-store.ts`):
 ```ts
 if (task.status === 'review' && idx >= 0) {
   const prevTask = this.tasks.value[idx];
@@ -606,9 +632,10 @@ internally — that is exclusively the hook's responsibility, to avoid double-su
 both paths fire on the same room selection.
 
 **Work:**
-- Remove all five `emitGoalUpdated()` call sites from `goal-handlers.ts`: `goal.update` (line 203),
-  `goal.needsHuman` (line 222), `goal.reactivate` (line 241), `goal.linkTask` (line 264, also
-  remove `emitGoalProgressUpdated`), and `goal.delete` (line 285). Keep `goal.created` emit.
+- Remove all eight `emitGoalUpdated()` call sites from `goal-handlers.ts`: `goal.update`,
+  `goal.needsHuman`, `goal.reactivate`, `goal.linkTask` (also remove `emitGoalProgressUpdated`),
+  `goal.delete`, `goal.setSchedule`, `goal.pauseSchedule`, `goal.resumeSchedule`.
+  Keep `goal.created` emit.
 - When a room is selected, call `liveQuery.subscribe` with `tasks.byRoom` and `goals.byRoom`.
 - Handle `liveQuery.snapshot`: discard if `subscriptionId` doesn't match current active
   subscription (stale-snapshot guard); otherwise replace `this.tasks.value` / `this.goals.value` entirely.
@@ -622,8 +649,8 @@ both paths fire on the same room selection.
 - Retain the `room.overview` listener; remove only its `this.tasks.value` assignment.
 - Remove `this.tasks.value` population from `fetchInitialState` (the `room.get` call itself stays).
 - Remove `this.tasks.value = [...this.tasks.value, task]` from the `task.create` response path
-  (`room-store.ts:417`). LiveQuery delta delivers the new task.
-- Remove `this.goals.value = response.goals ?? []` from `fetchGoals()` (`room-store.ts:499`);
+  in `room-store.ts`. LiveQuery delta delivers the new task.
+- Remove `this.goals.value = response.goals ?? []` from `fetchGoals()` in `room-store.ts`;
   remove or simplify the `fetchGoals()` call-sites in `createGoal`, `updateGoal`, `deleteGoal`,
   `linkTaskToGoal`. LiveQuery delta delivers all goal mutations.
 - Rewrite affected tests in `room-store-review.test.ts`; retain all five toast test cases.
@@ -639,15 +666,17 @@ both paths fire on the same room selection.
 - `room.task.update`, `goal.created`, `goal.updated`, `goal.completed` listeners removed.
 - `room.overview` listener retained for `room`/`sessions` signal updates; `tasks.value` no longer
   written by the `room.overview` handler or by `fetchInitialState`.
+- Remaining `emitTaskUpdate` calls in `task-handlers.ts` intentionally preserved (serve scheduling
+  via `room-runtime-service.ts`); acknowledged as known post-plan cleanup.
 - LiveQuery snapshot and delta are the sole **data** writers to `this.tasks.value` and
-  `this.goals.value`; lifecycle resets to `[]` at `room-store.ts:175` (tasks) and `:178` (goals)
-  on room deselect/switch are permitted and must be retained.
+  `this.goals.value`; lifecycle resets to `[]` on room deselect/switch are permitted and must
+  be retained.
 - No other code path (event handler, RPC response) overwrites task or goal signals — specifically:
-  the `task.create` optimistic append (`room-store.ts:417`) and `fetchGoals()` refetch
-  (`room-store.ts:499`) no longer write to signal state.
+  the `task.create` optimistic append and `fetchGoals()` refetch no longer write to signal state.
 - Goal progress updates surface in the UI (LiveQuery delivers them; were previously dropped).
-- All five `emitGoalUpdated()` call sites removed from `goal-handlers.ts` (`goal.update`,
-  `goal.needsHuman`, `goal.reactivate`, `goal.linkTask`, `goal.delete`); `goal.created` retained.
+- All eight `emitGoalUpdated()` call sites removed from `goal-handlers.ts` (`goal.update`,
+  `goal.needsHuman`, `goal.reactivate`, `goal.linkTask`, `goal.delete`, `goal.setSchedule`,
+  `goal.pauseSchedule`, `goal.resumeSchedule`); `goal.created` retained.
 - `goal.created` continues to be emitted from `goal-handlers.ts`.
 - Goal deletion surfaces in the UI via the LiveQuery `removed` array (not the old `goal.updated`
   sentinel); the `removed` entries are applied to `this.goals.value`.
@@ -673,15 +702,21 @@ both paths fire on the same room selection.
 (lines ~122–136). Task 5 replaces this with the standardized `liveQuery.subscribe` protocol
 (protocol consolidation, not a new capability).
 
-The daemon emits `state.groupMessages.delta` from two sites:
-- `packages/daemon/src/lib/room/runtime/room-runtime.ts:888`
-- `packages/daemon/src/lib/room/runtime/human-message-routing.ts:97`
+The daemon emits `state.groupMessages.delta` from two sites, **both in `room-runtime.ts`**
+(search for `state.groupMessages.delta` in the file):
+- `packages/daemon/src/lib/room/runtime/room-runtime.ts` — first site (inside the streaming
+  handler, near the `streamCallback` processing)
+- `packages/daemon/src/lib/room/runtime/room-runtime.ts` — second site (near the message
+  append/completion handling)
+
+Note: `human-message-routing.ts` does **not** emit `state.groupMessages.delta` (the file is only
+~77 lines and contains no such emission).
 
 Both sites become dead code once the frontend listener is removed. Task 5 must remove them.
 
 #### `task.getGroupMessages` RPC endpoint
 
-After Task 5 adoption, the `task.getGroupMessages` RPC endpoint (`task-handlers.ts:210–211`)
+After Task 5 adoption, the `task.getGroupMessages` RPC endpoint (in `task-handlers.ts`)
 becomes unused by the primary frontend path (`liveQuery.snapshot` now provides the initial load).
 **Retain the endpoint** — do not remove it. It may be used by external tooling, tests, or future
 consumers. No deprecation marker is needed in this task.
@@ -712,8 +747,12 @@ in component/hook state; discard any snapshot or delta whose `subscriptionId` do
 - Handle `liveQuery.delta`: discard if `subscriptionId` doesn't match (stale-delta guard);
   otherwise append new messages (`added` array only; ignore `updated`/`removed`).
 - Remove `state.groupMessages.delta` frontend listener from `TaskConversationRenderer.tsx`.
-- Remove the stale JSDoc comment at `TaskConversationRenderer.tsx:11` that references `state.groupMessages.delta` (the actual listener usage is at line 124).
-- Remove daemon-side emission sites: `room-runtime.ts:888` and `human-message-routing.ts:97`.
+- Remove the stale JSDoc comment in `TaskConversationRenderer.tsx` that references
+  `state.groupMessages.delta` (search for the comment near the top of the file).
+- Remove both daemon-side `state.groupMessages.delta` emission sites in `room-runtime.ts`
+  (search for `state.groupMessages.delta` — both hits are in this single file).
+- Migrate existing tests in `packages/web/src/components/room/TaskConversationRenderer.test.tsx`
+  that mock `state.groupMessages.delta` events — rewrite to use `liveQuery.snapshot`/`liveQuery.delta`.
 - Implement reconnect re-subscribe via general `connected` transition (without prior unsubscribe —
   old handles disposed server-side on disconnect).
 - Unsubscribe on component unmount or task deselection.
@@ -723,7 +762,7 @@ in component/hook state; discard any snapshot or delta whose `subscriptionId` do
 - New messages appear in TaskView without polling or manual refresh.
 - After WebSocket reconnect (general reconnect, not just visibility-resume), messages resync via snapshot.
 - `state.groupMessages.delta` listener removed from `TaskConversationRenderer.tsx`.
-- Both daemon-side `state.groupMessages.delta` emission sites removed.
+- Both daemon-side `state.groupMessages.delta` emission sites removed (both in `room-runtime.ts`).
 - Subscription disposed on component unmount.
 - Stale snapshots and deltas arriving with a non-matching `subscriptionId` (from a prior group
   subscription after rapid task switch) are discarded and do not corrupt the message list.
@@ -774,6 +813,7 @@ Task 5 from shipping against an unvalidated Task 2 in production.
 | MessageHub (getRouter, CallContext construction) | `packages/shared/src/message-hub/message-hub.ts` |
 | Room store | `packages/web/src/lib/room-store.ts` |
 | Room store tests | `packages/web/src/lib/__tests__/room-store-review.test.ts` |
+| TaskConversationRenderer tests | `packages/web/src/components/room/TaskConversationRenderer.test.tsx` |
 | ADR | `docs/adr/0001-live-query-and-job-queue.md` |
 | LiveQuery unit tests | `packages/daemon/tests/unit/storage/live-query.test.ts` |
 | LiveQuery integration tests | `packages/daemon/tests/unit/storage/live-query-integration.test.ts` |
