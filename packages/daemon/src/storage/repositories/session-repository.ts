@@ -126,15 +126,17 @@ export class SessionRepository {
 			// Merge partial config updates with existing config
 			const existing = this.getSession(id);
 			const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
-			// Strip function values (runtime-only fields like spawnClaudeCodeProcess)
-			// and let JSON.stringify's native cycle detection handle circular refs.
-			// Using a flat WeakSet would false-positive on valid shared-reference
-			// ("diamond") structures, so we rely on the native implementation instead.
+			// Strip runtime-only fields that must not be persisted:
+			// - mcpServers: may contain live Server instances with circular references
+			//   (set via AgentSession.setRuntimeMcpServers(), intentionally not serialized)
+			// - function values (runtime-only fields like spawnClaudeCodeProcess)
 			let serializedConfig: string;
 			try {
-				serializedConfig = JSON.stringify(mergedConfig, (_key, val) =>
-					typeof val === 'function' ? undefined : val
-				);
+				serializedConfig = JSON.stringify(mergedConfig, (key, val) => {
+					if (key === 'mcpServers') return undefined;
+					if (typeof val === 'function') return undefined;
+					return val;
+				});
 			} catch (err) {
 				throw new Error(
 					`updateSession: failed to serialize config for session "${id}": ${err instanceof Error ? err.message : String(err)}`
