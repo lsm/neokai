@@ -21,7 +21,12 @@
  */
 
 import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
-import type { SpaceWorkflow, WorkflowTransition, WorkflowConditionType } from '@neokai/shared';
+import type {
+	SpaceWorkflow,
+	WorkflowStep,
+	WorkflowTransition,
+	WorkflowConditionType,
+} from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
@@ -447,24 +452,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		}));
 
 		// Compute positions via autoLayout
-		const fakeSteps = newNodes.map((n) => ({
+		const layoutSteps: WorkflowStep[] = newNodes.map((n) => ({
 			id: n.step.localId,
 			name: n.step.name,
 			agentId: n.step.agentId,
-			instructions: n.step.instructions,
+			instructions: n.step.instructions || undefined,
 		}));
-		const fakeTransitions = newEdges.map((e, i) => ({
+		const layoutTransitions: WorkflowTransition[] = newEdges.map((e, i) => ({
 			id: `t-${i}`,
 			from: e.fromStepKey,
 			to: e.toStepKey,
 			order: i,
 		}));
 
-		const positions = autoLayout(
-			fakeSteps as Parameters<typeof autoLayout>[0],
-			fakeTransitions as Parameters<typeof autoLayout>[1],
-			firstLocalId
-		);
+		const positions = autoLayout(layoutSteps, layoutTransitions, firstLocalId);
 
 		const positionedNodes: VisualNode[] = newNodes.map((n) => ({
 			...n,
@@ -657,8 +658,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						Add Step
 					</button>
 
-					{/* Template picker — only shown when creating a new workflow */}
-					{!isEditing && (
+					{/* Template picker — only shown when creating a new workflow with no steps yet */}
+					{!isEditing && nodes.length === 0 && (
 						<div class="relative">
 							<button
 								onClick={() => setShowTemplates((v) => !v)}

@@ -89,6 +89,7 @@ vi.mock('../../../../lib/utils', () => ({
 
 import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
+import { TEMPLATES } from '../../WorkflowEditor';
 
 // ============================================================================
 // Fixtures
@@ -727,7 +728,7 @@ describe('VisualWorkflowEditor', () => {
 			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
-			expect(options.length).toBe(3); // 3 templates
+			expect(options.length).toBe(TEMPLATES.length);
 		});
 
 		it('hides dropdown when button clicked again', () => {
@@ -841,6 +842,30 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(options[0]);
 
 			expect(queryAllByTestId('template-option').length).toBe(0);
+		});
+
+		it('hides template button once nodes have been added (overwrite protection)', () => {
+			const { getByTestId, queryByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			// Button visible before any nodes
+			expect(queryByTestId('template-picker-button')).toBeTruthy();
+
+			// Add a step manually
+			fireEvent.click(getByTestId('add-step-button'));
+
+			// Button must be hidden now that the canvas has content
+			expect(queryByTestId('template-picker-button')).toBeNull();
+		});
+
+		it('hides template button after a template is applied', () => {
+			const { getByTestId, getAllByTestId, queryByTestId } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			fireEvent.click(options[0]);
+
+			// Template created nodes → button should be gone
+			expect(queryByTestId('template-picker-button')).toBeNull();
 		});
 
 		it('single-step template (Quick Fix) creates one node and no edges', () => {
