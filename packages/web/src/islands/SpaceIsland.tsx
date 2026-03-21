@@ -28,6 +28,10 @@ interface SpaceIslandProps {
 type SpaceTab = 'dashboard' | 'agents' | 'workflows' | 'settings';
 type EditorMode = 'list' | 'visual';
 
+/**
+ * localStorage key for the user's preferred workflow editor mode.
+ * Shared across all spaces — the preference is global, not per-space.
+ */
 const EDITOR_MODE_KEY = 'workflow-editor-mode';
 
 const TABS: { id: SpaceTab; label: string }[] = [
@@ -76,7 +80,19 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 		}
 	}, [activeTab]);
 
+	/**
+	 * Switch editor mode, persisting the preference to localStorage.
+	 * Prompts the user to confirm if an editor is open — switching modes
+	 * unmounts the active editor, which would discard any unsaved draft state.
+	 */
 	function handleSetEditorMode(mode: EditorMode) {
+		if (mode === editorMode) return;
+		if (
+			workflowEditId !== null &&
+			!confirm('Switching editor modes will discard any unsaved changes. Continue?')
+		) {
+			return;
+		}
 		setEditorMode(mode);
 		try {
 			localStorage.setItem(EDITOR_MODE_KEY, mode);
@@ -159,6 +175,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 									<button
 										type="button"
 										data-testid="editor-mode-list"
+										aria-pressed={editorMode === 'list'}
 										onClick={() => handleSetEditorMode('list')}
 										class={cn(
 											'px-3 py-1 transition-colors',
@@ -172,6 +189,7 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 									<button
 										type="button"
 										data-testid="editor-mode-visual"
+										aria-pressed={editorMode === 'visual'}
 										onClick={() => handleSetEditorMode('visual')}
 										class={cn(
 											'px-3 py-1 transition-colors',
