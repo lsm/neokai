@@ -17,6 +17,8 @@ import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
 import { setupSpaceHandlers } from '../../../src/lib/rpc-handlers/space-handlers';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
+import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
+import type { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
@@ -36,6 +38,7 @@ const mockSpace: Space = {
 	instructions: '',
 	sessionIds: [],
 	status: 'active',
+	autonomyLevel: 'supervised',
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -126,6 +129,21 @@ function createMockRunRepo(runs: SpaceWorkflowRun[] = [mockRun]): SpaceWorkflowR
 	} as unknown as SpaceWorkflowRunRepository;
 }
 
+function createMockSpaceAgentManager(): SpaceAgentManager {
+	return {
+		create: mock(async () => ({})),
+		listBySpaceId: mock(() => []),
+	} as unknown as SpaceAgentManager;
+}
+
+function createMockSpaceWorkflowManager(): SpaceWorkflowManager {
+	return {
+		createWorkflow: mock(() => ({})),
+		listWorkflows: mock(() => []),
+		getWorkflow: mock(() => null),
+	} as unknown as SpaceWorkflowManager;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('space-handlers', () => {
@@ -144,7 +162,15 @@ describe('space-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		taskRepo = createMockTaskRepo();
 		runRepo = createMockRunRepo();
-		setupSpaceHandlers(hub, spaceManager, taskRepo, runRepo, daemonHub);
+		setupSpaceHandlers(
+			hub,
+			spaceManager,
+			taskRepo,
+			runRepo,
+			daemonHub,
+			createMockSpaceAgentManager(),
+			createMockSpaceWorkflowManager()
+		);
 	}
 
 	const call = (method: string, data: unknown) => {

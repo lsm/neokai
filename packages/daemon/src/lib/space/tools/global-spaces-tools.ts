@@ -51,6 +51,16 @@ export interface GlobalSpacesState {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Canonical list of valid autonomy level values.
+ * Used by both MCP tool zod schemas so there is a single source of truth.
+ * Must be kept in sync with the `SpaceAutonomyLevel` type in @neokai/shared.
+ */
+const AUTONOMY_LEVEL_VALUES = [
+	'supervised',
+	'semi_autonomous',
+] as const satisfies readonly SpaceAutonomyLevel[];
+
 interface ToolResult {
 	content: Array<{ type: 'text'; text: string }>;
 }
@@ -365,7 +375,7 @@ export function createGlobalSpacesMcpServer(
 					.optional()
 					.describe('Instructions for agents working in this space'),
 				autonomy_level: z
-					.enum(['supervised', 'semi_autonomous'])
+					.enum(AUTONOMY_LEVEL_VALUES)
 					.optional()
 					.describe(
 						'Autonomy level for the Space Agent. "supervised" (default): agent notifies human of all judgment-required events and waits for approval. "semi_autonomous": agent can retry failed tasks and reassign them autonomously.'
@@ -392,7 +402,7 @@ export function createGlobalSpacesMcpServer(
 				background_context: z.string().optional().describe('New background context'),
 				default_model: z.string().optional().describe('New default model ID'),
 				autonomy_level: z
-					.enum(['supervised', 'semi_autonomous'])
+					.enum(AUTONOMY_LEVEL_VALUES)
 					.optional()
 					.describe('New autonomy level for the Space Agent'),
 			},
