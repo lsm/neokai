@@ -155,6 +155,33 @@ function buildHumanGateWorkflow(
 	});
 }
 
+function buildTaskResultWorkflow(
+	spaceId: string,
+	workflowManager: SpaceWorkflowManager,
+	agentId: string,
+	conditionExpression = 'passed'
+): SpaceWorkflow {
+	const step1Id = `step-1-${Math.random().toString(36).slice(2)}`;
+	const step2Id = `step-2-${Math.random().toString(36).slice(2)}`;
+	return workflowManager.createWorkflow({
+		spaceId,
+		name: 'Task Result WF',
+		steps: [
+			{ id: step1Id, name: 'Verify Step', agentId },
+			{ id: step2Id, name: 'Next Step', agentId },
+		],
+		transitions: [
+			{
+				from: step1Id,
+				to: step2Id,
+				condition: { type: 'task_result', expression: conditionExpression },
+			},
+		],
+		startStepId: step1Id,
+		rules: [],
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Mock SubSessionFactory
 // ---------------------------------------------------------------------------
@@ -910,6 +937,49 @@ describe('createTaskAgentToolHandlers — advance_workflow', () => {
 
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('complete');
+	});
+
+	test('forwards step_result to executor.advance() and follows matching task_result transition', async () => {
+		// Build a workflow where the transition from step1→step2 requires task_result='passed'
+		const wf = buildTaskResultWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'passed');
+		const { run, mainTask, stepTask } = await startRun(ctx, wf);
+		await ctx.runtime.executeTick(); // Rehydrate executor
+		const factory = makeMockSessionFactory();
+
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		// Mark the first step task as completed
+		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
+
+		// Advance with step_result='passed' — should match the 'passed' condition and go to step2
+		const result = await handlers.advance_workflow({ step_result: 'passed' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.terminal).toBe(false);
+		expect(parsed.nextStep.name).toBe('Next Step');
+	});
+
+	test('forwards step_result fallback when no DB result exists', async () => {
+		// Same workflow as above — but we DON'T set the task result in the DB
+		// The step_result passed to advance_workflow should be used as fallback
+		const wf = buildTaskResultWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'verified');
+		const { run, mainTask, stepTask } = await startRun(ctx, wf);
+		await ctx.runtime.executeTick(); // Rehydrate executor
+		const factory = makeMockSessionFactory();
+
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		// Mark the step as completed but DON'T set result in DB
+		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
+
+		// Advance with step_result='verified' — should match the 'verified' condition and go to step2
+		const result = await handlers.advance_workflow({ step_result: 'verified' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.terminal).toBe(false);
+		expect(parsed.nextStep.name).toBe('Next Step');
 	});
 });
 
