@@ -290,6 +290,9 @@ function makeCtx(): TestCtx {
 		deleteSession: async (sessionId: string) => {
 			sessionManagerDeleteCalls.push(sessionId);
 		},
+		registerSession: (_agentSession: unknown) => {
+			// no-op: unit tests don't exercise cache registration
+		},
 	};
 
 	// Spy on AgentSession.fromInit to return mock sessions

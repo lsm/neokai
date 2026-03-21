@@ -236,6 +236,18 @@ export class SessionManager {
 	}
 
 	/**
+	 * Register an externally-created AgentSession in the session cache.
+	 *
+	 * Used by TaskAgentManager to register Task Agent sessions created via
+	 * AgentSession.fromInit() so that getSessionAsync() returns the original
+	 * live instance (with MCP tools and active query) instead of creating a
+	 * duplicate from DB that would set up competing event subscriptions.
+	 */
+	registerSession(agentSession: AgentSession): void {
+		this.sessionCache.set(agentSession.getSessionData().id, agentSession);
+	}
+
+	/**
 	 * Inject a message into a session bypassing the RPC/UI message flow.
 	 *
 	 * Used for internal daemon-to-session communication (e.g. SpaceRuntime → global agent).

@@ -284,6 +284,12 @@ export class TaskAgentManager {
 			// --- Store in map before streaming start to allow getTaskAgent() calls
 			this.taskAgentSessions.set(taskId, agentSession);
 
+			// --- Register in SessionManager cache so getSessionAsync() returns the live
+			// instance with MCP tools attached rather than creating a duplicate from DB.
+			// Without this, RPC handlers (message.send, message.sdkMessages, etc.) would
+			// create a competing AgentSession with duplicate DaemonHub subscriptions.
+			this.config.sessionManager.registerSession(agentSession);
+
 			// --- Start streaming query
 			await agentSession.startStreamingQuery();
 
@@ -342,6 +348,9 @@ export class TaskAgentManager {
 			this.subSessions.set(taskId, new Map());
 		}
 		this.subSessions.get(taskId)!.set(sessionId, subSession);
+
+		// Register in SessionManager cache to prevent duplicate AgentSession creation.
+		this.config.sessionManager.registerSession(subSession);
 
 		// Start streaming query for the sub-session
 		await subSession.startStreamingQuery();
