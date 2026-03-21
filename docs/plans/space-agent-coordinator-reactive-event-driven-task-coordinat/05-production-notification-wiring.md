@@ -21,21 +21,25 @@ Wire the `NotificationSink` interface to the real Space Agent session so that Sp
 
 **Subtasks:**
 1. Create `packages/daemon/src/lib/space/runtime/session-notification-sink.ts`
-2. Implement `SessionNotificationSink` class that:
-   - Accepts a `sessionManager` and `sessionId` (the `spaces:global` session)
+2. **Audit `injectMessage` behavior (P0):** Before implementing, audit the existing `injectMessage` pattern in `RoomRuntimeService` / `AgentSession` (see `task-group-manager.ts` `SessionFactory` interface, `room-runtime-service.ts` implementation). Document: what happens when the session is actively streaming a response? Does `injectMessage` queue the message, wait, or drop it? The `MessageDeliveryMode` options should be examined. Choose the appropriate delivery mode for non-blocking notification injection and document the decision.
+3. Implement `SessionNotificationSink` class that:
+   - Accepts a `SessionFactory` interface (from `task-group-manager.ts`) and `sessionId` (the `spaces:global` session ID). **Do NOT use `sessionManager.getSessionAsync()` + `session.injectMessage()`** — the correct API is `sessionFactory.injectMessage(sessionId, message, opts)`.
    - Implements `notify(event: SpaceNotificationEvent): Promise<void>`
    - Formats each event kind into a structured message with `[TASK_EVENT]` prefix and JSON payload
    - Includes human-readable context (e.g., "Task 'Fix login bug' in space 'MyProject' needs attention: agent reported error")
-   - Uses `sessionManager.getSessionAsync()` + `session.injectMessage()` (or the equivalent pattern from room-runtime-service.ts sessionFactory)
-3. Handle edge cases: session not found (log warning, do not throw), session busy (use delivery mode appropriate for non-blocking injection)
-4. Write unit tests with a mock session that captures injected messages, verifying:
+   - Includes the space's `autonomyLevel` in the event message so the agent has context for decision-making
+4. Handle edge cases: session not found (log warning, do not throw), session busy (use the delivery mode determined by the audit in subtask 2)
+5. Write unit tests with a mock `SessionFactory` that captures injected messages, verifying:
    - Each event kind produces the expected message format
    - Missing session logs a warning but does not throw
-   - Message includes both structured JSON and human-readable text
+   - Message includes both structured JSON, human-readable text, and autonomy level
+   - Correct delivery mode is used
 
 **Acceptance criteria:**
-- `SessionNotificationSink` correctly formats and injects messages for all event kinds
+- `SessionNotificationSink` uses `sessionFactory.injectMessage(sessionId, message)` — NOT `session.injectMessage()`
 - Messages use `[TASK_EVENT]` prefix for reliable prompt parsing
+- Messages include the space's autonomy level for agent context
+- `injectMessage` concurrency behavior is documented (what happens when session is streaming)
 - Graceful handling of missing/unavailable sessions
 - Unit tests cover all event kinds and error cases
 
@@ -52,20 +56,19 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Agent type:** coder
 
 **Subtasks:**
-1. Update `ProvisionGlobalSpacesAgentDeps` to include dependencies needed for `SessionNotificationSink` (session factory/manager reference)
-2. In `provisionGlobalSpacesAgent()`, create a `SessionNotificationSink` targeting the `spaces:global` session
-3. Pass the sink to `SpaceRuntimeService` (or directly to the `SpaceRuntime` instance via a setter/config update)
-4. Update `SpaceRuntimeService` to accept an optional `NotificationSink` and pass it through to the underlying `SpaceRuntime`
-5. Update `SpaceRuntimeServiceConfig` to include `notificationSink?: NotificationSink`
-6. Ensure the sink is wired AFTER the global session is created (ordering matters)
-7. Write integration-style unit tests that verify:
+1. Update `ProvisionGlobalSpacesAgentDeps` to include the `SessionFactory` interface reference (needed for `SessionNotificationSink`). The `SessionFactory` is available from `RoomRuntimeService` which implements it.
+2. In `provisionGlobalSpacesAgent()`, AFTER the `spaces:global` session is created, create a `SessionNotificationSink` targeting that session ID.
+3. **Use the `setNotificationSink()` setter** (added in Task 2.2) on `SpaceRuntimeService` to wire the sink. Do NOT add `notificationSink` to `SpaceRuntimeServiceConfig` — the sink cannot be available at construction time because `SpaceRuntimeService` is instantiated in `rpc-handlers/index.ts` (line ~242) BEFORE `provisionGlobalSpacesAgent()` is called (line ~285). The setter pattern resolves this circular dependency.
+4. Ensure the wiring order is: (a) create global session → (b) create `SessionNotificationSink` with sessionFactory + sessionId → (c) call `spaceRuntimeService.setNotificationSink(sink)`.
+5. Write integration-style unit tests that verify:
    - After provisioning, the runtime has a non-null notification sink
    - A tick that produces a notification event results in a message being injected into the global session
 
 **Acceptance criteria:**
-- Global agent provisioning creates and wires the SessionNotificationSink
-- SpaceRuntime events are delivered to the `spaces:global` session
-- Wiring order is correct (session exists before sink is created)
+- Global agent provisioning creates and wires the `SessionNotificationSink` via the setter pattern
+- SpaceRuntime events are delivered to the `spaces:global` session via `sessionFactory.injectMessage()`
+- Wiring order is correct (session exists → sink created → setter called)
+- No changes to `SpaceRuntimeServiceConfig` constructor signature (uses setter instead)
 - Integration test verifies end-to-end flow from tick event to session message
 
 **Dependencies:** Task 5.1, Task 2.2

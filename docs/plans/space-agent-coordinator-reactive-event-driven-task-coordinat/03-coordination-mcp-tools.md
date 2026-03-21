@@ -6,10 +6,12 @@ Implement the five new coordination tools (`create_standalone_task`, `get_task_d
 
 ## Scope
 
-- New SpaceTaskManager methods for retry and reassign operations
+- New SpaceTaskManager methods for retry and reassign operations (note: `cancelTask()` already exists with cascade behavior — no new cancel logic needed)
 - New tool handlers in `space-agent-tools.ts` and `global-spaces-tools.ts`
 - MCP tool definitions with zod schemas
 - Unit tests for all new handlers
+
+**Important context:** `SpaceTaskManager.cancelTask()` already exists (lines 200-224 of `space-task-manager.ts`) and performs cascading cancellation of dependent tasks. The `cancel_task` MCP tool is a **wrapper** around this existing method, with one new behavior: an optional `cancel_workflow_run` flag. The genuinely new SpaceTaskManager methods are `retryTask()` and `reassignTask()` only.
 
 ---
 
@@ -53,12 +55,12 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 **Agent type:** coder
 
 **Subtasks:**
-1. Add `SpaceTaskManager` to `SpaceAgentToolsConfig` (needed for create/retry/reassign/cancel operations)
+1. Add `SpaceTaskManager` to `SpaceAgentToolsConfig` (needed for create/retry/reassign/cancel operations). The caller of `createSpaceAgentMcpServer()` should construct `SpaceTaskManager` externally (from `db` + `spaceId`) and pass it in, keeping the tools layer free of DB construction logic. This matches how `taskRepo` and `workflowRunRepo` are already passed in.
 2. Add `spaceAgentManager` to `SpaceAgentToolsConfig` (needed for reassign validation)
 3. Implement `create_standalone_task` handler: creates a task with no workflowRunId/workflowStepId, accepts title, description, priority, task_type, assigned_agent, custom_agent_id
 4. Implement `get_task_detail` handler: fetches full task record by ID including all fields (error, result, prUrl, prNumber, progress, currentStep)
 5. Implement `retry_task` handler: calls `SpaceTaskManager.retryTask()`, accepts task_id and optional description
-6. Implement `cancel_task` handler: calls `SpaceTaskManager.cancelTask()`, accepts task_id and optional cancel_workflow_run boolean (if true and task has workflowRunId, also cancels the run)
+6. Implement `cancel_task` handler: wraps the existing `SpaceTaskManager.cancelTask()` (which already cascades to dependent tasks), accepts task_id and optional `cancel_workflow_run` boolean. **New behavior:** If `cancel_workflow_run` is true and the task has a `workflowRunId`, also update the workflow run status to `cancelled` via `workflowRunRepo.updateStatus(runId, 'cancelled')`. The live `WorkflowExecutor` in SpaceRuntime's `executors` map will be cleaned up by `cleanupTerminalExecutors()` on the next tick (which already removes executors for terminal-state runs). Do NOT attempt to remove the executor directly — rely on the existing cleanup mechanism.
 7. Implement `reassign_task` handler: calls `SpaceTaskManager.reassignTask()`, accepts task_id, custom_agent_id, assigned_agent
 8. Add MCP tool definitions with zod schemas for all five tools
 9. Write unit tests for all five tool handlers
@@ -99,6 +101,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Error messages are clear when no space context is available
 - Unit tests cover the space resolution and all tool operations
 
-**Dependencies:** Task 3.2
+**Dependencies:** Task 3.1 (needs `retryTask`/`reassignTask` methods; does NOT depend on Task 3.2 — `space-agent-tools.ts` and `global-spaces-tools.ts` are independent modules that can be built in parallel)
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.

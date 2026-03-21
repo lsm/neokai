@@ -52,8 +52,8 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. Test: prompt generation with `supervised` autonomy includes "notify human of ALL events" instruction
 3. Test: prompt generation with `semi_autonomous` autonomy includes "retry once autonomously" instruction
 4. Test: prompt generation with no autonomy level defaults to supervised instructions
-5. Test: `retry_task` tool works regardless of autonomy level (tool itself has no autonomy gate -- the LLM decides based on prompt)
-6. Test: notification sink message format includes the space's autonomy level so the agent has context
+5. Test: notification sink message format includes the space's autonomy level so the agent can read it and make context-appropriate decisions
+6. Test: `retry_task` tool is callable at both autonomy levels — verify the tool itself returns success regardless of level (the autonomy gate is in the prompt, not the tool code)
 
 **Acceptance criteria:**
 - Prompt content varies correctly based on autonomy level
@@ -89,5 +89,30 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - All edge cases are documented by test descriptions
 
 **Dependencies:** Task 5.1, Task 5.2, Task 2.3
+
+Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+
+---
+
+### Task 6.4: Online tests with dev proxy for Space Agent tool interaction
+
+**Description:** Write online tests using the dev proxy (`NEOKAI_USE_DEV_PROXY=1`) to verify that the Space Agent actually calls the correct coordination tools when it receives `[TASK_EVENT]` notifications. These tests exercise the full LLM-driven decision loop with mocked API responses.
+
+**Agent type:** coder
+
+**Subtasks:**
+1. Create `packages/daemon/tests/online/space/space-agent-coordination.test.ts`
+2. Test: inject a `[TASK_EVENT]` message with `task_needs_attention` kind into a provisioned Space Agent session (using dev proxy). Verify the agent calls `get_task_detail` and/or `retry_task` tool in its response (via tool_use blocks in the mocked response).
+3. Test: in `supervised` mode, inject a `[TASK_EVENT]` and verify the agent's response includes escalation text (asking the human for guidance) rather than autonomous action.
+4. Test: in `semi_autonomous` mode, inject a `[TASK_EVENT]` and verify the agent attempts `retry_task` autonomously.
+5. Configure dev proxy mock responses that simulate realistic Claude responses with tool calls for each scenario.
+
+**Acceptance criteria:**
+- Online tests run with `NEOKAI_USE_DEV_PROXY=1` and do NOT make real API calls
+- Tests verify the Space Agent prompt + tool interaction produces expected behavior
+- Both autonomy levels are tested for correct agent decision-making
+- Tests follow the existing online test patterns (see `packages/daemon/tests/online/`)
+
+**Dependencies:** Task 5.2, Task 4.1, Task 3.3
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.

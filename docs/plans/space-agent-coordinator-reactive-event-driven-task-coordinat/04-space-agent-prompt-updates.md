@@ -47,7 +47,7 @@ Update the Space Agent system prompts (`space-chat-agent.ts` and `global-spaces-
 - Existing prompt tests still pass
 - New tests verify autonomy-aware prompt content
 
-**Dependencies:** Task 1.1 (SpaceAutonomyLevel type), Task 3.2 (tools exist for prompt to reference)
+**Dependencies:** Task 1.1 (SpaceAutonomyLevel type). Note: tool names are defined upfront in the plan, so prompts can reference them by name without waiting for tool implementation. No dependency on Task 3.2.
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
@@ -70,6 +70,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Decision tree guidance helps the agent choose between retry/cancel/reassign
 - Unit tests verify new prompt sections
 
-**Dependencies:** Task 3.3 (global tools exist for prompt to reference)
+**Dependencies:** Task 1.1 (SpaceAutonomyLevel type). Note: tool names are defined upfront, so no dependency on Task 3.3.
 
 Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
