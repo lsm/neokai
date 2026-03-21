@@ -321,6 +321,131 @@ describe('SpaceWorkflowRepository', () => {
 		expect(repo.getWorkflowsReferencingAgent('no-such-agent')).toHaveLength(0);
 	});
 
+	test('getWorkflowsReferencingAgent finds agent referenced via agents[] JSON config (multi-agent step)', () => {
+		// Multi-agent steps store agent_id = NULL and put agent IDs in the JSON config column.
+		// The LIKE-based query must catch these so deletion protection works for multi-agent steps.
+		seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
+		seedAgent(db, 'agent-multi-2', 'space-1', 'Multi2');
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Multi-Agent WF',
+			steps: [
+				{
+					id: 'step-multi',
+					name: 'Parallel Step',
+					agents: [{ agentId: 'agent-multi-1' }, { agentId: 'agent-multi-2' }],
+				},
+			],
+		});
+		// Both agents must be found via the config LIKE path (agent_id is NULL in DB)
+		const refs1 = repo.getWorkflowsReferencingAgent('agent-multi-1');
+		expect(refs1).toHaveLength(1);
+		expect(refs1[0].id).toBe(wf.id);
+
+		const refs2 = repo.getWorkflowsReferencingAgent('agent-multi-2');
+		expect(refs2).toHaveLength(1);
+		expect(refs2[0].id).toBe(wf.id);
+
+		// An agent not in the step must not be returned
+		expect(repo.getWorkflowsReferencingAgent('agent-coder')).toHaveLength(0);
+	});
+
+	// -------------------------------------------------------------------------
+	// Multi-agent step persistence (agents[] and channels[] round-trips)
+	// -------------------------------------------------------------------------
+
+	test('round-trip: step with agents[] is persisted and restored correctly', () => {
+		seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
+		seedAgent(db, 'agent-multi-2', 'space-1', 'Multi2');
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Multi-Agent Round-Trip',
+			steps: [
+				{
+					id: 'step-1',
+					name: 'Parallel Step',
+					agents: [
+						{ agentId: 'agent-multi-1', instructions: 'do A' },
+						{ agentId: 'agent-multi-2' },
+					],
+					instructions: 'shared instructions',
+				},
+			],
+		});
+
+		const read = repo.getWorkflow(wf.id);
+		expect(read).not.toBeNull();
+		const step = read!.steps[0];
+
+		// agentId should be absent (multi-agent step stored with NULL agent_id)
+		expect(step.agentId).toBeUndefined();
+
+		// agents[] must be restored with all fields
+		expect(step.agents).toHaveLength(2);
+		expect(step.agents![0].agentId).toBe('agent-multi-1');
+		expect(step.agents![0].instructions).toBe('do A');
+		expect(step.agents![1].agentId).toBe('agent-multi-2');
+		expect(step.agents![1].instructions).toBeUndefined();
+
+		// shared instructions stored in the config as well
+		expect(step.instructions).toBe('shared instructions');
+	});
+
+	test('round-trip: step with channels[] is persisted and restored correctly', () => {
+		seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
+		seedAgent(db, 'agent-multi-2', 'space-1', 'Multi2');
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Channel Round-Trip',
+			steps: [
+				{
+					id: 'step-1',
+					name: 'Channels Step',
+					agents: [{ agentId: 'agent-multi-1' }, { agentId: 'agent-multi-2' }],
+					channels: [
+						{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'feedback' },
+						{ from: 'reviewer', to: ['coder', 'security'], direction: 'bidirectional' },
+					],
+				},
+			],
+		});
+
+		const read = repo.getWorkflow(wf.id);
+		expect(read).not.toBeNull();
+		const step = read!.steps[0];
+
+		expect(step.channels).toHaveLength(2);
+		expect(step.channels![0]).toMatchObject({
+			from: 'coder',
+			to: 'reviewer',
+			direction: 'one-way',
+			label: 'feedback',
+		});
+		expect(step.channels![1]).toMatchObject({
+			from: 'reviewer',
+			to: ['coder', 'security'],
+			direction: 'bidirectional',
+		});
+	});
+
+	test('round-trip: legacy single-agent step (agentId only) still works correctly', () => {
+		// Regression guard: ensure the multi-agent changes do not break the existing path.
+		seedAgent(db, 'agent-1', 'space-1', 'Alpha');
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Legacy Round-Trip',
+			steps: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+		});
+
+		const read = repo.getWorkflow(wf.id);
+		expect(read).not.toBeNull();
+		const step = read!.steps[0];
+
+		expect(step.agentId).toBe('agent-1');
+		expect(step.agents).toBeUndefined();
+		expect(step.channels).toBeUndefined();
+	});
+
 	// -------------------------------------------------------------------------
 	// JSON round-trips
 	// -------------------------------------------------------------------------

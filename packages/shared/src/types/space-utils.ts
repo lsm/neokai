@@ -110,6 +110,8 @@ export function resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[] {
  * @param step   - The workflow step whose channels are to be resolved.
  * @param agents - All `SpaceAgent` records in the Space; used to map agentId → role.
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
+ * @throws {Error} When neither `agentId` nor `agents` is provided on the step
+ *   (propagated from `resolveStepAgents`). Callers should validate steps before calling this.
  */
 export function resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): ResolvedChannel[] {
 	if (!step.channels || step.channels.length === 0) return [];
