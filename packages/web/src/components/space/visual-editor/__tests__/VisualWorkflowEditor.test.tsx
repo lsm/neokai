@@ -707,6 +707,159 @@ describe('VisualWorkflowEditor', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Template picker
+	// -------------------------------------------------------------------------
+
+	describe('Template picker', () => {
+		it('shows template picker button in create mode', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(getByTestId('template-picker-button')).toBeTruthy();
+		});
+
+		it('hides template picker button in edit mode', () => {
+			const { queryByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
+			);
+			expect(queryByTestId('template-picker-button')).toBeNull();
+		});
+
+		it('shows template dropdown when button is clicked', () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			expect(options.length).toBe(3); // 3 templates
+		});
+
+		it('hides dropdown when button clicked again', () => {
+			const { getByTestId, queryAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(getByTestId('template-picker-button'));
+			expect(queryAllByTestId('template-option').length).toBe(0);
+		});
+
+		it('selecting a template populates nodes', () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.click(getByTestId('template-picker-button'));
+
+			// Select the "Coding (Plan → Code)" template (2 steps: planner + coder)
+			const options = getAllByTestId('template-option');
+			const codingOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+			);
+			expect(codingOption).toBeTruthy();
+			fireEvent.click(codingOption!);
+
+			// Should have 2 nodes (planner + coder)
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
+		});
+
+		it('selecting a template creates edges between nodes', () => {
+			const { getByTestId, getAllByTestId, container } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const codingOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+			);
+			fireEvent.click(codingOption!);
+
+			// Should have 1 edge connecting the 2 nodes (EdgeRenderer uses data-edge-id attribute)
+			expect(container.querySelectorAll('[data-edge-id]').length).toBe(1);
+		});
+
+		it('selecting a template assigns autoLayout positions (non-zero for at least one node)', () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const codingOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+			);
+			fireEvent.click(codingOption!);
+
+			// Nodes use absolute positioning via `left` and `top` style properties.
+			// autoLayout places the first node at START_X=50, START_Y=50, so at
+			// least one node must have a non-zero left position.
+			const nodes = getAllByTestId(/^workflow-node-/);
+			const hasNonZeroLeft = nodes.some((n) => {
+				const left = n.style.left;
+				return left !== '' && left !== '0px' && left !== '0';
+			});
+			expect(hasNonZeroLeft).toBe(true);
+		});
+
+		it('selects first step as start node after template applied', () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const codingOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+			);
+			fireEvent.click(codingOption!);
+
+			// Exactly one node should have the START badge
+			const startBadges = getAllByTestId(/^workflow-node-/).filter((n) =>
+				n.textContent?.includes('START')
+			);
+			expect(startBadges.length).toBe(1);
+		});
+
+		it('sets workflow name from template label when name is empty', () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const codingOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+			);
+			fireEvent.click(codingOption!);
+
+			expect((getByTestId('workflow-name-input') as HTMLInputElement).value).toBe(
+				'Coding (Plan → Code)'
+			);
+		});
+
+		it('does not override existing name when applying template', () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'My Custom Name' } });
+
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const codingOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+			);
+			fireEvent.click(codingOption!);
+
+			expect((getByTestId('workflow-name-input') as HTMLInputElement).value).toBe('My Custom Name');
+		});
+
+		it('closes template dropdown after selecting a template', () => {
+			const { getByTestId, getAllByTestId, queryAllByTestId } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			fireEvent.click(options[0]);
+
+			expect(queryAllByTestId('template-option').length).toBe(0);
+		});
+
+		it('single-step template (Quick Fix) creates one node and no edges', () => {
+			const { getByTestId, getAllByTestId, container } = render(
+				<VisualWorkflowEditor {...makeProps()} />
+			);
+			fireEvent.click(getByTestId('template-picker-button'));
+			const options = getAllByTestId('template-option');
+			const quickFixOption = options.find(
+				(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+			);
+			fireEvent.click(quickFixOption!);
+
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(1);
+			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// Rules section
 	// -------------------------------------------------------------------------
 

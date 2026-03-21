@@ -30,13 +30,13 @@ const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment']
 // Template Definitions
 // ============================================================================
 
-interface WorkflowTemplate {
+export interface WorkflowTemplate {
 	label: string;
 	description: string;
 	stepRoles: string[]; // agent role names to look up from agent list
 }
 
-const TEMPLATES: WorkflowTemplate[] = [
+export const TEMPLATES: WorkflowTemplate[] = [
 	{
 		label: 'Coding (Plan → Code)',
 		description: 'Planner agent designs the approach, then coder implements.',
