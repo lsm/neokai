@@ -123,6 +123,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 31: Add 'space_task_agent' to sessions type CHECK constraint.
 	runMigration31(db);
+
+	// Migration 32: Add task_agent_session_id column to space_tasks.
+	runMigration32(db);
 }
 
 /**
@@ -1643,6 +1646,7 @@ function runMigration29(db: BunDatabase): void {
 			input_draft TEXT,
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
+			task_agent_session_id TEXT,
 			pr_url TEXT,
 			pr_number INTEGER,
 			pr_created_at INTEGER,
@@ -1666,6 +1670,9 @@ function runMigration29(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
 	);
 
 	// -------------------------------------------------------------------------
@@ -1958,4 +1965,22 @@ function runMigration31(db: BunDatabase): void {
 			db.exec('PRAGMA foreign_keys = ON');
 		}
 	}
+}
+
+/**
+ * Migration 32: Add `task_agent_session_id` column to `space_tasks`.
+ *
+ * Stores the ID of the Task Agent session associated with this task. Nullable —
+ * tasks without a Task Agent return NULL (mapped to undefined in code).
+ */
+function runMigration32(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	try {
+		db.prepare(`SELECT task_agent_session_id FROM space_tasks LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN task_agent_session_id TEXT`);
+	}
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+	);
 }

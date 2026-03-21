@@ -73,6 +73,7 @@ describe('SpaceTaskRepository', () => {
 			expect(task.customAgentId).toBeUndefined();
 			expect(task.workflowRunId).toBeUndefined();
 			expect(task.workflowStepId).toBeUndefined();
+			expect(task.taskAgentSessionId).toBeUndefined();
 		});
 
 		it('creates a task with workflow routing fields', () => {
@@ -98,6 +99,21 @@ describe('SpaceTaskRepository', () => {
 				status: 'draft',
 			});
 			expect(task.status).toBe('draft');
+		});
+
+		it('persists taskAgentSessionId when provided', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Agent task',
+				description: '',
+				taskAgentSessionId: 'session-abc',
+			});
+			expect(task.taskAgentSessionId).toBe('session-abc');
+		});
+
+		it('leaves taskAgentSessionId undefined when not provided', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			expect(task.taskAgentSessionId).toBeUndefined();
 		});
 	});
 
@@ -197,6 +213,54 @@ describe('SpaceTaskRepository', () => {
 			});
 			const updated = repo.updateTask(task.id, { customAgentId: null });
 			expect(updated!.customAgentId).toBeUndefined();
+		});
+
+		it('sets taskAgentSessionId', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, { taskAgentSessionId: 'session-xyz' });
+			expect(updated!.taskAgentSessionId).toBe('session-xyz');
+		});
+
+		it('clears taskAgentSessionId', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'T',
+				description: '',
+				taskAgentSessionId: 'session-xyz',
+			});
+			const updated = repo.updateTask(task.id, { taskAgentSessionId: null });
+			expect(updated!.taskAgentSessionId).toBeUndefined();
+		});
+	});
+
+	describe('getTaskBySessionId', () => {
+		it('returns the task matching the session ID', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Agent task',
+				description: '',
+				taskAgentSessionId: 'session-lookup',
+			});
+			const found = repo.getTaskBySessionId('session-lookup');
+			expect(found).not.toBeNull();
+			expect(found!.id).toBe(task.id);
+			expect(found!.taskAgentSessionId).toBe('session-lookup');
+		});
+
+		it('returns null when no task matches the session ID', () => {
+			expect(repo.getTaskBySessionId('nonexistent-session')).toBeNull();
+		});
+
+		it('returns the correct task when multiple tasks exist', () => {
+			repo.createTask({ spaceId, title: 'Other', description: '' });
+			const task = repo.createTask({
+				spaceId,
+				title: 'Agent task',
+				description: '',
+				taskAgentSessionId: 'session-specific',
+			});
+			const found = repo.getTaskBySessionId('session-specific');
+			expect(found!.id).toBe(task.id);
 		});
 	});
 

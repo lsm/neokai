@@ -143,6 +143,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			input_draft TEXT,
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
+			task_agent_session_id TEXT,
 			pr_url TEXT,
 			pr_number INTEGER,
 			pr_created_at INTEGER,
