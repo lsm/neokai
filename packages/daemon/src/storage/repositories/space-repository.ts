@@ -6,7 +6,13 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@neokai/shared';
+import type {
+	Space,
+	SpaceAutonomyLevel,
+	SpaceConfig,
+	CreateSpaceParams,
+	UpdateSpaceParams,
+} from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
 export class SpaceRepository {
@@ -20,8 +26,8 @@ export class SpaceRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -35,6 +41,7 @@ export class SpaceRepository {
 			JSON.stringify(params.allowedModels ?? []),
 			'[]',
 			'active',
+			params.autonomyLevel ?? 'supervised',
 			params.config ? JSON.stringify(params.config) : null,
 			now,
 			now
@@ -115,6 +122,10 @@ export class SpaceRepository {
 		if (params.allowedModels !== undefined) {
 			fields.push('allowed_models = ?');
 			values.push(JSON.stringify(params.allowedModels));
+		}
+		if (params.autonomyLevel !== undefined) {
+			fields.push('autonomy_level = ?');
+			values.push(params.autonomyLevel);
 		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
@@ -204,7 +215,8 @@ export class SpaceRepository {
 	private rowToSpace(row: Record<string, unknown>): Space {
 		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
 		const rawConfig = row.config as string | null;
-		const config = rawConfig ? (JSON.parse(rawConfig) as Record<string, unknown>) : undefined;
+		const config = rawConfig ? (JSON.parse(rawConfig) as SpaceConfig) : undefined;
+		const rawAutonomyLevel = (row.autonomy_level as string | null) ?? 'supervised';
 
 		return {
 			id: row.id as string,
@@ -217,6 +229,7 @@ export class SpaceRepository {
 			allowedModels: rawModels.length > 0 ? rawModels : undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
+			autonomyLevel: rawAutonomyLevel as SpaceAutonomyLevel,
 			config,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,

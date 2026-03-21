@@ -21,13 +21,14 @@ export function createSpaceAgentSchema(db: Database): void {
 			allowed_models TEXT NOT NULL DEFAULT '[]',
 			session_ids TEXT NOT NULL DEFAULT '[]',
 			status TEXT NOT NULL DEFAULT 'active',
+			autonomy_level TEXT NOT NULL DEFAULT 'supervised',
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
 	`);
 
-	// Keep in sync with runMigration29 in migrations.ts and space-test-db.ts.
+	// Keep in sync with runMigration33 in migrations.ts and space-test-db.ts.
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,

@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with runMigration30 in packages/daemon/src/storage/schema/migrations.ts
+ * Keep in sync with runMigration33 in packages/daemon/src/storage/schema/migrations.ts
  * and space-agent-schema.ts.
  */
 
@@ -26,6 +26,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			session_ids TEXT NOT NULL DEFAULT '[]',
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'archived')),
+			autonomy_level TEXT NOT NULL DEFAULT 'supervised',
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL

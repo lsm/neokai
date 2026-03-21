@@ -126,6 +126,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 32: Add task_agent_session_id column to space_tasks.
 	runMigration32(db);
+
+	// Migration 33: Add autonomy_level column to spaces table.
+	runMigration33(db);
 }
 
 /**
@@ -1983,4 +1986,22 @@ function runMigration32(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
 	);
+}
+
+/**
+ * Migration 33: Add `autonomy_level` column to `spaces`.
+ *
+ * Controls how much the Space Agent can act autonomously:
+ * - 'supervised' (default): notifies human of all judgment calls, waits for approval.
+ * - 'semi_autonomous': retries/reassigns tasks autonomously; escalates after one failed retry.
+ *
+ * Default is 'supervised' so all existing spaces remain supervised after migration.
+ */
+function runMigration33(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	try {
+		db.prepare(`SELECT autonomy_level FROM spaces LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE spaces ADD COLUMN autonomy_level TEXT NOT NULL DEFAULT 'supervised'`);
+	}
 }
