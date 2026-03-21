@@ -12,6 +12,7 @@
  */
 
 import type { WorkflowRule, WorkflowStep } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 
 // ============================================================================
 // Types
@@ -35,7 +36,7 @@ export interface RuleDraft {
 
 export function makeEmptyRule(): RuleDraft {
 	return {
-		localId: crypto.randomUUID(),
+		localId: generateUUID(),
 		name: '',
 		content: '',
 		appliesTo: [],
@@ -45,7 +46,7 @@ export function makeEmptyRule(): RuleDraft {
 /** Convert saved WorkflowRules to drafts */
 export function rulesToDrafts(rules: WorkflowRule[]): RuleDraft[] {
 	return rules.map((r) => ({
-		localId: crypto.randomUUID(),
+		localId: generateUUID(),
 		id: r.id,
 		name: r.name,
 		content: r.content,

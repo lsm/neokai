@@ -27,6 +27,7 @@ import type {
 	WorkflowTransition,
 	WorkflowConditionType,
 } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
@@ -239,7 +240,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function addStep() {
-		const newLocalId = crypto.randomUUID();
+		const newLocalId = generateUUID();
 		const newStep: StepDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
 		// Capture emptiness before the setNodes call so we can call setStartStepId
@@ -426,7 +427,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const localIds = template.stepRoles.map(() => crypto.randomUUID());
+		const localIds = template.stepRoles.map(() => generateUUID());
 		const firstLocalId = localIds[0];
 
 		const newNodes: VisualNode[] = template.stepRoles.map((role, i) => {
