@@ -176,17 +176,39 @@ export class SpaceWorkflowManager {
 	}
 
 	private validateStepAgentRef(spaceId: string, step: WorkflowStepInput, index: number): void {
-		if (!step.agentId || !step.agentId.trim()) {
+		const hasAgentId = step.agentId && step.agentId.trim().length > 0;
+		const hasAgents = step.agents && step.agents.length > 0;
+
+		if (!hasAgentId && !hasAgents) {
 			throw new WorkflowValidationError(
-				`step[${index}]: agentId must be a non-empty SpaceAgent UUID`
+				`step[${index}]: at least one of agentId or agents must be provided`
 			);
 		}
+
 		if (this.agentLookup) {
-			const agent = this.agentLookup.getAgentById(spaceId, step.agentId);
-			if (!agent) {
-				throw new WorkflowValidationError(
-					`step[${index}]: agentId "${step.agentId}" does not match any SpaceAgent in this space`
-				);
+			if (hasAgentId) {
+				const agent = this.agentLookup.getAgentById(spaceId, step.agentId!);
+				if (!agent) {
+					throw new WorkflowValidationError(
+						`step[${index}]: agentId "${step.agentId}" does not match any SpaceAgent in this space`
+					);
+				}
+			}
+			if (hasAgents) {
+				for (let j = 0; j < step.agents!.length; j++) {
+					const entry = step.agents![j];
+					if (!entry.agentId || !entry.agentId.trim()) {
+						throw new WorkflowValidationError(
+							`step[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
+						);
+					}
+					const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
+					if (!agent) {
+						throw new WorkflowValidationError(
+							`step[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
+						);
+					}
+				}
 			}
 		}
 	}

@@ -24,6 +24,8 @@ import type {
 	WorkflowStepInput,
 	WorkflowTransitionInput,
 	WorkflowRuleInput,
+	WorkflowStepAgent,
+	WorkflowChannel,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
@@ -78,6 +80,10 @@ interface WorkflowConfigJson {
 // JSON stored inside space_workflow_steps.config
 interface StepConfigJson {
 	instructions?: string;
+	/** Multi-agent array — present when the step uses the agents[] format */
+	agents?: WorkflowStepAgent[];
+	/** Channel topology declarations — present when channels are defined */
+	channels?: WorkflowChannel[];
 }
 
 // ---------------------------------------------------------------------------
@@ -94,16 +100,25 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function rowToStep(row: StepRow): WorkflowStep {
-	if (!row.agent_id) {
-		throw new Error(`WorkflowStep ${row.id}: agent_id is null in DB`);
-	}
 	const cfg = parseJson<StepConfigJson>(row.config, {});
-	return {
+	const step: WorkflowStep = {
 		id: row.id,
 		name: row.name,
-		agentId: row.agent_id,
-		instructions: cfg.instructions,
 	};
+	// agentId: stored as non-empty string for single-agent steps, null/empty for multi-agent steps.
+	if (row.agent_id) {
+		step.agentId = row.agent_id;
+	}
+	if (cfg.instructions) {
+		step.instructions = cfg.instructions;
+	}
+	if (cfg.agents && cfg.agents.length > 0) {
+		step.agents = cfg.agents;
+	}
+	if (cfg.channels && cfg.channels.length > 0) {
+		step.channels = cfg.channels;
+	}
+	return step;
 }
 
 function rowToTransition(row: TransitionRow): WorkflowTransition {
@@ -396,6 +411,17 @@ export class SpaceWorkflowRepository {
 		const stepCfg: StepConfigJson = {
 			instructions: input.instructions,
 		};
+		// Persist agents and channels into the JSON config column so they survive round-trips.
+		if (input.agents && input.agents.length > 0) {
+			stepCfg.agents = input.agents;
+		}
+		if (input.channels && input.channels.length > 0) {
+			stepCfg.channels = input.channels;
+		}
+
+		// Store null for agent_id when using the multi-agent agents[] format.
+		// Single-agent steps store the UUID directly for fast lookups.
+		const agentIdValue = input.agentId && input.agentId.trim() ? input.agentId : null;
 
 		this.db
 			.prepare(
@@ -408,7 +434,7 @@ export class SpaceWorkflowRepository {
 				workflowId,
 				input.name,
 				'',
-				input.agentId ?? '',
+				agentIdValue,
 				index,
 				JSON.stringify(stepCfg),
 				now,

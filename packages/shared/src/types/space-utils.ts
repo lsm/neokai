@@ -85,15 +85,19 @@ export function resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[] {
  *
  * Resolution algorithm:
  * - Each channel's `from`/`to` role strings are resolved against the step's agents via
- *   the provided `SpaceAgent[]` lookup table.
- * - `'*'` in `from` or `to` expands to all agent roles present in the step.
+ *   the provided `SpaceAgent[]` lookup table (role strings matched via SpaceAgent.role).
+ * - `'*'` in `from` or `to` (as the sole element) expands to all agent roles in the step.
+ *   Note: `'*'` mixed with other roles in an array `to` is treated as a literal role name;
+ *   use `validateStepChannels` to catch this pattern at edit time.
  * - Bidirectional channels are expanded into two one-way entries:
  *   - **Point-to-point** (`A ↔ B`): A→B + B→A, both with `isHubSpoke: false`.
  *   - **Hub-spoke** (`A ↔ [B, C, D]`): hub→each spoke + each spoke→hub, all with
  *     `isHubSpoke: true`. Spoke-to-spoke routing is intentionally omitted.
  * - Self-loops (fromRole === toRole) are skipped.
- * - Agent IDs not found in the provided `agents` list are skipped (invalid references
- *   are reported by `validateStepChannels`).
+ * - Roles not resolvable via the provided `agents` list are skipped silently;
+ *   use `validateStepChannels` to surface these as errors before calling this function.
+ * - When two step agents share the same SpaceAgent.role, the last one wins in the
+ *   role→agentId map. Duplicate roles are flagged by `validateStepChannels`.
  *
  * Supported topology patterns:
  * - `A → B`        one-way point-to-point
@@ -104,7 +108,7 @@ export function resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[] {
  * - `A → *`        A sends to all agents
  *
  * @param step   - The workflow step whose channels are to be resolved.
- * @param agents - All `SpaceAgent` records in the Space; used to map `agentId` → role.
+ * @param agents - All `SpaceAgent` records in the Space; used to map agentId → role.
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
  */
 export function resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): ResolvedChannel[] {
@@ -125,13 +129,13 @@ export function resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): R
 	const results: ResolvedChannel[] = [];
 
 	for (const channel of step.channels) {
-		_expandChannel(channel, allRoles, roleToAgentId, results);
+		expandChannel(channel, allRoles, roleToAgentId, results);
 	}
 
 	return results;
 }
 
-function _expandChannel(
+function expandChannel(
 	channel: WorkflowChannel,
 	allRoles: string[],
 	roleToAgentId: Map<string, string>,
@@ -143,6 +147,7 @@ function _expandChannel(
 	const fromRoles: string[] = from === '*' ? allRoles : [from];
 
 	// Resolve concrete to-roles.
+	// '*' is only expanded when it is the sole element; mixed arrays are treated literally.
 	const toList: string[] = Array.isArray(to) ? to : [to];
 	const toRoles: string[] = toList.length === 1 && toList[0] === '*' ? allRoles : toList;
 
@@ -196,9 +201,12 @@ function _expandChannel(
 /**
  * Validates that all role references in a step's `channels` are resolvable.
  *
- * A role reference is valid when it is:
- * - The wildcard `'*'`, or
- * - A string that matches `SpaceAgent.role` for at least one agent in the step.
+ * Checks:
+ * - At least one of `agentId` or `agents` is provided (delegates to `resolveStepAgents`).
+ * - All step agent IDs are found in the provided `agents` list.
+ * - No two step agents share the same `SpaceAgent.role` (ambiguous channel targeting).
+ * - `from`/`to` role strings are either the wildcard `'*'` or match a known role.
+ * - `'*'` is not mixed with other roles in an array `to` (use a plain `'*'` string instead).
  *
  * @param step   - The workflow step to validate.
  * @param agents - All `SpaceAgent` records in the Space.
@@ -217,12 +225,21 @@ export function validateStepChannels(step: WorkflowStep, agents: SpaceAgent[]): 
 		return errors;
 	}
 
-	// Build known roles set from step agents.
+	// Build known roles set from step agents; detect duplicate roles.
 	const knownRoles = new Set<string>();
+	const seenRoles = new Set<string>();
 	for (const sa of stepAgents) {
 		const spaceAgent = agents.find((a) => a.id === sa.agentId);
 		if (spaceAgent) {
-			knownRoles.add(spaceAgent.role);
+			if (seenRoles.has(spaceAgent.role)) {
+				errors.push(
+					`Step "${step.name}" has two agents with role "${spaceAgent.role}". ` +
+						'Duplicate roles make channel targeting ambiguous.'
+				);
+			} else {
+				seenRoles.add(spaceAgent.role);
+				knownRoles.add(spaceAgent.role);
+			}
 		} else {
 			errors.push(
 				`Step agent with agentId "${sa.agentId}" was not found in the provided space agents list.`
@@ -241,6 +258,15 @@ export function validateStepChannels(step: WorkflowStep, agents: SpaceAgent[]): 
 		}
 
 		const toList: string[] = Array.isArray(ch.to) ? ch.to : [ch.to];
+
+		// Reject '*' mixed with other roles in array to — use plain '*' string instead.
+		if (toList.length > 1 && toList.includes('*')) {
+			errors.push(
+				`channels[${i}].to mixes wildcard '*' with explicit roles. ` +
+					"Use a plain '*' string (not an array) to target all agents."
+			);
+		}
+
 		for (const toRole of toList) {
 			if (toRole !== '*' && !knownRoles.has(toRole)) {
 				errors.push(

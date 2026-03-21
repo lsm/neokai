@@ -42,6 +42,7 @@ import {
 	ReportResultSchema,
 	RequestHumanInputSchema,
 } from './task-agent-tool-schemas';
+import { resolveStepAgents } from '@neokai/shared';
 import type {
 	SpawnStepAgentInput,
 	CheckStepStatusInput,
@@ -247,12 +248,14 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Ensure customAgentId is set — fall back to step.agentId for preset agents.
+			// Ensure customAgentId is set — fall back to the primary step agent ID for preset agents.
 			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
-			// but those agents are still SpaceAgent records indexed by step.agentId.
+			// but those agents are still SpaceAgent records. Use resolveStepAgents to get the
+			// correct primary agentId regardless of whether the step uses agentId or agents[].
+			const primaryAgentId = resolveStepAgents(step)[0]?.agentId;
 			const effectiveTask = {
 				...stepTask,
-				customAgentId: stepTask.customAgentId ?? step.agentId,
+				customAgentId: stepTask.customAgentId ?? primaryAgentId,
 			};
 
 			// Apply optional instruction override

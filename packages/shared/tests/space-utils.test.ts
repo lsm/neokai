@@ -396,6 +396,35 @@ describe('validateStepChannels', () => {
 		const errors = validateStepChannels(step, allAgents);
 		expect(errors.length).toBeGreaterThanOrEqual(3); // bad-from, bad-to, another-bad
 	});
+
+	test('reports error when two step agents share the same role', () => {
+		// Two coder agents in the same step — duplicate role makes channels ambiguous
+		const dupCoderAgent = makeAgent('agent-coder-2-id', 'coder');
+		const agents = [...allAgents, dupCoderAgent];
+		const step = makeStep({
+			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-coder-2-id' }],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+		});
+		const errors = validateStepChannels(step, agents);
+		expect(errors.some((e) => e.includes('Duplicate roles'))).toBe(true);
+	});
+
+	test('reports error when * is mixed with other roles in array to', () => {
+		const step = makeStep({
+			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			channels: [{ from: 'coder', to: ['reviewer', '*'], direction: 'one-way' }],
+		});
+		const errors = validateStepChannels(step, allAgents);
+		expect(errors.some((e) => e.includes("mixes wildcard '*'"))).toBe(true);
+	});
+
+	test('plain * in to (not in array) is accepted', () => {
+		const step = makeStep({
+			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
+		});
+		expect(validateStepChannels(step, allAgents)).toEqual([]);
+	});
 });
 
 // ============================================================================

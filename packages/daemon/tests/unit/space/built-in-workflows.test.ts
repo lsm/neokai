@@ -252,7 +252,9 @@ describe('getBuiltInWorkflows()', () => {
 	test('all agentId placeholders are valid builtin role names', () => {
 		for (const wf of getBuiltInWorkflows()) {
 			for (const step of wf.steps) {
-				expect(VALID_BUILTIN_ROLES.has(step.agentId)).toBe(true);
+				// Built-in workflows use single-agent steps; agentId must be defined and a valid role name.
+				expect(step.agentId).toBeDefined();
+				expect(VALID_BUILTIN_ROLES.has(step.agentId!)).toBe(true);
 			}
 		}
 	});

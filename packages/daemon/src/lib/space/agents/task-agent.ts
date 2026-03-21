@@ -46,6 +46,7 @@ import type {
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
+import { resolveStepAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { inferProviderForModel } from '../../providers/registry';
 
@@ -82,8 +83,18 @@ export interface TaskAgentContext {
 // ---------------------------------------------------------------------------
 
 function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
-	const agent = agents.find((a) => a.id === step.agentId);
-	const agentLabel = agent ? `${agent.name} (role: ${agent.role})` : `agent id: ${step.agentId}`;
+	const stepAgents = resolveStepAgents(step);
+	let agentLabel: string;
+	if (stepAgents.length === 1) {
+		const a = agents.find((ag) => ag.id === stepAgents[0].agentId);
+		agentLabel = a ? `${a.name} (role: ${a.role})` : `agent id: ${stepAgents[0].agentId}`;
+	} else {
+		const labels = stepAgents.map((sa) => {
+			const a = agents.find((ag) => ag.id === sa.agentId);
+			return a ? `${a.name} (role: ${a.role})` : `agent id: ${sa.agentId}`;
+		});
+		agentLabel = labels.join(', ');
+	}
 	const instructions = step.instructions ? `\n    Instructions: ${step.instructions}` : '';
 	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
 }
