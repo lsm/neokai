@@ -135,6 +135,11 @@ export class SpaceRuntime {
 	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:needs_attention`
 	 * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
 	 * Entries are cleared when the task leaves the flagged state.
+	 *
+	 * Restart contract: this set is in-memory only and starts empty on every daemon restart.
+	 * Tasks already in `needs_attention` at restart time will be re-notified once on the first
+	 * tick. This is intentional: the Space Agent session is also new after restart and needs to
+	 * learn about outstanding issues. No DB persistence for dedup state is required.
 	 */
 	private notifiedTaskSet = new Set<string>();
 
@@ -203,6 +208,7 @@ export class SpaceRuntime {
 	 * On every call:
 	 * 1. Processes completed tasks and advances their workflows
 	 * 2. Cleans up executors for runs that have reached a terminal state
+	 * 3. Checks standalone tasks (no workflowRunId) for needs_attention and timeout
 	 */
 	async executeTick(): Promise<void> {
 		if (!this.rehydrated) {
@@ -212,6 +218,7 @@ export class SpaceRuntime {
 
 		await this.processCompletedTasks();
 		await this.cleanupTerminalExecutors();
+		await this.checkStandaloneTasks();
 	}
 
 	/**
@@ -636,6 +643,83 @@ export class SpaceRuntime {
 	 */
 	getTaskManagerForSpace(spaceId: string): SpaceTaskManager {
 		return this.getOrCreateTaskManager(spaceId);
+	}
+
+	/**
+	 * Checks standalone tasks (tasks without a workflowRunId) across all spaces for:
+	 *   - `needs_attention` status → emit `task_needs_attention` notification
+	 *   - `in_progress` timeout    → emit `task_timeout` notification
+	 *
+	 * Uses the shared `notifiedTaskSet` for deduplication so the same task+status pair
+	 * is never notified twice in a row. Dedup keys are cleared when the task leaves the
+	 * flagged state, allowing re-notification if the task cycles back into it.
+	 *
+	 * Restart contract: because `notifiedTaskSet` is in-memory only, tasks already in
+	 * `needs_attention` at daemon startup will re-notify once on the first tick. This is
+	 * intentional — the Space Agent session is new after restart and needs to be informed
+	 * of outstanding issues. See the `notifiedTaskSet` field comment for details.
+	 */
+	private async checkStandaloneTasks(): Promise<void> {
+		const spaces = await this.config.spaceManager.listSpaces(false);
+
+		for (const space of spaces) {
+			// Fetch all non-archived standalone tasks for this space in a single query.
+			// Filtering by workflowRunId === undefined identifies tasks that are not
+			// associated with any workflow run (i.e., standalone tasks).
+			const standaloneTasks = this.config.taskRepo
+				.listBySpace(space.id)
+				.filter((t) => !t.workflowRunId);
+
+			// Dedup cleanup: clear keys for tasks that have left their flagged state.
+			// This mirrors the per-tick cleanup done in processRunTick() for workflow tasks.
+			for (const task of standaloneTasks) {
+				if (task.status !== 'needs_attention') {
+					this.notifiedTaskSet.delete(`${task.id}:needs_attention`);
+				}
+				if (task.status !== 'in_progress') {
+					this.notifiedTaskSet.delete(`${task.id}:timeout`);
+				}
+			}
+
+			// Emit task_needs_attention for standalone tasks in needs_attention state.
+			for (const task of standaloneTasks) {
+				if (task.status !== 'needs_attention') continue;
+				const dedupKey = `${task.id}:needs_attention`;
+				if (!this.notifiedTaskSet.has(dedupKey)) {
+					this.notifiedTaskSet.add(dedupKey);
+					await this.notificationSink.notify({
+						kind: 'task_needs_attention',
+						spaceId: space.id,
+						taskId: task.id,
+						reason: task.error ?? 'Task requires attention',
+						timestamp: new Date().toISOString(),
+					});
+				}
+			}
+
+			// Timeout detection for standalone in_progress tasks.
+			const taskTimeoutMs = space.config?.taskTimeoutMs;
+			if (taskTimeoutMs !== undefined) {
+				const now = Date.now();
+				for (const task of standaloneTasks) {
+					if (task.status !== 'in_progress' || !task.startedAt) continue;
+					const elapsedMs = now - task.startedAt;
+					if (elapsedMs > taskTimeoutMs) {
+						const dedupKey = `${task.id}:timeout`;
+						if (!this.notifiedTaskSet.has(dedupKey)) {
+							this.notifiedTaskSet.add(dedupKey);
+							await this.notificationSink.notify({
+								kind: 'task_timeout',
+								spaceId: space.id,
+								taskId: task.id,
+								elapsedMs,
+								timestamp: new Date().toISOString(),
+							});
+						}
+					}
+				}
+			}
+		}
 	}
 
 	/**

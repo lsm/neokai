@@ -688,6 +688,320 @@ describe('SpaceRuntime — notification events', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Standalone task notifications
+	// -------------------------------------------------------------------------
+
+	describe('standalone task notifications', () => {
+		test('emits task_needs_attention for standalone task in needs_attention state', async () => {
+			// Create a standalone task (no workflowRunId) directly via repo
+			const created = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone Task',
+				description: 'No workflow',
+				status: 'needs_attention',
+			});
+			// createTask doesn't support error field — set it via update
+			const task = taskRepo.updateTask(created.id, { error: 'Disk full' })!;
+
+			await runtime.executeTick();
+
+			expect(sink.events).toHaveLength(1);
+			const evt = sink.events[0];
+			expect(evt.kind).toBe('task_needs_attention');
+			if (evt.kind === 'task_needs_attention') {
+				expect(evt.spaceId).toBe(SPACE_ID);
+				expect(evt.taskId).toBe(task.id);
+				expect(evt.reason).toBe('Disk full');
+				expect(typeof evt.timestamp).toBe('string');
+			}
+		});
+
+		test('uses fallback reason when standalone task.error is null', async () => {
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone Task',
+				description: '',
+				status: 'needs_attention',
+			});
+
+			await runtime.executeTick();
+
+			const evt = sink.events[0];
+			expect(evt.kind).toBe('task_needs_attention');
+			if (evt.kind === 'task_needs_attention') {
+				expect(evt.reason).toBe('Task requires attention');
+			}
+		});
+
+		test('deduplicates standalone needs_attention across ticks', async () => {
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone',
+				description: '',
+				status: 'needs_attention',
+			});
+
+			// First tick — emits
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Second tick — still needs_attention — deduped
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Third tick — still deduped
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+		});
+
+		test('re-notifies standalone task after it leaves and re-enters needs_attention', async () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone',
+				description: '',
+				status: 'needs_attention',
+			});
+
+			// First tick — emits
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Task gets retried: back to in_progress
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Task fails again
+			taskRepo.updateTask(task.id, { status: 'needs_attention', error: 'Again' });
+			await runtime.executeTick();
+			// Should emit a second time since dedup key was cleared when task left needs_attention
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(2);
+		});
+
+		test('pending standalone tasks emit no notifications', async () => {
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone Pending',
+				description: '',
+				status: 'pending',
+			});
+
+			await runtime.executeTick();
+
+			expect(sink.events).toHaveLength(0);
+		});
+
+		test('in_progress standalone tasks without timeout emit no notifications', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000); // 1 minute — won't fire in unit test
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Standalone In Progress',
+				description: '',
+				status: 'in_progress',
+			});
+			// Stamp started_at (normally done by repo on status transition, but we set in creation)
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(Date.now(), task.id);
+
+			await runtime.executeTick();
+
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(0);
+		});
+
+		test('emits task_timeout for standalone in_progress task that exceeds threshold', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000); // 1 second
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Slow Standalone',
+				description: '',
+				status: 'in_progress',
+			});
+			// Back-date started_at to 2 seconds ago to simulate timeout
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 2000,
+				task.id
+			);
+
+			await runtime.executeTick();
+
+			expect(sink.events).toHaveLength(1);
+			const evt = sink.events[0];
+			expect(evt.kind).toBe('task_timeout');
+			if (evt.kind === 'task_timeout') {
+				expect(evt.spaceId).toBe(SPACE_ID);
+				expect(evt.taskId).toBe(task.id);
+				expect(evt.elapsedMs).toBeGreaterThan(1000);
+				expect(typeof evt.timestamp).toBe('string');
+			}
+		});
+
+		test('does NOT emit timeout for standalone task when taskTimeoutMs is undefined', async () => {
+			// No config set — timeout disabled
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Slow Standalone No Config',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 100_000,
+				task.id
+			);
+
+			await runtime.executeTick();
+
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(0);
+		});
+
+		test('deduplicates standalone timeout notifications across ticks', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Timed Out Standalone',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 2000,
+				task.id
+			);
+
+			// First tick — emits
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+
+			// Second tick — still in_progress and over threshold — deduped
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+		});
+
+		test('re-notifies standalone timeout after task leaves and re-enters in_progress', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Cycling Standalone',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 2000,
+				task.id
+			);
+
+			// First tick — emits timeout
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+
+			// Task moves to needs_attention (leaves in_progress)
+			taskRepo.updateTask(task.id, { status: 'needs_attention' });
+			await runtime.executeTick();
+
+			// Task re-enters in_progress and times out again
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 2000,
+				task.id
+			);
+			await runtime.executeTick();
+
+			// Should emit a second timeout since dedup key was cleared when task left in_progress
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
+		});
+
+		test('workflow tasks are NOT processed by checkStandaloneTasks', async () => {
+			// Create a workflow task (has workflowRunId) with needs_attention status
+			// It should NOT generate a duplicate notification via the standalone path
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER },
+			]);
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Workflow error' });
+
+			await runtime.executeTick();
+
+			// Should get exactly one notification (from processRunTick, not checkStandaloneTasks)
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(1);
+			if (naEvents[0].kind === 'task_needs_attention') {
+				expect(naEvents[0].taskId).toBe(tasks[0].id);
+			}
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Restart re-notification behavior (Task 2.3 restart contract)
+	// -------------------------------------------------------------------------
+
+	describe('restart re-notification (empty dedup set on restart)', () => {
+		test('standalone needs_attention task is re-notified after simulated restart', async () => {
+			const created = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Pre-existing Standalone',
+				description: '',
+				status: 'needs_attention',
+			});
+			// createTask doesn't support error field — set it via update
+			const task = taskRepo.updateTask(created.id, { error: 'Pre-restart error' })!;
+
+			// First runtime instance — first tick emits notification
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+
+			// Simulate restart: create a fresh runtime with empty dedup set
+			// (In production the daemon process restarts and all in-memory state is lost)
+			const freshSink = new MockNotificationSink();
+			const freshRuntime = makeRuntime({ notificationSink: freshSink });
+
+			// First tick on fresh runtime — dedup set is empty → re-notifies once
+			await freshRuntime.executeTick();
+			const reNotified = freshSink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(reNotified).toHaveLength(1);
+			if (reNotified[0].kind === 'task_needs_attention') {
+				expect(reNotified[0].taskId).toBe(task.id);
+				expect(reNotified[0].reason).toBe('Pre-restart error');
+			}
+
+			// Second tick on fresh runtime — deduped, no new notification
+			await freshRuntime.executeTick();
+			expect(freshSink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+		});
+
+		test('standalone timed-out task is re-notified after simulated restart', async () => {
+			setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
+
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Pre-existing Timeout',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
+				Date.now() - 5000,
+				task.id
+			);
+
+			// First runtime instance — first tick emits timeout
+			await runtime.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+
+			// Simulate restart: fresh runtime with empty dedup set
+			const freshSink = new MockNotificationSink();
+			const freshRuntime = makeRuntime({ notificationSink: freshSink });
+
+			// First tick on fresh runtime — re-notifies once (dedup set was empty)
+			await freshRuntime.executeTick();
+			expect(freshSink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+
+			// Second tick — deduped
+			await freshRuntime.executeTick();
+			expect(freshSink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// setNotificationSink() — post-construction wiring
 	// -------------------------------------------------------------------------
 
