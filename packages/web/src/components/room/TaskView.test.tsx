@@ -274,7 +274,7 @@ describe('TaskView — awaiting_human badge', () => {
 		await waitFor(() => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
-		expect(container.querySelector('.bg-amber-900\\/20')).toBeNull();
+		expect(container.querySelector('[data-testid="action-bar"]')).toBeNull();
 	});
 });
 
@@ -449,16 +449,16 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
-		// Verify approve button is in the HeaderReviewBar (amber-900/20 background)
+		// Verify approve button is in the ActionBar
 		await waitFor(() => {
-			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-			expect(headerReviewBar).not.toBeNull();
-			const approveBtn = headerReviewBar?.querySelector('button.bg-green-700');
+			const actionBar = container.querySelector('[data-testid="action-bar"]');
+			expect(actionBar).not.toBeNull();
+			const approveBtn = actionBar?.querySelector('[data-testid="action-bar-primary"]');
 			expect(approveBtn).not.toBeNull();
 		});
 
 		const approveBtn = container.querySelector(
-			'.bg-amber-900\\/20 button.bg-green-700'
+			'[data-testid="action-bar-primary"]'
 		) as HTMLButtonElement;
 		fireEvent.click(approveBtn);
 
@@ -486,9 +486,9 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		// Verify the feedback textarea is in the bottom area (border-t, not in amber header)
 		const inputWrapper = getByTestId('input-textarea').closest('.border-t');
 		expect(inputWrapper).not.toBeNull();
-		// Verify it's NOT in the amber header bar
-		const amberBar = container.querySelector('.bg-amber-900\\/20');
-		expect(amberBar?.contains(getByTestId('input-textarea'))).toBe(false);
+		// Verify it's NOT in the action bar
+		const actionBar = container.querySelector('[data-testid="action-bar"]');
+		expect(actionBar?.contains(getByTestId('input-textarea'))).toBe(false);
 	});
 
 	it('sends message to leader via task.sendHumanMessage in awaiting_leader state', async () => {
@@ -1420,9 +1420,9 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
 		await waitFor(() => {
-			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-			expect(headerReviewBar).not.toBeNull();
-			const rejectBtn = headerReviewBar?.querySelector('button.bg-red-700');
+			const actionBar = container.querySelector('[data-testid="action-bar"]');
+			expect(actionBar).not.toBeNull();
+			const rejectBtn = actionBar?.querySelector('[data-testid="action-bar-secondary"]');
 			expect(rejectBtn).not.toBeNull();
 		});
 	});
@@ -1440,9 +1440,9 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// No header review bar should be shown
-		const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-		expect(headerReviewBar).toBeNull();
+		// No action bar should be shown
+		const actionBar = container.querySelector('[data-testid="action-bar"]');
+		expect(actionBar).toBeNull();
 	});
 
 	it('calls task.reject RPC when reject button is clicked', async () => {
@@ -1457,15 +1457,15 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 			<TaskView roomId="room-1" taskId="task-1" />
 		);
 
-		// Wait for the header review bar to appear
+		// Wait for the action bar to appear
 		await waitFor(() => {
-			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-			expect(headerReviewBar).not.toBeNull();
+			const actionBar = container.querySelector('[data-testid="action-bar"]');
+			expect(actionBar).not.toBeNull();
 		});
 
 		// Click reject button (opens modal)
 		const rejectBtn = container.querySelector(
-			'.bg-amber-900\\/20 button.bg-red-700'
+			'[data-testid="action-bar-secondary"]'
 		) as HTMLButtonElement;
 		fireEvent.click(rejectBtn);
 
