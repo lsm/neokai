@@ -217,6 +217,69 @@ describe('SpaceRuntime', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// resolveTaskTypesForStep (multi-agent variant)
+	// -------------------------------------------------------------------------
+
+	describe('resolveTaskTypesForStep()', () => {
+		test('single agentId shorthand → one-element array with correct resolution', () => {
+			const step = { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER };
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(1);
+			expect(results[0].taskType).toBe('planning');
+			expect(results[0].customAgentId).toBeUndefined();
+		});
+
+		test('multi-agent step → one ResolvedTaskType per agent entry', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }, { agentId: AGENT_CUSTOM }],
+			};
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(3);
+			expect(results[0]).toEqual({ taskType: 'planning', customAgentId: undefined });
+			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[2]).toEqual({ taskType: 'coding', customAgentId: AGENT_CUSTOM });
+		});
+
+		test('multi-agent step with general role → coding, no customAgentId', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_GENERAL }, { agentId: AGENT_CODER }],
+			};
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(2);
+			expect(results[0]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: undefined });
+		});
+
+		test('multi-agent step with unknown agentId → coding + customAgentId preserved', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_CODER }, { agentId: 'unknown-agent-id' }],
+			};
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(2);
+			expect(results[0]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: 'unknown-agent-id' });
+		});
+
+		test('resolveTaskTypeForStep delegates to first entry of resolveTaskTypesForStep', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+			};
+			const single = runtime.resolveTaskTypeForStep(step);
+			const multi = runtime.resolveTaskTypesForStep(step);
+			expect(single).toEqual(multi[0]);
+			expect(single.taskType).toBe('planning');
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// getRulesForStep
 	// -------------------------------------------------------------------------
 

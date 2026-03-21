@@ -98,14 +98,24 @@ export type CommandRunner = (
 ) => Promise<{ exitCode: number | null; timedOut?: boolean; stderr?: string }>;
 
 /**
+ * Single-agent resolution result used by TaskTypeResolver.
+ */
+export interface TaskTypeResolution {
+	taskType?: string;
+	customAgentId?: string;
+}
+
+/**
  * Optional resolver injected by SpaceRuntime to set task metadata (taskType,
  * customAgentId) at task-creation time. When provided, the task is created
  * complete in a single DB write — no second update required.
+ *
+ * May return either a single `TaskTypeResolution` (single-agent / backward-compat)
+ * or an array of `TaskTypeResolution` (one per agent in a multi-agent step).
+ * When an array is returned, the first entry is used for the primary task created
+ * by the executor; individual per-agent sub-tasks use their corresponding entry.
  */
-export type TaskTypeResolver = (step: WorkflowStep) => {
-	taskType?: string;
-	customAgentId?: string;
-};
+export type TaskTypeResolver = (step: WorkflowStep) => TaskTypeResolution | TaskTypeResolution[];
 
 // ---------------------------------------------------------------------------
 // Default timeout constants
@@ -426,7 +436,10 @@ export class WorkflowExecutor {
 		// When a taskTypeResolver is provided it fully controls taskType AND customAgentId —
 		// customAgentId: undefined means "no custom agent" for preset roles (planner/coder/general).
 		// Without a resolver (backward-compat), fall back to nextStep.agentId.
-		const resolved = this.taskTypeResolver?.(nextStep);
+		// The resolver may return a single resolution or an array (multi-agent); use the first entry
+		// for the primary task.
+		const rawResolved = this.taskTypeResolver?.(nextStep);
+		const resolved = Array.isArray(rawResolved) ? rawResolved[0] : rawResolved;
 
 		// Create a pending SpaceTask for the new step
 		const task = await this.taskManager.createTask({
