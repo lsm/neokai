@@ -294,6 +294,11 @@ export class WorkflowExecutor {
 			throw new Error('Cannot advance: workflow run is already complete');
 		}
 
+		// Re-read the run from DB on every advance() to pick up any external changes
+		// (e.g. a human increasing maxIterations via updateRun(), or resetting status
+		// to 'in_progress' after resolving the condition failure).
+		this.run = this.workflowRunRepo.getRun(this.run.id) ?? this.run;
+
 		// A condition failure sets status to needs_attention; require explicit external
 		// reset (e.g. updating run.config with the approval flag) before retrying.
 		if (this.run.status === 'needs_attention') {
@@ -388,6 +393,28 @@ export class WorkflowExecutor {
 		const nextStep = this.workflow.steps.find((s) => s.id === transition.to);
 		if (!nextStep) {
 			throw new Error(`Target step "${transition.to}" not found in workflow "${this.workflow.id}"`);
+		}
+
+		// If this is a cyclic transition, increment the iteration counter and check the cap.
+		// When the cap is reached, escalate to needs_attention instead of creating a new task.
+		// The iterationCount is NOT reset when a human resets the run — they may increase
+		// maxIterations via updateRun() to allow more cycles.
+		if (transition.isCyclic) {
+			const newCount = this.run.iterationCount + 1;
+			const updatedForIteration = this.workflowRunRepo.updateRun(this.run.id, {
+				iterationCount: newCount,
+			});
+			if (!updatedForIteration) throw new Error('Failed to persist iteration count');
+			this.run = updatedForIteration;
+
+			if (newCount >= this.run.maxIterations) {
+				this.markNeedsAttention();
+				throw new WorkflowTransitionError(
+					`Iteration cap reached (${newCount}/${this.run.maxIterations}): ` +
+						`cyclic transition from step "${transition.from}" to "${transition.to}" ` +
+						`would exceed maximum iterations. Increase maxIterations or resolve manually.`
+				);
+			}
 		}
 
 		// Persist new currentStepId
