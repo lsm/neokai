@@ -503,11 +503,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * 5. Handle WorkflowGateError → return gate-blocked status (caller calls request_human_input)
 		 * 6. Return next step info (or terminal state)
 		 *
-		 * Note: AdvanceWorkflowInput includes a `step_result` field which is currently a
-		 * placeholder. WorkflowExecutor.advance() does not yet accept a result parameter;
-		 * transition conditions are evaluated against run.config (e.g. humanApproved).
-		 * The field is retained in the schema for forward compatibility but is not forwarded
-		 * to the executor in this implementation.
+		 * Note: WorkflowExecutor.advance() now accepts `{ stepResult?: string }` for
+		 * task_result condition evaluation. The `step_result` field in AdvanceWorkflowInput
+		 * is not yet forwarded here — Task 1.3 will wire `_args.step_result` through to
+		 * `executor.advance({ stepResult: _args.step_result })`. In the meantime, advance()
+		 * resolves the task result from the DB (most recently completed task on the step).
 		 */
 		async advance_workflow(_args: AdvanceWorkflowInput): Promise<ToolResult> {
 			const executor = runtime.getExecutor(workflowRunId);

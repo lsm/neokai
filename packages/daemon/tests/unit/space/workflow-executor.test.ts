@@ -1221,4 +1221,417 @@ describe('WorkflowExecutor', () => {
 			expect(r3.tasks[0].goalId).toBe('goal-cycle');
 		});
 	});
+
+	// =========================================================================
+	// Condition type: task_result
+	// =========================================================================
+
+	describe('condition type: task_result', () => {
+		test('evaluateCondition: passes when taskResult starts with expression', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'passed',
+			};
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'passed' },
+				ctx
+			);
+			expect(result.passed).toBe(true);
+		});
+
+		test('evaluateCondition: passes with prefix match (failed: tests broken)', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'failed: tests broken',
+			};
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'failed' },
+				ctx
+			);
+			expect(result.passed).toBe(true);
+		});
+
+		test('evaluateCondition: fails when taskResult does not match expression', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'failed: tests broken',
+			};
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'passed' },
+				ctx
+			);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('does not match');
+			expect(result.reason).toContain('failed: tests broken');
+			expect(result.reason).toContain('passed');
+		});
+
+		test('evaluateCondition: fails when expression is empty', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'passed',
+			};
+			const result = await executor.evaluateCondition({ type: 'task_result', expression: '' }, ctx);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('non-empty expression');
+		});
+
+		test('evaluateCondition: fails when expression is undefined', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'passed',
+			};
+			const result = await executor.evaluateCondition({ type: 'task_result' }, ctx);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('non-empty expression');
+		});
+
+		test('task_result retries are short-circuited (maxRetries has no effect)', async () => {
+			// task_result context doesn't change between retries, so maxRetries should be ignored.
+			// Verify that advance() only evaluates the condition once even with maxRetries set.
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+						maxRetries: 5,
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-retry-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Retry Test',
+				currentStepId: workflow.startStepId,
+			});
+
+			// Complete a task with 'failed' — won't match 'passed'
+			const verifyStepId = workflow.steps.find((s) => s.name === 'Verify')!.id;
+			const task = await taskManager.createTask({
+				title: 'Verify',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task.id, 'in_progress');
+			await taskManager.completeTask(task.id, 'failed');
+
+			const executor = makeExecutor(workflow, run);
+			// Should fail immediately (not retry 5 times) since taskResult won't change
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+		});
+
+		test('evaluateCondition: fails when taskResult is undefined', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = { workspacePath: WORKSPACE };
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'passed' },
+				ctx
+			);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('No task result available');
+		});
+	});
+
+	// =========================================================================
+	// advance() with task_result — DB and fallback resolution
+	// =========================================================================
+
+	describe('advance() with task_result conditions', () => {
+		/**
+		 * Helper: creates a workflow with A → B where A→B has a task_result condition,
+		 * creates a completed task on step A with the given result, then returns the executor.
+		 */
+		async function setupTaskResultWorkflow(opts: {
+			taskResultOnStep?: string;
+			conditionExpression: string;
+		}) {
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: opts.conditionExpression,
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-task-result-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Task Result Test Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			// Create a task on step A and complete it with a result
+			if (opts.taskResultOnStep !== undefined) {
+				const task = await taskManager.createTask({
+					title: 'Verify Task',
+					description: 'Verify work',
+					workflowRunId: run.id,
+					workflowStepId: workflow.steps.find((s) => s.name === 'Verify')!.id,
+					status: 'pending',
+				});
+				await taskManager.setTaskStatus(task.id, 'in_progress');
+				await taskManager.completeTask(task.id, opts.taskResultOnStep);
+			}
+
+			const executor = makeExecutor(workflow, run);
+			return { workflow, run, executor };
+		}
+
+		test('advance() resolves taskResult from DB and follows matching transition', async () => {
+			const { executor } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'passed',
+				conditionExpression: 'passed',
+			});
+
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Next');
+			expect(result.tasks).toHaveLength(1);
+		});
+
+		test('advance() resolves taskResult from DB with prefix match', async () => {
+			const { executor } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'failed: linting errors found',
+				conditionExpression: 'failed',
+			});
+
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('advance() uses stepResult fallback when no DB result', async () => {
+			// No completed task on the step — taskResult comes from options.stepResult
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-fallback-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Fallback Test Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance({ stepResult: 'passed' });
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('advance() DB result takes priority over stepResult fallback', async () => {
+			const { executor } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'failed: real DB result',
+				conditionExpression: 'failed',
+			});
+
+			// Even though stepResult says 'passed', the DB result 'failed: ...' is used
+			const result = await executor.advance({ stepResult: 'passed' });
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('advance() sets needs_attention when task_result does not match', async () => {
+			const { executor, run } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'failed: tests broken',
+				conditionExpression: 'passed',
+			});
+
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
+		});
+
+		test('advance() sets needs_attention when no task result and no fallback', async () => {
+			// No completed task on step, no stepResult fallback
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-no-result-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'No Result Test Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
+		});
+
+		test('advance() picks most recently completed task when multiple exist', async () => {
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-multi-tasks-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi Tasks Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const verifyStepId = workflow.steps.find((s) => s.name === 'Verify')!.id;
+
+			// Create first task, complete with 'failed'
+			const task1 = await taskManager.createTask({
+				title: 'Verify 1',
+				description: 'First try',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task1.id, 'in_progress');
+			await taskManager.completeTask(task1.id, 'failed: first attempt');
+			// Force a deterministic earlier completedAt via direct DB update
+			db.prepare('UPDATE space_tasks SET completed_at = ? WHERE id = ?').run(1000, task1.id);
+
+			// Create second task, complete with 'passed'
+			const task2 = await taskManager.createTask({
+				title: 'Verify 2',
+				description: 'Second try',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task2.id, 'in_progress');
+			await taskManager.completeTask(task2.id, 'passed');
+			// Force a deterministic later completedAt via direct DB update
+			db.prepare('UPDATE space_tasks SET completed_at = ? WHERE id = ?').run(2000, task2.id);
+
+			const executor = makeExecutor(workflow, run);
+			// Should use 'passed' from the most recently completed task
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('existing condition types continue to work unchanged', async () => {
+			// Verify that 'always', 'human', and 'condition' still work
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{
+					id: STEP_B,
+					name: 'Step B',
+					agentId: AGENT_B,
+					incomingCondition: { type: 'always' },
+				},
+			]);
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Step B');
+		});
+	});
 });

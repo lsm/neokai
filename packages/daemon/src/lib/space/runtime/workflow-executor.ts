@@ -44,6 +44,11 @@ export interface ConditionContext {
 	 * Set externally (e.g. via RPC) into run.config.humanApproved before retry.
 	 */
 	humanApproved?: boolean;
+	/**
+	 * Result string from the most recently completed task on the current step.
+	 * Used by `task_result` conditions for prefix matching.
+	 */
+	taskResult?: string;
 }
 
 /** Result of a single condition evaluation attempt */
@@ -234,10 +239,25 @@ export class WorkflowExecutor {
 			}
 
 			case 'task_result': {
-				// TODO(Task 1.2): Implement prefix matching against completed task's result field.
-				// Until then, Verify step transitions (task_result conditions) will not fire,
-				// causing the run to go to needs_attention. This is intentional for phased rollout.
-				return { passed: false, reason: 'task_result evaluation not yet implemented' };
+				if (!condition.expression || !condition.expression.trim()) {
+					return {
+						passed: false,
+						reason: 'task_result type requires a non-empty expression',
+					};
+				}
+				if (context.taskResult === undefined) {
+					return {
+						passed: false,
+						reason: 'No task result available for evaluation',
+					};
+				}
+				if (context.taskResult.startsWith(condition.expression)) {
+					return { passed: true };
+				}
+				return {
+					passed: false,
+					reason: `Task result "${context.taskResult}" does not match "${condition.expression}"`,
+				};
 			}
 
 			default: {
@@ -267,7 +287,9 @@ export class WorkflowExecutor {
 	 *
 	 * Does NOT spawn session groups — that is SpaceRuntime's responsibility.
 	 */
-	async advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }> {
+	async advance(options?: {
+		stepResult?: string;
+	}): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }> {
 		if (this.isComplete()) {
 			throw new Error('Cannot advance: workflow run is already complete');
 		}
@@ -294,11 +316,18 @@ export class WorkflowExecutor {
 			return { step: current, tasks: [] };
 		}
 
+		// Only resolve taskResult when at least one transition uses task_result conditions.
+		// This avoids an unnecessary DB query on the common path (always/human/condition).
+		const needsTaskResult = transitions.some((t) => t.condition?.type === 'task_result');
+		const taskResult = needsTaskResult
+			? await this.resolveTaskResult(current.id, options?.stepResult)
+			: undefined;
+
 		// Evaluate transitions in order; follow the first one whose condition passes.
 		// A failing condition does NOT stop evaluation — the next transition is tried.
 		// Only when every transition has been evaluated and none passed is the run marked
 		// needs_attention and a WorkflowTransitionError thrown.
-		const context = this.getConditionContext();
+		const context = this.getConditionContext(taskResult);
 		let lastReason: string | undefined;
 		let blockedByHumanGate = false;
 
@@ -343,11 +372,12 @@ export class WorkflowExecutor {
 	// -------------------------------------------------------------------------
 
 	/** Builds a ConditionContext from the current run's config and workspacePath. */
-	private getConditionContext(): ConditionContext {
+	private getConditionContext(taskResult?: string): ConditionContext {
 		const config = (this.run.config ?? {}) as Record<string, unknown>;
 		return {
 			workspacePath: this.workspacePath,
 			humanApproved: config.humanApproved === true,
+			taskResult,
 		};
 	}
 
@@ -398,9 +428,12 @@ export class WorkflowExecutor {
 		condition: WorkflowCondition,
 		context: ConditionContext
 	): Promise<ConditionResult> {
-		// human conditions cannot change between retries in the same advance() call;
-		// short-circuit after the first evaluation to avoid redundant checks.
-		const maxAttempts = condition.type === 'human' ? 1 : 1 + (condition.maxRetries ?? 0);
+		// human and task_result conditions cannot change between retries in the same advance()
+		// call; short-circuit after the first evaluation to avoid redundant checks.
+		const maxAttempts =
+			condition.type === 'human' || condition.type === 'task_result'
+				? 1
+				: 1 + (condition.maxRetries ?? 0);
 		let lastResult: ConditionResult = { passed: false, reason: 'Condition never evaluated' };
 
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -429,6 +462,27 @@ export class WorkflowExecutor {
 			const updated = this.workflowRunRepo.updateRun(this.run.id, { config: rest });
 			if (updated) this.run = updated;
 		}
+	}
+
+	/**
+	 * Resolves the task result for the current step from the most recently completed task.
+	 * DB task `result` takes priority; `fallback` is used when the DB result is empty.
+	 */
+	private async resolveTaskResult(stepId: string, fallback?: string): Promise<string | undefined> {
+		const allTasks = await this.taskManager.listTasksByWorkflowRun(this.run.id);
+		const completedOnStep = allTasks.filter(
+			(t) => t.workflowStepId === stepId && t.status === 'completed'
+		);
+
+		// Sort by completedAt descending to get the most recently completed task
+		completedOnStep.sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+
+		const latestTask = completedOnStep[0];
+		const dbResult = latestTask?.result;
+
+		// Use DB result if present (including empty string), otherwise fall back to options.stepResult
+		if (dbResult != null) return dbResult;
+		return fallback;
 	}
 
 	/**
