@@ -182,7 +182,7 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "A task needs attention. Let me get the full details before deciding how to proceed."
+							"text": "[MOCKED SEMI-AUTONOMOUS] A task needs attention. I will use get_task_detail to assess the situation before deciding how to proceed."
 						},
 						{
 							"type": "tool_use",
@@ -236,7 +236,7 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "I am in semi-autonomous mode. I will retry this failed task autonomously without waiting for human approval."
+							"text": "[MOCKED SEMI-AUTONOMOUS] I am in semi-autonomous mode. I will retry this failed task autonomously without waiting for human approval."
 						},
 						{
 							"type": "tool_use",

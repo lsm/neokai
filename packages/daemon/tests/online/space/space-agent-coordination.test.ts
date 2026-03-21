@@ -306,6 +306,10 @@ describe('Space Agent Coordination — Online Tests', () => {
 
 			// The mocked response routes to get_task_detail; SDK records the tool_use block
 			expect(getDetailUses.length).toBeGreaterThan(0);
+
+			// Confirm the correct semi-autonomous mock was routed (not the supervised mock)
+			const responseText = extractAssistantText(assistantMsgs);
+			expect(responseText).toContain('[MOCKED SEMI-AUTONOMOUS]');
 		},
 		TEST_TIMEOUT
 	);
@@ -364,9 +368,9 @@ describe('Space Agent Coordination — Online Tests', () => {
 			// representing the semi_autonomous agent attempting to retry autonomously
 			expect(retryUses.length).toBeGreaterThan(0);
 
-			// Also verify the agent's text explains its autonomous reasoning
+			// Confirm the correct semi-autonomous mock was routed (not the supervised mock)
 			const responseText = extractAssistantText(assistantMsgs);
-			expect(responseText.toLowerCase()).toMatch(/semi.autonomous|retry|autonomous/i);
+			expect(responseText).toContain('[MOCKED SEMI-AUTONOMOUS]');
 		},
 		TEST_TIMEOUT
 	);
