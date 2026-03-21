@@ -25,7 +25,6 @@ const mockPauseRuntime = vi.fn().mockResolvedValue(undefined);
 const mockResumeRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStopRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStartRuntime = vi.fn().mockResolvedValue(undefined);
-const mockApproveTask = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../lib/room-store.ts', () => ({
 	get roomStore() {
@@ -39,7 +38,6 @@ vi.mock('../../lib/room-store.ts', () => ({
 			resumeRuntime: mockResumeRuntime,
 			stopRuntime: mockStopRuntime,
 			startRuntime: mockStartRuntime,
-			approveTask: mockApproveTask,
 			archiveRoom: vi.fn().mockResolvedValue(undefined),
 		};
 	},
@@ -81,7 +79,6 @@ describe('RoomDashboard', () => {
 		mockResumeRuntime.mockClear();
 		mockStopRuntime.mockClear();
 		mockStartRuntime.mockClear();
-		mockApproveTask.mockClear();
 		mockNavigateToRoomTask.mockClear();
 	});
 

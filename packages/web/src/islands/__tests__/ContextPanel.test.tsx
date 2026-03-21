@@ -120,8 +120,8 @@ vi.mock('../../lib/design-tokens.ts', () => ({
 	},
 	tokens: {
 		transition: {
-			quick: 'transition-all duration-150',
-			smooth: 'transition-all duration-250',
+			quick: 'transition-all duration-150 ease-out',
+			smooth: 'transition-all duration-250 ease-out',
 		},
 	},
 }));

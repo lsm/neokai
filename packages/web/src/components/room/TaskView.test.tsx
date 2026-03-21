@@ -1089,6 +1089,7 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
+		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
 	it('does NOT show action buttons for cancelled tasks', async () => {
