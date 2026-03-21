@@ -14,11 +14,14 @@
 import type { MessageHub } from '@neokai/shared';
 import type {
 	Space,
+	SpaceAutonomyLevel,
 	CreateSpaceParams,
 	UpdateSpaceParams,
 	SpaceTask,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
+
+const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = ['supervised', 'semi_autonomous'];
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -56,6 +59,14 @@ export function setupSpaceHandlers(
 		}
 		if (!params.name || params.name.trim() === '') {
 			throw new Error('name is required');
+		}
+		if (
+			params.autonomyLevel !== undefined &&
+			!VALID_AUTONOMY_LEVELS.includes(params.autonomyLevel)
+		) {
+			throw new Error(
+				`Invalid autonomyLevel: ${params.autonomyLevel}. Must be one of: ${VALID_AUTONOMY_LEVELS.join(', ')}`
+			);
 		}
 
 		const space = await spaceManager.createSpace(params);
@@ -118,6 +129,14 @@ export function setupSpaceHandlers(
 
 		if (!params.id) {
 			throw new Error('id is required');
+		}
+		if (
+			params.autonomyLevel !== undefined &&
+			!VALID_AUTONOMY_LEVELS.includes(params.autonomyLevel)
+		) {
+			throw new Error(
+				`Invalid autonomyLevel: ${params.autonomyLevel}. Must be one of: ${VALID_AUTONOMY_LEVELS.join(', ')}`
+			);
 		}
 
 		const { id, ...updateParams } = params;
