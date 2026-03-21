@@ -10,6 +10,7 @@ import {
 	checkLeaderDraftsExist,
 	checkWorkerPrMerged,
 	checkLeaderPrMerged,
+	checkLeaderRootRepoSynced,
 	runWorkerExitGate,
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
@@ -1567,5 +1568,296 @@ describe('closeStalePr', () => {
 		);
 		expect(result).toBe(false);
 		expect(calls.length).toBe(0);
+	});
+});
+
+describe('checkLeaderRootRepoSynced', () => {
+	test('skips when not approved (approved=false)', async () => {
+		const calls: string[] = [];
+		const opts: HookOptions = {
+			runCommand: async (args) => {
+				calls.push(args.join(' '));
+				return { stdout: '', exitCode: 0 };
+			},
+		};
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: false, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+		expect(calls.length).toBe(0);
+	});
+
+	test('skips when workerBypassed=true (bypass/research-only task)', async () => {
+		const calls: string[] = [];
+		const opts: HookOptions = {
+			runCommand: async (args) => {
+				calls.push(args.join(' '));
+				return { stdout: '', exitCode: 0 };
+			},
+		};
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: true, workerBypassed: true, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+		expect(calls.length).toBe(0);
+	});
+
+	test('passes when fetch and pull both succeed', async () => {
+		const opts = mockRunner({
+			'git symbolic-ref refs/remotes/origin/HEAD': {
+				stdout: 'refs/remotes/origin/main',
+				exitCode: 0,
+			},
+			'git fetch origin': { stdout: '', exitCode: 0 },
+			'git pull origin main': { stdout: 'Already up to date.', exitCode: 0 },
+		});
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails when git fetch origin fails', async () => {
+		const opts = mockRunner({
+			'git symbolic-ref refs/remotes/origin/HEAD': {
+				stdout: 'refs/remotes/origin/main',
+				exitCode: 0,
+			},
+			'git fetch origin': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('git fetch origin');
+		expect(result.bounceMessage).toContain('git fetch origin');
+	});
+
+	test('fails when git pull fails', async () => {
+		const opts = mockRunner({
+			'git symbolic-ref refs/remotes/origin/HEAD': {
+				stdout: 'refs/remotes/origin/dev',
+				exitCode: 0,
+			},
+			'git fetch origin': { stdout: '', exitCode: 0 },
+			'git pull origin dev': { stdout: 'error: merge conflict', exitCode: 1 },
+		});
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('git pull origin dev');
+		expect(result.bounceMessage).toContain('git pull origin dev');
+	});
+
+	test('passes fail-open when default branch cannot be determined', async () => {
+		// All branch detection commands fail → cannot determine branch → pass gracefully
+		const opts = mockRunner({});
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('falls back to BASE_BRANCHES when symbolic-ref fails', async () => {
+		const opts = mockRunner({
+			'git symbolic-ref refs/remotes/origin/HEAD': { stdout: '', exitCode: 1 },
+			'git rev-parse --verify origin/main': { stdout: 'abc123', exitCode: 0 },
+			'git fetch origin': { stdout: '', exitCode: 0 },
+			'git pull origin main': { stdout: 'Already up to date.', exitCode: 0 },
+		});
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({ approved: true, rootWorkspacePath: '/root/repo' }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('runs all commands on rootWorkspacePath, not workspacePath', async () => {
+		const calls: Array<{ args: string[]; cwd: string }> = [];
+		const opts: HookOptions = {
+			runCommand: async (args, cwd) => {
+				calls.push({ args, cwd });
+				// Provide responses for all expected commands
+				const key = args.join(' ');
+				if (key === 'git symbolic-ref refs/remotes/origin/HEAD') {
+					return { stdout: 'refs/remotes/origin/main', exitCode: 0 };
+				}
+				if (key === 'git fetch origin') return { stdout: '', exitCode: 0 };
+				if (key === 'git pull origin main') return { stdout: '', exitCode: 0 };
+				return { stdout: '', exitCode: 1 };
+			},
+		};
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({
+				approved: true,
+				workspacePath: '/tmp/task-worktree',
+				rootWorkspacePath: '/root/main-repo',
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+		// Every git command must have run in rootWorkspacePath
+		expect(calls.length).toBeGreaterThan(0);
+		for (const call of calls) {
+			expect(call.cwd).toBe('/root/main-repo');
+		}
+	});
+
+	test('falls back to workspacePath when rootWorkspacePath is not provided', async () => {
+		const calls: Array<{ args: string[]; cwd: string }> = [];
+		const opts: HookOptions = {
+			runCommand: async (args, cwd) => {
+				calls.push({ args, cwd });
+				const key = args.join(' ');
+				if (key === 'git symbolic-ref refs/remotes/origin/HEAD') {
+					return { stdout: 'refs/remotes/origin/main', exitCode: 0 };
+				}
+				if (key === 'git fetch origin') return { stdout: '', exitCode: 0 };
+				if (key === 'git pull origin main') return { stdout: '', exitCode: 0 };
+				return { stdout: '', exitCode: 1 };
+			},
+		};
+		const result = await checkLeaderRootRepoSynced(
+			makeLeaderCtx({
+				approved: true,
+				workspacePath: '/tmp/task-worktree',
+				// rootWorkspacePath intentionally omitted
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+		// Should fall back to workspacePath
+		expect(calls.length).toBeGreaterThan(0);
+		for (const call of calls) {
+			expect(call.cwd).toBe('/tmp/task-worktree');
+		}
+	});
+});
+
+describe('runLeaderCompleteGate — root repo sync after PR merge', () => {
+	test('passes end-to-end when PR merged and root repo synced successfully', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-feature', exitCode: 0 },
+			'gh pr view feat/add-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+			'git symbolic-ref refs/remotes/origin/HEAD': {
+				stdout: 'refs/remotes/origin/main',
+				exitCode: 0,
+			},
+			'git fetch origin': { stdout: '', exitCode: 0 },
+			'git pull origin main': { stdout: 'Already up to date.', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				rootWorkspacePath: '/root/main-repo',
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails when PR merged but git fetch fails (sync error)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-feature', exitCode: 0 },
+			'gh pr view feat/add-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+			'git symbolic-ref refs/remotes/origin/HEAD': {
+				stdout: 'refs/remotes/origin/main',
+				exitCode: 0,
+			},
+			'git fetch origin': { stdout: '', exitCode: 1 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				rootWorkspacePath: '/root/main-repo',
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('git fetch origin');
+		expect(result.bounceMessage).toContain('complete_task');
+	});
+
+	test('root sync runs on rootWorkspacePath, not the task worktree', async () => {
+		const calls: Array<{ args: string[]; cwd: string }> = [];
+		const opts: HookOptions = {
+			runCommand: async (args, cwd) => {
+				calls.push({ args, cwd });
+				const key = args.join(' ');
+				if (key === 'git rev-parse --abbrev-ref HEAD') return { stdout: 'feat/foo', exitCode: 0 };
+				if (key === 'gh pr view feat/foo --json state --jq .state')
+					return { stdout: 'MERGED', exitCode: 0 };
+				if (key === 'git symbolic-ref refs/remotes/origin/HEAD')
+					return { stdout: 'refs/remotes/origin/dev', exitCode: 0 };
+				if (key === 'git fetch origin') return { stdout: '', exitCode: 0 };
+				if (key === 'git pull origin dev') return { stdout: '', exitCode: 0 };
+				return { stdout: '', exitCode: 1 };
+			},
+		};
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				workspacePath: '/tmp/task-worktree',
+				rootWorkspacePath: '/root/main-repo',
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+		// PR check runs in the task worktree (to get branch name)
+		const prCheckCall = calls.find(
+			(c) =>
+				c.args.includes('rev-parse') && c.args.includes('--abbrev-ref') && c.args.includes('HEAD')
+		);
+		expect(prCheckCall?.cwd).toBe('/tmp/task-worktree');
+		// Root sync commands run in rootWorkspacePath
+		const syncCalls = calls.filter(
+			(c) => c.args.includes('fetch') || c.args.includes('pull') || c.args.includes('symbolic-ref')
+		);
+		expect(syncCalls.length).toBeGreaterThan(0);
+		for (const call of syncCalls) {
+			expect(call.cwd).toBe('/root/main-repo');
+		}
+	});
+
+	test('skip root sync for bypass tasks even when approved', async () => {
+		const calls: string[] = [];
+		const opts: HookOptions = {
+			runCommand: async (args) => {
+				calls.push(args.join(' '));
+				const key = args.join(' ');
+				if (key === 'git rev-parse --abbrev-ref HEAD') return { stdout: 'feat/foo', exitCode: 0 };
+				// bypass tasks — gh fails open
+				return { stdout: '', exitCode: 1 };
+			},
+		};
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				workerBypassed: true,
+				rootWorkspacePath: '/root/main-repo',
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+		// Sync commands (fetch, pull, symbolic-ref) must NOT have been called
+		const syncCalled = calls.some(
+			(c) => c.includes('fetch') || c.includes('pull') || c.includes('symbolic-ref')
+		);
+		expect(syncCalled).toBe(false);
 	});
 });

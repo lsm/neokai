@@ -82,6 +82,12 @@ export interface WorkerExitHookContext {
 
 export interface LeaderCompleteHookContext {
 	workspacePath: string;
+	/**
+	 * The room's root workspace path (the main repository, NOT the task's isolated worktree).
+	 * Used by checkLeaderRootRepoSynced to pull the root repo after PR merge.
+	 * Falls back to workspacePath if not provided.
+	 */
+	rootWorkspacePath?: string;
 	taskType: string;
 	workerRole: string;
 	taskId: string;
@@ -598,6 +604,88 @@ export async function checkLeaderDraftsExist(
 	};
 }
 
+/**
+ * Sync the root repo (Room workspace path) to the latest remote HEAD after a PR merge.
+ * This ensures new worktrees branch from the most recent commit, not a stale one.
+ *
+ * Only runs for approved, non-bypassed tasks (i.e., a PR was actually merged).
+ * Uses rootWorkspacePath (the main repo) rather than workspacePath (the task worktree).
+ */
+export async function checkLeaderRootRepoSynced(
+	ctx: LeaderCompleteHookContext,
+	opts?: HookOptions
+): Promise<HookResult> {
+	// Only sync when a PR was merged (approved task, not a bypass/research-only task)
+	if (!ctx.approved || ctx.workerBypassed) {
+		return { pass: true };
+	}
+
+	const rootPath = ctx.rootWorkspacePath ?? ctx.workspacePath;
+	const run = getRunner(opts);
+
+	// Detect default branch via git symbolic-ref
+	let defaultBranch = '';
+	const { stdout: symref, exitCode: symrefExit } = await run(
+		['git', 'symbolic-ref', 'refs/remotes/origin/HEAD'],
+		rootPath
+	);
+	if (symrefExit === 0 && symref) {
+		defaultBranch = symref.trim().replace('refs/remotes/origin/', '');
+	}
+
+	if (!defaultBranch) {
+		// Fallback: check well-known base branches by trying to resolve them
+		for (const candidate of BASE_BRANCHES) {
+			const { exitCode } = await run(
+				['git', 'rev-parse', '--verify', `origin/${candidate}`],
+				rootPath
+			);
+			if (exitCode === 0) {
+				defaultBranch = candidate;
+				break;
+			}
+		}
+	}
+
+	if (!defaultBranch) {
+		log.warn(`checkLeaderRootRepoSynced: could not determine default branch, skipping root sync`);
+		return { pass: true };
+	}
+
+	// Fetch latest from origin
+	const { exitCode: fetchExit } = await run(['git', 'fetch', 'origin'], rootPath);
+	if (fetchExit !== 0) {
+		log.warn(`checkLeaderRootRepoSynced: git fetch origin failed (exit ${fetchExit})`);
+		return {
+			pass: false,
+			reason: 'Root repo sync failed: git fetch origin returned a non-zero exit code.',
+			bounceMessage:
+				'Could not sync the root repository — `git fetch origin` failed.\n\n' +
+				'Please check network connectivity and ensure the remote is reachable, ' +
+				'then call `complete_task` again.',
+		};
+	}
+
+	// Pull the default branch into the root repo
+	const { exitCode: pullExit } = await run(['git', 'pull', 'origin', defaultBranch], rootPath);
+	if (pullExit !== 0) {
+		log.warn(
+			`checkLeaderRootRepoSynced: git pull origin ${defaultBranch} failed (exit ${pullExit})`
+		);
+		return {
+			pass: false,
+			reason: `Root repo sync failed: git pull origin ${defaultBranch} returned a non-zero exit code.`,
+			bounceMessage:
+				`Could not sync the root repository — \`git pull origin ${defaultBranch}\` failed.\n\n` +
+				'This is required so new worktrees branch from the latest commit.\n' +
+				'Resolve any issues (e.g. merge conflicts in the root repo) and call `complete_task` again.',
+		};
+	}
+
+	log.info(`checkLeaderRootRepoSynced: root repo synced to origin/${defaultBranch}`);
+	return { pass: true };
+}
+
 // --- PR URL Utility ---
 
 /**
@@ -746,6 +834,11 @@ export async function runLeaderCompleteGate(
 	// Fails open when gh is unavailable (e.g. bypass/research-only tasks with no PR).
 	const mergedResult = await checkLeaderPrMerged(ctx, opts);
 	if (!mergedResult.pass) return mergedResult;
+
+	// Sync root repo after PR merge so new worktrees branch from the latest commit.
+	// Only runs for approved, non-bypassed tasks; fails open on missing default branch.
+	const syncResult = await checkLeaderRootRepoSynced(ctx, opts);
+	if (!syncResult.pass) return syncResult;
 
 	// Planning tasks: verify draft tasks were created from the merged plan.
 	if (ctx.taskType === 'planning') {
