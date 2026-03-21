@@ -1,6 +1,148 @@
 {
 	"mocks": [
 		{
+			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason)",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"body": {
+					"matcher": ".JsonContains",
+					"key": "messages",
+					"value": "probe_supervised_escalation"
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{ "name": "content-type", "value": "application/json" },
+					{ "name": "x-mocked-by", "value": "Dev Proxy mocks.json (space-agent supervised)" }
+				],
+				"body": {
+					"id": "msg_space_supervised_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED SUPERVISED] Task needs human attention. I am operating in supervised mode and cannot act autonomously. I need your approval before retrying or cancelling this task. The task failed and I am waiting for your guidance on how to proceed."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 60,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - semi_autonomous: calls get_task_detail (probe phrase; stop_reason end_turn so test reads tool_use from SDK messages without needing follow-up)",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"body": {
+					"matcher": ".JsonContains",
+					"key": "messages",
+					"value": "probe_semi_autonomous_get_detail"
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{ "name": "content-type", "value": "application/json" },
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent semi_autonomous get_task_detail)"
+					}
+				],
+				"body": {
+					"id": "msg_space_semi_detail_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "A task needs attention. Let me get the full details before deciding how to proceed."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_get_detail_001",
+							"name": "get_task_detail",
+							"input": {
+								"task_id": "PLACEHOLDER_TASK_ID"
+							}
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - semi_autonomous: calls retry_task autonomously (probe phrase; stop_reason end_turn so test reads tool_use from SDK messages without needing follow-up)",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"body": {
+					"matcher": ".JsonContains",
+					"key": "messages",
+					"value": "probe_semi_autonomous_retry"
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{ "name": "content-type", "value": "application/json" },
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent semi_autonomous retry_task)"
+					}
+				],
+				"body": {
+					"id": "msg_space_semi_retry_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "I am in semi-autonomous mode. I will retry this failed task autonomously without waiting for human approval."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_retry_001",
+							"name": "retry_task",
+							"input": {
+								"task_id": "PLACEHOLDER_TASK_ID"
+							}
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages",
 				"method": "POST",
