@@ -6,7 +6,10 @@
  * - Archive: completed/cancelled/needs_attention → archived via button + confirmation dialog
  * - Archived tab: archived tasks appear in Archived tab, not Done tab
  * - Archive dialog content: mentions permanent worktree cleanup
- * - Auto-reactivation: sending a message to completed/cancelled task reactivates it
+ * - Message input enabled for completed/cancelled tasks (send-to-reactivate hint)
+ *
+ * Note: Auto-reactivation via message send (status badge update) requires a real agent
+ * group and is covered by daemon online integration tests (rpc-task-lifecycle.test.ts).
  *
  * Setup: uses RPC to create rooms/tasks and advance them to desired states (CLAUDE.md allowed).
  * Test actions and assertions: all through visible UI elements.
@@ -15,8 +18,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { deleteRoom } from '../helpers/room-helpers';
 
-// ─── RPC Helpers ─────────────────────────────────────────────────────────────
+// ─── RPC Setup Helper ─────────────────────────────────────────────────────────
 
 async function createRoomAndTaskInStatus(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
@@ -42,35 +46,13 @@ async function createRoomAndTaskInStatus(
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
-		// Advance to in_progress first (required for most terminal transitions)
+		// Advance to in_progress first (required for completed/cancelled/needs_attention transitions)
 		await hub.request('task.setStatus', { roomId, taskId, status: 'in_progress' });
-
-		if (status === 'completed') {
-			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
-		} else if (status === 'cancelled') {
-			await hub.request('task.setStatus', { roomId, taskId, status: 'cancelled' });
-		} else if (status === 'needs_attention') {
-			await hub.request('task.setStatus', { roomId, taskId, status: 'needs_attention' });
-		}
+		// Advance to the requested terminal status
+		await hub.request('task.setStatus', { roomId, taskId, status });
 
 		return { roomId, taskId };
 	}, taskStatus);
-}
-
-async function deleteRoom(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	roomId: string
-): Promise<void> {
-	if (!roomId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('room.delete', { roomId: id });
-		}, roomId);
-	} catch {
-		// Best-effort cleanup
-	}
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -98,8 +80,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Verify task shows "completed" status in the header
-		await expect(page.locator('text=completed').first()).toBeVisible({ timeout: 5000 });
+		// Verify task shows "completed" status badge
+		const statusBadge = page.locator('[data-testid="task-status-badge"]');
+		await expect(statusBadge).toHaveText('completed', { timeout: 5000 });
 
 		// Click the Reactivate button
 		const reactivateBtn = page.locator('[data-testid="task-reactivate-button"]');
@@ -107,7 +90,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await reactivateBtn.click();
 
 		// Status badge should update to "in progress" (status.replace('_', ' '))
-		await expect(page.locator('text=in progress').first()).toBeVisible({ timeout: 10000 });
+		await expect(statusBadge).toHaveText('in progress', { timeout: 10000 });
 
 		// Reactivate button should disappear (task is now active)
 		await expect(page.locator('[data-testid="task-reactivate-button"]')).not.toBeAttached({
@@ -121,16 +104,17 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Verify task shows "cancelled" status
-		await expect(page.locator('text=cancelled').first()).toBeVisible({ timeout: 5000 });
+		// Verify task shows "cancelled" status badge
+		const statusBadge = page.locator('[data-testid="task-status-badge"]');
+		await expect(statusBadge).toHaveText('cancelled', { timeout: 5000 });
 
 		// Click the Reactivate button
 		const reactivateBtn = page.locator('[data-testid="task-reactivate-button"]');
 		await expect(reactivateBtn).toBeVisible({ timeout: 5000 });
 		await reactivateBtn.click();
 
-		// Status should update to "in progress"
-		await expect(page.locator('text=in progress').first()).toBeVisible({ timeout: 10000 });
+		// Status badge should update to "in progress"
+		await expect(statusBadge).toHaveText('in progress', { timeout: 10000 });
 		await expect(page.locator('[data-testid="task-reactivate-button"]')).not.toBeAttached({
 			timeout: 5000,
 		});
@@ -149,7 +133,9 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Wait for the task to appear in the list
-		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=E2E Lifecycle Test Task').first()).toBeVisible({
+			timeout: 5000,
+		});
 
 		// Click the Reactivate button in the list item
 		const reactivateBtn = page.locator(`[data-testid="task-reactivate-${taskId}"]`);
@@ -338,7 +324,7 @@ test.describe('Task Lifecycle — Archive', () => {
 	test('archived task has no Reactivate or Archive buttons', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
-		// Archive the task via RPC (to skip the UI flow already tested above)
+		// Archive the task via RPC (infrastructure setup — the UI archive flow is tested above)
 		await page.evaluate(
 			async ({ rId, tId }) => {
 				const hub = window.__messageHub || window.appState?.messageHub;
@@ -352,14 +338,16 @@ test.describe('Task Lifecycle — Archive', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Status should show "archived"
-		await expect(page.locator('text=archived').first()).toBeVisible({ timeout: 5000 });
+		// Status badge should show "archived"
+		await expect(page.locator('[data-testid="task-status-badge"]')).toHaveText('archived', {
+			timeout: 5000,
+		});
 
 		// Neither Reactivate nor Archive buttons should be present
 		await expect(page.locator('[data-testid="task-reactivate-button"]')).not.toBeAttached();
 		await expect(page.locator('[data-testid="task-archive-button"]')).not.toBeAttached();
 
-		// Message input should be disabled/show archived notice
+		// Message input should show archived notice
 		await expect(page.locator('text=Archived tasks cannot receive messages.').first()).toBeVisible({
 			timeout: 5000,
 		});
