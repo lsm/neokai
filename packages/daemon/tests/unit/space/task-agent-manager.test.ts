@@ -81,6 +81,7 @@ interface MockAgentSession {
 	session: { id: string; context?: Record<string, unknown> };
 	getProcessingState: () => AgentProcessingState;
 	getSDKMessageCount: () => number;
+	getSessionData: () => { id: string; context?: Record<string, unknown> };
 	setRuntimeMcpServers: (servers: Record<string, unknown>) => void;
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
@@ -115,6 +116,9 @@ function makeMockSession(
 		},
 		getSDKMessageCount() {
 			return this._sdkMessageCount;
+		},
+		getSessionData() {
+			return this.session;
 		},
 		setRuntimeMcpServers(servers) {
 			this._mcpServers = servers;

@@ -436,10 +436,10 @@ export class TaskAgentManager {
 	 *
 	 * Queries `space_tasks` for tasks with status `in_progress` or `needs_attention`
 	 * that have a non-null `taskAgentSessionId`. For each such task that has a
-	 * `space_task_agent` session type in the DB, recreates the Task Agent session
-	 * (using `createTaskAgentInit()` + `AgentSession.fromInit()`), re-attaches the
-	 * MCP server and system prompt, restarts the streaming query, and injects a
-	 * re-orientation message so the agent resumes from where it left off.
+	 * `space_task_agent` session type in the DB, restores the Task Agent session via
+	 * `AgentSession.restore()`, re-attaches the MCP server and system prompt,
+	 * restarts the streaming query, and injects a re-orientation message so the
+	 * agent resumes from where it left off.
 	 *
 	 * Sub-sessions are NOT fully rehydrated — the Task Agent will re-spawn them
 	 * via its MCP tools after receiving the re-orientation message. The in-memory
