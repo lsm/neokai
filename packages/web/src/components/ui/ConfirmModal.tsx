@@ -5,6 +5,8 @@
  * Used for destructive actions that require user confirmation.
  */
 
+import type { ComponentChildren } from 'preact';
+
 import { Modal } from './Modal.tsx';
 
 export interface ConfirmModalProps {
@@ -15,9 +17,11 @@ export interface ConfirmModalProps {
 	message: string;
 	confirmText?: string;
 	cancelText?: string;
-	confirmButtonVariant?: 'danger' | 'primary' | 'warning';
+	confirmButtonVariant?: 'danger' | 'primary' | 'warning' | 'approve';
 	isLoading?: boolean;
 	error?: string | null;
+	children?: ComponentChildren;
+	confirmTestId?: string;
 }
 
 export function ConfirmModal({
@@ -31,6 +35,8 @@ export function ConfirmModal({
 	confirmButtonVariant = 'danger',
 	isLoading = false,
 	error = null,
+	children,
+	confirmTestId,
 }: ConfirmModalProps) {
 	const handleConfirm = () => {
 		onConfirm();
@@ -42,13 +48,17 @@ export function ConfirmModal({
 			? 'bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50'
 			: confirmButtonVariant === 'warning'
 				? 'bg-amber-600 hover:bg-amber-700 text-white disabled:bg-amber-600/50'
-				: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50';
+				: confirmButtonVariant === 'approve'
+					? 'bg-green-600 hover:bg-green-700 text-white disabled:bg-green-600/50'
+					: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50';
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose} title={title} size="sm" showCloseButton={false}>
 			<div class="space-y-4">
 				{/* Message */}
 				<p class="text-gray-300 text-sm leading-relaxed">{message}</p>
+
+				{children && <div class="mt-2">{children}</div>}
 
 				{/* Error message */}
 				{error && (
@@ -71,6 +81,7 @@ export function ConfirmModal({
 						type="button"
 						onClick={handleConfirm}
 						disabled={isLoading}
+						data-testid={confirmTestId}
 						class={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed ${confirmButtonClasses}`}
 					>
 						{isLoading ? 'Processing...' : confirmText}
