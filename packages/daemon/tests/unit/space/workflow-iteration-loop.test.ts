@@ -19,7 +19,10 @@ import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
-import { WorkflowExecutor } from '../../../src/lib/space/runtime/workflow-executor.ts';
+import {
+	WorkflowExecutor,
+	WorkflowTransitionError,
+} from '../../../src/lib/space/runtime/workflow-executor.ts';
 import type { SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -274,7 +277,7 @@ describe('Workflow Iteration Loop', () => {
 		expect(runState.currentStepId).toBe(STEP_DONE);
 		expect(runState.iterationCount).toBe(1);
 
-		// Verify all 7 tasks are under the same run (6 workflow tasks + Done)
+		// Verify all 7 tasks are under the same run (6 from 2 cycles + 1 terminal Done task)
 		const allTasks = await taskManager.listTasksByWorkflowRun(run.id);
 		expect(allTasks).toHaveLength(7);
 
@@ -409,7 +412,7 @@ describe('Workflow Iteration Loop', () => {
 			workflowId: workflow.id,
 			title: 'Max Iter Test',
 			currentStepId: workflow.startStepId,
-			maxIterations: 2, // Allow 1 iteration (not 2), so second loop-back throws
+			maxIterations: 2, // First loop-back succeeds (count=1), second throws (count=2 >= 2)
 		});
 
 		const activeRun = runRepo.updateStatus(run.id, 'in_progress')!;
@@ -458,7 +461,14 @@ describe('Workflow Iteration Loop', () => {
 		executor = makeExecutor(workflow, runState);
 
 		// Should throw because iteration cap is reached
-		expect(() => executor.advance()).toThrow(/iteration/i);
+		let thrownError: Error | undefined;
+		try {
+			await executor.advance();
+		} catch (e) {
+			thrownError = e as Error;
+		}
+		expect(thrownError).toBeInstanceOf(WorkflowTransitionError);
+		expect(thrownError!.message).toContain('Iteration cap reached');
 
 		runState = runRepo.getRun(run.id)!;
 		expect(runState.status).toBe('needs_attention');
