@@ -40,7 +40,6 @@ let mockCurrentRoomSessionIdSignal: ReturnType<typeof signal<string | null>>;
 let mockCurrentRoomTaskIdSignal: ReturnType<typeof signal<string | null>>;
 
 // Computed signals derived from the mocks
-let mockActiveGoals: ReturnType<typeof computed>;
 let mockTasksByGoalId: ReturnType<typeof computed>;
 let mockOrphanTasks: ReturnType<typeof computed>;
 let mockOrphanTasksActive: ReturnType<typeof computed>;
@@ -53,8 +52,6 @@ function initSignals() {
 	mockGoalsSignal = signal([]);
 	mockCurrentRoomSessionIdSignal = signal(null);
 	mockCurrentRoomTaskIdSignal = signal(null);
-
-	mockActiveGoals = computed(() => mockGoalsSignal.value.filter((g) => g.status === 'active'));
 
 	mockTasksByGoalId = computed(() => {
 		const taskMap = new Map();
@@ -102,7 +99,6 @@ vi.mock('../../lib/room-store.ts', () => ({
 			tasks: mockTasksSignal,
 			sessions: mockSessionsSignal,
 			goals: mockGoalsSignal,
-			activeGoals: mockActiveGoals,
 			tasksByGoalId: mockTasksByGoalId,
 			orphanTasksActive: mockOrphanTasksActive,
 			orphanTasksReview: mockOrphanTasksReview,
@@ -218,7 +214,7 @@ describe('RoomContextPanel', () => {
 	it('highlights Dashboard only when both session and task signals are null', () => {
 		mockCurrentRoomSessionIdSignal.value = null;
 		mockCurrentRoomTaskIdSignal.value = null;
-		const { container } = render(<RoomContextPanel roomId="room-1" />);
+		render(<RoomContextPanel roomId="room-1" />);
 		const dashboardBtn = screen.getByText('Dashboard').closest('button');
 		expect(dashboardBtn?.className).toContain('bg-dark-700');
 	});
@@ -248,16 +244,16 @@ describe('RoomContextPanel', () => {
 
 	// -- Goals section --
 
-	it('renders Goals section with count of active goals', () => {
+	it('renders Goals section with count of all goals', () => {
 		mockGoalsSignal.value = [
 			makeGoal('g1', 'Goal 1'),
 			makeGoal('g2', 'Goal 2'),
 			makeGoal('g3', 'Archived Goal', [], 'archived'),
 		];
 		render(<RoomContextPanel roomId="room-1" />);
-		// The CollapsibleSection shows title and count
+		// The CollapsibleSection shows title and count matching total goals shown
 		expect(screen.getByText('Goals')).toBeTruthy();
-		expect(screen.getByText('(2)')).toBeTruthy();
+		expect(screen.getByText('(3)')).toBeTruthy();
 	});
 
 	it('expands a goal to show linked tasks on click', () => {
@@ -400,8 +396,9 @@ describe('RoomContextPanel', () => {
 		expect(screen.getByText('Session 1')).toBeTruthy();
 	});
 
-	it('creates a session via the [+] button and navigates to it', async () => {
-		render(<RoomContextPanel roomId="room-1" />);
+	it('creates a session via the [+] button, navigates to it, and calls onNavigate', async () => {
+		const onNavigate = vi.fn();
+		render(<RoomContextPanel roomId="room-1" onNavigate={onNavigate} />);
 
 		const createBtn = screen.getByLabelText('Create session');
 		fireEvent.click(createBtn);
@@ -411,6 +408,7 @@ describe('RoomContextPanel', () => {
 		});
 		expect(mockCreateSession).toHaveBeenCalledWith();
 		expect(mockNavigateToRoomSession).toHaveBeenCalledWith('room-1', 'new-session-id');
+		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 
 	it('navigates to session on click and calls onNavigate', () => {

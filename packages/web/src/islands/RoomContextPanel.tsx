@@ -9,7 +9,7 @@
  * 5. Sessions section (collapsible, default collapsed)
  */
 
-import { useMemo, useState } from 'preact/hooks';
+import { useCallback, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
 import { roomStore } from '../lib/room-store';
 import {
@@ -89,15 +89,16 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	);
 
 	// Goals data
-	const activeGoals = roomStore.activeGoals.value;
 	const tasksByGoalId = roomStore.tasksByGoalId.value;
 
-	// Orphan tasks by tab
-	const orphanTasksForTab = useMemo(() => {
-		if (orphanTab === 'active') return roomStore.orphanTasksActive.value;
-		if (orphanTab === 'review') return roomStore.orphanTasksReview.value;
-		return roomStore.orphanTasksDone.value;
-	}, [orphanTab]);
+	// Orphan tasks by tab — read signal .value directly (no useMemo) so Preact
+	// Signals auto-tracking picks up changes when the underlying task list updates.
+	const orphanTasksForTab =
+		orphanTab === 'active'
+			? roomStore.orphanTasksActive.value
+			: orphanTab === 'review'
+				? roomStore.orphanTasksReview.value
+				: roomStore.orphanTasksDone.value;
 
 	// Sessions
 	const filteredSessions = useMemo(() => {
@@ -116,6 +117,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	const roomAgentSessionId = `room:chat:${roomId}`;
 
 	const isDashboardSelected = selectedSessionId === null && selectedTaskId === null;
+	// Router clears taskId when navigating to agent, so checking sessionId alone is safe.
 	const isRoomAgentSelected = selectedSessionId === roomAgentSessionId;
 
 	// Goal expand/collapse
@@ -151,6 +153,21 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		navigateToRoomSession(roomId, sessionId);
 		onNavigate?.();
 	};
+
+	const handleCreateSession = useCallback(
+		async (e: Event) => {
+			e.stopPropagation();
+			try {
+				const sessionId = await roomStore.createSession();
+				navigateToRoomSession(roomId, sessionId);
+				onNavigate?.();
+			} catch {
+				// createSession can fail if not connected or RPC errors — silently ignore
+				// since the user will see the session list unchanged as feedback.
+			}
+		},
+		[roomId, onNavigate]
+	);
 
 	const hasTasks = pendingCount > 0 || activeCount > 0;
 
@@ -226,7 +243,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
 				{/* Goals section */}
-				<CollapsibleSection title="Goals" count={activeGoals.length}>
+				<CollapsibleSection title="Goals" count={goals.length}>
 					{goals.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No goals</div>
 					) : (
@@ -317,12 +334,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 					defaultExpanded={false}
 					headerRight={
 						<button
-							onClick={async (e) => {
-								e.stopPropagation();
-								const sessionId = await roomStore.createSession();
-								navigateToRoomSession(roomId, sessionId);
-								onNavigate?.();
-							}}
+							onClick={handleCreateSession}
 							class="text-gray-500 hover:text-gray-300 transition-colors p-0.5"
 							aria-label="Create session"
 						>
