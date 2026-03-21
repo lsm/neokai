@@ -536,3 +536,8 @@ a:focus-visible {
 		border: none !important;
 	}
 }
+
+/* Safe area inset support for iOS notch/home indicator */
+.pb-safe {
+	padding-bottom: env(safe-area-inset-bottom);
+}

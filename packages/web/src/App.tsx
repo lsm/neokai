@@ -1,6 +1,7 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { NavRail } from './islands/NavRail.tsx';
+import { BottomTabBar } from './islands/BottomTabBar.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
@@ -132,9 +133,14 @@ export function App() {
 				{/* Context Panel - always visible */}
 				<ContextPanel />
 
-				{/* Main Content */}
-				<MainContent />
+				{/* Main Content — add bottom padding on mobile to avoid tab bar overlap */}
+				<div class="flex-1 flex flex-col overflow-hidden pb-16 md:pb-0 min-w-0">
+					<MainContent />
+				</div>
 			</div>
+
+			{/* Bottom Tab Bar (mobile only) */}
+			<BottomTabBar />
 
 			{/* Global Toast Container */}
 			<ToastContainer />
