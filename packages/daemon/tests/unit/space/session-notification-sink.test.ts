@@ -421,6 +421,89 @@ describe('SessionNotificationSink', () => {
 		});
 	});
 
+	describe('goal_tasks_complete event', () => {
+		it('emits [TASK_EVENT] goal_tasks_complete with goal info', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'goal_tasks_complete',
+				spaceId: SPACE_ID,
+				goalId: 'goal-xyz',
+				goalTitle: 'Implement login page',
+				goalValidationCriteria: 'Run e2e tests and verify login flow works',
+				iterationCount: 1,
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			expect(factory.calls).toHaveLength(1);
+			const { message } = factory.calls[0];
+			expect(message).toContain('[TASK_EVENT] goal_tasks_complete');
+			expect(message).toContain('Implement login page');
+			expect(message).toContain('goal-xyz');
+		});
+
+		it('includes iterationCount and goalValidationCriteria in JSON payload', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'goal_tasks_complete',
+				spaceId: SPACE_ID,
+				goalId: 'goal-123',
+				goalTitle: 'Add tests',
+				goalValidationCriteria: 'All tests pass with >90% coverage',
+				iterationCount: 2,
+				previousIssueCount: 3,
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			const json = extractJson(factory.calls[0].message);
+			expect(json['kind']).toBe('goal_tasks_complete');
+			expect(json['goalId']).toBe('goal-123');
+			expect(json['goalTitle']).toBe('Add tests');
+			expect(json['goalValidationCriteria']).toBe('All tests pass with >90% coverage');
+			expect(json['iterationCount']).toBe(2);
+			expect(json['previousIssueCount']).toBe(3);
+		});
+
+		it('formats first completion message without previous issue count', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'goal_tasks_complete',
+				spaceId: SPACE_ID,
+				goalId: 'goal-1',
+				goalTitle: 'My Goal',
+				iterationCount: 1,
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			const { message } = factory.calls[0];
+			expect(message).toContain('First completion');
+		});
+
+		it('formats subsequent iteration with previous issue count', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'goal_tasks_complete',
+				spaceId: SPACE_ID,
+				goalId: 'goal-1',
+				goalTitle: 'My Goal',
+				iterationCount: 3,
+				previousIssueCount: 2,
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			const { message } = factory.calls[0];
+			expect(message).toContain('Iteration 3');
+			expect(message).toContain('2 issue(s)');
+		});
+	});
+
 	describe('formatEventMessage (exported helper)', () => {
 		it('produces consistent output for the same input', () => {
 			const event: SpaceNotificationEvent = {

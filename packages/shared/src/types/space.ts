@@ -196,6 +196,13 @@ export interface SpaceTask {
 	 * session is created. Null when no Task Agent has been spawned yet.
 	 */
 	taskAgentSessionId?: string | null;
+	/**
+	 * ID of the goal this task is associated with.
+	 * Links the task to a RoomGoal for goal-completion tracking by SpaceRuntime.
+	 * When all non-cancelled tasks for a goal are completed, the Space Agent is notified
+	 * to verify the work and mark the goal complete.
+	 */
+	goalId?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Start timestamp (milliseconds since epoch) */
@@ -232,6 +239,11 @@ export interface CreateSpaceTaskParams {
 	 * Set when the task transitions from 'pending' to 'in_progress'.
 	 */
 	taskAgentSessionId?: string | null;
+	/**
+	 * ID of the goal this task is associated with.
+	 * Links the task to a RoomGoal for goal-completion tracking.
+	 */
+	goalId?: string | null;
 }
 
 /**
@@ -262,6 +274,10 @@ export interface UpdateSpaceTaskParams {
 	 * Set when spawning a Task Agent; null to clear the reference.
 	 */
 	taskAgentSessionId?: string | null;
+	/**
+	 * ID of the goal this task is associated with. Null clears the association.
+	 */
+	goalId?: string | null;
 }
 
 // ============================================================================

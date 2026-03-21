@@ -52,6 +52,29 @@ export interface TaskTimeoutEvent {
 	timestamp: string;
 }
 
+/**
+ * All non-cancelled tasks for a goal have completed. Space Agent should create a
+ * verification task to validate the work, then either mark the goal complete or
+ * create fix tasks for any issues found (triggering another iteration).
+ */
+export interface GoalTasksCompleteEvent {
+	kind: 'goal_tasks_complete';
+	/** Space the tasks belong to. */
+	spaceId: string;
+	/** ID of the goal whose tasks have all completed. */
+	goalId: string;
+	/** Title of the goal (for human-readable context in the message). */
+	goalTitle: string;
+	/** Validation criteria from the goal description (used to build verification task). */
+	goalValidationCriteria?: string;
+	/** How many verification iterations have completed (starts at 1 on first completion). */
+	iterationCount: number;
+	/** Number of issues found in the previous iteration (undefined on first iteration). */
+	previousIssueCount?: number;
+	/** ISO-8601 timestamp when the event was emitted. */
+	timestamp: string;
+}
+
 /** A workflow run has reached a terminal state (completed, cancelled, or needs_attention). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
@@ -99,7 +122,8 @@ export type SpaceNotificationEvent =
 	| TaskNeedsAttentionEvent
 	| WorkflowRunNeedsAttentionEvent
 	| TaskTimeoutEvent
-	| WorkflowRunCompletedEvent;
+	| WorkflowRunCompletedEvent
+	| GoalTasksCompleteEvent;
 
 // ---------------------------------------------------------------------------
 // NotificationSink interface

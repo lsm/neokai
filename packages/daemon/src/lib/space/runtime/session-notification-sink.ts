@@ -108,6 +108,8 @@ export function formatEventMessage(
 			return formatTaskTimeout(event, autonomyLevel);
 		case 'workflow_run_completed':
 			return formatWorkflowRunCompleted(event, autonomyLevel);
+		case 'goal_tasks_complete':
+			return formatGoalTasksComplete(event, autonomyLevel);
 	}
 }
 
@@ -207,6 +209,53 @@ function formatWorkflowRunCompleted(
 	};
 	if (event.summary !== undefined) {
 		payload['summary'] = event.summary;
+	}
+	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatGoalTasksComplete(
+	event: {
+		kind: 'goal_tasks_complete';
+		spaceId: string;
+		goalId: string;
+		goalTitle: string;
+		goalValidationCriteria?: string;
+		iterationCount: number;
+		previousIssueCount?: number;
+		timestamp: string;
+	},
+	autonomyLevel: AutonomyLevel
+): string {
+	const iterationPart =
+		event.iterationCount === 1
+			? 'First completion'
+			: event.previousIssueCount !== undefined
+				? `Iteration ${event.iterationCount} (previous iteration found ${event.previousIssueCount} issue(s))`
+				: `Iteration ${event.iterationCount}`;
+
+	const criteriaPart = event.goalValidationCriteria
+		? ` Validation criteria: ${event.goalValidationCriteria}`
+		: '';
+
+	const humanReadable =
+		`[GOAL_TASKS_COMPLETE] All tasks for goal "${event.goalTitle}" (id: ${event.goalId}) are completed. ` +
+		`${iterationPart}.${criteriaPart} ` +
+		`Action: Create a verification task to validate the completed work, then mark the goal complete or create fix tasks.`;
+
+	const payload: Record<string, unknown> = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		goalId: event.goalId,
+		goalTitle: event.goalTitle,
+		iterationCount: event.iterationCount,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
+	if (event.goalValidationCriteria !== undefined) {
+		payload['goalValidationCriteria'] = event.goalValidationCriteria;
+	}
+	if (event.previousIssueCount !== undefined) {
+		payload['previousIssueCount'] = event.previousIssueCount;
 	}
 	return buildMessage(event.kind, humanReadable, payload);
 }

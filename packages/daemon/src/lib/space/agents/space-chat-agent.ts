@@ -206,6 +206,17 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`  Payload fields: \`runId\`, \`reason\`, \`autonomyLevel\`\n` +
 			`  Action: Summarize the outcome to the user and suggest next steps if relevant.`
 	);
+	sections.push('');
+	sections.push(
+		`- **\`goal_tasks_complete\`** — All tasks for a goal have completed. Verification is required.\n` +
+			`  Payload fields: \`goalId\`, \`goalTitle\`, \`goalValidationCriteria\`, \`iterationCount\`, \`previousIssueCount\`\n` +
+			`  Action (verification loop):\n` +
+			`    1. Create a verification task using \`create_standalone_task\` with \`goal_id\` set and the \`goalValidationCriteria\` as the task description.\n` +
+			`    2. When the verification task completes, read its result with \`get_task_detail\`.\n` +
+			`    3. **If issues found**: Create new fix tasks using \`create_standalone_task\` with \`goal_id\` set describing each issue. The loop will trigger again when they complete.\n` +
+			`    4. **If no issues**: Call \`complete_goal\` with a summary of what was accomplished.\n` +
+			`    5. **Iteration limit**: If \`iterationCount\` exceeds 3, escalate to the human instead of creating more tasks.`
+	);
 
 	// Autonomy level section
 	const level = context.autonomyLevel ?? 'supervised';
@@ -255,7 +266,13 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push('');
 	sections.push(
 		`- **\`create_standalone_task\`** — Create a task outside any workflow. Use for self-contained work ` +
-			`that doesn't require multi-step orchestration. Provide a title, description, and optionally an agent ID.`
+			`that doesn't require multi-step orchestration. Provide a title, description, and optionally an agent ID. ` +
+			`Pass \`goal_id\` to link the task to a goal — SpaceRuntime tracks goal-level completion automatically.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`complete_goal\`** — Mark a goal as successfully completed after a verification task confirms ` +
+			`the work meets the goal's validation criteria. Provide a summary of what was accomplished.`
 	);
 	sections.push('');
 	sections.push(

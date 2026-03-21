@@ -32,11 +32,13 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { GoalRepository } from '../../../storage/repositories/goal-repository';
+import type { NotificationSink } from './notification-sink';
+import { NullNotificationSink } from './notification-sink';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
-import { type NotificationSink, NullNotificationSink } from './notification-sink';
 
 const log = new Logger('space-runtime');
 
@@ -58,16 +60,26 @@ export interface SpaceRuntimeConfig {
 	/** Task repository for querying tasks by run/step */
 	taskRepo: SpaceTaskRepository;
 	/**
+	 * Goal repository for looking up goal details (title, description) when
+	 * emitting `goal_tasks_complete` notifications. Optional — when omitted,
+	 * goal-completion detection is disabled.
+	 */
+	goalRepo?: GoalRepository;
+	/**
+	 * Notification sink for emitting events to the Space Agent.
+	 * Defaults to NullNotificationSink (no-op) when not provided.
+	 */
+	notificationSink?: NotificationSink;
+	/**
 	 * Interval between executeTick() calls in milliseconds.
 	 * Used by start(). Default: 5000 (5 seconds).
 	 */
 	tickIntervalMs?: number;
 	/**
-	 * Sink for structured notification events emitted after mechanical processing.
-	 * Defaults to NullNotificationSink (no-op). Use setNotificationSink() to wire
-	 * in a real sink after construction (e.g. once the Space Agent session exists).
+	 * Maximum number of goal verification iterations before escalating to human.
+	 * Default: 3.
 	 */
-	notificationSink?: NotificationSink;
+	maxGoalIterations?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +154,14 @@ export class SpaceRuntime {
 	 * learn about outstanding issues. No DB persistence for dedup state is required.
 	 */
 	private notifiedTaskSet = new Set<string>();
+
+	/**
+	 * Per-goal iteration state for goal-completion tracking.
+	 * - `iterationCount`: how many times we have emitted `goal_tasks_complete` for this goal
+	 * - `notified`: true if we have already emitted the notification for the current batch
+	 *   of completed tasks (cleared when new active tasks appear for the goal)
+	 */
+	private goalIterations = new Map<string, { iterationCount: number; notified: boolean }>();
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
@@ -223,6 +243,7 @@ export class SpaceRuntime {
 		await this.processCompletedTasks();
 		await this.cleanupTerminalExecutors();
 		await this.checkStandaloneTasks();
+		await this.checkGoalCompletion();
 	}
 
 	/**
@@ -460,6 +481,128 @@ export class SpaceRuntime {
 
 		// Re-throw after all runs processed so callers see the error.
 		if (firstError !== null) throw firstError;
+	}
+
+	/**
+	 * Check whether all non-cancelled tasks for any goal-linked task group have
+	 * completed. If so, emit a `goal_tasks_complete` notification to the Space Agent
+	 * so it can create a verification task and close the loop.
+	 *
+	 * Deduplication logic:
+	 * - We track `notified` per goal in `goalIterations`. Once we fire the notification
+	 *   for the current batch we set `notified = true` and skip on subsequent ticks.
+	 * - When new active tasks appear for the goal (pending/in_progress/draft), we clear
+	 *   `notified` so the next completion will trigger a new notification (new iteration).
+	 * - If iterations exceed `maxGoalIterations`, we emit an escalation notice instead
+	 *   of a normal completion notice.
+	 */
+	private async checkGoalCompletion(): Promise<void> {
+		const goalRepo = this.config.goalRepo;
+		const sink = this.config.notificationSink ?? new NullNotificationSink();
+		const maxIterations = this.config.maxGoalIterations ?? 3;
+
+		// Collect all goal IDs referenced by any space task in the DB.
+		// We do this by scanning tasks across all spaces using the taskRepo.
+		// taskRepo.listByGoalId() queries across all spaces (no space_id filter).
+		const knownGoalIds = this.collectGoalIds();
+
+		for (const goalId of knownGoalIds) {
+			const tasks = this.config.taskRepo.listByGoalId(goalId);
+			if (tasks.length === 0) continue;
+
+			// Separate active (non-terminal) from terminal tasks
+			const activeTasks = tasks.filter(
+				(t) => t.status === 'pending' || t.status === 'in_progress' || t.status === 'draft'
+			);
+			const nonCancelledTasks = tasks.filter((t) => t.status !== 'cancelled');
+
+			const state = this.goalIterations.get(goalId) ?? { iterationCount: 0, notified: false };
+
+			if (activeTasks.length > 0) {
+				// New tasks have been added or tasks are still running — reset notified flag
+				// so the next full-completion triggers a new notification (next iteration).
+				if (state.notified) {
+					this.goalIterations.set(goalId, { ...state, notified: false });
+				}
+				continue;
+			}
+
+			// No active tasks — check if all non-cancelled tasks are completed
+			if (nonCancelledTasks.length === 0) continue;
+			const allCompleted = nonCancelledTasks.every((t) => t.status === 'completed');
+			if (!allCompleted) continue;
+
+			// All done — skip if we already notified for this batch
+			if (state.notified) continue;
+
+			const newIterationCount = state.iterationCount + 1;
+			this.goalIterations.set(goalId, { iterationCount: newIterationCount, notified: true });
+
+			if (newIterationCount > maxIterations) {
+				// Too many iterations — escalate to human
+				log.warn(
+					`SpaceRuntime: goal ${goalId} has exceeded ${maxIterations} iterations without convergence. Escalating.`
+				);
+				await sink.notify({
+					kind: 'task_needs_attention',
+					spaceId: tasks[0].spaceId,
+					taskId: goalId,
+					reason:
+						`Goal "${goalId}" has gone through ${newIterationCount - 1} verification iterations ` +
+						`without converging. Human review required to break the loop.`,
+					timestamp: new Date().toISOString(),
+				});
+				continue;
+			}
+
+			// Look up goal details if goalRepo is available
+			let goalTitle = goalId;
+			let goalValidationCriteria: string | undefined;
+			if (goalRepo) {
+				const goal = goalRepo.getGoal(goalId);
+				if (goal) {
+					goalTitle = goal.title;
+					goalValidationCriteria = goal.description || undefined;
+				}
+			}
+
+			await sink.notify({
+				kind: 'goal_tasks_complete',
+				spaceId: tasks[0].spaceId,
+				goalId,
+				goalTitle,
+				goalValidationCriteria,
+				iterationCount: newIterationCount,
+				timestamp: new Date().toISOString(),
+			});
+		}
+	}
+
+	/**
+	 * Collect the set of distinct goal IDs currently referenced by space tasks.
+	 * Used by checkGoalCompletion() to know which goals to check.
+	 */
+	private collectGoalIds(): Set<string> {
+		const goalIds = new Set<string>();
+		// Check in-memory tracking first — includes goals we've already seen
+		for (const goalId of this.goalIterations.keys()) {
+			goalIds.add(goalId);
+		}
+		// Also scan current tasks in the DB via the taskRepo to pick up new goal IDs.
+		// We use a raw query via the DB reference to avoid cross-space lookup complexity.
+		try {
+			const rows = this.config.db
+				.prepare(
+					`SELECT DISTINCT goal_id FROM space_tasks WHERE goal_id IS NOT NULL AND archived_at IS NULL`
+				)
+				.all() as Array<{ goal_id: string }>;
+			for (const row of rows) {
+				goalIds.add(row.goal_id);
+			}
+		} catch {
+			// Table might not have the column yet during migration — skip silently
+		}
+		return goalIds;
 	}
 
 	/**

@@ -24,6 +24,7 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { createSpaceAgentToolHandlers } from '../../../src/lib/space/tools/space-agent-tools.ts';
+import { GoalRepository } from '../../../src/storage/repositories/goal-repository.ts';
 import type { SpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -1158,5 +1159,150 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.customAgentId).toBe(ctx.agentId);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// create_standalone_task — goal_id parameter
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — create_standalone_task goal_id', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('creates task with goal_id when provided', async () => {
+		const goalRepo = new GoalRepository(ctx.db);
+		const goal = goalRepo.createGoal({ roomId: 'room-1', title: 'My Goal' });
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Verify work',
+			description: 'Check the output',
+			goal_id: goal.id,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.goalId).toBe(goal.id);
+	});
+
+	test('creates task without goal_id when not provided', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Plain task',
+			description: 'No goal',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.goalId ?? null).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// complete_goal
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — complete_goal', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	function makeHandlersWithGoalRepo(ctx: TestCtx) {
+		const goalRepo = new GoalRepository(ctx.db);
+		return {
+			handlers: createSpaceAgentToolHandlers({
+				spaceId: ctx.spaceId,
+				runtime: ctx.runtime,
+				workflowManager: ctx.workflowManager,
+				taskRepo: ctx.taskRepo,
+				workflowRunRepo: ctx.workflowRunRepo,
+				taskManager: ctx.taskManager,
+				spaceAgentManager: ctx.agentManager,
+				goalRepo,
+			}),
+			goalRepo,
+		};
+	}
+
+	test('marks goal as completed', async () => {
+		const { handlers, goalRepo } = makeHandlersWithGoalRepo(ctx);
+		const goal = goalRepo.createGoal({ roomId: 'room-1', title: 'Feature Goal' });
+
+		const result = await handlers.complete_goal({
+			goal_id: goal.id,
+			summary: 'All tests pass, feature works as expected.',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.goal.status).toBe('completed');
+		expect(parsed.summary).toBe('All tests pass, feature works as expected.');
+	});
+
+	test('returns success when goal already completed', async () => {
+		const { handlers, goalRepo } = makeHandlersWithGoalRepo(ctx);
+		const goal = goalRepo.createGoal({ roomId: 'room-1', title: 'Already Done' });
+		goalRepo.updateGoal(goal.id, { status: 'completed' });
+
+		const result = await handlers.complete_goal({
+			goal_id: goal.id,
+			summary: 'Done again',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+	});
+
+	test('returns error when goal not found', async () => {
+		const { handlers } = makeHandlersWithGoalRepo(ctx);
+
+		const result = await handlers.complete_goal({
+			goal_id: 'goal-does-not-exist',
+			summary: 'Summary',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('goal-does-not-exist');
+	});
+
+	test('returns error when goalRepo not configured', async () => {
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			// no goalRepo
+		});
+
+		const result = await handlers.complete_goal({
+			goal_id: 'any-goal-id',
+			summary: 'Summary',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('not available');
+	});
+
+	test('returns error when goal is archived', async () => {
+		const { handlers, goalRepo } = makeHandlersWithGoalRepo(ctx);
+		const goal = goalRepo.createGoal({ roomId: 'room-1', title: 'Archived Goal' });
+		goalRepo.updateGoal(goal.id, { status: 'archived' });
+
+		const result = await handlers.complete_goal({
+			goal_id: goal.id,
+			summary: 'Summary',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('archived');
 	});
 });

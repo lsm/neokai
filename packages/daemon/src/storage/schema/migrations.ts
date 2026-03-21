@@ -129,6 +129,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 33: Add autonomy_level column to spaces table.
 	runMigration33(db);
+
+	// Migration 34: Add goal_id column to space_tasks for goal-completion tracking.
+	runMigration34(db);
 }
 
 /**
@@ -1650,6 +1653,7 @@ function runMigration29(db: BunDatabase): void {
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
 			task_agent_session_id TEXT,
+			goal_id TEXT,
 			pr_url TEXT,
 			pr_number INTEGER,
 			pr_created_at INTEGER,
@@ -1676,6 +1680,9 @@ function runMigration29(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id) WHERE goal_id IS NOT NULL`
 	);
 
 	// -------------------------------------------------------------------------
@@ -2004,4 +2011,25 @@ function runMigration33(db: BunDatabase): void {
 	} catch {
 		db.exec(`ALTER TABLE spaces ADD COLUMN autonomy_level TEXT NOT NULL DEFAULT 'supervised'`);
 	}
+}
+
+/**
+ * Migration 34: Add `goal_id` column to `space_tasks`.
+ *
+ * Links a SpaceTask to a RoomGoal for goal-completion tracking. When all
+ * non-cancelled tasks for a goal are completed, SpaceRuntime notifies the
+ * Space Agent to verify the work and mark the goal complete.
+ *
+ * Nullable — standalone tasks (not linked to a goal) return NULL.
+ */
+function runMigration34(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	try {
+		db.prepare(`SELECT goal_id FROM space_tasks LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN goal_id TEXT`);
+	}
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id) WHERE goal_id IS NOT NULL`
+	);
 }

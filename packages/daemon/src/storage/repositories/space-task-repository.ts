@@ -25,8 +25,8 @@ export class SpaceTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, depends_on, task_agent_session_id, goal_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -44,6 +44,7 @@ export class SpaceTaskRepository {
 			params.createdByTaskId ?? null,
 			JSON.stringify(params.dependsOn ?? []),
 			params.taskAgentSessionId ?? null,
+			params.goalId ?? null,
 			now,
 			now
 		);
@@ -227,6 +228,10 @@ export class SpaceTaskRepository {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
 		}
+		if (params.goalId !== undefined) {
+			fields.push('goal_id = ?');
+			values.push(params.goalId ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -280,6 +285,19 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * List non-archived tasks for a given goal (across all spaces).
+	 * Used by SpaceRuntime to check goal completion status.
+	 */
+	listByGoalId(goalId: string): SpaceTask[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM space_tasks WHERE goal_id = ? AND archived_at IS NULL ORDER BY created_at ASC`
+			)
+			.all(goalId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
 	 * Get a task by its Task Agent session ID
 	 */
 	getTaskBySessionId(sessionId: string): SpaceTask | null {
@@ -328,6 +346,7 @@ export class SpaceTaskRepository {
 			inputDraft: (row.input_draft as string | null) ?? undefined,
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
 			taskAgentSessionId: (row.task_agent_session_id as string | null) ?? undefined,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			prUrl: (row.pr_url as string | null) ?? undefined,
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,

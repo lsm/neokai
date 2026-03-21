@@ -29,6 +29,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { GoalRepository } from '../../../storage/repositories/goal-repository';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 
@@ -51,6 +52,11 @@ export interface SpaceAgentToolsConfig {
 	taskManager: SpaceTaskManager;
 	/** Space agent manager for reassign validation. */
 	spaceAgentManager: SpaceAgentManager;
+	/**
+	 * Goal repository for marking goals complete. Optional — when omitted,
+	 * `complete_goal` returns an error.
+	 */
+	goalRepo?: GoalRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +76,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
+		goalRepo,
 	} = config;
 
 	return {
@@ -300,6 +307,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			task_type?: SpaceTaskType;
 			assigned_agent?: 'coder' | 'general';
 			custom_agent_id?: string;
+			goal_id?: string;
 		}): Promise<ToolResult> {
 			try {
 				// Validate custom_agent_id if provided
@@ -320,12 +328,54 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					taskType: args.task_type,
 					assignedAgent: args.assigned_agent,
 					customAgentId: args.custom_agent_id,
+					goalId: args.goal_id,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
 			}
+		},
+
+		/**
+		 * Mark a goal as successfully completed with a summary.
+		 * Call this after verification confirms all tasks for the goal passed validation.
+		 */
+		async complete_goal(args: { goal_id: string; summary: string }): Promise<ToolResult> {
+			if (!goalRepo) {
+				return jsonResult({
+					success: false,
+					error: 'Goal repository not available — cannot complete goals in this context.',
+				});
+			}
+
+			const goal = goalRepo.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+
+			if (goal.status === 'completed') {
+				return jsonResult({
+					success: true,
+					goal,
+					message: `Goal "${goal.title}" is already marked as completed.`,
+				});
+			}
+
+			if (goal.status === 'archived') {
+				return jsonResult({
+					success: false,
+					error: `Cannot complete an archived goal: ${args.goal_id}`,
+				});
+			}
+
+			const updated = goalRepo.updateGoal(args.goal_id, { status: 'completed' });
+			return jsonResult({
+				success: true,
+				goal: updated,
+				summary: args.summary,
+				message: `Goal "${goal.title}" marked as completed.`,
+			});
 		},
 
 		/**
@@ -534,8 +584,29 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe('ID of a custom Space agent to assign this task to'),
+				goal_id: z
+					.string()
+					.optional()
+					.describe(
+						'ID of the goal this task is associated with. When all tasks for a goal complete, ' +
+							'SpaceRuntime automatically notifies the Space Agent to verify and close the goal loop.'
+					),
 			},
 			(args) => handlers.create_standalone_task(args)
+		),
+		tool(
+			'complete_goal',
+			'Mark a goal as successfully completed after verification confirms all tasks passed validation. ' +
+				'Call this only after a verification task confirms the work meets the goal criteria.',
+			{
+				goal_id: z.string().describe('ID of the goal to mark as completed'),
+				summary: z
+					.string()
+					.describe(
+						'Summary of what was accomplished and how it meets the goal validation criteria'
+					),
+			},
+			(args) => handlers.complete_goal(args)
 		),
 		tool(
 			'get_task_detail',

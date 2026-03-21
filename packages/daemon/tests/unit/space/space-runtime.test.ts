@@ -1084,4 +1084,275 @@ describe('SpaceRuntime', () => {
 			expect(workflows).toHaveLength(3); // still 3, not 6
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// checkGoalCompletion (via executeTick)
+	// -------------------------------------------------------------------------
+
+	describe('goal completion detection', () => {
+		const GOAL_ID = 'goal-abc';
+
+		test('emits goal_tasks_complete when all non-cancelled tasks for a goal complete', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const notificationSink = {
+				notify: async (
+					e: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent
+				) => {
+					events.push(e);
+				},
+			};
+
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink,
+			});
+
+			// Create two tasks linked to the goal, then mark them completed
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			const t1 = await taskManager.createTask({ title: 'T1', description: 'D', goalId: GOAL_ID });
+			const t2 = await taskManager.createTask({ title: 'T2', description: 'D', goalId: GOAL_ID });
+
+			await taskManager.startTask(t1.id);
+			await taskManager.completeTask(t1.id, 'done');
+			await taskManager.startTask(t2.id);
+			await taskManager.completeTask(t2.id, 'done');
+
+			// executeTick should detect goal completion
+			runtimeWithSink['rehydrated'] = true; // skip rehydration
+			await runtimeWithSink.executeTick();
+
+			expect(events).toHaveLength(1);
+			expect(events[0].kind).toBe('goal_tasks_complete');
+			const evt =
+				events[0] as import('../../../src/lib/space/runtime/notification-sink.ts').GoalTasksCompleteEvent;
+			expect(evt.goalId).toBe(GOAL_ID);
+			expect(evt.iterationCount).toBe(1);
+			expect(evt.spaceId).toBe(SPACE_ID);
+		});
+
+		test('does not emit duplicate notification on subsequent ticks when no new tasks added', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const notificationSink = {
+				notify: async (
+					e: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent
+				) => {
+					events.push(e);
+				},
+			};
+
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink,
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			const t1 = await taskManager.createTask({ title: 'T1', description: 'D', goalId: GOAL_ID });
+			await taskManager.startTask(t1.id);
+			await taskManager.completeTask(t1.id, 'done');
+
+			runtimeWithSink['rehydrated'] = true;
+			await runtimeWithSink.executeTick();
+			await runtimeWithSink.executeTick(); // second tick should NOT re-emit
+
+			expect(events).toHaveLength(1); // only one notification
+		});
+
+		test('re-emits notification after new tasks are added (next iteration)', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const notificationSink = {
+				notify: async (
+					e: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent
+				) => {
+					events.push(e);
+				},
+			};
+
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink,
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			// First iteration: create + complete task
+			const t1 = await taskManager.createTask({ title: 'T1', description: 'D', goalId: GOAL_ID });
+			await taskManager.startTask(t1.id);
+			await taskManager.completeTask(t1.id, 'done');
+
+			runtimeWithSink['rehydrated'] = true;
+			await runtimeWithSink.executeTick(); // emits iteration 1
+			expect(events).toHaveLength(1);
+
+			// Second iteration: add fix task (makes goal active again), then complete it
+			const t2 = await taskManager.createTask({
+				title: 'Fix T2',
+				description: 'D',
+				goalId: GOAL_ID,
+			});
+			// t2 is pending → active tasks exist → notified flag cleared
+			await runtimeWithSink.executeTick(); // tick with active task → should not re-emit
+			expect(events).toHaveLength(1);
+
+			// Now complete t2
+			await taskManager.startTask(t2.id);
+			await taskManager.completeTask(t2.id, 'done');
+
+			await runtimeWithSink.executeTick(); // emits iteration 2
+			expect(events).toHaveLength(2);
+			const evt2 =
+				events[1] as import('../../../src/lib/space/runtime/notification-sink.ts').GoalTasksCompleteEvent;
+			expect(evt2.iterationCount).toBe(2);
+		});
+
+		test('cancelled tasks are excluded from completion check', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const notificationSink = {
+				notify: async (
+					e: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent
+				) => {
+					events.push(e);
+				},
+			};
+
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink,
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			// One completed, one cancelled — should still emit (cancelled excluded)
+			const t1 = await taskManager.createTask({ title: 'T1', description: 'D', goalId: GOAL_ID });
+			const t2 = await taskManager.createTask({ title: 'T2', description: 'D', goalId: GOAL_ID });
+			await taskManager.startTask(t1.id);
+			await taskManager.completeTask(t1.id, 'done');
+			await taskManager.cancelTask(t2.id);
+
+			runtimeWithSink['rehydrated'] = true;
+			await runtimeWithSink.executeTick();
+
+			expect(events).toHaveLength(1);
+			const evt =
+				events[0] as import('../../../src/lib/space/runtime/notification-sink.ts').GoalTasksCompleteEvent;
+			expect(evt.goalId).toBe(GOAL_ID);
+		});
+
+		test('does not emit when active tasks remain for the goal', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const notificationSink = {
+				notify: async (
+					e: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent
+				) => {
+					events.push(e);
+				},
+			};
+
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink,
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			const t1 = await taskManager.createTask({ title: 'T1', description: 'D', goalId: GOAL_ID });
+			const t2 = await taskManager.createTask({ title: 'T2', description: 'D', goalId: GOAL_ID });
+			await taskManager.startTask(t1.id);
+			await taskManager.completeTask(t1.id, 'done');
+			// t2 is still pending → active task exists
+
+			runtimeWithSink['rehydrated'] = true;
+			await runtimeWithSink.executeTick();
+
+			expect(events).toHaveLength(0); // no notification while tasks active
+		});
+
+		test('escalates to task_needs_attention after maxGoalIterations exceeded', async () => {
+			const events: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent[] =
+				[];
+			const notificationSink = {
+				notify: async (
+					e: import('../../../src/lib/space/runtime/notification-sink.ts').SpaceNotificationEvent
+				) => {
+					events.push(e);
+				},
+			};
+
+			const runtimeWithSink = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+				notificationSink,
+				maxGoalIterations: 2, // low max for testing
+			});
+
+			const taskManager = new (
+				await import('../../../src/lib/space/managers/space-task-manager.ts')
+			).SpaceTaskManager(db, SPACE_ID);
+
+			runtimeWithSink['rehydrated'] = true;
+
+			// Simulate 3 iterations (exceeds max of 2)
+			for (let i = 0; i < 3; i++) {
+				const t = await taskManager.createTask({
+					title: `T${i}`,
+					description: 'D',
+					goalId: GOAL_ID,
+				});
+				await taskManager.startTask(t.id);
+				await taskManager.completeTask(t.id, 'done');
+				await runtimeWithSink.executeTick();
+			}
+
+			// First 2 are normal goal_tasks_complete, 3rd is escalation
+			expect(events).toHaveLength(3);
+			expect(events[0].kind).toBe('goal_tasks_complete');
+			expect(events[1].kind).toBe('goal_tasks_complete');
+			expect(events[2].kind).toBe('task_needs_attention');
+		});
+	});
 });
