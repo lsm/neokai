@@ -51,6 +51,10 @@ function makeLeaderCtx(overrides?: Partial<LeaderCompleteHookContext>): LeaderCo
 		taskId: 'task-1',
 		groupId: 'group-1',
 		hasReviewers: false,
+		// Default approved=true matches production: complete_task is only reachable after
+		// the state machine enforces human approval, so approved is always true in real runs.
+		// Tests that want to exercise the pre-approval code path must pass approved: false.
+		approved: true,
 		...overrides,
 	};
 }

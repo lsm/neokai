@@ -630,8 +630,11 @@ export async function checkLeaderRootRepoSynced(
 	opts?: HookOptions
 ): Promise<HookResult> {
 	// Only sync when a PR was merged (approved task, not a bypass/research-only task).
-	// approved=false is the pre-approval phase; workerBypassed means no real PR exists.
+	// approved=false/undefined is the pre-approval phase; workerBypassed means no real PR exists.
 	if (!ctx.approved || ctx.workerBypassed) {
+		log.debug(
+			`checkLeaderRootRepoSynced: skipping root sync (approved=${ctx.approved}, workerBypassed=${ctx.workerBypassed})`
+		);
 		return { pass: true };
 	}
 
