@@ -1939,5 +1939,128 @@ describe('WorkflowExecutor', () => {
 			await freshExecutor.advance();
 			expect(runRepo.getRun(run.id)?.iterationCount).toBe(3);
 		});
+
+		test('cyclic transition condition fails, non-cyclic always passes — no iterationCount increment', async () => {
+			// Step A has two outgoing transitions:
+			//   order 0: isCyclic=true with task_result condition 'loop' (will not match)
+			//   order 1: isCyclic=false with always condition (will match)
+			// When the cyclic branch is skipped due to its condition failing, iterationCount
+			// must remain 0 because followTransition() is never called for that branch.
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-skip-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					// Cyclic back-edge: only followed when task result starts with 'loop'
+					{
+						from: STEP_A,
+						to: STEP_B,
+						condition: { type: 'task_result', expression: 'loop' },
+						isCyclic: true,
+						order: 0,
+					},
+					// Forward edge: always followed when cyclic branch is skipped
+					{
+						from: STEP_A,
+						to: STEP_C,
+						condition: { type: 'always' },
+						isCyclic: false,
+						order: 1,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Skip No Increment',
+				currentStepId: workflow.startStepId,
+				maxIterations: 5,
+			});
+
+			// Create a completed task on STEP_A whose result does NOT start with 'loop'
+			const stepATask = await taskManager.createTask({
+				title: 'Step A task',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: STEP_A,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(stepATask.id, 'in_progress');
+			await taskManager.setTaskStatus(stepATask.id, 'completed', { result: 'done' });
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Should have followed the non-cyclic transition (A → C)
+			expect(result.tasks[0].workflowStepId).toBe(STEP_C);
+			// iterationCount must still be 0 — cyclic branch was never followed
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(0);
+		});
+
+		test('isCyclic transition with task_result condition increments iterationCount when condition passes', async () => {
+			// Verify that the cyclic path correctly increments when its condition DOES match.
+			// Step A: cyclic back to B when task result starts with 'retry', else forward to C.
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-match-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					{
+						from: STEP_A,
+						to: STEP_B,
+						condition: { type: 'task_result', expression: 'retry' },
+						isCyclic: true,
+						order: 0,
+					},
+					{
+						from: STEP_A,
+						to: STEP_C,
+						condition: { type: 'always' },
+						isCyclic: false,
+						order: 1,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Match Increment',
+				currentStepId: workflow.startStepId,
+				maxIterations: 5,
+			});
+
+			// Create a completed task on STEP_A whose result DOES start with 'retry'
+			const stepATask = await taskManager.createTask({
+				title: 'Step A task',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: STEP_A,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(stepATask.id, 'in_progress');
+			await taskManager.setTaskStatus(stepATask.id, 'completed', {
+				result: 'retry: validation failed',
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Should have followed the cyclic transition (A → B)
+			expect(result.tasks[0].workflowStepId).toBe(STEP_B);
+			// iterationCount must be 1 — cyclic branch was followed
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
+		});
 	});
 });
