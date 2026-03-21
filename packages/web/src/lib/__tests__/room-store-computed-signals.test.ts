@@ -5,6 +5,7 @@
  * - orphanTasksActive: Orphan tasks with draft/pending/in_progress
  * - orphanTasksReview: Orphan tasks with review/needs_attention
  * - orphanTasksDone: Orphan tasks with completed/cancelled
+ * - orphanTasksArchived: Orphan tasks with archived
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -194,7 +195,26 @@ describe('RoomStore — computed goal/task signals', () => {
 		});
 	});
 
-	describe('all 7 TaskStatus values are covered', () => {
+	describe('orphanTasksArchived', () => {
+		it('includes archived orphan tasks', () => {
+			roomStore.tasks.value = [
+				makeTask('t1', 'in_progress'),
+				makeTask('t2', 'archived'),
+				makeTask('t3', 'completed'),
+			];
+			roomStore.goals.value = [];
+			const ids = roomStore.orphanTasksArchived.value.map((t) => t.id);
+			expect(ids).toEqual(['t2']);
+		});
+
+		it('excludes archived tasks linked to a goal', () => {
+			roomStore.tasks.value = [makeTask('t1', 'archived')];
+			roomStore.goals.value = [makeGoal('g1', ['t1'])];
+			expect(roomStore.orphanTasksArchived.value).toEqual([]);
+		});
+	});
+
+	describe('all 8 TaskStatus values are covered', () => {
 		it('every status falls into exactly one bucket', () => {
 			roomStore.tasks.value = [
 				makeTask('draft', 'draft'),
@@ -204,24 +224,27 @@ describe('RoomStore — computed goal/task signals', () => {
 				makeTask('needs_attention', 'needs_attention'),
 				makeTask('completed', 'completed'),
 				makeTask('cancelled', 'cancelled'),
+				makeTask('archived', 'archived'),
 			];
 			roomStore.goals.value = [];
 
 			const active = new Set(roomStore.orphanTasksActive.value.map((t) => t.id));
 			const review = new Set(roomStore.orphanTasksReview.value.map((t) => t.id));
 			const done = new Set(roomStore.orphanTasksDone.value.map((t) => t.id));
+			const archived = new Set(roomStore.orphanTasksArchived.value.map((t) => t.id));
 
 			// No overlap
-			for (const id of active) {
-				expect(review.has(id)).toBe(false);
-				expect(done.has(id)).toBe(false);
-			}
-			for (const id of review) {
-				expect(done.has(id)).toBe(false);
+			const buckets = [active, review, done, archived];
+			for (let i = 0; i < buckets.length; i++) {
+				for (let j = i + 1; j < buckets.length; j++) {
+					for (const id of buckets[i]) {
+						expect(buckets[j].has(id)).toBe(false);
+					}
+				}
 			}
 
 			// All covered
-			expect(active.size + review.size + done.size).toBe(7);
+			expect(active.size + review.size + done.size + archived.size).toBe(8);
 		});
 	});
 
