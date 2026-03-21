@@ -282,7 +282,6 @@ export function ContextPanel() {
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
-		navSection === 'inbox' ||
 		navSection === 'projects' ||
 		navSection === 'settings';
 
@@ -428,8 +427,7 @@ export function ContextPanel() {
 						onCreateSpace={() => setCreateSpaceOpen(true)}
 					/>
 				)}
-				{navSection === 'inbox' && <div class="p-4 text-gray-400 text-sm">Inbox</div>}
-				{navSection === 'projects' && (
+		{navSection === 'projects' && (
 					<div class="flex-1 flex items-center justify-center p-6">
 						<div class="text-center">
 							<div class="text-4xl mb-3">📁</div>
