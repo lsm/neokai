@@ -20,21 +20,23 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskRepository } from '../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentManager } from '../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager } from '../../src/lib/space/managers/space-workflow-manager.ts';
-import type { SpaceAgentLookup } from '../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceManager } from '../../src/lib/space/managers/space-manager.ts';
-import { SpaceTaskManager } from '../../src/lib/space/managers/space-task-manager.ts';
-import { WorkflowExecutor } from '../../src/lib/space/runtime/workflow-executor.ts';
-import type { CommandRunner } from '../../src/lib/space/runtime/workflow-executor.ts';
-import { SpaceRuntime } from '../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceRuntimeConfig } from '../../src/lib/space/runtime/space-runtime.ts';
-import { WorkflowValidationError } from '../../src/lib/space/managers/space-workflow-manager.ts';
+import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
+import {
+	SpaceWorkflowManager,
+	WorkflowValidationError,
+} from '../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
+import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
+import { WorkflowExecutor } from '../../../src/lib/space/runtime/workflow-executor.ts';
+import type { CommandRunner } from '../../../src/lib/space/runtime/workflow-executor.ts';
+import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { resolveStepAgents, resolveStepChannels } from '@neokai/shared';
 import type { SpaceAgent, WorkflowStep } from '@neokai/shared';
 
@@ -424,9 +426,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 	let dir: string;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
-	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
-	let spaceManager: SpaceManager;
 	let runtime: SpaceRuntime;
 
 	const SPACE_ID = 'space-rt-ma';
@@ -448,11 +448,11 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		taskRepo = new SpaceTaskRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
-		agentManager = new SpaceAgentManager(agentRepo);
+		const agentManager = new SpaceAgentManager(agentRepo);
 
 		const workflowRepo = new SpaceWorkflowRepository(db);
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
-		spaceManager = new SpaceManager(db);
+		const spaceManager = new SpaceManager(db);
 
 		const config: SpaceRuntimeConfig = {
 			db,
@@ -565,6 +565,36 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(plannerTask!.customAgentId).toBeUndefined();
 		expect(coderTask).toBeDefined();
 		expect(coderTask!.customAgentId).toBeUndefined();
+	});
+
+	test('custom-role agent in multi-agent start step sets customAgentId on its task', async () => {
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Custom Role Start ${Date.now()}`,
+			steps: [
+				{
+					id: STEP_A,
+					name: 'Custom Start',
+					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_CUSTOM }],
+				},
+			],
+			transitions: [],
+			startStepId: STEP_A,
+			rules: [],
+			tags: [],
+		});
+
+		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		expect(tasks).toHaveLength(2);
+		// Custom role agent should have customAgentId set
+		const customTask = tasks.find((t) => t.customAgentId === AGENT_CUSTOM);
+		expect(customTask).toBeDefined();
+		expect(customTask!.taskType).toBe('coding');
+		// Preset coder role should have no customAgentId
+		const coderTask = tasks.find((t) => t.customAgentId === undefined);
+		expect(coderTask).toBeDefined();
+		expect(coderTask!.taskType).toBe('coding');
 	});
 
 	// -------------------------------------------------------------------------
@@ -760,76 +790,6 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		expect(tasks).toHaveLength(1);
 		expect(tasks[0].workflowStepId).toBe(STEP_A);
-	});
-
-	// -------------------------------------------------------------------------
-	// Subtask 12: Mixed workflows
-	// -------------------------------------------------------------------------
-
-	test('mixed workflow: single-agent step followed by multi-agent step', async () => {
-		const workflow = workflowManager.createWorkflow({
-			spaceId: SPACE_ID,
-			name: `Mixed WF ${Date.now()}`,
-			steps: [
-				{ id: STEP_A, name: 'Single Start', agentId: AGENT_CODER },
-				{
-					id: STEP_B,
-					name: 'Multi Second',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
-				},
-			],
-			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_A,
-			rules: [],
-			tags: [],
-		});
-
-		// Start: single-agent first step
-		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(startTasks).toHaveLength(1);
-		expect(startTasks[0].workflowStepId).toBe(STEP_A);
-
-		// Complete the first task
-		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });
-		await runtime.executeTick();
-
-		// Multi-agent second step should have 2 new tasks
-		const allTasks = taskRepo.listByWorkflowRun(run.id);
-		const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
-		expect(stepBTasks).toHaveLength(2);
-	});
-
-	test('mixed workflow: multi-agent step followed by single-agent step', async () => {
-		const workflow = workflowManager.createWorkflow({
-			spaceId: SPACE_ID,
-			name: `Mixed WF Reverse ${Date.now()}`,
-			steps: [
-				{
-					id: STEP_A,
-					name: 'Multi Start',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
-				},
-				{ id: STEP_B, name: 'Single Second', agentId: AGENT_CODER },
-			],
-			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_A,
-			rules: [],
-			tags: [],
-		});
-
-		// Start: multi-agent first step creates 2 tasks
-		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(startTasks).toHaveLength(2);
-
-		// Complete both parallel tasks
-		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });
-		taskRepo.updateTask(startTasks[1].id, { status: 'completed' });
-		await runtime.executeTick();
-
-		// Single-agent second step creates exactly 1 new task
-		const allTasks = taskRepo.listByWorkflowRun(run.id);
-		const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
-		expect(stepBTasks).toHaveLength(1);
 	});
 });
 
@@ -1151,7 +1111,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 		).toThrow(WorkflowValidationError);
 	});
 
-	test('rejects channels with wildcard * from unknown role reference in to field', () => {
+	test('rejects channel from referencing unknown role', () => {
 		const lookup: SpaceAgentLookup = {
 			getAgentById: (_spaceId, id) => {
 				if (id === 'agent-coder-id') return { id, name: 'Coder', role: 'coder' };
@@ -1163,7 +1123,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 		expect(() =>
 			mgr.createWorkflow({
 				spaceId: 'space-1',
-				name: 'Bad To Role',
+				name: 'Bad From Role',
 				steps: [
 					{
 						name: 'Step',
@@ -1208,7 +1168,6 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 	let dir: string;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
-	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let runtime: SpaceRuntime;
 
@@ -1232,7 +1191,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		taskRepo = new SpaceTaskRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
-		agentManager = new SpaceAgentManager(agentRepo);
+		const agentManager = new SpaceAgentManager(agentRepo);
 		const workflowRepo = new SpaceWorkflowRepository(db);
 		workflowManager = new SpaceWorkflowManager(workflowRepo);
 		const spaceManager = new SpaceManager(db);
@@ -1316,11 +1275,10 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		expect(finalRun.status).toBe('completed');
 	});
 
-	test('multi-agent step with channels stored in run config after advance', async () => {
-		// Seed agents with roles matching channel references
+	test('channels for start step are stored in run config after startWorkflowRun()', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
-			name: `Channel Step ${Date.now()}`,
+			name: `Channel Start Step ${Date.now()}`,
 			steps: [
 				{
 					id: STEP_A,
@@ -1339,10 +1297,10 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Two tasks created for multi-agent start step
+		// Two tasks for the multi-agent start step
 		expect(tasks).toHaveLength(2);
 
-		// Resolved channels stored in run config
+		// storeResolvedChannels called for start step (space-runtime.ts:365)
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
 		const config = (updatedRun.config ?? {}) as Record<string, unknown>;
 		const resolvedChannels = config._resolvedChannels as Array<Record<string, unknown>> | undefined;
@@ -1354,6 +1312,53 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			toRole: 'reviewer',
 			direction: 'one-way',
 			label: 'review-request',
+		});
+	});
+
+	test('channels for non-start step are stored in run config after executeTick() advances', async () => {
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Channel Non-Start Step ${Date.now()}`,
+			steps: [
+				{ id: STEP_A, name: 'Start (single)', agentId: AGENT_PLANNER },
+				{
+					id: STEP_B,
+					name: 'Parallel With Channels',
+					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'feedback' }],
+				},
+			],
+			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+			startStepId: STEP_A,
+			rules: [],
+			tags: [],
+		});
+
+		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		// Step A has no channels — no _resolvedChannels yet
+		const runAfterStart = workflowRunRepo.getRun(run.id)!;
+		const configAfterStart = (runAfterStart.config ?? {}) as Record<string, unknown>;
+		expect(configAfterStart._resolvedChannels).toBeUndefined();
+
+		// Advance to Step B (which has channels)
+		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });
+		await runtime.executeTick();
+
+		// storeResolvedChannels called for step B (space-runtime.ts:783)
+		const runAfterAdvance = workflowRunRepo.getRun(run.id)!;
+		const configAfterAdvance = (runAfterAdvance.config ?? {}) as Record<string, unknown>;
+		const resolvedChannels = configAfterAdvance._resolvedChannels as
+			| Array<Record<string, unknown>>
+			| undefined;
+
+		expect(resolvedChannels).toBeDefined();
+		expect(resolvedChannels).toHaveLength(1);
+		expect(resolvedChannels![0]).toMatchObject({
+			fromRole: 'coder',
+			toRole: 'reviewer',
+			direction: 'one-way',
+			label: 'feedback',
 		});
 	});
 });
