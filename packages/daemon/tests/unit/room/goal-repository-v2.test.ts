@@ -12,6 +12,18 @@ import { createTables } from '../../../src/storage/schema';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { MissionMetric, CronSchedule } from '@neokai/shared';
+import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
+
+const noOpReactiveDb = {
+	notifyChange: () => {},
+	on: () => {},
+	off: () => {},
+	getTableVersion: () => 0,
+	beginTransaction: () => {},
+	commitTransaction: () => {},
+	abortTransaction: () => {},
+	db: null as never,
+} as ReactiveDatabase;
 
 describe('GoalRepository — V2 Mission fields', () => {
 	let db: Database;
@@ -30,7 +42,7 @@ describe('GoalRepository — V2 Mission fields', () => {
 			defaultPath: '/workspace/test',
 		});
 		roomId = room.id;
-		repo = new GoalRepository(db);
+		repo = new GoalRepository(db, noOpReactiveDb);
 	});
 
 	afterEach(() => {

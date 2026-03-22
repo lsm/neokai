@@ -127,7 +127,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Create factory function for per-room goal managers
 	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
-		return new GoalManager(deps.db.getDatabase(), roomId);
+		return new GoalManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
 	};
 
 	// Create factory function for per-room task managers (used by goal review handlers)

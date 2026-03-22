@@ -20,6 +20,7 @@ import type {
 	MissionExecutionStatus,
 } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database';
 
 export interface CreateGoalParams {
 	roomId: string;
@@ -75,7 +76,10 @@ export interface UpdateExecutionParams {
 }
 
 export class GoalRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb: ReactiveDatabase
+	) {}
 
 	/**
 	 * Create a new goal
@@ -119,6 +123,7 @@ export class GoalRepository {
 			params.replanCount ?? 0
 		);
 
+		this.reactiveDb.notifyChange('goals');
 		return this.getGoal(id)!;
 	}
 
@@ -253,6 +258,7 @@ export class GoalRepository {
 		const stmt = this.db.prepare(`UPDATE goals SET ${fields.join(', ')} WHERE id = ?`);
 		stmt.run(...values);
 
+		this.reactiveDb.notifyChange('goals');
 		return this.getGoal(id);
 	}
 
@@ -262,7 +268,11 @@ export class GoalRepository {
 	deleteGoal(id: string): boolean {
 		const stmt = this.db.prepare(`DELETE FROM goals WHERE id = ?`);
 		const result = stmt.run(id);
-		return result.changes > 0;
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('goals');
+			return true;
+		}
+		return false;
 	}
 
 	/**

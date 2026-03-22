@@ -104,8 +104,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize database
 	const db = new Database(config.dbPath);
-	await db.initialize();
+	// Create reactiveDb before initialize() so GoalRepository can receive it
 	const reactiveDb = createReactiveDatabase(db);
+	await db.initialize(reactiveDb);
 	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
 
 	// Initialize job queue
