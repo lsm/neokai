@@ -26,6 +26,7 @@ RPC_FILES=(
   rpc-draft-handlers.test.ts
   rpc-file-handlers.test.ts
   rpc-interrupt-handlers.test.ts
+  rpc-live-query.test.ts
   rpc-mcp-toggle.test.ts
   rpc-message-handlers.test.ts
   rpc-model-handlers.test.ts
