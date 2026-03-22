@@ -235,6 +235,42 @@ describe('SessionGroupRepository — notifyChange integration', () => {
 		});
 	});
 
+	describe('appendEvent', () => {
+		it('emits change event for task_group_events after appendEvent', () => {
+			const group = repo.createGroup('task-1', 'worker-1', 'leader-1');
+
+			let fired = false;
+			reactiveDb.on('change:task_group_events', () => {
+				fired = true;
+			});
+
+			repo.appendEvent({ groupId: group.id, kind: 'status', payloadJson: '{}' });
+			expect(fired).toBe(true);
+		});
+
+		it('increments task_group_events version on each appendEvent', () => {
+			const group = repo.createGroup('task-1', 'worker-1', 'leader-1');
+			const v0 = reactiveDb.getTableVersion('task_group_events');
+			repo.appendEvent({ groupId: group.id, kind: 'status' });
+			repo.appendEvent({ groupId: group.id, kind: 'log' });
+			expect(reactiveDb.getTableVersion('task_group_events')).toBe(v0 + 2);
+		});
+	});
+
+	describe('updateWorkerSession', () => {
+		it('emits change event for session_group_members after updateWorkerSession', () => {
+			const group = repo.createGroup('task-1', 'worker-1', 'leader-1');
+
+			let fired = false;
+			reactiveDb.on('change:session_group_members', () => {
+				fired = true;
+			});
+
+			repo.updateWorkerSession(group.id, 'worker-2');
+			expect(fired).toBe(true);
+		});
+	});
+
 	describe('updateMetadata (version-checked writes)', () => {
 		it('emits change event after incrementFeedbackIteration', () => {
 			const group = repo.createGroup('task-1', 'worker-1', 'leader-1');
@@ -273,6 +309,31 @@ describe('SessionGroupRepository — transaction safety', () => {
 
 	afterEach(() => {
 		db.close();
+	});
+
+	it('createGroup is atomic — session_groups row is rolled back if members insert fails', () => {
+		// Add a constraint that makes the second INSERT fail
+		db.exec(`CREATE UNIQUE INDEX unique_worker ON session_group_members(group_id, role)`);
+
+		// Force session_group_members insert to fail by pre-inserting a conflicting row.
+		// We do this by making the table unusable for new inserts.
+		db.exec('DROP TABLE session_group_members');
+		db.exec(`
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL CHECK(role = 'blocked'),
+				joined_at INTEGER NOT NULL
+			)
+		`);
+
+		expect(() => {
+			repo.createGroup('task-1', 'worker-1', 'leader-1');
+		}).toThrow();
+
+		// The session_groups insert must have been rolled back
+		const rows = db.prepare('SELECT * FROM session_groups').all();
+		expect(rows).toHaveLength(0);
 	});
 
 	it('abortTransaction is called on createGroup error; transactionDepth does not get stuck', () => {

@@ -229,21 +229,26 @@ export class SessionGroupRepository {
 		const now = Date.now();
 		const metadata: TaskGroupMetadata = { ...defaultMetadata(), workerRole, workspacePath };
 
+		// reactiveDb.beginTransaction() batches change events only — not a DB transaction.
+		// this.db.transaction() provides actual SQLite atomicity so the second INSERT
+		// failure rolls back the first.
 		this.reactiveDb.beginTransaction();
 		try {
-			this.db
-				.prepare(
-					`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+			this.db.transaction(() => {
+				this.db
+					.prepare(
+						`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES (?, 'task', ?, 0, ?, ?)`
-				)
-				.run(id, taskId, JSON.stringify(metadata), now);
+					)
+					.run(id, taskId, JSON.stringify(metadata), now);
 
-			this.db
-				.prepare(
-					`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				this.db
+					.prepare(
+						`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
 			 VALUES (?, ?, 'worker', ?), (?, ?, 'leader', ?)`
-				)
-				.run(id, workerSessionId, now, id, leaderSessionId, now);
+					)
+					.run(id, workerSessionId, now, id, leaderSessionId, now);
+			})();
 
 			this.reactiveDb.notifyChange('session_groups');
 			this.reactiveDb.commitTransaction();
@@ -773,23 +778,26 @@ export class SessionGroupRepository {
 	 * Keeps the last 50 records to bound storage size.
 	 */
 	recordGateFailure(groupId: string, gateName: string, reason: string): void {
+		// reactiveDb.beginTransaction() batches change events only — not a DB transaction.
+		// this.db.transaction() provides actual SQLite atomicity for the read-modify-write.
 		this.reactiveDb.beginTransaction();
 		try {
-			const raw = (
-				this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
-					string,
-					unknown
-				>
-			)?.metadata as string;
-			const currentMeta = this.parseMetadata(raw);
-			const existing = currentMeta.gateFailures ?? [];
-			const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
-			// Cap at 50 records — old entries are unlikely to matter for detection
-			const updated = [...existing, record].slice(-50);
-			const merged = { ...currentMeta, gateFailures: updated };
-			this.db
-				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
-				.run(JSON.stringify(merged), groupId);
+			this.db.transaction(() => {
+				const raw = (
+					this.db
+						.prepare(`SELECT metadata FROM session_groups WHERE id = ?`)
+						.get(groupId) as Record<string, unknown>
+				)?.metadata as string;
+				const currentMeta = this.parseMetadata(raw);
+				const existing = currentMeta.gateFailures ?? [];
+				const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
+				// Cap at 50 records — old entries are unlikely to matter for detection
+				const updated = [...existing, record].slice(-50);
+				const merged = { ...currentMeta, gateFailures: updated };
+				this.db
+					.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+					.run(JSON.stringify(merged), groupId);
+			})();
 			this.reactiveDb.notifyChange('session_groups');
 			this.reactiveDb.commitTransaction();
 		} catch (e) {
@@ -822,6 +830,7 @@ export class SessionGroupRepository {
 				`UPDATE session_group_members SET session_id = ? WHERE group_id = ? AND role = 'worker'`
 			)
 			.run(newSessionId, groupId);
+		this.reactiveDb.notifyChange('session_group_members');
 	}
 
 	updateLastForwardedMessageId(
@@ -843,6 +852,7 @@ export class SessionGroupRepository {
 			 VALUES (?, ?, ?, ?)`
 			)
 			.run(params.groupId, params.kind, params.payloadJson ?? null, Date.now());
+		this.reactiveDb.notifyChange('task_group_events');
 		return Number(result.lastInsertRowid);
 	}
 
