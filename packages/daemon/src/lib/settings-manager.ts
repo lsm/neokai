@@ -446,17 +446,21 @@ export class SettingsManager {
 	}
 
 	/**
-	 * Get full MCP server configs from project and user settings files.
+	 * Get full MCP server configs from user and project settings files.
 	 *
 	 * Reads raw MCP server config objects (command, args, env, type, url, etc.) from:
 	 * - User: ~/.claude/settings.json and ~/.mcp.json
 	 * - Project: .claude/settings.json and .mcp.json in workspace
-	 * - Local: .claude/settings.local.json in workspace
+	 *
+	 * The `local` source (.claude/settings.local.json) is intentionally excluded because
+	 * the daemon itself writes to that file via writeFileOnlySettings. Including it would
+	 * create a bypass vector where the daemon could inject servers into room agent sessions.
 	 *
 	 * Only includes servers from enabled sources. Returns a merged map where
-	 * later sources (local > project > user) override earlier ones with the same name.
+	 * project servers override user servers with the same name.
+	 * Excludes servers the user has explicitly set to `allowed: false`.
 	 */
-	getProjectMcpServersConfig(): Record<string, McpServerConfig> {
+	getEnabledMcpServersConfig(): Record<string, McpServerConfig> {
 		const globalSettings = this.getGlobalSettings();
 		const enabledSources = globalSettings.settingSources || ['user', 'project', 'local'];
 
@@ -490,12 +494,7 @@ export class SettingsManager {
 			Object.assign(result, readRawMcpServers(join(this.workspacePath, '.mcp.json')));
 		}
 
-		if (enabledSources.includes('local')) {
-			Object.assign(
-				result,
-				readRawMcpServers(join(this.workspacePath, '.claude', 'settings.local.json'))
-			);
-		}
+		// NOTE: 'local' source (.claude/settings.local.json) is excluded — see doc comment above.
 
 		// Respect per-server allow/deny settings — exclude servers the user has explicitly disallowed.
 		const mcpServerSettings = globalSettings.mcpServerSettings || {};

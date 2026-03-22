@@ -36,7 +36,7 @@ describe('RoomRuntimeService', () => {
 		} as unknown as RoomManager;
 
 		mockSettingsManager = {
-			getProjectMcpServersConfig: mock(() => ({})),
+			getEnabledMcpServersConfig: mock(() => ({})),
 		} as unknown as SettingsManager;
 
 		const config: RoomRuntimeServiceConfig = {
@@ -205,7 +205,7 @@ describe('RoomRuntimeService', () => {
 				github: { command: 'npx', args: ['@github/mcp'] },
 			};
 			mockSettingsManager = {
-				getProjectMcpServersConfig: mock(() => projectServers),
+				getEnabledMcpServersConfig: mock(() => projectServers),
 			} as unknown as SettingsManager;
 
 			// Mock roomManager — listRooms returns empty so initializeExistingRooms is a no-op
@@ -261,7 +261,7 @@ describe('RoomRuntimeService', () => {
 
 		it('should give room-agent-tools precedence over project servers with same name', async () => {
 			// Override: project server also named 'room-agent-tools' — should be overridden
-			(mockSettingsManager.getProjectMcpServersConfig as ReturnType<typeof mock>).mockReturnValue({
+			(mockSettingsManager.getEnabledMcpServersConfig as ReturnType<typeof mock>).mockReturnValue({
 				'room-agent-tools': { command: 'project-version', args: [] },
 				'other-tool': { command: 'other-cmd' },
 			});
@@ -284,7 +284,7 @@ describe('RoomRuntimeService', () => {
 		});
 
 		it('should call setRuntimeMcpServers with only room-agent-tools when no project servers', async () => {
-			(mockSettingsManager.getProjectMcpServersConfig as ReturnType<typeof mock>).mockReturnValue(
+			(mockSettingsManager.getEnabledMcpServersConfig as ReturnType<typeof mock>).mockReturnValue(
 				{}
 			);
 

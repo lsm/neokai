@@ -722,9 +722,9 @@ describe('SettingsManager', () => {
 		});
 	});
 
-	describe('getProjectMcpServersConfig', () => {
+	describe('getEnabledMcpServersConfig', () => {
 		it('should return empty object when no settings files exist', () => {
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toEqual({});
 		});
 
@@ -740,7 +740,7 @@ describe('SettingsManager', () => {
 				})
 			);
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toHaveProperty('github');
 			expect((result['github'] as { command: string }).command).toBe('npx');
 		});
@@ -755,7 +755,7 @@ describe('SettingsManager', () => {
 				})
 			);
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toHaveProperty('my-tool');
 		});
 
@@ -771,7 +771,7 @@ describe('SettingsManager', () => {
 				JSON.stringify({ mcpServers: { tool2: { command: 'cmd2' } } })
 			);
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toHaveProperty('tool1');
 			expect(result).toHaveProperty('tool2');
 		});
@@ -790,7 +790,7 @@ describe('SettingsManager', () => {
 				JSON.stringify({ mcpServers: { project_tool: { command: 'project-cmd' } } })
 			);
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).not.toHaveProperty('project_tool');
 		});
 
@@ -802,7 +802,7 @@ describe('SettingsManager', () => {
 				JSON.stringify({ someOtherConfig: 'value' })
 			);
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toEqual({});
 		});
 
@@ -811,7 +811,7 @@ describe('SettingsManager', () => {
 			mkdirSync(settingsDir, { recursive: true });
 			writeFileSync(join(settingsDir, 'settings.json'), 'not valid json {{{');
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toEqual({});
 		});
 
@@ -835,7 +835,7 @@ describe('SettingsManager', () => {
 				},
 			});
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toHaveProperty('allowed_tool');
 			expect(result).not.toHaveProperty('denied_tool');
 		});
@@ -859,9 +859,71 @@ describe('SettingsManager', () => {
 				},
 			});
 
-			const result = settingsManager.getProjectMcpServersConfig();
+			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toHaveProperty('tool_explicit_allow');
 			expect(result).toHaveProperty('tool_no_setting');
+		});
+
+		it('should read MCP servers from user settings.json', () => {
+			// TEST_USER_SETTINGS_DIR points to the isolated user settings dir
+			const userSettingsPath = join(process.env.TEST_USER_SETTINGS_DIR!, 'settings.json');
+			writeFileSync(
+				userSettingsPath,
+				JSON.stringify({
+					mcpServers: {
+						user_tool: { command: 'user-cmd', args: ['--user'] },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('user_tool');
+			expect((result['user_tool'] as { command: string }).command).toBe('user-cmd');
+		});
+
+		it('should not include servers from settings.local.json (local source excluded)', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.local.json'),
+				JSON.stringify({
+					mcpServers: {
+						local_only_tool: { command: 'local-cmd' },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).not.toHaveProperty('local_only_tool');
+		});
+
+		it('project source overrides user source for same server name', () => {
+			// User has a server named 'shared-tool'
+			const userSettingsPath = join(process.env.TEST_USER_SETTINGS_DIR!, 'settings.json');
+			writeFileSync(
+				userSettingsPath,
+				JSON.stringify({
+					mcpServers: {
+						'shared-tool': { command: 'user-version' },
+					},
+				})
+			);
+
+			// Project overrides 'shared-tool' with a different command
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						'shared-tool': { command: 'project-version' },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('shared-tool');
+			expect((result['shared-tool'] as { command: string }).command).toBe('project-version');
 		});
 	});
 });

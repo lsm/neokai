@@ -512,12 +512,12 @@ export class RoomRuntimeService {
 					}
 				}
 
-				// Merge project-configured MCP servers with the room-agent-tools server so the
+				// Merge user/project-configured MCP servers with the room-agent-tools server so the
 				// room agent can use GitHub MCP, etc. for coordination tasks.
 				// room-agent-tools is placed last to ensure it always takes precedence.
-				const projectMcpServers = this.ctx.settingsManager.getProjectMcpServersConfig();
+				const enabledMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
 				roomChatSession.setRuntimeMcpServers({
-					...projectMcpServers,
+					...enabledMcpServers,
 					'room-agent-tools': roomAgentMcpServer,
 				});
 				// Inject the room chat system prompt so the agent knows the proper
