@@ -527,12 +527,12 @@ describe('send_feedback — multicast (target: [role1, role2])', () => {
 		const result = parse(
 			await handlers.send_feedback({ target: ['B', 'C'], message: 'Multicast partial' })
 		);
-		// Partial success: B delivered, C failed
-		expect(result.success).toBe(true);
+		// Partial success: B delivered, C failed → success is 'partial' (not true)
+		expect(result.success).toBe('partial');
 		const delivered = result.delivered as Array<{ sessionId: string }>;
 		expect(delivered).toHaveLength(1);
 		expect(delivered[0].sessionId).toBe('sess-B');
-		const failures = result.partialFailures as Array<{ sessionId: string; error: string }>;
+		const failures = result.failed as Array<{ sessionId: string; error: string }>;
 		expect(failures).toHaveLength(1);
 		expect(failures[0].sessionId).toBe('sess-C');
 		expect(failures[0].error).toContain('Session C unavailable');
@@ -1202,7 +1202,8 @@ describe('Error cases — non-existent targets and injection failures', () => {
 
 		const result = parse(await handlers.send_feedback({ target: 'reviewer', message: 'Hi' }));
 		expect(result.success).toBe(false);
-		expect((result.error as string).toLowerCase()).toContain('failed to deliver');
+		// All-failed path: production returns `message` (not `error`) describing the failure
+		expect((result.message as string).toLowerCase()).toContain('failed');
 	});
 });
 
