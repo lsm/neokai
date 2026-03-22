@@ -28,6 +28,7 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import type { DaemonAppContext } from '../../../src/app';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
+import { enqueueRoomTick } from '../../../src/lib/job-handlers/room-tick.handler';
 import type { Job, JobStatus } from '../../../src/storage/repositories/job-queue-repository';
 
 // ---------------------------------------------------------------------------
@@ -92,22 +93,21 @@ async function waitForTickJob(
  *
  * Steps:
  * 1. Delete the existing pending tick (if any) for the room.
- * 2. Directly insert a new pending tick with runAt = Date.now().
+ * 2. Call enqueueRoomTick with delay=0 to schedule an immediate tick.
  *
- * This avoids coupling the test to timer internals and keeps tests fast.
+ * Using enqueueRoomTick (rather than direct jobQueue.enqueue) preserves the
+ * production dedup path: if RoomRuntime fires scheduleTick() in the window
+ * between delete and re-enqueue, enqueueRoomTick's guard will absorb the
+ * duplicate instead of creating two pending jobs.
  */
 function acceleratePendingTick(daemonCtx: DaemonAppContext, roomId: string): void {
 	const pending = listTickJobs(daemonCtx, roomId, ['pending']);
 	for (const job of pending) {
 		daemonCtx.jobQueue.deleteJob(job.id);
 	}
-	// Enqueue a tick that is due immediately so the processor runs it ASAP.
-	daemonCtx.jobQueue.enqueue({
-		queue: ROOM_TICK,
-		payload: { roomId },
-		maxRetries: 0,
-		runAt: Date.now(),
-	});
+	// enqueueRoomTick with delay=0 schedules an immediate tick via the same
+	// production code path used by RoomRuntime.start() / resume().
+	enqueueRoomTick(roomId, daemonCtx.jobQueue, 0);
 }
 
 /** Create a room and return its ID. */
@@ -258,6 +258,10 @@ describe('room.tick via job queue (online)', () => {
 	test('job processes and re-enqueues the next tick (self-scheduling)', async () => {
 		// Wait for the initial pending tick, then accelerate it to run immediately.
 		await waitForTickJob(daemonCtx, roomId, ['pending']);
+		// Capture the time before the job is triggered so the runAt assertion is
+		// anchored to when the tick was enqueued rather than when the assertion runs.
+		// This avoids a false failure if the assertion executes many seconds later.
+		const triggerTime = Date.now();
 		acceleratePendingTick(daemonCtx, roomId);
 
 		// Wait for the job to reach 'completed' status.
@@ -270,9 +274,11 @@ describe('room.tick via job queue (online)', () => {
 		expect(next).toBeDefined();
 		expect(next!.queue).toBe(ROOM_TICK);
 
-		// The next tick should be scheduled ~30 s in the future.
-		// Verify it is at least 20 s away to allow for minor clock skew.
-		const minExpectedRunAt = Date.now() + 20_000;
+		// The next tick should be scheduled ~30 s after the handler ran.
+		// Anchor to triggerTime (captured before the job was submitted) rather than
+		// Date.now() (evaluated after waitForTickJob returns) to avoid spurious
+		// failures in slow CI environments where the assertion can run 10+ s late.
+		const minExpectedRunAt = triggerTime + 20_000;
 		expect(next!.runAt).toBeGreaterThan(minExpectedRunAt);
 	}, 15_000);
 
@@ -280,23 +286,35 @@ describe('room.tick via job queue (online)', () => {
 	// Stopped runtime prevents re-scheduling after in-flight tick completes
 	// -------------------------------------------------------------------------
 
-	test('in-flight tick does not re-schedule after runtime is stopped', async () => {
-		// Accelerate the initial tick so it runs immediately.
-		await waitForTickJob(daemonCtx, roomId, ['pending']);
-		acceleratePendingTick(daemonCtx, roomId);
-
-		// Stop the runtime before the processor picks up the accelerated job.
-		// Race: stop may happen before or after the handler reads runtime state.
-		// Either way, the invariant is: after the job completes, no new pending tick
-		// should be enqueued (handler checks runtime.getState() === 'running').
+	test('tick handler skips re-scheduling when runtime is stopped', async () => {
+		// Stop the runtime first — this removes the runtime from the runtimes map
+		// (via runtimes.delete in stopRuntime) and cancels pending ticks.
 		await daemon.messageHub.request('room.runtime.stop', { roomId });
+		await new Promise<void>((resolve) => setTimeout(resolve, SETTLE_MS));
+		expect(listTickJobs(daemonCtx, roomId, ['pending']).length).toBe(0);
 
-		// Wait long enough for the processor to pick up and finish the accelerated job.
-		await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+		// Now directly enqueue an immediate tick for the stopped room.
+		// This simulates a tick job that was already in-flight (or queued) when the
+		// runtime was stopped — the handler must find no runtime and skip re-scheduling.
+		daemonCtx.jobQueue.enqueue({
+			queue: ROOM_TICK,
+			payload: { roomId },
+			maxRetries: 0,
+			runAt: Date.now(),
+		});
 
-		// No new pending tick should exist for the stopped room.
-		const pendingAfterStop = listTickJobs(daemonCtx, roomId, ['pending']);
-		expect(pendingAfterStop.length).toBe(0);
+		// Wait for the tick job to be processed (status = completed).
+		// The handler calls getRuntimeForRoom(roomId) → returns null (runtime was removed)
+		// → returns { skipped: true, reason: 'not running' } without re-enqueuing.
+		const processed = await waitForTickJob(daemonCtx, roomId, ['completed']);
+		expect(processed).toBeDefined();
+		expect(processed!.status).toBe('completed');
+		// Verify the handler returned the skipped sentinel rather than the normal result.
+		expect(processed!.result).toMatchObject({ skipped: true, reason: 'not running' });
+
+		// The critical invariant: no new pending tick was enqueued after the skip.
+		const pendingAfterProcess = listTickJobs(daemonCtx, roomId, ['pending']);
+		expect(pendingAfterProcess.length).toBe(0);
 	}, 15_000);
 
 	// -------------------------------------------------------------------------
