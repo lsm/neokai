@@ -162,11 +162,15 @@ export class GitHubService {
 				}
 			);
 
-			this.pollingService.start();
-			log.info('Polling service started (job-queue-driven)', { intervalMs });
-
 			// Register the github.poll job handler so the processor can execute it.
+			// pollingService.start() is called inside this guard so that isRunning() is
+			// consistent with whether an actual poll chain is in place — if jobQueue/
+			// jobProcessor are absent no scheduling exists and the service must not
+			// report itself as running.
 			if (this.jobProcessor && this.jobQueue) {
+				this.pollingService.start();
+				log.info('Polling service started (job-queue-driven)', { intervalMs });
+
 				this.jobProcessor.register(GITHUB_POLL, () =>
 					handleGitHubPoll({
 						pollingService: this.pollingService,
