@@ -81,7 +81,7 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
      - `autoScrollEnabled: boolean` state (default `true`) — wired to the `enabled` parameter. Include a toggle button (matching V1's autoscroll toggle at ~lines 1105-1127) so users can lock/unlock autoscroll.
      - `isFirstLoad: boolean` state — set to `true` initially and whenever `conversationKey` changes (matching V1's pattern at lines 588, 610-621). Set to `false` once the first non-zero `TurnBlockItem[]` arrives. Pass as `isInitialLoad` to the hook.
      - Pass `TurnBlockItem[]` array length as `messageCount`.
-     - Pass `loadingOlder` from `useGroupMessages` (if older messages are being fetched, prevent auto-scroll from jumping).
+     - Pass `loadingOlder` from `useGroupMessages` (if older messages are being fetched, prevent auto-scroll from jumping). **Note**: V1 does NOT pass `loadingOlder` to `useAutoScroll` — this is an intentional V2 improvement to prevent scroll-jump when older messages are prepended.
      This ensures initial-load scroll-to-bottom fires correctly and subsequent updates only auto-scroll when the user hasn't scrolled up.
 3. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 

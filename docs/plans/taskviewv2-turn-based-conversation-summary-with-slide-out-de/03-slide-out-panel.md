@@ -2,28 +2,47 @@
 
 ## Goal
 
-Build a reusable right-side slide-out panel component that mounts the existing `ChatContainer` by session ID, with smooth transition animation. Verify that mounting a secondary ChatContainer instance doesn't cause side effects.
+Build a reusable right-side slide-out panel component that displays the full session chat for a given session ID, with smooth transition animation.
+
+## Architectural Constraint: ChatContainer Cannot Be Reused
+
+`ChatContainer` reads messages from `sessionStore.sdkMessages` — a global singleton signal that only holds data for ONE session at a time. The entire data-loading chain is triggered by `sessionStore.select()`:
+
+```
+select() → doSelect() → startSubscriptions() → fetchInitialState() → sdkMessages.value = [...]
+```
+
+Calling `select()` for the slide-out panel's session would overwrite the primary session's data. Suppressing `select()` would leave the panel with no messages. A save/restore wrapper is also broken because `doSelect()` clears `sdkMessages.value = []` when switching, blanking the primary view mid-render.
+
+**Therefore**: The slide-out panel must use a standalone `ReadonlySessionChat` component that fetches and renders messages independently, without touching `sessionStore`. This component loads messages via `state.sdkMessages` RPC + `state.sdkMessages.delta` subscription, keyed to the target `sessionId`, and renders them using the existing `SDKMessageRenderer` components. This is more work than reusing `ChatContainer` but is the only architecturally sound approach.
 
 ## Tasks
 
-### Task 3.1: Implement SlideOutPanel component
+### Task 3.1: Implement ReadonlySessionChat and SlideOutPanel components
 
 **Agent type:** coder
 
 **Description:**
-Create a `SlideOutPanel` component that slides in from the right side of the task view container and renders `ChatContainer` for a given session ID. Only one panel can be open at a time.
+Build a `ReadonlySessionChat` component that independently fetches and renders a session's messages (without touching `sessionStore`), then wrap it in a `SlideOutPanel` with slide-in animation, backdrop, and keyboard support.
 
 **Subtasks (ordered implementation steps):**
 
 1. Run `bun install` at the worktree root.
-2. Investigate and resolve `ChatContainer.tsx` side effects when mounting a secondary instance:
-   - Check session selection state management (line 84+) and cleanup logic (line 521) for conflicts.
-   - **Known issue**: `ChatContainer` calls `sessionStore.select(sessionId)` at line 514-518, guarded by `if (sessionId && sessionId !== sessionStore.activeSessionId.value)`. This guard prevents redundant calls but does NOT prevent the issue: when the slide-out panel mounts with a different session ID, it WILL call `select()` and change the global active session. The cleanup path (lines 520-527) has a deferred guard that only clears selection if the session is still active when the timeout fires. The `readonly` prop does not suppress any of this. Preact signals are global singletons and cannot be scoped with a context provider.
-   - **Message loading concern**: Verify that `ChatContainer` has a self-contained data loading path for messages that does NOT depend on `sessionStore.select()`. If `ChatContainer` loads messages based on its `sessionId` prop (via RPC/subscription keyed to the session ID), then suppressing selection is safe. If it relies on `sessionStore` for message data population (i.e., the store only loads data for the selected session), then the slide-out panel will show an empty or wrong message list. In that case, the `suppressSelection` approach is insufficient and the panel must either (a) temporarily allow the `select()` call with a save/restore wrapper, or (b) use a completely different rendering path (e.g., mount a standalone message list component that fetches by session ID independently).
-   - **Preferred strategy**: Add a new prop `suppressSelection?: boolean` to `ChatContainer` that skips the `sessionStore.select()` call when true. The slide-out panel passes `suppressSelection={true}`. This is a minimal, targeted change to `ChatContainer` (adding a conditional guard around one line) that doesn't affect existing callers. **Only valid if the message loading concern above is confirmed safe.**
-   - **Fallback strategy**: If modifying `ChatContainer` proves too risky (e.g., the selection call has downstream effects), create a thin wrapper `ReadonlyChatContainer` that mounts `ChatContainer` after saving/restoring the session selection state via `useEffect` cleanup. **Caveat**: The existing cleanup in `ChatContainer` uses `setTimeout(() => {}, 0)` (deferred), so the save/restore wrapper must account for this async timing — use a matching `setTimeout` in the restore to run after ChatContainer's deferred cleanup.
-   - Document the chosen approach and any findings in the PR description.
-3. Create `packages/web/src/components/room/SlideOutPanel.tsx` with the following:
+2. Create `packages/web/src/components/room/ReadonlySessionChat.tsx`:
+   - **Props**: `{ sessionId: string }`
+   - **Data loading** (independent of `sessionStore`):
+     - Fetch initial messages via `state.sdkMessages` RPC (or equivalent session message RPC) keyed to `sessionId`.
+     - Subscribe to `state.sdkMessages.delta` on channel `session:{sessionId}` for real-time updates.
+     - Maintain messages in local component state (NOT in `sessionStore`).
+     - Handle loading and error states.
+   - **Rendering**:
+     - Render messages using `SDKMessageRenderer` with `taskContext={false}` and `readonly={true}` styling.
+     - Omit the input area (read-only view).
+     - Include auto-scroll to bottom on new messages (simple `scrollIntoView` on new message arrival).
+     - Include a "Load older" button if the session has older messages (pagination via cursor).
+   - **Note**: This component is a simplified, read-only version of the message rendering in `ChatContainer`. It does NOT need to support: message input, question resolution, file uploads, or session selection. It only needs: message fetching, streaming delta updates, and rendering via `SDKMessageRenderer`.
+   - `data-testid="readonly-session-chat"` on the root element.
+3. Create `packages/web/src/components/room/SlideOutPanel.tsx`:
    - **Props**:
      ```
      {
@@ -43,8 +62,8 @@ Create a `SlideOutPanel` component that slides in from the right side of the tas
      - Agent name/label with role color (import `ROLE_COLORS` from shared constants)
      - Close button (X icon) on the right
    - **Body**:
-     - Mount `ChatContainer` with `sessionId={sessionId}` and `readonly={true}` when `isOpen && sessionId`
-     - Apply any isolation needed based on the investigation in step 2
+     - Mount `ReadonlySessionChat` with `sessionId={sessionId}` when `isOpen && sessionId`
+     - This is fully independent of `sessionStore` — no side effects on the primary session.
    - **Transition animation**:
      - Slide-in from right: use CSS `transform: translateX(100%)` to `translateX(0)` with Tailwind `transition-transform duration-300`
      - Backdrop fade-in with `transition-opacity`
@@ -64,10 +83,10 @@ Create a `SlideOutPanel` component that slides in from the right side of the tas
 5. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
 **Acceptance Criteria:**
+- `ReadonlySessionChat` fetches and renders messages independently of `sessionStore` — no calls to `sessionStore.select()`, no reads from `sessionStore.sdkMessages`.
+- Messages stream in real-time via delta subscription.
 - Panel slides in from the right with smooth animation.
 - Panel is absolutely positioned within the task view container (not fixed to viewport).
-- Panel renders ChatContainer for the given session ID in readonly mode.
-- ChatContainer side effects are investigated and mitigated (documented in PR).
 - Panel has a header with agent label and close button.
 - Clicking the backdrop closes the panel.
 - Pressing Escape closes the panel.
@@ -77,39 +96,41 @@ Create a `SlideOutPanel` component that slides in from the right side of the tas
 - All `data-testid` attributes are present.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-**Dependencies:** None (ChatContainer already exists and accepts `sessionId` prop). **Note**: The preferred isolation strategy adds a `suppressSelection` prop to `ChatContainer.tsx` — this is a minimal one-line conditional guard, not a structural change to the component.
+**Dependencies:** None
 
 ---
 
-### Task 3.2: Unit tests for SlideOutPanel
+### Task 3.2: Unit tests for ReadonlySessionChat and SlideOutPanel
 
 **Agent type:** coder
 
 **Description:**
-Write unit tests for the SlideOutPanel component covering open/close behavior, rendering, and accessibility.
+Write unit tests covering message loading isolation, panel open/close behavior, rendering, and accessibility.
 
 **Subtasks (ordered implementation steps):**
 
 1. Run `bun install` at the worktree root.
 2. Create `packages/web/src/components/room/__tests__/SlideOutPanel.test.tsx`.
-3. Mock `ChatContainer` (the default export from `../../islands/ChatContainer.tsx`) to avoid complex session loading.
+3. Mock the message fetching RPC and delta subscription used by `ReadonlySessionChat`.
 4. Write test cases:
+   - **Session isolation**: Verify that `sessionStore.select` is NEVER called when `ReadonlySessionChat` mounts — spy on `sessionStore.select` and confirm zero calls. Verify `sessionStore.activeSessionId` is not changed.
+   - **Message loading**: Verify `ReadonlySessionChat` fetches messages via the correct RPC with the given `sessionId`.
    - **Closed state**: When `isOpen: false`, panel is not visible (has translate-x-full or similar).
-   - **Open state**: When `isOpen: true` with a sessionId, panel is visible and ChatContainer is mounted with correct sessionId and readonly=true.
+   - **Open state**: When `isOpen: true` with a sessionId, panel is visible and `ReadonlySessionChat` is mounted with correct sessionId.
    - **Close button**: Clicking close button calls `onClose`.
    - **Backdrop click**: Clicking the backdrop overlay calls `onClose`.
    - **Escape key**: Pressing Escape calls `onClose`.
    - **Agent label display**: Header shows the agent label with correct role color.
-   - **Null sessionId**: When sessionId is null and isOpen is true, panel shows a placeholder or does not mount ChatContainer.
+   - **Null sessionId**: When sessionId is null and isOpen is true, panel shows a placeholder or does not mount `ReadonlySessionChat`.
    - **Accessibility attributes**: Verify `role="dialog"`, `aria-modal="true"`, and `aria-label` are present.
    - **data-testid attributes**: Verify all required `data-testid` attributes are present.
-   - **Session selection isolation**: Verify that the global active session does NOT change when the slide-out panel opens with a different session ID. This is a behavior test — spy on `sessionStore.select` (or check `sessionStore.activeSessionId`) before and after panel mount, and confirm it was not altered. The test is valid regardless of which isolation strategy was chosen (suppressSelection prop or wrapper).
 5. Run tests and verify all pass.
 6. Commit and push to the same feature branch, update PR.
 
 **Acceptance Criteria:**
 - All test cases pass.
-- ChatContainer is properly mocked.
+- Session isolation test confirms `sessionStore` is never touched.
+- Message fetching RPC is properly mocked and verified.
 - Open/close transitions are tested via CSS class assertions.
 - Accessibility attributes are verified.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
