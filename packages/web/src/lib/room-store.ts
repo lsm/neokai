@@ -391,6 +391,7 @@ class RoomStore {
 				(event) => {
 					if (event.subscriptionId === goalsSubId) {
 						this.goals.value = event.rows as RoomGoal[];
+						this.goalsLoading.value = false;
 					}
 				}
 			);
@@ -415,6 +416,8 @@ class RoomStore {
 			this.cleanupFunctions.push(unsubGoalDelta);
 
 			// Subscribe to the goals.byRoom named query.
+			// Mark loading before subscribing; the snapshot handler clears it.
+			this.goalsLoading.value = true;
 			await hub.request('liveQuery.subscribe', {
 				queryName: 'goals.byRoom',
 				params: [roomId],
@@ -434,8 +437,7 @@ class RoomStore {
 						subscriptionId: goalsSubId,
 					})
 					.catch((err) => {
-						logger.warn('Goals LiveQuery re-subscribe failed, falling back to refetch:', err);
-						this.fetchGoals().catch(() => {});
+						logger.warn('Goals LiveQuery re-subscribe failed:', err);
 					});
 			});
 			this.cleanupFunctions.push(unsubReconnect);
@@ -654,7 +656,7 @@ class RoomStore {
 			taskId,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -677,7 +679,7 @@ class RoomStore {
 			status,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -700,7 +702,7 @@ class RoomStore {
 			feedback,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	// ========================================
@@ -738,24 +740,6 @@ class RoomStore {
 	// ========================================
 	// Goals Methods
 	// ========================================
-
-	/**
-	 * Fetch goals for the room
-	 */
-	async fetchGoals(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		// Goals are delivered exclusively via the goals.byRoom LiveQuery subscription.
-		// This method is kept for compatibility but no longer writes to goals.value.
-	}
 
 	/**
 	 * Create a new goal

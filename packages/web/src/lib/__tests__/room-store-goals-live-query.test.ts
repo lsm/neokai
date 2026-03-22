@@ -268,4 +268,17 @@ describe('RoomStore — goals.byRoom LiveQuery subscription', () => {
 		// goals signal unchanged from snapshot
 		expect(roomStore.goals.value[0].id).toBe('g1');
 	});
+
+	it('sets goalsLoading to true before subscribing and false on first snapshot', () => {
+		// After room select, goalsLoading is true because the mock hub did not fire a snapshot.
+		expect(roomStore.goalsLoading.value).toBe(true);
+
+		// When the server delivers the snapshot, goalsLoading clears.
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: GOALS_SUB_ID,
+			rows: [makeGoal('g1')],
+			version: 1,
+		});
+		expect(roomStore.goalsLoading.value).toBe(false);
+	});
 });
