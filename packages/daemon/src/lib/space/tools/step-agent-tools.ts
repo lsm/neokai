@@ -274,56 +274,67 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 				});
 			}
 
-			// Resolve target roles to session IDs from group members
-			// Multiple members can share the same role (parallel instances)
-			const targetMembers = group.members.filter(
-				(m) =>
-					targetRoles.includes(m.role) && m.sessionId !== mySessionId && m.role !== 'task-agent'
+			// Find peer sessions for each target role (exclude self and task-agent)
+			const peers = group.members.filter(
+				(m) => m.sessionId !== mySessionId && m.role !== 'task-agent'
 			);
+			const delivered: Array<{ role: string; sessionId: string }> = [];
+			const notFound: string[] = [];
+			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
 
-			if (targetMembers.length === 0) {
-				return jsonResult({
-					success: false,
-					error:
-						`No active sessions found for target role(s): ${targetRoles.join(', ')}. ` +
-						`Use list_peers to check which peers are currently active.`,
-					targetRoles,
-				});
-			}
-
-			// Prefix message with sender identity so the receiver can attribute it.
-			// Without this, agents in multi-peer groups cannot tell who sent the message.
-			const attributedMessage = `[Feedback from ${myRole}]: ${message}`;
-
-			// Inject message into each target session
-			const injected: Array<{ sessionId: string; role: string }> = [];
-			const failed: Array<{ sessionId: string; role: string; error: string }> = [];
-
-			for (const member of targetMembers) {
-				try {
-					await messageInjector(member.sessionId, attributedMessage);
-					injected.push({ sessionId: member.sessionId, role: member.role });
-				} catch (err) {
-					const msg = err instanceof Error ? err.message : String(err);
-					failed.push({ sessionId: member.sessionId, role: member.role, error: msg });
+			// Best-effort delivery: attempt all targets, aggregate errors.
+			// This avoids the partial-delivery / stop-on-first-error problem where
+			// some peers receive the message while others don't, and the caller gets
+			// success: false despite partial delivery having already occurred.
+			for (const targetRole of targetRoles) {
+				const targetSessions = peers.filter((m) => m.role === targetRole);
+				if (targetSessions.length === 0) {
+					notFound.push(targetRole);
+					continue;
+				}
+				for (const targetMember of targetSessions) {
+					const prefixedMessage = `[Feedback from ${myRole}]: ${message}`;
+					try {
+						await messageInjector(targetMember.sessionId, prefixedMessage);
+						delivered.push({ role: targetRole, sessionId: targetMember.sessionId });
+					} catch (err) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						failed.push({ role: targetRole, sessionId: targetMember.sessionId, error: errMsg });
+					}
 				}
 			}
 
-			if (injected.length === 0) {
+			if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
 				return jsonResult({
 					success: false,
-					error: `Failed to deliver message to any target. All injections failed.`,
+					error:
+						`No active sessions found for target role(s): ${notFound.join(', ')}. ` +
+						`Use list_peers to check which peers are currently active.`,
+					notFoundRoles: notFound,
+				});
+			}
+
+			if (failed.length > 0) {
+				// Partial or total delivery failure — report what was and was not delivered.
+				return jsonResult({
+					success: delivered.length > 0 ? 'partial' : false,
+					delivered,
 					failed,
+					notFoundRoles: notFound.length > 0 ? notFound : undefined,
+					message:
+						delivered.length > 0
+							? `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`
+							: `Message delivery failed for all ${failed.length} target(s).`,
 				});
 			}
 
 			return jsonResult({
 				success: true,
-				delivered: injected,
-				...(failed.length > 0 ? { partialFailures: failed } : {}),
+				delivered,
+				notFoundRoles: notFound.length > 0 ? notFound : undefined,
 				message:
-					`Message delivered to ${injected.length} peer(s): ` +
-					injected.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
+					`Message delivered to ${delivered.length} peer(s): ` +
+					delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
 					'.',
 			});
 		},
