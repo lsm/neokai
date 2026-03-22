@@ -62,8 +62,7 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
-import { ROOM_TICK } from '../job-queue-constants';
-import { createRoomTickHandler, enqueueRoomTick } from '../job-handlers/room-tick.handler';
+import { enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -172,18 +171,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 		reactiveDb: deps.reactiveDb,
-		// Pass the job queue so each RoomRuntime schedules ticks via enqueueRoomTick.
 		jobQueue: deps.jobQueue,
+		jobProcessor: deps.jobProcessor,
 	});
-	// Register room.tick job handler before starting the service so no tick jobs
-	// fired during recovery are picked up without a handler.
-	deps.jobProcessor.register(
-		ROOM_TICK,
-		createRoomTickHandler(
-			(roomId) => roomRuntimeService.getRuntime(roomId) ?? undefined,
-			deps.jobQueue
-		)
-	);
 
 	// Seed an initial room.tick job for every room after startup, and for each
 	// newly created room. The handler's finally block keeps the loop going; this
