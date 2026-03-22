@@ -214,7 +214,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			getAgentById(spaceId: string, id: string) {
 				const agent = agentRepo.getById(id);
 				if (!agent || agent.spaceId !== spaceId) return null;
-				return { id: agent.id, name: agent.name };
+				return { id: agent.id, name: agent.name, role: agent.role };
 			},
 		};
 		workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
