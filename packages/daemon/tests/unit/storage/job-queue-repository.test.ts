@@ -416,6 +416,51 @@ describe('JobQueueRepository', () => {
 			expect(jobs.length).toBe(3);
 		});
 
+		it('filters by status array (returns jobs matching any of the statuses)', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [processing] = repository.dequeue('test', 1);
+			repository.complete(processing.id);
+			// Now we have: 1 pending, 1 completed
+
+			const jobs = repository.listJobs({ status: ['pending', 'completed'] });
+
+			expect(jobs.length).toBe(2);
+			expect(jobs.every((j) => j.status === 'pending' || j.status === 'completed')).toBe(true);
+		});
+
+		it('filters by status array — only matching statuses returned', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.dequeue('test', 1);
+			// Now: 1 pending, 1 processing
+
+			const jobs = repository.listJobs({ status: ['pending'] });
+
+			expect(jobs.length).toBe(1);
+			expect(jobs[0].status).toBe('pending');
+		});
+
+		it('returns empty array for empty status array', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+
+			const jobs = repository.listJobs({ status: [] });
+
+			expect(jobs).toEqual([]);
+		});
+
+		it('string status still works (backward compatible)', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.dequeue('test', 1);
+
+			const jobs = repository.listJobs({ status: 'pending' });
+
+			expect(jobs.length).toBe(1);
+			expect(jobs[0].status).toBe('pending');
+		});
+
 		it('orders by created_at DESC', async () => {
 			repository.enqueue({ queue: 'test', payload: { order: 1 } });
 			await new Promise((r) => setTimeout(r, 5));
