@@ -11,6 +11,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
 import { currentRoomTabSignal } from '../lib/signals';
+import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
@@ -32,6 +33,12 @@ interface RoomProps {
 export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
+
+	// Manage LiveQuery subscriptions for tasks and goals.
+	// Intentionally declared before the select() effect so that LiveQuery
+	// handlers are registered before the hub request fires — both share
+	// [roomId] as their dependency and run in declaration order.
+	useRoomLiveQuery(roomId);
 
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => {

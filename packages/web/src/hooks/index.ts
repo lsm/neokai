@@ -51,3 +51,4 @@ export {
 	type SessionGroupMessage,
 	type UseGroupMessagesResult,
 } from './useGroupMessages';
+export { useRoomLiveQuery } from './useRoomLiveQuery';

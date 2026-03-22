@@ -87,7 +87,9 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 		const mod = await import('../room-store.ts');
 		roomStore = mod.roomStore;
 
-		// Force deselect so the next select() always re-runs startSubscriptions
+		// Force deselect so the next select() always re-runs startSubscriptions.
+		// Also unsubscribeRoom so liveQueryActive is cleared between tests.
+		roomStore.unsubscribeRoom(ROOM_ID);
 		if (roomStore.roomId.value !== null) {
 			await roomStore.select(null);
 		}
@@ -103,6 +105,7 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 		// Simulates a race where liveQuery.delta arrives before the snapshot
 		// populates tasks — the task is not yet in local state.
 		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoom(ROOM_ID);
 		roomStore.tasks.value = [];
 
 		// Delta with an 'updated' task that is not in current state
@@ -118,6 +121,7 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 
 	it('fires a toast when existing task transitions from in_progress to review', async () => {
 		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoom(ROOM_ID);
 
 		// Seed with an in_progress task via snapshot
 		fireEvent('liveQuery.snapshot', {
@@ -139,6 +143,7 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 
 	it('does NOT fire a toast when a task updates but stays in review', async () => {
 		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoom(ROOM_ID);
 
 		// Seed with an already-review task
 		fireEvent('liveQuery.snapshot', {
@@ -158,6 +163,7 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 
 	it('does NOT fire a toast for task updates with non-review status', async () => {
 		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoom(ROOM_ID);
 
 		fireEvent('liveQuery.snapshot', {
 			subscriptionId: TASKS_SUB_ID,
@@ -176,6 +182,7 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 
 	it('does NOT fire a toast for delta events with a different subscriptionId', async () => {
 		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoom(ROOM_ID);
 
 		fireEvent('liveQuery.snapshot', {
 			subscriptionId: TASKS_SUB_ID,
