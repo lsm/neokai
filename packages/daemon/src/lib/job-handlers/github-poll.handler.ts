@@ -51,13 +51,16 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
 	// completion, not from when the job was dequeued.
 	const nextRunAt = Date.now() + intervalMs;
 
-	// Only enqueue the next job if there is no pending or processing job
-	// already in the chain. Checking 'processing' prevents a duplicate chain
-	// from forming under stale-reclaim or slow-poll scenarios.
+	// Only enqueue the next job if no pending job is already waiting.
+	// We check 'pending' only (not 'processing') because the current job is
+	// itself in 'processing' state while this handler runs — including
+	// 'processing' would always find itself and prevent self-scheduling.
+	// A stale/duplicate 'processing' job is handled by the processor's eager
+	// stale-reclamation on startup, which moves it back to 'pending'.
 	// limit: 1 is sufficient — we only need to know if any job exists.
 	const existingJobs = jobQueue.listJobs({
 		queue: GITHUB_POLL,
-		status: ['pending', 'processing'],
+		status: 'pending',
 		limit: 1,
 	});
 

@@ -94,15 +94,21 @@ describe('handleGitHubPoll', () => {
 		expect(enqueueMock).not.toHaveBeenCalled();
 	});
 
-	it('skips enqueueing when a processing job already exists (dedup)', async () => {
-		listJobsMock = mock(() => [makeJob({ status: 'processing' })]);
-		const deps = makeDeps();
-		deps.jobQueue.listJobs = listJobsMock as never;
-		deps.jobQueue.enqueue = enqueueMock as never;
+	it('does NOT check processing status in dedup — only pending — so self-scheduling always works', async () => {
+		// The handler must NOT include 'processing' in its dedup query, because the
+		// current job is itself in 'processing' state while executing. Verifying
+		// that listJobs is called with 'pending' (not ['pending','processing']) is
+		// the only way to confirm self-scheduling is not blocked by the handler's own
+		// processing status.
+		await handleGitHubPoll(makeDeps());
 
-		await handleGitHubPoll(deps);
-
-		expect(enqueueMock).not.toHaveBeenCalled();
+		const listArg = (
+			listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
+		)[0];
+		// Must be a string (single status), not an array that includes 'processing'.
+		expect(typeof listArg.status).toBe('string');
+		expect(listArg.status).toBe('pending');
+		expect(listArg.status).not.toContain('processing');
 	});
 
 	it('still schedules next poll when triggerPoll throws (error is caught internally)', async () => {
@@ -122,15 +128,18 @@ describe('handleGitHubPoll', () => {
 		expect(enqueueMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('queries listJobs with pending+processing statuses and GITHUB_POLL queue', async () => {
+	it('queries listJobs with pending status only and GITHUB_POLL queue', async () => {
 		await handleGitHubPoll(makeDeps());
 
 		expect(listJobsMock).toHaveBeenCalledTimes(1);
 		const listArg = (
-			listJobsMock.mock.calls[0] as [{ queue: string; status: string[]; limit: number }]
+			listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
 		)[0];
 		expect(listArg.queue).toBe(GITHUB_POLL);
-		expect(listArg.status).toEqual(['pending', 'processing']);
+		// Only 'pending' — not 'processing' — because the current job is itself
+		// in 'processing' state while the handler runs; checking 'processing'
+		// would always find itself and prevent self-scheduling.
+		expect(listArg.status).toBe('pending');
 		expect(listArg.limit).toBe(1);
 	});
 
