@@ -184,6 +184,9 @@ describe('room.tick via job queue (online)', () => {
 
 		// Attempt to enqueue additional ticks via the RPC resume path (which calls
 		// enqueueRoomTick internally). The dedup guard must absorb these.
+		// Sequence ends on resume so the runtime is running and exactly one pending
+		// tick should exist — asserting toBe(1) (not just <=1) proves the dedup
+		// guard absorbed the duplicates while still leaving one job standing.
 		await daemon.messageHub.request('room.runtime.pause', { roomId });
 		await daemon.messageHub.request('room.runtime.resume', { roomId });
 		await daemon.messageHub.request('room.runtime.pause', { roomId });
@@ -193,7 +196,9 @@ describe('room.tick via job queue (online)', () => {
 		await new Promise<void>((resolve) => setTimeout(resolve, SETTLE_MS));
 
 		const pendingJobs = listTickJobs(daemonCtx, roomId, ['pending']);
-		expect(pendingJobs.length).toBeLessThanOrEqual(1);
+		// Exactly 1: dedup absorbed the extra enqueue calls; the runtime is running
+		// so the one surviving tick was not cancelled.
+		expect(pendingJobs.length).toBe(1);
 	}, 15_000);
 
 	// -------------------------------------------------------------------------
@@ -408,6 +413,12 @@ describe('room.tick via job queue (online)', () => {
 			config.port = 0;
 			config.dbPath = dbPath;
 
+			// Note: createDaemonApp inherits the current process environment, which
+			// includes ANTHROPIC_BASE_URL and ANTHROPIC_API_KEY set by daemon1's
+			// createInProcessDaemonServer (Dev Proxy routing). Daemon2 will silently
+			// use the proxy for any LLM calls it makes. This is harmless here because
+			// the room tick handler makes no LLM calls, but future changes that add
+			// LLM paths to the tick handler should be aware of this implicit coupling.
 			daemonCtx2 = await createDaemonApp({ config, verbose: false, standalone: false });
 
 			// Connect a client so the daemon is ready.
