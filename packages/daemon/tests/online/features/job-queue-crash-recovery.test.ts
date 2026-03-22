@@ -144,34 +144,36 @@ function insertStaleCrashedJob(
 /**
  * Verify that a job was eagerly reclaimed by daemon2.
  *
- * Since reclaimStale() and tick() both run synchronously inside start(),
- * the job transitions stale-processing → pending → (fresh-)processing
- * before createDaemonApp() returns. We verify reclamation by checking that
- * the job is either:
- *   (a) in 'processing' with a fresh startedAt (re-dequeued after reclaim), or
- *   (b) already in a final state (completed/dead/failed — processed immediately).
+ * reclaimStale() sets status='pending' and started_at=NULL for stale jobs.
+ * tick() then immediately re-dequeues them (status='processing', fresh startedAt).
+ * Both transitions happen synchronously inside start(), before createDaemonApp()
+ * returns. We verify reclamation by checking that the stale state is gone:
  *
- * In either case the stale startedAt is gone, proving reclaimStale() ran.
+ *   - 'pending'    → startedAt is NULL  (reclaimed, not yet re-dequeued)
+ *   - 'processing' → startedAt is recent (re-dequeued after reclaim)
+ *   - final states → reclaim + execution both completed immediately
  */
 function assertEagerlyReclaimed(
 	jobQueue: DaemonAppContext['jobQueue'],
 	queue: string,
 	jobId: string
 ): void {
-	// The job must NOT still be stuck in stale processing (started_at 6 min ago)
 	const allJobs = jobQueue.listJobs({
 		queue,
 		status: ['pending', 'processing', 'completed', 'failed', 'dead'],
 	});
 	const job = allJobs.find((j) => j.id === jobId);
-	expect(job).toBeDefined(); // job must still exist
+	expect(job).toBeDefined();
 
-	if (job!.status === 'processing') {
+	if (job!.status === 'pending') {
+		// reclaimStale() clears started_at when moving to pending
+		expect(job!.startedAt).toBeNull();
+	} else if (job!.status === 'processing') {
 		// Re-dequeued after reclaim → startedAt must be recent, not the old stale value
-		const staleCutoff = Date.now() - STALE_AGE_MS + 30_000; // ≥ 5m30s ago is still "recent enough"
+		const staleCutoff = Date.now() - STALE_AGE_MS + 30_000; // leaves 30 s of margin
 		expect(job!.startedAt).toBeGreaterThan(staleCutoff);
 	}
-	// Any other status (pending, completed, dead, failed) also proves reclamation
+	// completed/dead/failed: job was reclaimed and already executed; no further assertion needed
 }
 
 /**
@@ -180,11 +182,18 @@ function assertEagerlyReclaimed(
  * Each call creates a fresh workspace directory (to avoid worktree conflicts)
  * but points the database at the shared `dbPath`. This lets two sequential
  * daemon instances share persistent job-queue state across restarts.
+ *
+ * The created workspace path is appended to `trackWorkspaceDirs` so the caller
+ * can clean it up in afterEach alongside other per-test directories.
  */
-async function createDaemonWithSharedDb(dbPath: string): Promise<DaemonAppContext> {
+async function createDaemonWithSharedDb(
+	dbPath: string,
+	trackWorkspaceDirs: string[]
+): Promise<DaemonAppContext> {
 	const workspaceId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 	const workspace = `/tmp/crash-recovery-ws-${workspaceId}`;
 	await Bun.$`mkdir -p ${workspace}`.quiet();
+	trackWorkspaceDirs.push(workspace);
 
 	process.env.NEOKAI_WORKSPACE_PATH = workspace;
 	process.env.NODE_ENV = 'test';
@@ -212,6 +221,15 @@ describe('Job queue crash/restart recovery (online)', () => {
 	let daemon1: DaemonAppContext | null;
 	let daemon2: DaemonAppContext | null;
 
+	// Per-daemon workspace directories created by createDaemonWithSharedDb.
+	// Tracked here so afterEach can delete them alongside tmpDir.
+	let createdWorkspaceDirs: string[];
+
+	// Env vars mutated by createDaemonWithSharedDb — saved before each test
+	// and restored in afterEach to prevent cross-test pollution.
+	let savedWorkspacePath: string | undefined;
+	let savedTestWorktreeBaseDir: string | undefined;
+
 	// GitHub env vars saved for restoration
 	let savedGithubPollingInterval: string | undefined;
 	let savedGithubToken: string | undefined;
@@ -223,7 +241,11 @@ describe('Job queue crash/restart recovery (online)', () => {
 		dbPath = `${tmpDir}/crash-test.db`;
 		daemon1 = null;
 		daemon2 = null;
+		createdWorkspaceDirs = [];
 
+		// Save env vars that createDaemonWithSharedDb will mutate
+		savedWorkspacePath = process.env.NEOKAI_WORKSPACE_PATH;
+		savedTestWorktreeBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
 		savedGithubPollingInterval = process.env.GITHUB_POLLING_INTERVAL;
 		savedGithubToken = process.env.GITHUB_TOKEN;
 	}, 30_000);
@@ -247,6 +269,18 @@ describe('Job queue crash/restart recovery (online)', () => {
 			daemon2 = null;
 		}
 
+		// Restore env vars mutated by createDaemonWithSharedDb
+		if (savedWorkspacePath === undefined) {
+			delete process.env.NEOKAI_WORKSPACE_PATH;
+		} else {
+			process.env.NEOKAI_WORKSPACE_PATH = savedWorkspacePath;
+		}
+		if (savedTestWorktreeBaseDir === undefined) {
+			delete process.env.TEST_WORKTREE_BASE_DIR;
+		} else {
+			process.env.TEST_WORKTREE_BASE_DIR = savedTestWorktreeBaseDir;
+		}
+
 		// Restore GitHub env vars
 		if (savedGithubPollingInterval === undefined) {
 			delete process.env.GITHUB_POLLING_INTERVAL;
@@ -259,7 +293,10 @@ describe('Job queue crash/restart recovery (online)', () => {
 			process.env.GITHUB_TOKEN = savedGithubToken;
 		}
 
-		// Remove per-test DB and workspace directories
+		// Remove per-daemon workspace dirs and the shared DB dir
+		for (const dir of createdWorkspaceDirs) {
+			await Bun.$`rm -rf ${dir}`.quiet();
+		}
 		await Bun.$`rm -rf ${tmpDir}`.quiet();
 	}, 30_000);
 
@@ -267,7 +304,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 
 	test('session.title_generation: stale crash job is eagerly reclaimed on restart', async () => {
 		// --- daemon1: initialize schema, insert stale processing job, stop ---
-		daemon1 = await createDaemonWithSharedDb(dbPath);
+		daemon1 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
 
 		const rawDb1 = daemon1.db.getDatabase();
 		// maxRetries=0: job dies on the first failed attempt (no retry delays)
@@ -277,7 +314,6 @@ describe('Job queue crash/restart recovery (online)', () => {
 			{
 				sessionId: 'fake-session-crash-test',
 				userMessageText: 'Hello',
-				// maxRetries=0 so it dies on first failure without retry backoff delays
 			},
 			0
 		);
@@ -295,9 +331,9 @@ describe('Job queue crash/restart recovery (online)', () => {
 		// --- daemon2: start with same DB ---
 		// jobProcessor.start() eagerly calls reclaimStale(), moving the stale
 		// job to 'pending', then immediately calls tick() which re-dequeues it.
-		daemon2 = await createDaemonWithSharedDb(dbPath);
+		daemon2 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
 
-		// Verify eager reclamation: stale startedAt is gone
+		// Verify eager reclamation: stale state is cleared
 		assertEagerlyReclaimed(daemon2.jobQueue, SESSION_TITLE_GENERATION, staleJobId);
 
 		// The job fails (fake session doesn't exist) and with maxRetries=0 immediately
@@ -322,10 +358,14 @@ describe('Job queue crash/restart recovery (online)', () => {
 		process.env.GITHUB_TOKEN = 'ghp_fake_token_for_crash_recovery_test';
 
 		// --- daemon1: start polling, get the initial poll job enqueued, then stop ---
-		daemon1 = await createDaemonWithSharedDb(dbPath);
+		daemon1 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
+
+		// Guard: gitHubService must be initialized (GITHUB_TOKEN + GITHUB_POLLING_INTERVAL
+		// are set above). If this fails, authentication or service init is broken.
+		expect(daemon1.gitHubService).not.toBeNull();
 
 		// Stub triggerPoll to avoid any real GitHub network calls
-		const pollingService1 = daemon1.gitHubService?.getPollingService();
+		const pollingService1 = daemon1.gitHubService!.getPollingService();
 		if (pollingService1) {
 			pollingService1.triggerPoll = async () => {};
 		}
@@ -349,10 +389,13 @@ describe('Job queue crash/restart recovery (online)', () => {
 		daemon1 = null;
 
 		// --- daemon2: start with same DB ---
-		daemon2 = await createDaemonWithSharedDb(dbPath);
+		daemon2 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
+
+		// Guard: gitHubService must also be initialized on daemon2
+		expect(daemon2.gitHubService).not.toBeNull();
 
 		// Stub triggerPoll on daemon2 as well
-		const pollingService2 = daemon2.gitHubService?.getPollingService();
+		const pollingService2 = daemon2.gitHubService!.getPollingService();
 		if (pollingService2) {
 			pollingService2.triggerPoll = async () => {};
 		}
@@ -384,7 +427,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 
 	test('room.tick: stale crash job is reclaimed and completes gracefully (no active runtime)', async () => {
 		// --- daemon1: initialize schema, insert stale tick job, stop ---
-		daemon1 = await createDaemonWithSharedDb(dbPath);
+		daemon1 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
 
 		const rawDb1 = daemon1.db.getDatabase();
 		const fakeRoomId = `crash-test-room-${Date.now()}`;
@@ -402,7 +445,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 		daemon1 = null;
 
 		// --- daemon2: start with same DB ---
-		daemon2 = await createDaemonWithSharedDb(dbPath);
+		daemon2 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
 
 		// Stale tick was eagerly reclaimed by daemon2's startup
 		assertEagerlyReclaimed(daemon2.jobQueue, ROOM_TICK, staleJobId);
@@ -426,7 +469,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 
 	test('job_queue.cleanup: stale crash job is reclaimed and runs to completion on restart', async () => {
 		// --- daemon1: initialize schema (seeds initial cleanup job), insert stale job, stop ---
-		daemon1 = await createDaemonWithSharedDb(dbPath);
+		daemon1 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
 
 		const rawDb1 = daemon1.db.getDatabase();
 		const staleJobId = insertStaleCrashedJob(rawDb1, JOB_QUEUE_CLEANUP, {});
@@ -442,7 +485,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 		daemon1 = null;
 
 		// --- daemon2: start with same DB ---
-		daemon2 = await createDaemonWithSharedDb(dbPath);
+		daemon2 = await createDaemonWithSharedDb(dbPath, createdWorkspaceDirs);
 
 		// Stale cleanup job was eagerly reclaimed by daemon2's startup
 		assertEagerlyReclaimed(daemon2.jobQueue, JOB_QUEUE_CLEANUP, staleJobId);
