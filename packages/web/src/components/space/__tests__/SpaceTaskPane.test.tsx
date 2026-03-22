@@ -18,20 +18,39 @@
  * - Human input area shown for needs_attention status
  * - Human input area NOT shown for other statuses
  * - Close button calls onClose
+ * - Working Agents section shown when session groups exist for task
+ * - Working Agents section hidden when no groups exist
+ * - Member status badges rendered correctly
+ * - Agent name looked up from agents signal
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
-import { signal } from '@preact/signals';
-import type { SpaceTask } from '@neokai/shared';
+import { signal, computed } from '@preact/signals';
+import type { SpaceTask, SpaceSessionGroup, SpaceAgent } from '@neokai/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+let mockSessionGroups: ReturnType<typeof signal<SpaceSessionGroup[]>>;
+let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
+		const sessionGroupsByTask = computed(() => {
+			const map = new Map<string, SpaceSessionGroup[]>();
+			for (const group of mockSessionGroups.value) {
+				if (group.taskId) {
+					const existing = map.get(group.taskId) ?? [];
+					map.set(group.taskId, [...existing, group]);
+				}
+			}
+			return map;
+		});
 		return {
 			tasks: mockTasks,
+			sessionGroups: mockSessionGroups,
+			sessionGroupsByTask,
+			agents: mockAgents,
 			updateTask: mockUpdateTask,
 		};
 	},
@@ -43,6 +62,8 @@ vi.mock('../../../lib/utils', () => ({
 
 // Initialize signals
 mockTasks = signal<SpaceTask[]>([]);
+mockSessionGroups = signal<SpaceSessionGroup[]>([]);
+mockAgents = signal<SpaceAgent[]>([]);
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
 
@@ -61,10 +82,54 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 	};
 }
 
+function makeGroup(overrides: Partial<SpaceSessionGroup> = {}): SpaceSessionGroup {
+	return {
+		id: 'group-1',
+		spaceId: 'space-1',
+		name: 'task:task-1',
+		status: 'active',
+		members: [],
+		createdAt: 1000000,
+		updatedAt: 1000000,
+		taskId: 'task-1',
+		...overrides,
+	};
+}
+
+function makeMember(
+	overrides: Partial<import('@neokai/shared').SpaceSessionGroupMember> = {}
+): import('@neokai/shared').SpaceSessionGroupMember {
+	return {
+		id: 'member-1',
+		groupId: 'group-1',
+		sessionId: 'session-1',
+		role: 'task-agent',
+		status: 'active',
+		orderIndex: 0,
+		createdAt: 1000000,
+		...overrides,
+	};
+}
+
+function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
+	return {
+		id: 'agent-1',
+		spaceId: 'space-1',
+		name: 'Backend Engineer',
+		role: 'coder',
+		instructions: '',
+		createdAt: 1000000,
+		updatedAt: 1000000,
+		...overrides,
+	};
+}
+
 describe('SpaceTaskPane', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
+		mockSessionGroups.value = [];
+		mockAgents.value = [];
 		mockUpdateTask.mockClear();
 	});
 
@@ -191,12 +256,106 @@ describe('SpaceTaskPane', () => {
 		const { container } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(container.querySelector('[aria-label="Close task pane"]')).toBeNull();
 	});
+
+	// -----------------------------------------------------------------------
+	// Working Agents section
+	// -----------------------------------------------------------------------
+
+	it('does NOT show Working Agents section when no groups exist for the task', () => {
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [];
+		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('Working Agents')).toBeNull();
+	});
+
+	it('shows Working Agents section when a group exists for the task', () => {
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ taskId: 'task-1' })];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Working Agents')).toBeTruthy();
+	});
+
+	it('does NOT show Working Agents section when groups belong to a different task', () => {
+		mockTasks.value = [makeTask({ id: 'task-1' })];
+		mockSessionGroups.value = [makeGroup({ taskId: 'task-other' })];
+		const { queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByText('Working Agents')).toBeNull();
+	});
+
+	it('renders group name inside Working Agents section', () => {
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ name: 'My Group', taskId: 'task-1' })];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('My Group')).toBeTruthy();
+	});
+
+	it('renders member role when no agentId is provided', () => {
+		const member = makeMember({ role: 'task-agent', agentId: undefined });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Task Agent')).toBeTruthy();
+	});
+
+	it('renders agent name from agents signal when agentId matches', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'Security Auditor', role: 'reviewer' });
+		const member = makeMember({ agentId: 'agent-1', role: 'reviewer' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+		mockAgents.value = [agent];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Security Auditor')).toBeTruthy();
+	});
+
+	it('shows active status badge for active member', () => {
+		const member = makeMember({ status: 'active' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText('active').length).toBeGreaterThan(0);
+	});
+
+	it('shows completed status badge for completed member', () => {
+		const member = makeMember({ status: 'completed' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText('completed').length).toBeGreaterThan(0);
+	});
+
+	it('shows failed status badge for failed member', () => {
+		const member = makeMember({ status: 'failed' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText('failed').length).toBeGreaterThan(0);
+	});
+
+	it('renders multiple groups when they share the same taskId', () => {
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [
+			makeGroup({ id: 'group-1', name: 'First Group', taskId: 'task-1' }),
+			makeGroup({ id: 'group-2', name: 'Second Group', taskId: 'task-1', createdAt: 2000000 }),
+		];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('First Group')).toBeTruthy();
+		expect(getByText('Second Group')).toBeTruthy();
+	});
+
+	it('shows "No members yet" when group has no members', () => {
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [] })];
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('No members yet')).toBeTruthy();
+	});
 });
 
 describe('SpaceTaskPane — HumanInputArea submit behavior', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
+		mockSessionGroups.value = [];
+		mockAgents.value = [];
 		mockUpdateTask.mockClear();
 	});
 

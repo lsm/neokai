@@ -8,7 +8,13 @@
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
-import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceTaskStatus,
+	SpaceTaskPriority,
+	SpaceSessionGroup,
+	SpaceSessionGroupMember,
+} from '@neokai/shared';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -63,6 +69,127 @@ function StatusBadge({ status }: { status: SpaceTaskStatus }) {
 		</span>
 	);
 }
+
+// ============================================================================
+// Working Agents Section
+// ============================================================================
+
+const MEMBER_STATUS_CLASSES: Record<SpaceSessionGroupMember['status'], string> = {
+	active: 'bg-blue-900/30 text-blue-300 border-blue-700/50',
+	completed: 'bg-green-900/30 text-green-300 border-green-700/50',
+	failed: 'bg-red-900/30 text-red-400 border-red-700/50',
+};
+
+function MemberStatusBadge({ status }: { status: SpaceSessionGroupMember['status'] }) {
+	return (
+		<span
+			class={cn(
+				'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border',
+				MEMBER_STATUS_CLASSES[status]
+			)}
+		>
+			{status === 'active' && (
+				<span class="relative flex h-1.5 w-1.5">
+					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+					<span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-400" />
+				</span>
+			)}
+			{status === 'completed' && (
+				<svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+					<path
+						fill-rule="evenodd"
+						d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+						clip-rule="evenodd"
+					/>
+				</svg>
+			)}
+			{status === 'failed' && (
+				<svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+					<path
+						fill-rule="evenodd"
+						d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+						clip-rule="evenodd"
+					/>
+				</svg>
+			)}
+			<span class="capitalize">{status}</span>
+		</span>
+	);
+}
+
+interface WorkingAgentsProps {
+	groups: SpaceSessionGroup[];
+}
+
+function WorkingAgents({ groups }: WorkingAgentsProps) {
+	const agents = spaceStore.agents.value;
+
+	// Show the most recent group first; if there are multiple, show them all
+	const sortedGroups = [...groups].sort((a, b) => b.createdAt - a.createdAt);
+
+	return (
+		<div>
+			<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+				Working Agents
+			</h3>
+			<div class="space-y-2">
+				{sortedGroups.map((group) => {
+					const createdDate = new Date(group.createdAt);
+					const timeStr = createdDate.toLocaleTimeString(undefined, {
+						hour: '2-digit',
+						minute: '2-digit',
+					});
+
+					return (
+						<div
+							key={group.id}
+							class="border border-dark-700 rounded-lg p-2.5 bg-dark-800/50 space-y-2"
+						>
+							{/* Group header */}
+							<div class="flex items-center justify-between">
+								<span class="text-xs font-medium text-gray-300">{group.name}</span>
+								<span class="text-xs text-gray-600">{timeStr}</span>
+							</div>
+
+							{/* Members */}
+							{group.members.length === 0 ? (
+								<p class="text-xs text-gray-600 italic">No members yet</p>
+							) : (
+								<ul class="space-y-1.5">
+									{group.members.map((member) => {
+										const agent = member.agentId
+											? agents.find((a) => a.id === member.agentId)
+											: null;
+										const agentName =
+											agent?.name ?? (member.role === 'task-agent' ? 'Task Agent' : null);
+
+										return (
+											<li key={member.id} class="flex items-center gap-2 min-w-0">
+												<MemberStatusBadge status={member.status} />
+												<span class="text-xs text-gray-300 capitalize flex-1 truncate">
+													{agentName ?? member.role}
+												</span>
+												{agentName && agentName !== member.role && (
+													<span class="text-xs text-gray-600 truncate max-w-[5rem] capitalize">
+														{member.role}
+													</span>
+												)}
+											</li>
+										);
+									})}
+								</ul>
+							)}
+						</div>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
+// ============================================================================
+// Human Input
+// ============================================================================
 
 interface HumanInputAreaProps {
 	task: SpaceTask;
@@ -126,6 +253,7 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 
 export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
+	const sessionGroupsByTask = spaceStore.sessionGroupsByTask.value;
 
 	if (!taskId) {
 		return (
@@ -136,6 +264,7 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	}
 
 	const task = tasks.find((t) => t.id === taskId);
+	const taskGroups = taskId ? (sessionGroupsByTask.get(taskId) ?? []) : [];
 
 	if (!task) {
 		return (
@@ -241,6 +370,9 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 						</div>
 					</div>
 				)}
+
+				{/* Working Agents */}
+				{taskGroups.length > 0 && <WorkingAgents groups={taskGroups} />}
 
 				{/* Result */}
 				{task.result && (
