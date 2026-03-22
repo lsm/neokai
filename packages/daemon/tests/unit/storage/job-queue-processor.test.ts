@@ -313,6 +313,60 @@ describe('JobQueueProcessor', () => {
 		});
 	});
 
+	describe('eager stale reclamation on start()', () => {
+		it('reclaims stale processing jobs immediately when start() is called', async () => {
+			const eagerProcessor = new JobQueueProcessor(repo, {
+				staleThresholdMs: 1000,
+				pollIntervalMs: 5000, // long interval so the interval tick doesn't interfere
+			});
+			eagerProcessor.register('eager-queue', async () => {});
+
+			// Enqueue and dequeue manually to create a "processing" job
+			const job = repo.enqueue({ queue: 'eager-queue', payload: {} });
+			repo.dequeue('eager-queue', 1);
+
+			// Confirm it's processing
+			expect(repo.getJob(job.id)?.status).toBe('processing');
+
+			// Make it stale (started 10s ago, threshold is 1s)
+			db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+				Date.now() - 10_000,
+				job.id
+			);
+
+			// start() should eagerly reclaim before the first tick
+			eagerProcessor.start();
+			// Give the immediate tick time to process the reclaimed job
+			await flush();
+			await eagerProcessor.stop();
+
+			const after = repo.getJob(job.id);
+			expect(after?.status).toBe('completed');
+		});
+
+		it('does not wait for STALE_CHECK_INTERVAL before first reclamation', async () => {
+			// Create a spy on reclaimStale to verify it's called during start()
+			let reclaimCallCount = 0;
+			const originalReclaim = repo.reclaimStale.bind(repo);
+			repo.reclaimStale = (staleBefore: number) => {
+				reclaimCallCount++;
+				return originalReclaim(staleBefore);
+			};
+
+			const eagerProcessor = new JobQueueProcessor(repo, {
+				staleThresholdMs: 1000,
+				pollIntervalMs: 5000,
+			});
+			eagerProcessor.register('spy-queue', async () => {});
+
+			eagerProcessor.start();
+			await eagerProcessor.stop();
+
+			// reclaimStale should have been called during start() (before any tick interval)
+			expect(reclaimCallCount).toBeGreaterThanOrEqual(1);
+		});
+	});
+
 	describe('start / stop', () => {
 		it('start() begins polling and processes enqueued jobs', async () => {
 			const shortProcessor = new JobQueueProcessor(repo, { pollIntervalMs: 50 });

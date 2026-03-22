@@ -58,6 +58,8 @@ import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -78,6 +80,17 @@ export interface RPCHandlerDependencies {
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
+	/**
+	 * Persistent job queue repository.
+	 * TODO: consumed by Milestones 2–5 handlers (session title generation,
+	 * GitHub polling, room tick, cleanup jobs).
+	 */
+	jobQueue: JobQueueRepository;
+	/**
+	 * Persistent job queue processor.
+	 * TODO: consumed by Milestones 2–5 handlers for registering queue handlers.
+	 */
+	jobProcessor: JobQueueProcessor;
 }
 
 const log = new Logger('rpc-handlers');

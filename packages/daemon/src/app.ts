@@ -20,6 +20,8 @@ import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
+import { JobQueueRepository } from './storage/repositories/job-queue-repository';
+import { JobQueueProcessor } from './storage/job-queue-processor';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -63,6 +65,10 @@ export interface DaemonAppContext {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task Agent Manager — manages Task Agent session lifecycle for space tasks */
 	taskAgentManager: TaskAgentManager;
+	/** Persistent job queue repository */
+	jobQueue: JobQueueRepository;
+	/** Persistent job queue processor */
+	jobProcessor: JobQueueProcessor;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -99,6 +105,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	await db.initialize();
 	const reactiveDb = createReactiveDatabase(db);
 	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
+
+	// Initialize job queue
+	const jobQueue = new JobQueueRepository(db.getDatabase());
+	const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
+	const jobProcessor = new JobQueueProcessor(jobQueue, {
+		pollIntervalMs: 1000,
+		maxConcurrent,
+		staleThresholdMs: 5 * 60 * 1000,
+	});
+	jobProcessor.setChangeNotifier((table) => {
+		reactiveDb.notifyChange(table);
+	});
 
 	// Initialize Space agent manager
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
@@ -228,6 +246,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		gitHubService: gitHubService ?? undefined,
 		spaceManager,
 		spaceAgentManager,
+		jobQueue,
+		jobProcessor,
 	});
 
 	// Create WebSocket handlers
@@ -342,6 +362,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] GitHub service started');
 	}
 
+	// Start job queue processor last (after all handler registrations)
+	jobProcessor.start();
+	logInfo('[Daemon] Job queue processor started');
+
 	// Cleanup function for graceful shutdown
 	let isCleanedUp = false;
 	const cleanup = async () => {
@@ -390,6 +414,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 					clearInterval(checkInterval);
 				}
 			}
+
+			// Stop job queue processor before MessageHub cleanup
+			await jobProcessor.stop();
+			logInfo('[Daemon] Job queue processor stopped');
 
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
@@ -451,6 +479,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		spaceManager,
 		spaceRuntimeService,
 		taskAgentManager,
+		jobQueue,
+		jobProcessor,
 		cleanup,
 	};
 }

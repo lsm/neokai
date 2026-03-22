@@ -28,6 +28,7 @@
 		"packages/daemon/src/lib/prompts/index.ts",
 		"packages/shared/src/event-bus.ts",
 		"packages/daemon/src/lib/room/task-message-queue.ts",
+		"packages/daemon/src/lib/job-queue-constants.ts",
 		"packages/daemon/dump-context.ts",
 		".claude/**"
 	],
