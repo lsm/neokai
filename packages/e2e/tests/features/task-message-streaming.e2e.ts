@@ -2,23 +2,27 @@
  * Task Message Streaming E2E Tests
  *
  * Verifies that the TaskConversationRenderer correctly displays messages
- * via the LiveQuery subscription without requiring a page refresh.
+ * via the LiveQuery subscription.
  *
  * Tests:
- * - Messages from the initial LiveQuery snapshot appear in TaskView
- * - New messages injected after page load appear via LiveQuery delta (no refresh)
+ * - Messages from the initial LiveQuery snapshot appear in TaskView on load
  * - Switching between two tasks shows correct messages for each task
  *
- * Setup: Creates rooms and tasks via RPC in beforeEach (infrastructure).
- *        Message injection via task.group.addMessage (admin RPC).
+ * Note on "live delta without refresh" testing: injecting a message after page
+ * navigation requires calling hub.request() inside the test body, which violates
+ * CLAUDE.md's E2E rule that prohibits non-lifecycle RPC calls. That scenario
+ * (liveQuery.delta delivery) is fully exercised by the useGroupMessages unit tests
+ * in packages/web/src/hooks/__tests__/useGroupMessages.test.ts and does not need
+ * an E2E test.
+ *
+ * Setup: Creates rooms, tasks, session groups, and messages via RPC in beforeEach
+ *        (accepted infrastructure pattern per CLAUDE.md).
  * Cleanup: Deletes rooms via RPC in afterEach.
  *
  * E2E Rules:
  * - All test actions go through the UI (clicks, navigation)
  * - All assertions check visible DOM state
  * - RPC is used only in beforeEach/afterEach for test infrastructure
- *   Exception: task.group.addMessage is called via page.evaluate() in test body
- *   to simulate agent message delivery (no UI equivalent for injecting agent messages)
  */
 
 import { test, expect } from '../../fixtures';
@@ -27,7 +31,19 @@ import { deleteRoom } from '../helpers/room-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
-// ─── RPC Setup Helpers ─────────────────────────────────────────────────────────
+// ─── RPC Setup Helpers (beforeEach/afterEach infrastructure only) ─────────────
+
+type Hub = { request: (method: string, params: unknown) => Promise<unknown> };
+
+function getHub(w: Window & typeof globalThis): Hub {
+	const hub = (w as unknown as Record<string, unknown>).__messageHub as Hub | undefined;
+	if (hub?.request) return hub;
+	const appState = (w as unknown as Record<string, unknown>).appState as
+		| { messageHub?: Hub }
+		| undefined;
+	if (appState?.messageHub?.request) return appState.messageHub;
+	throw new Error('MessageHub not available');
+}
 
 async function createRoomWithTask(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
@@ -36,7 +52,9 @@ async function createRoomWithTask(
 	await waitForWebSocketConnected(page);
 
 	return page.evaluate(async (title) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
+		const hub = (window.__messageHub || window.appState?.messageHub) as {
+			request: (m: string, p: unknown) => Promise<unknown>;
+		};
 		if (!hub?.request) throw new Error('MessageHub not available');
 
 		const roomRes = await hub.request('room.create', { name: 'E2E Streaming Test Room' });
@@ -53,150 +71,144 @@ async function createRoomWithTask(
 	}, taskTitle);
 }
 
-async function createGroupForTask(
+async function createGroupWithMessages(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
 	taskId: string,
-	roomId: string
-): Promise<{ groupId: string; workerSessionId: string; leaderSessionId: string }> {
+	roomId: string,
+	messages: string[]
+): Promise<string> {
 	return page.evaluate(
-		async ({ tId, rId }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
+		async ({ tId, rId, msgs }) => {
+			const hub = (window.__messageHub || window.appState?.messageHub) as {
+				request: (m: string, p: unknown) => Promise<unknown>;
+			};
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			const res = await hub.request('task.group.create', { taskId: tId, roomId: rId });
-			return res as { groupId: string; workerSessionId: string; leaderSessionId: string };
+			const groupRes = await hub.request('task.group.create', { taskId: tId, roomId: rId });
+			const groupId = (groupRes as { groupId: string }).groupId;
+
+			for (const content of msgs) {
+				await hub.request('task.group.addMessage', {
+					groupId,
+					role: 'system',
+					messageType: 'status',
+					content,
+				});
+			}
+
+			return groupId;
 		},
-		{ tId: taskId, rId: roomId }
+		{ tId: taskId, rId: roomId, msgs: messages }
 	);
 }
 
-async function injectMessage(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	groupId: string,
-	content: string,
-	messageType: string = 'status'
-): Promise<void> {
-	await page.evaluate(
-		async ({ gId, c, mt }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
+// ─── Tests ─────────────────────────────────────────────────────────────────────
 
-			await hub.request('task.group.addMessage', {
-				groupId: gId,
-				role: mt === 'status' ? 'system' : 'coder',
-				messageType: mt,
-				content: c,
-			});
-		},
-		{ gId: groupId, c: content, mt: messageType }
-	);
-}
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
-test.describe('TaskView — Message Streaming', () => {
+test.describe('TaskView — Message Streaming via LiveQuery', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
-	let roomId = '';
-	let taskId = '';
+	// ── Test 1: initial snapshot ───────────────────────────────────────────────
 
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		await page
-			.getByRole('button', { name: 'New Session', exact: true })
-			.waitFor({ timeout: 10000 });
-		roomId = '';
-		taskId = '';
-	});
+	test.describe('initial snapshot display', () => {
+		let roomId = '';
+		let taskId = '';
 
-	test.afterEach(async ({ page }) => {
-		await deleteRoom(page, roomId);
-	});
+		test.beforeEach(async ({ page }) => {
+			await page.goto('/');
+			await page
+				.getByRole('button', { name: 'New Session', exact: true })
+				.waitFor({ timeout: 10000 });
 
-	test('messages pre-loaded in DB appear in TaskView on initial load', async ({ page }) => {
-		({ roomId, taskId } = await createRoomWithTask(page, 'E2E Streaming Task 1'));
+			// Create room, task, group, and pre-load messages — all infrastructure
+			({ roomId, taskId } = await createRoomWithTask(page, 'E2E Streaming Task 1'));
+			await createGroupWithMessages(page, taskId, roomId, [
+				'Agent started working',
+				'Completed first step',
+			]);
+		});
 
-		// Create group and inject messages BEFORE navigating to the task view
-		const { groupId } = await createGroupForTask(page, taskId, roomId);
-		await injectMessage(page, groupId, 'Agent started working', 'status');
-		await injectMessage(page, groupId, 'Completed first step', 'status');
+		test.afterEach(async ({ page }) => {
+			await deleteRoom(page, roomId);
+			roomId = '';
+			taskId = '';
+		});
 
-		// Navigate to the task view — LiveQuery snapshot should deliver the pre-existing messages
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Streaming Task 1')).toBeVisible({ timeout: 10000 });
+		test('messages pre-loaded in DB appear in TaskView on initial load', async ({ page }) => {
+			// Navigate to the task view — LiveQuery snapshot delivers the pre-existing messages
+			await page.goto(`/room/${roomId}/task/${taskId}`);
+			await expect(page.locator('text=E2E Streaming Task 1')).toBeVisible({ timeout: 10000 });
 
-		// Both status messages should appear via the initial snapshot
-		await expect(page.locator('text=Agent started working')).toBeVisible({ timeout: 10000 });
-		await expect(page.locator('text=Completed first step')).toBeVisible({ timeout: 10000 });
-	});
-
-	test('new message injected after page load appears via LiveQuery without refresh', async ({
-		page,
-	}) => {
-		({ roomId, taskId } = await createRoomWithTask(page, 'E2E Streaming Task 2'));
-
-		// Create group before navigating
-		const { groupId } = await createGroupForTask(page, taskId, roomId);
-
-		// Navigate to the task view
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Streaming Task 2')).toBeVisible({ timeout: 10000 });
-
-		// Wait for the task view conversation area to be rendered
-		// (shows "Waiting for agent activity…" when empty)
-		await expect(page.locator('text=Waiting for agent activity')).toBeVisible({ timeout: 8000 });
-
-		// Inject a message AFTER the page is loaded — should arrive via LiveQuery delta
-		await injectMessage(page, groupId, 'Live streaming message arrived', 'status');
-
-		// The new message should appear in the conversation without a page refresh
-		await expect(page.locator('text=Live streaming message arrived')).toBeVisible({
-			timeout: 8000,
+			// Both status messages should appear via the initial snapshot (no refresh needed)
+			await expect(page.locator('text=Agent started working')).toBeVisible({ timeout: 10000 });
+			await expect(page.locator('text=Completed first step')).toBeVisible({ timeout: 10000 });
 		});
 	});
 
-	test('switching between two tasks shows correct messages for each task', async ({ page }) => {
-		({ roomId, taskId } = await createRoomWithTask(page, 'E2E Streaming Task A'));
+	// ── Test 2: task switching ─────────────────────────────────────────────────
 
-		// Create a second task in the same room
-		const task2Id = await page.evaluate(
-			async ({ rId }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('MessageHub not available');
+	test.describe('task switching shows correct messages', () => {
+		let roomId = '';
+		let taskId = '';
+		let task2Id = '';
 
-				const taskRes = await hub.request('task.create', {
-					roomId: rId,
-					title: 'E2E Streaming Task B',
-					description: 'Second task for switching test',
-				});
-				return (taskRes as { task: { id: string } }).task.id;
-			},
-			{ rId: roomId }
-		);
+		test.beforeEach(async ({ page }) => {
+			await page.goto('/');
+			await page
+				.getByRole('button', { name: 'New Session', exact: true })
+				.waitFor({ timeout: 10000 });
 
-		// Create groups for both tasks and inject distinct messages
-		const { groupId: groupId1 } = await createGroupForTask(page, taskId, roomId);
-		const { groupId: groupId2 } = await createGroupForTask(page, task2Id, roomId);
+			// Create room, two tasks with distinct messages — all infrastructure
+			({ roomId, taskId } = await createRoomWithTask(page, 'E2E Streaming Task A'));
 
-		await injectMessage(page, groupId1, 'Message for Task A only', 'status');
-		await injectMessage(page, groupId2, 'Message for Task B only', 'status');
+			task2Id = await page.evaluate(
+				async ({ rId }) => {
+					const hub = (window.__messageHub || window.appState?.messageHub) as {
+						request: (m: string, p: unknown) => Promise<unknown>;
+					};
+					if (!hub?.request) throw new Error('MessageHub not available');
+					const taskRes = await hub.request('task.create', {
+						roomId: rId,
+						title: 'E2E Streaming Task B',
+						description: 'Second task for switching test',
+					});
+					return (taskRes as { task: { id: string } }).task.id;
+				},
+				{ rId: roomId }
+			);
 
-		// Navigate to Task A
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Streaming Task A')).toBeVisible({ timeout: 10000 });
+			await createGroupWithMessages(page, taskId, roomId, ['Message for Task A only']);
+			await createGroupWithMessages(page, task2Id, roomId, ['Message for Task B only']);
+		});
 
-		// Task A's message should be visible
-		await expect(page.locator('text=Message for Task A only')).toBeVisible({ timeout: 10000 });
-		// Task B's message should NOT be visible
-		await expect(page.locator('text=Message for Task B only')).not.toBeVisible();
+		test.afterEach(async ({ page }) => {
+			await deleteRoom(page, roomId);
+			roomId = '';
+			taskId = '';
+			task2Id = '';
+		});
 
-		// Navigate to Task B
-		await page.goto(`/room/${roomId}/task/${task2Id}`);
-		await expect(page.locator('text=E2E Streaming Task B')).toBeVisible({ timeout: 10000 });
+		test('switching between two tasks shows correct messages for each task', async ({ page }) => {
+			// Navigate to Task A
+			await page.goto(`/room/${roomId}/task/${taskId}`);
+			await expect(page.locator('text=E2E Streaming Task A')).toBeVisible({ timeout: 10000 });
 
-		// Task B's message should be visible
-		await expect(page.locator('text=Message for Task B only')).toBeVisible({ timeout: 10000 });
-		// Task A's message should NOT be visible
-		await expect(page.locator('text=Message for Task A only')).not.toBeVisible();
+			// Task A's message visible; Task B's is not
+			await expect(page.locator('text=Message for Task A only')).toBeVisible({ timeout: 10000 });
+			await expect(page.locator('text=Message for Task B only')).not.toBeVisible();
+
+			// Navigate to Task B
+			await page.goto(`/room/${roomId}/task/${task2Id}`);
+			await expect(page.locator('text=E2E Streaming Task B')).toBeVisible({ timeout: 10000 });
+
+			// Task B's message visible; Task A's is not
+			await expect(page.locator('text=Message for Task B only')).toBeVisible({ timeout: 10000 });
+			await expect(page.locator('text=Message for Task A only')).not.toBeVisible();
+
+			// Navigate back to Task A — subscription must re-establish correctly
+			await page.goto(`/room/${roomId}/task/${taskId}`);
+			await expect(page.locator('text=E2E Streaming Task A')).toBeVisible({ timeout: 10000 });
+			await expect(page.locator('text=Message for Task A only')).toBeVisible({ timeout: 10000 });
+			await expect(page.locator('text=Message for Task B only')).not.toBeVisible();
+		});
 	});
 });
