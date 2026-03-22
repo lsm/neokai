@@ -559,7 +559,7 @@ describe('Goal RPC Handlers', () => {
 			).rejects.toThrow('No update fields provided');
 		});
 
-		it('emits goal.updated event', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.update');
 			expect(handler).toBeDefined();
 
@@ -568,14 +568,7 @@ describe('Goal RPC Handlers', () => {
 				{}
 			);
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 	});
 
@@ -610,20 +603,13 @@ describe('Goal RPC Handlers', () => {
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
 		});
 
-		it('emits goal.updated event', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.needsHuman');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 	});
 
@@ -658,20 +644,13 @@ describe('Goal RPC Handlers', () => {
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
 		});
 
-		it('emits goal.updated event', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.reactivate');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 	});
 
@@ -719,27 +698,16 @@ describe('Goal RPC Handlers', () => {
 			);
 		});
 
-		it('emits goal.updated and goal.progressUpdated events', async () => {
+		it('does not emit goal.updated or goal.progressUpdated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.linkTask');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123', taskId: 'task-456' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith(
 				'goal.progressUpdated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
+				expect.anything()
 			);
 		});
 
@@ -841,21 +809,13 @@ describe('Goal RPC Handlers', () => {
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
 		});
 
-		it('emits goal.updated event with undefined goal to signal deletion', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.delete');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-					goal: undefined,
-				})
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 
 		it('returns false when delete fails', async () => {
@@ -969,17 +929,14 @@ describe('Goal RPC Handlers', () => {
 			).rejects.toThrow('Invalid cron expression');
 		});
 
-		it('emits goal.updated event on success', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.setSchedule')!;
 			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
 			mockGoalManager.updateGoalStatus.mockResolvedValueOnce(recurringGoal);
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123', cronExpression: '@weekly' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({ roomId: 'room-123', goalId: 'goal-123' })
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 	});
 
@@ -1029,7 +986,7 @@ describe('Goal RPC Handlers', () => {
 			);
 		});
 
-		it('emits goal.updated event on success', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.pauseSchedule')!;
 			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
 			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
@@ -1039,10 +996,7 @@ describe('Goal RPC Handlers', () => {
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({ roomId: 'room-123', goalId: 'goal-123' })
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 	});
 
@@ -1107,7 +1061,7 @@ describe('Goal RPC Handlers', () => {
 			);
 		});
 
-		it('emits goal.updated event on success', async () => {
+		it('does not emit goal.updated (superseded by LiveQuery delta delivery)', async () => {
 			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
 			mockGoalManager.getGoal.mockResolvedValueOnce(pausedGoal);
 			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
@@ -1117,10 +1071,7 @@ describe('Goal RPC Handlers', () => {
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
 
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({ roomId: 'room-123', goalId: 'goal-123' })
-			);
+			expect(daemonHubData.emit).not.toHaveBeenCalledWith('goal.updated', expect.anything());
 		});
 	});
 
