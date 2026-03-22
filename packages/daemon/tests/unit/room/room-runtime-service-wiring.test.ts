@@ -1,10 +1,34 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import {
 	RoomRuntimeService,
 	type RoomRuntimeServiceConfig,
 } from '../../../src/lib/room/runtime/room-runtime-service';
+import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import { createRoomTickHandler } from '../../../src/lib/job-handlers/room-tick.handler';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
 import type { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
+
+const CREATE_TABLE_SQL = `
+	CREATE TABLE IF NOT EXISTS job_queue (
+		id TEXT PRIMARY KEY,
+		queue TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending'
+			CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+		payload TEXT NOT NULL DEFAULT '{}',
+		result TEXT,
+		error TEXT,
+		priority INTEGER NOT NULL DEFAULT 0,
+		max_retries INTEGER NOT NULL DEFAULT 3,
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		run_at INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		started_at INTEGER,
+		completed_at INTEGER
+	);
+	CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
+	CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
+`;
 
 /** Minimal daemonHub mock that supports on() subscriptions */
 function makeDaemonHub() {
@@ -153,5 +177,57 @@ describe('RoomRuntimeService.startRuntime()', () => {
 	it('returns false when the room does not exist', () => {
 		const service = new RoomRuntimeService(makeConfig());
 		expect(service.startRuntime('non-existent')).toBe(false);
+	});
+});
+
+describe('stopRuntime() + room.tick handler interaction', () => {
+	it('tick handler returns { skipped, reason } for a room whose runtime was deleted by stopRuntime()', async () => {
+		// Set up an in-memory job queue so we can build a real handler
+		const db = new Database(':memory:');
+		db.exec(CREATE_TABLE_SQL);
+		const jobQueue = new JobQueueRepository(db as never);
+
+		const service = new RoomRuntimeService(makeConfig());
+
+		// Inject a running runtime into the map
+		const mockRuntime = {
+			stop: () => {},
+			getState: () => 'running',
+		} as unknown as RoomRuntime;
+		(service as unknown as { runtimes: Map<string, RoomRuntime> }).runtimes.set(
+			'room-stop',
+			mockRuntime
+		);
+
+		// Stop the runtime — this deletes it from the map
+		service.stopRuntime('room-stop');
+		expect(service.getRuntime('room-stop')).toBeNull();
+
+		// Build the handler using the same runtime-lookup closure as RoomRuntimeService.start()
+		const handler = createRoomTickHandler((roomId) => service.getRuntime(roomId), jobQueue);
+
+		// Simulate a tick job that was already in-flight when stopRuntime() was called
+		const job = {
+			id: 'test-tick-job',
+			queue: ROOM_TICK,
+			status: 'processing' as const,
+			payload: { roomId: 'room-stop' },
+			result: null,
+			error: null,
+			priority: 0,
+			maxRetries: 0,
+			retryCount: 0,
+			runAt: Date.now(),
+			createdAt: Date.now(),
+			startedAt: Date.now(),
+			completedAt: null,
+		};
+
+		const result = await handler(job);
+
+		// Handler must skip and not re-schedule — the loop is terminated
+		expect(result).toEqual({ skipped: true, reason: 'not running' });
+		const pending = jobQueue.listJobs({ queue: ROOM_TICK, status: ['pending'] });
+		expect(pending).toHaveLength(0);
 	});
 });
