@@ -174,11 +174,59 @@ describe('enqueueRoomTick', () => {
 		expect((pending[0].payload as any).roomId).toBe('room-a');
 	});
 
-	it('deduplicates: second enqueue with existing pending job is a no-op', () => {
+	it('deduplicates: second enqueue with same or later delay is a no-op', () => {
 		enqueueRoomTick('room-a', repo, 1000);
 		enqueueRoomTick('room-a', repo, 1000);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(1);
+	});
+
+	it('replaces pending tick when new request has a sooner runAt', () => {
+		enqueueRoomTick('room-a', repo, 30_000);
+		const before = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
+		expect(before).toHaveLength(1);
+		const oldId = before[0].id;
+
+		// Request an immediate tick — should replace the 30s-delayed one
+		enqueueRoomTick('room-a', repo, 0);
+		const after = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
+		expect(after).toHaveLength(1);
+		expect(after[0].id).not.toBe(oldId);
+		// The new tick should run much sooner
+		expect(after[0].runAt).toBeLessThan(before[0].runAt);
+	});
+
+	it('does not delete existing pending tick before enqueue succeeds', () => {
+		const pendingJob: Job = {
+			id: 'pending-1',
+			queue: ROOM_TICK,
+			status: 'pending',
+			payload: { roomId: 'room-a' },
+			result: null,
+			error: null,
+			priority: 0,
+			maxRetries: 0,
+			retryCount: 0,
+			runAt: Date.now() + 30_000,
+			createdAt: Date.now(),
+			startedAt: null,
+			completedAt: null,
+		};
+
+		let deletedId: string | null = null;
+		const mockRepo = {
+			listJobs: () => [pendingJob],
+			enqueue: () => {
+				throw new Error('enqueue failed');
+			},
+			deleteJob: (id: string) => {
+				deletedId = id;
+				return true;
+			},
+		} as unknown as JobQueueRepository;
+
+		expect(() => enqueueRoomTick('room-a', mockRepo, 0)).toThrow('enqueue failed');
+		expect(deletedId).toBeNull();
 	});
 
 	it('allows enqueueing for different rooms independently', () => {

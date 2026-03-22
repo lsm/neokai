@@ -12,11 +12,15 @@ export const DEFAULT_TICK_INTERVAL_MS = 30_000;
 export type GetRuntimeForRoom = (roomId: string) => RoomRuntime | null | undefined;
 
 /**
- * Enqueues a room.tick job for a room if no pending tick job already exists for it.
- * Deduplication is by roomId — only one pending tick per room is allowed.
+ * Enqueues a room.tick job for a room, maintaining at most one pending tick per room.
  *
- * Uses a high limit (10_000) to safely cover deployments with thousands of rooms
- * while remaining bounded. At most one pending tick exists per room in steady state.
+ * When a pending tick already exists for the room:
+ * - If it will run at or before the requested time, keep it (no-op).
+ * - If the new request is sooner (e.g. an immediate tick triggered by goal creation),
+ *   delete the stale pending tick and enqueue a new one with the earlier runAt.
+ *
+ * This ensures event-driven ticks (scheduleTick with delay=0) are never silently
+ * dropped by a slower periodic tick that happens to be pending.
  */
 export function enqueueRoomTick(
 	roomId: string,
@@ -24,15 +28,28 @@ export function enqueueRoomTick(
 	delayMs: number = DEFAULT_TICK_INTERVAL_MS
 ): void {
 	const existing = jobQueue.listJobs({ queue: ROOM_TICK, status: ['pending'], limit: 10_000 });
-	const hasPending = existing.some((j) => (j.payload as { roomId?: string }).roomId === roomId);
-	if (hasPending) return;
+	const pendingJob = existing.find((j) => (j.payload as { roomId?: string }).roomId === roomId);
+
+	const desiredRunAt = Date.now() + delayMs;
+
+	if (pendingJob) {
+		// Existing tick will fire sooner or at the same time — keep it
+		if (pendingJob.runAt <= desiredRunAt) return;
+	}
 
 	jobQueue.enqueue({
 		queue: ROOM_TICK,
 		payload: { roomId },
 		maxRetries: 0,
-		runAt: Date.now() + delayMs,
+		runAt: desiredRunAt,
 	});
+
+	// New request is sooner — best-effort cleanup of the stale pending tick.
+	// Enqueue first so a transient enqueue failure cannot drop the only pending
+	// tick and stall room progress.
+	if (pendingJob) {
+		jobQueue.deleteJob(pendingJob.id);
+	}
 }
 
 /**
