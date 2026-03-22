@@ -12,7 +12,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { deleteRoom, openMissionsTab } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -26,15 +26,6 @@ async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0])
 		});
 		return (res as { room: { id: string } }).room.id;
 	});
-}
-
-async function openMissionsTab(
-	page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<void> {
-	const missionsTab = page.locator('button:has-text("Missions")');
-	await expect(missionsTab).toBeVisible({ timeout: 10000 });
-	await missionsTab.click();
-	await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
 }
 
 async function openCreateMissionModal(
