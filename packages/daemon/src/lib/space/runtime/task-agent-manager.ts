@@ -269,7 +269,11 @@ export class TaskAgentManager {
 
 			// --- Build and attach MCP server with live runtime dependencies
 			const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
-			const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
+			const subSessionFactory = this.createSubSessionFactory(
+				taskId,
+				spaceId,
+				workflowRun?.id ?? ''
+			);
 
 			const workflowRunId = workflowRun?.id ?? '';
 
@@ -409,7 +413,8 @@ export class TaskAgentManager {
 	async createSubSession(
 		taskId: string,
 		sessionId: string,
-		init: AgentSessionInit
+		init: AgentSessionInit,
+		mcpServers?: Record<string, McpServerConfig>
 	): Promise<string> {
 		const subSession = AgentSession.fromInit(
 			init,
@@ -419,6 +424,11 @@ export class TaskAgentManager {
 			this.config.getApiKey,
 			this.config.defaultModel
 		);
+
+		// Attach MCP servers before streaming starts so tools are available from turn 1.
+		if (mcpServers) {
+			subSession.setRuntimeMcpServers(mcpServers);
+		}
 
 		// Determine step ID from session convention or task context.
 		// The subSessions map uses the actual session ID as both the map key and session ID.
@@ -663,14 +673,39 @@ export class TaskAgentManager {
 	/**
 	 * Create a `SubSessionFactory` implementation bound to a specific taskId.
 	 * Passed to `createTaskAgentMcpServer()` for the given Task Agent session.
+	 *
+	 * @param workflowRunId  The active workflow run ID — forwarded to the step agent
+	 *   MCP server so it can read the resolved channel topology from run.config.
 	 */
-	private createSubSessionFactory(taskId: string, spaceId: string): SubSessionFactory {
+	private createSubSessionFactory(
+		taskId: string,
+		spaceId: string,
+		workflowRunId: string
+	): SubSessionFactory {
 		return {
 			create: async (
 				init: AgentSessionInit,
 				memberInfo?: SubSessionMemberInfo
 			): Promise<string> => {
-				const sessionId = await this.createSubSession(taskId, init.sessionId, init);
+				// Build the step agent MCP server BEFORE creating the sub-session.
+				// The sessionId is known from init.sessionId (randomUUID set by spawn_step_agent).
+				// The MCP server closures capture it for group lookups and messageInjector calls.
+				const stepAgentMcpServer = createStepAgentMcpServer({
+					ownSessionId: init.sessionId,
+					ownRole: memberInfo?.role ?? 'agent',
+					taskId,
+					workflowRunId,
+					sessionGroupRepo: this.config.sessionGroupRepo,
+					workflowRunRepo: this.config.workflowRunRepo,
+					messageInjector: (targetSessionId, message) =>
+						this.injectSubSessionMessage(targetSessionId, message),
+					getGroupId: () => this.taskGroupIds.get(taskId),
+					taskAgentMessageInjector: (message) => this.injectTaskAgentMessage(taskId, message),
+				});
+
+				const sessionId = await this.createSubSession(taskId, init.sessionId, init, {
+					'step-agent': stepAgentMcpServer as unknown as McpServerConfig,
+				});
 
 				// Add the sub-session as a member of the task's group (non-fatal).
 				const groupId = this.taskGroupIds.get(taskId);
@@ -1087,7 +1122,7 @@ export class TaskAgentManager {
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
 		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
-		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
+		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId, workflowRun?.id ?? '');
 
 		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
 
