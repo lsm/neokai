@@ -378,10 +378,12 @@ function createIndexes(db: BunDatabase): void {
 	);
 	// Room Runtime indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
-	// Partial unique index: at most one active group per task ref_id at the DB level
+	// Partial unique index: at most one active group per task ref_id at the DB level.
+	// Scoped to task/task_pair group types only — other future group types may share
+	// ref_id values without violating this constraint.
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
-		 ON session_groups(ref_id) WHERE completed_at IS NULL`
+		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);

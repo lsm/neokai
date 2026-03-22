@@ -361,7 +361,12 @@ export class SessionGroupRepository {
 
 	/**
 	 * DB-level zombie cleanup for a room: marks active session groups as completed
-	 * when their task is in a terminal state (completed, cancelled, archived).
+	 * when their task is in a terminal state
+	 * (completed, cancelled, archived, needs_attention).
+	 *
+	 * 'needs_attention' is the renamed 'failed' status (migration 24) and IS terminal —
+	 * TaskGroupManager.fail() sets it via failTask(). Zombies arise when the group's
+	 * completed_at was never set due to a crash after failTask() ran.
 	 *
 	 * Synchronous and safe to call from stop() without async/await.
 	 * Returns the number of groups cleaned up.
@@ -377,7 +382,7 @@ export class SessionGroupRepository {
 				   AND ref_id IN (
 				     SELECT t.id FROM tasks t
 				     WHERE t.room_id = ?
-				       AND t.status IN ('completed', 'cancelled', 'archived')
+				       AND t.status IN ('completed', 'cancelled', 'archived', 'needs_attention')
 				   )`
 			)
 			.run(now, roomId);
@@ -433,18 +438,24 @@ export class SessionGroupRepository {
 	 * lightweight revive intended for the "send message to failed task" flow.
 	 */
 	reviveGroup(groupId: string): SessionGroup | null {
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups
-				 SET completed_at = NULL,
-				     version = version + 1
-				 WHERE id = ?`
-			)
-			.run(groupId);
+		try {
+			const result = this.db
+				.prepare(
+					`UPDATE session_groups
+					 SET completed_at = NULL,
+					     version = version + 1
+					 WHERE id = ?`
+				)
+				.run(groupId);
 
-		if (result.changes === 0) return null;
-		this.reactiveDb.notifyChange('session_groups');
-		return this.getGroup(groupId);
+			if (result.changes === 0) return null;
+			this.reactiveDb.notifyChange('session_groups');
+			return this.getGroup(groupId);
+		} catch {
+			// Unique constraint violation: another active group already exists for this ref_id.
+			// Return null so callers treat this the same as a "group not found" condition.
+			return null;
+		}
 	}
 
 	/**
@@ -464,19 +475,25 @@ export class SessionGroupRepository {
 			deferredLeader: current.deferredLeader,
 		};
 
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups
-				 SET completed_at = NULL,
-				     metadata = ?,
-				     version = version + 1
-				 WHERE id = ?`
-			)
-			.run(JSON.stringify(resetMetadata), groupId);
+		try {
+			const result = this.db
+				.prepare(
+					`UPDATE session_groups
+					 SET completed_at = NULL,
+					     metadata = ?,
+					     version = version + 1
+					 WHERE id = ?`
+				)
+				.run(JSON.stringify(resetMetadata), groupId);
 
-		if (result.changes === 0) return null;
-		this.reactiveDb.notifyChange('session_groups');
-		return this.getGroup(groupId);
+			if (result.changes === 0) return null;
+			this.reactiveDb.notifyChange('session_groups');
+			return this.getGroup(groupId);
+		} catch {
+			// Unique constraint violation: another active group already exists for this ref_id.
+			// Return null so callers treat this the same as a "group not found" condition.
+			return null;
+		}
 	}
 
 	// ===== Metadata update helpers (partial merge pattern) =====

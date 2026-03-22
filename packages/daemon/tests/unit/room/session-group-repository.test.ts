@@ -843,7 +843,7 @@ describe('SessionGroupRepository', () => {
 			expect(zombie!.completedAt).not.toBeNull();
 		});
 
-		it('handles cancelled and archived tasks', () => {
+		it('handles cancelled, archived, and needs_attention tasks', () => {
 			const now = Date.now();
 			db.exec(`
 				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
@@ -853,10 +853,10 @@ describe('SessionGroupRepository', () => {
 				UPDATE tasks SET status = 'cancelled' WHERE id = '${taskId}';
 
 				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
-				VALUES ('zombie-archived', 'task', 'task-2', 0, '{}', ${now});
+				VALUES ('zombie-needs-attn', 'task', 'task-2', 0, '{}', ${now});
 				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
-				VALUES ('zombie-archived', 'wa', 'worker', ${now}), ('zombie-archived', 'la', 'leader', ${now});
-				UPDATE tasks SET status = 'archived' WHERE id = 'task-2';
+				VALUES ('zombie-needs-attn', 'wa', 'worker', ${now}), ('zombie-needs-attn', 'la', 'leader', ${now});
+				UPDATE tasks SET status = 'needs_attention' WHERE id = 'task-2';
 			`);
 			const cleaned = repo.cleanupZombieGroupsForRoom(roomId);
 			expect(cleaned).toBe(2);
