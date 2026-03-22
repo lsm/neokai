@@ -45,7 +45,7 @@ describe('TaskManager', () => {
 		roomId = room.id;
 
 		// Create task manager
-		taskManager = new TaskManager(db, roomId);
+		taskManager = new TaskManager(db, roomId, { notifyChange: () => {} } as never);
 	});
 
 	afterEach(() => {
@@ -150,7 +150,7 @@ describe('TaskManager', () => {
 
 			// Create another room and task manager
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 
 			// Should not be able to access room 1's task from room 2's manager
 			const retrieved = await taskManager2.getTask(created.id);
@@ -202,7 +202,7 @@ describe('TaskManager', () => {
 			await taskManager.createTask({ title: 'Room 1 Task', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 			await taskManager2.createTask({ title: 'Room 2 Task', description: '' });
 
 			const tasks1 = await taskManager.listTasks();
@@ -533,7 +533,7 @@ describe('TaskManager', () => {
 			const task = await taskManager.createTask({ title: 'Room 1 Task', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 
 			const result = await taskManager2.deleteTask(task.id);
 
@@ -755,7 +755,7 @@ describe('TaskManager', () => {
 		it('should isolate tasks between rooms', async () => {
 			// Create another room
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 
 			// Add tasks to both rooms
 			await taskManager.createTask({ title: 'Room 1 Task', description: '' });

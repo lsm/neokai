@@ -201,6 +201,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			mockRoomManager,
 			createMockDaemonHub(),
 			makeDb(makeGroupRow(submittedForReview)),
+			{ notifyChange: () => {} } as never,
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -318,6 +319,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				mockRoomManager,
 				createMockDaemonHub(),
 				makeDb(null), // no group row
+				{ notifyChange: () => {} } as never,
 				makeTaskManagerFactory(mockTask),
 				service
 			);
@@ -367,6 +369,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				mockRoomManager,
 				createMockDaemonHub(),
 				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
 				factory,
 				service
 			);
@@ -419,6 +422,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				mockRoomManager,
 				createMockDaemonHub(),
 				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
 				factory,
 				service
 			);
@@ -471,6 +475,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				mockRoomManager,
 				createMockDaemonHub(),
 				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
 				factory,
 				service
 			);
@@ -530,6 +535,7 @@ describe('task.cancel RPC Handler', () => {
 			mockRoomManager,
 			createMockDaemonHub(),
 			makeDb(makeGroupRow(submittedForReview)),
+			{ notifyChange: () => {} } as never,
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -644,6 +650,7 @@ describe('task.reject RPC Handler', () => {
 			mockRoomManager,
 			createMockDaemonHub(),
 			makeDb(makeGroupRow(submittedForReview)),
+			{ notifyChange: () => {} } as never,
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -743,6 +750,7 @@ describe('task.reject RPC Handler', () => {
 				mockRoomManager,
 				createMockDaemonHub(),
 				makeDb(null), // no group row
+				{ notifyChange: () => {} } as never,
 				makeTaskManagerFactory(reviewTask),
 				service
 			);
@@ -846,6 +854,7 @@ describe('task.setStatus RPC Handler', () => {
 			mockRoomManager,
 			createMockDaemonHub(),
 			makeDb(makeGroupRow(submittedForReview)),
+			{ notifyChange: () => {} } as never,
 			taskManagerFactory ?? makeSetStatusTaskManagerFactory(task),
 			runtimeService
 		);
@@ -1099,6 +1108,7 @@ describe('task.setStatus RPC Handler', () => {
 				mockRoomManager,
 				daemonHub,
 				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
 				makeSetStatusWithArchiveFactory(completedTask),
 				service
 			);
@@ -1167,6 +1177,7 @@ describe('task.interruptSession RPC Handler', () => {
 			mockRoomManager,
 			createMockDaemonHub(),
 			makeDb(makeGroupRow()),
+			{ notifyChange: () => {} } as never,
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -1299,6 +1310,7 @@ describe('task.archive RPC Handler', () => {
 			mockRoomManager,
 			createMockDaemonHub(),
 			makeDb(makeGroupRow()),
+			{ notifyChange: () => {} } as never,
 			opts.taskManagerFactory ?? makeTaskManagerFactory(task),
 			runtimeService
 		);

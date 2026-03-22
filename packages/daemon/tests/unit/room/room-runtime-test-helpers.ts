@@ -242,7 +242,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	const mockHub = createMockDaemonHub();
 	const groupRepo = new SessionGroupRepository(db as never);
 	const observer = new SessionObserver(mockHub as unknown as DaemonHub);
-	const taskManager = new TaskManager(db as never, 'room-1');
+	const taskManager = new TaskManager(db as never, 'room-1', { notifyChange: () => {} } as never);
 	const goalManager = new GoalManager(db as never, 'room-1');
 	const sessionFactory = createMockSessionFactory();
 	const room = makeRoom(opts?.room);
