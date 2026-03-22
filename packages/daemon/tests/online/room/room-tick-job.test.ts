@@ -14,9 +14,11 @@
  *
  * The room created in each test has no goals or tasks, so runtime.tick() is a
  * fast no-op (zombie check + empty recurring missions pass + no available
- * tasks). No Anthropic API calls are made.
+ * tasks). No Anthropic API calls are made; dev proxy is optional but harmless.
  *
- * Run:
+ * NOTE: All room/* CI shards are intentionally disabled in
+ * .github/workflows/main.yml due to resource usage. Run this test locally:
+ *
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/room/room-tick-job.test.ts
  */
 
@@ -102,7 +104,7 @@ describe('room tick via job queue (online)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await createDaemonServer({});
+		daemon = await createDaemonServer();
 	}, 30_000);
 
 	afterEach(async () => {
@@ -148,19 +150,24 @@ describe('room tick via job queue (online)', () => {
 		expect(next!.runAt).toBeGreaterThan(minExpectedRunAt);
 	}, 15_000);
 
-	test('dedup: at most one pending room.tick job per room', async () => {
+	test('dedup: exactly one pending room.tick job per room at creation', async () => {
 		const daemonCtx = getDaemonCtx(daemon);
 		const roomId = await createRoom(daemon);
 
-		// Immediately after room creation only one job should exist for this room.
+		// enqueueRoomTick() is called synchronously inside room.created handler
+		// (runtime.start() -> scheduleTick() -> enqueueRoomTick). The job processor
+		// polls every 1 s, so the job is in 'pending' state before the first poll
+		// fires — expect exactly 1 active job immediately after createRoom().
 		const atCreation = getRoomTickJobs(daemonCtx, roomId, ['pending', 'processing']);
-		expect(atCreation.length).toBeLessThanOrEqual(1);
+		expect(atCreation.length).toBe(1);
 
 		// Allow the initial tick to complete and the next to be enqueued.
 		await waitForRoomTickJob(daemonCtx, roomId, ['completed']);
 		await waitForRoomTickJob(daemonCtx, roomId, ['pending']);
 
 		// After re-scheduling: still at most one pending job for this room.
+		// (The 30 s job could be in 'pending' only; 'processing' is excluded since
+		// runAt is 30 s in the future and the processor won't pick it up yet.)
 		const afterReschedule = getRoomTickJobs(daemonCtx, roomId, ['pending']);
 		expect(afterReschedule.length).toBeLessThanOrEqual(1);
 	}, 15_000);
@@ -170,11 +177,14 @@ describe('room tick via job queue (online)', () => {
 		const roomId = await createRoom(daemon);
 
 		// Wait for the initial immediate tick to complete so the runtime has
-		// queued the next 30 s tick — gives us something to cancel.
+		// queued the next 30 s tick — gives us a pending job to cancel.
+		// The 30 s runAt ensures the processor cannot pick it up before we pause.
 		await waitForRoomTickJob(daemonCtx, roomId, ['completed']);
 		await waitForRoomTickJob(daemonCtx, roomId, ['pending']);
 
-		// Pause the runtime. This calls cancelPendingTickJobs().
+		// Pause the runtime. cancelPendingTickJobs() is called synchronously
+		// inside the RPC handler before it returns, so there is no async race
+		// between the pause RPC completing and our assertion below.
 		await daemon.messageHub.request('room.runtime.pause', { roomId });
 
 		// No pending room.tick jobs should remain for this room.
@@ -215,34 +225,45 @@ describe('room tick via job queue (online)', () => {
 		expect(stateResult.state).toBe('running');
 	}, 15_000);
 
-	test('stop cancels pending ticks and halts further scheduling', async () => {
+	test('stop cancels pending ticks and removes the runtime', async () => {
 		const daemonCtx = getDaemonCtx(daemon);
 		const roomId = await createRoom(daemon);
 
 		// Wait until there's a pending future tick to cancel.
+		// The 30 s runAt ensures the processor cannot pick it up before we stop.
 		await waitForRoomTickJob(daemonCtx, roomId, ['completed']);
 		await waitForRoomTickJob(daemonCtx, roomId, ['pending']);
 
-		// Stop the runtime.
+		// Stop the runtime. cancelPendingTickJobs() is called synchronously inside
+		// the RPC handler before it returns — no async race between the stop RPC
+		// completing and the assertion below.
 		await daemon.messageHub.request('room.runtime.stop', { roomId });
 
 		// No pending tick jobs should remain for this room.
 		const pendingAfterStop = getRoomTickJobs(daemonCtx, roomId, ['pending']);
 		expect(pendingAfterStop.length).toBe(0);
+
+		// stopRuntime() deletes the runtime from the map; getRuntimeState returns null
+		// which the RPC handler normalises to 'stopped'.
+		const stateResult = (await daemon.messageHub.request('room.runtime.state', {
+			roomId,
+		})) as { state: string };
+		expect(stateResult.state).toBe('stopped');
 	}, 15_000);
 
 	test('restart after stop resumes tick scheduling', async () => {
 		const daemonCtx = getDaemonCtx(daemon);
 		const roomId = await createRoom(daemon);
 
-		// Let initial tick complete, then stop.
+		// Let initial tick complete, then stop (no need to wait for the 30 s
+		// reschedule — stopRuntime cancels any pending ticks internally).
 		await waitForRoomTickJob(daemonCtx, roomId, ['completed']);
 		await daemon.messageHub.request('room.runtime.stop', { roomId });
 
 		// Confirm no pending jobs after stop.
 		expect(getRoomTickJobs(daemonCtx, roomId, ['pending']).length).toBe(0);
 
-		// Start the runtime again.
+		// Start the runtime again — creates a fresh runtime and calls start().
 		await daemon.messageHub.request('room.runtime.start', { roomId });
 
 		// A fresh tick should be enqueued by the new runtime's start().
