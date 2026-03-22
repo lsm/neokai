@@ -520,6 +520,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				method: message.method,
 				timestamp: message.timestamp,
+				...(clientId !== undefined ? { clientId } : {}),
 			};
 			const result = await Promise.resolve(handler(message.data, context));
 
