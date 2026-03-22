@@ -39,9 +39,6 @@ import type { Job, JobStatus } from '../../../src/storage/repositories/job-queue
 
 // This test suite requires in-process daemon access to inspect the job queue
 // directly. Spawned-process mode does not expose daemonContext.
-if (process.env.DAEMON_TEST_SPAWN === 'true') {
-	describe.skip('room tick via job queue (online) — requires in-process daemon (DAEMON_TEST_SPAWN=true is set)', () => {});
-}
 
 /** Maximum time (ms) to wait for a job to reach a desired status. */
 const JOB_WAIT_TIMEOUT_MS = 10_000;
@@ -165,7 +162,9 @@ async function startRuntime(daemon: DaemonServerContext, roomId: string): Promis
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe('room tick via job queue (online)', () => {
+const describeOrSkip = process.env.DAEMON_TEST_SPAWN === 'true' ? describe.skip : describe;
+
+describeOrSkip('room tick via job queue (online)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
