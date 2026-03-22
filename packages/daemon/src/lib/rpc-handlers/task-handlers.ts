@@ -22,7 +22,7 @@ import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
-import { TaskManager } from '../room/managers/task-manager';
+import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
@@ -385,10 +385,22 @@ export function setupTaskHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
+		// Validate status transition for runtime mode. This must happen here (not just in the
+		// manager) because the cancel and archive paths below use early returns that bypass
+		// setTaskStatus/archiveTask validation. Manual mode bypasses this check.
+		if (params.mode !== 'manual') {
+			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
+			if (!allowedTransitions.includes(params.status)) {
+				throw new Error(
+					`Invalid status transition from '${task.status}' to '${params.status}'. ` +
+						`Allowed: ${allowedTransitions.join(', ') || 'none'}`
+				);
+			}
+		}
+
 		// Archiving: delegate entirely to archiveTaskGroup (terminates sessions + cleans worktree)
 		// or archiveTask (no runtime — sets archivedAt directly). Early return skips generic path.
 		// Only applies to transitioning TO 'archived' (unarchiving is handled by the generic path below).
-		// Transition validation is owned by archiveTask/setTaskStatus — no duplicate check here.
 		if (params.status === 'archived') {
 			const runtime = runtimeService?.getRuntime(params.roomId);
 			const modeOpts = params.mode ? { mode: params.mode } : undefined;
