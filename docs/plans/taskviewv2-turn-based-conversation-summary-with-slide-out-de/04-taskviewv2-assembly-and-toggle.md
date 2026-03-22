@@ -24,6 +24,7 @@ Build a small helper component that renders runtime messages (status dividers, r
      - `model_fallback` — amber notification card
      - `leader_summary` — purple context card
    - Copy the rendering JSX from `TaskConversationRenderer.tsx` for these specific message types. This is intentional duplication of ~50 lines of JSX, scoped to only runtime message rendering.
+   - **Field access pattern**: The `RuntimeMessage` wrapper contains `message: SDKMessage`. To access type-specific fields (e.g., `resetsAt` and `sessionRole` for rate_limited, `fromModel`/`toModel` for model_fallback), access them from `runtimeMsg.message` and cast as needed: `const raw = runtimeMsg.message as Record<string, unknown>`. This matches the existing pattern in `TaskConversationRenderer.tsx`.
    - `data-testid="runtime-message"` on the root element
 3. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
@@ -52,7 +53,7 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
    - Use `useTaskViewData(roomId, taskId)` (extracted in Task 1.1) for task/group/session data
    - Use `useGroupMessages(groupId)` (extracted in Task 1.1) for message fetching
    - Feed messages into `useTurnBlocks(messages, isAtTail)` to get `TurnBlockItem[]`
-     - `isAtTail` is derived from `useGroupMessages` — true when there are no more newer messages to load
+     - `isAtTail` is the `isAtTail` field from the `useGroupMessages` return value (added in Task 1.1)
    - Render the list of `TurnBlockItem[]`:
      - `type: 'turn'` items render as `TurnSummaryBlock` components
      - `type: 'runtime'` items render as `RuntimeMessageRenderer` components

@@ -30,7 +30,7 @@ Milestones 2 and 3 can be developed in parallel after Milestone 1 completes.
 ## Key Constraints
 
 - Do NOT change V1 **behavior** — refactoring V1 to import from shared modules is allowed, but the rendered output and logic must remain identical
-- Do NOT modify `TaskConversationRenderer.tsx` rendering logic (V1 renderer)
+- Do NOT change the rendered output of `TaskConversationRenderer.tsx` — refactoring its internals to use shared hooks (e.g., `useGroupMessages`) is allowed and expected
 - All new V2 code goes under `packages/web/src/components/room/` and `packages/web/src/hooks/`
 - PR targets the `dev` branch
 - ChatContainer already accepts `{ sessionId, readonly? }` props — reuse directly in the slide-out panel, but verify no side effects from mounting a secondary instance (see Milestone 3)

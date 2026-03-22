@@ -16,10 +16,12 @@ Create a `SlideOutPanel` component that slides in from the right side of the tas
 **Subtasks (ordered implementation steps):**
 
 1. Run `bun install` at the worktree root.
-2. Investigate `ChatContainer.tsx` for side effects when mounting a secondary instance:
+2. Investigate and resolve `ChatContainer.tsx` side effects when mounting a secondary instance:
    - Check session selection state management (line 84+) and cleanup logic (line 521) for conflicts.
-   - If `ChatContainer` modifies global signals (e.g., session selection state), the slide-out panel must either (a) wrap it in a context that isolates signals, or (b) pass a prop to disable selection side effects.
-   - Document findings and chosen isolation approach in the PR description.
+   - **Known issue**: `ChatContainer` calls `sessionStore.select()` which modifies global signal state. The `readonly` prop exists but does not suppress this call. Preact signals are global singletons and cannot be scoped with a context provider.
+   - **Preferred strategy**: Add a new prop `suppressSelection?: boolean` to `ChatContainer` that skips the `sessionStore.select()` call when true. The slide-out panel passes `suppressSelection={true}`. This is a minimal, targeted change to `ChatContainer` (adding a conditional guard around one line) that doesn't affect existing callers.
+   - **Fallback strategy**: If modifying `ChatContainer` proves too risky (e.g., the selection call has downstream effects), create a thin wrapper `ReadonlyChatContainer` that mounts `ChatContainer` after saving/restoring the session selection state via `useEffect` cleanup.
+   - Document the chosen approach and any findings in the PR description.
 3. Create `packages/web/src/components/room/SlideOutPanel.tsx` with the following:
    - **Props**:
      ```

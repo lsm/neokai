@@ -22,7 +22,9 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
    - This covers the `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, session model fetch, and loading/error states.
    - Update `TaskView.tsx` to call `useTaskViewData()` instead of inline logic. Verify V1 behavior is unchanged.
 4. Extract the group message fetching and parsing logic from `TaskConversationRenderer.tsx` into `packages/web/src/hooks/useGroupMessages.ts`:
-   - `useGroupMessages(groupId)` — returns `{ messages: ParsedGroupMessage[], isLoading, loadOlder, hasOlder }`.
+   - Define the `ParsedGroupMessage` type alias: this is `SDKMessage` with `_taskMeta` (containing `authorRole`, `authorSessionId`, etc.) attached during parsing. Formally: `type ParsedGroupMessage = SDKMessage & { _taskMeta?: { authorRole: string; authorSessionId: string; [key: string]: unknown } }`. Export this type from the hook file so downstream consumers (e.g., `useTurnBlocks`) can import it.
+   - `useGroupMessages(groupId)` — returns `{ messages: ParsedGroupMessage[], isLoading, loadOlder, hasOlder, isAtTail: boolean }`.
+     - `isAtTail`: `true` when the loaded messages include the newest messages in the conversation (i.e., initial load fetches the tail, and no newer page exists). This is always `true` after initial load since the current implementation fetches newest-first. It would be `false` only if a future bidirectional pagination loads a middle page. For now, default to `true` after the initial fetch completes.
    - This covers: `task.getGroupMessages` RPC, `state.groupMessages.delta` subscription, `parseGroupMessage()` parsing, pagination buffer, deduplication, and the `fetchingRef`/`pendingDeltasRef` race-condition handling.
    - Update `TaskConversationRenderer.tsx` to call `useGroupMessages()` instead of inline logic. Verify V1 behavior is unchanged.
 5. Extract shared sub-components from `TaskView.tsx` into `packages/web/src/components/room/task-shared/`:
@@ -41,6 +43,10 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
 - `HumanInputArea`, `TaskActionDialogs`, `TaskActionBar` are extracted into shared files.
 - `TaskView.tsx` and `TaskConversationRenderer.tsx` import from the new shared locations.
 - V1 behavior is identical — all existing tests pass, no visual changes.
+- **Note on test updates**: Existing test files (`TaskView.test.tsx`, `TaskConversationRenderer.test.tsx`) may need mock target adjustments (e.g., mocking the new shared hook modules instead of inline logic). These import/mock swaps are expected and acceptable — they are part of the refactor, not a behavioral change.
+- **Implementation note**: This task touches multiple complex files. Commit after each subtask (steps 2-5) for safe rollback if any extraction step causes issues.
+- `ParsedGroupMessage` type is defined and exported from `useGroupMessages.ts`.
+- `useGroupMessages` return type includes `isAtTail: boolean`.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** None
