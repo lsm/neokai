@@ -65,7 +65,7 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
        canCancel, canInterrupt, canReactivate, canComplete, canArchive,
      }
      ```
-   - This covers: `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, room channel join/leave, loading/error states, `conversationKey` state (used to force `TaskConversationRenderer` remount after approve/reject), `associatedGoal` (from `roomStore.goalByTaskId`), all task action handlers with their loading/error states, all modal states, and derived permission flags (`canCancel`, `canInterrupt`, `canReactivate`, `canComplete`, `canArchive` — derived from `task.status` at ~lines 926-936).
+   - This covers: `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, room channel join/leave, loading/error states, `conversationKey` state (used to force `TaskConversationRenderer` remount after approve/reject), `associatedGoal` (from `roomStore.goalByTaskId`), all task action handlers with their loading/error states, all modal states, and derived permission flags (`canCancel`, `canReactivate`, `canComplete`, `canArchive` at ~lines 928-936, and `canInterrupt` defined separately at ~line 998 near the `interruptSession` handler).
    - **Note**: The source uses `interruptSession` as the handler name (line 1001, calling `task.interruptSession` RPC). Keep this name in the hook for consistency.
    - Update `TaskView.tsx` to call `useTaskViewData()` instead of inline logic. Verify V1 behavior is unchanged.
 5. Extract shared sub-components from `TaskView.tsx` into `packages/web/src/components/room/task-shared/`:
