@@ -451,10 +451,13 @@ export class SessionGroupRepository {
 			if (result.changes === 0) return null;
 			this.reactiveDb.notifyChange('session_groups');
 			return this.getGroup(groupId);
-		} catch {
-			// Unique constraint violation: another active group already exists for this ref_id.
-			// Return null so callers treat this the same as a "group not found" condition.
-			return null;
+		} catch (err) {
+			// Only swallow unique constraint violations (another active group exists for ref_id).
+			// All other DB errors (disk full, closed DB, etc.) are re-thrown.
+			if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+				return null;
+			}
+			throw err;
 		}
 	}
 
@@ -489,10 +492,13 @@ export class SessionGroupRepository {
 			if (result.changes === 0) return null;
 			this.reactiveDb.notifyChange('session_groups');
 			return this.getGroup(groupId);
-		} catch {
-			// Unique constraint violation: another active group already exists for this ref_id.
-			// Return null so callers treat this the same as a "group not found" condition.
-			return null;
+		} catch (err) {
+			// Only swallow unique constraint violations (another active group exists for ref_id).
+			// All other DB errors (disk full, closed DB, etc.) are re-thrown.
+			if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+				return null;
+			}
+			throw err;
 		}
 	}
 

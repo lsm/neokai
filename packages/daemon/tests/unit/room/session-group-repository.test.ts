@@ -328,6 +328,35 @@ describe('SessionGroupRepository', () => {
 			const reset = repo.resetGroupForRestart(group.id);
 			expect(reset!.version).toBe(group.version + 2); // +1 for failGroup, +1 for reset
 		});
+
+		it('returns null (not throws) when unique constraint prevents restart', () => {
+			// Install the partial unique index to simulate production schema
+			db.exec(
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+				 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
+			);
+
+			const now = Date.now();
+			// Create a completed group for the task
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
+				VALUES ('completed-grp2', 'task', '${taskId}', 0, '{}', ${now - 2000}, ${now - 1000});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('completed-grp2', 'w-c2', 'worker', ${now}), ('completed-grp2', 'l-c2', 'leader', ${now});
+			`);
+
+			// Create another active group for the same task (bypasses index since completed-grp2 is done)
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('active-grp2', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('active-grp2', 'w-a2', 'worker', ${now}), ('active-grp2', 'l-a2', 'leader', ${now});
+			`);
+
+			// Resetting the completed group would violate the unique index — must return null, not throw
+			const result = repo.resetGroupForRestart('completed-grp2');
+			expect(result).toBeNull();
+		});
 	});
 
 	describe('reviveGroup', () => {
@@ -373,6 +402,35 @@ describe('SessionGroupRepository', () => {
 
 			repo.reviveGroup(group.id);
 			expect(repo.getActiveGroups(roomId)).toHaveLength(1);
+		});
+
+		it('returns null (not throws) when unique constraint prevents revive', () => {
+			// Install the partial unique index to simulate production schema
+			db.exec(
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+				 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
+			);
+
+			const now = Date.now();
+			// Create a completed group for the task
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
+				VALUES ('completed-grp', 'task', '${taskId}', 0, '{}', ${now - 2000}, ${now - 1000});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('completed-grp', 'w-old', 'worker', ${now}), ('completed-grp', 'l-old', 'leader', ${now});
+			`);
+
+			// Create another active group for the same task (bypasses the index since completed-grp is completed)
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('active-grp', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('active-grp', 'w-new', 'worker', ${now}), ('active-grp', 'l-new', 'leader', ${now});
+			`);
+
+			// Now attempting to revive the completed group should return null (violates unique index)
+			const result = repo.reviveGroup('completed-grp');
+			expect(result).toBeNull();
 		});
 	});
 
