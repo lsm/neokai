@@ -186,6 +186,22 @@ export class MessageHub {
 		};
 	}
 
+	/**
+	 * Register a handler for client disconnect events (server-side only)
+	 * Forwards to the primary transport's onClientDisconnect if supported.
+	 * Returns a no-op unsubscribe function if the transport doesn't support it.
+	 */
+	onClientDisconnect(handler: (clientId: string) => void): UnsubscribeFn {
+		const transport = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		if (transport?.onClientDisconnect) {
+			return transport.onClientDisconnect(handler);
+		}
+		// No-op: transport doesn't support disconnect events
+		return () => {};
+	}
+
 	// ========================================
 	// Router Management (Server-side)
 	// ========================================
