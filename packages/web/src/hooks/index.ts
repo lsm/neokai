@@ -46,3 +46,8 @@ export {
 	type UseAutoScrollOptions,
 	type UseAutoScrollResult,
 } from './useAutoScroll';
+export {
+	useGroupMessageLiveQuery,
+	type GroupMessage,
+	type UseGroupMessageLiveQueryResult,
+} from './useGroupMessageLiveQuery';
