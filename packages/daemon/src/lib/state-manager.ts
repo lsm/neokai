@@ -353,6 +353,25 @@ export class StateManager {
 			});
 		});
 
+		// Space session group events (space-scoped channel: 'space:${spaceId}')
+		this.eventBus.on('spaceSessionGroup.created', (data) => {
+			this.messageHub.event('spaceSessionGroup.created', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.memberAdded', (data) => {
+			this.messageHub.event('spaceSessionGroup.memberAdded', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.memberUpdated', (data) => {
+			this.messageHub.event('spaceSessionGroup.memberUpdated', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
 		// Space workflow definition events (global channel)
 		this.eventBus.on('spaceWorkflow.created', (data) => {
 			this.messageHub.event('spaceWorkflow.created', data, {
