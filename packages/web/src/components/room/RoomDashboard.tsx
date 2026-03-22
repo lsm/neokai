@@ -14,6 +14,7 @@ import { useState } from 'preact/hooks';
 import type { RuntimeState } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
 import { navigateToRooms, navigateToRoomTask } from '../../lib/router';
+import { currentRoomTabSignal } from '../../lib/signals';
 import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -201,8 +202,12 @@ export function RoomDashboard() {
 				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
 				<RoomTasks
 					tasks={tasks}
+					goalByTaskId={roomStore.goalByTaskId.value}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+					onGoalClick={() => {
+						currentRoomTabSignal.value = 'goals';
+					}}
 					onReject={async (taskId, feedback) => {
 						try {
 							await roomStore.rejectTask(taskId, feedback);

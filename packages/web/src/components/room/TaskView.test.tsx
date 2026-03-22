@@ -2091,3 +2091,149 @@ describe('TaskView — Reactivate and Archive actions', () => {
 		expect(sendButton.disabled).toBe(false);
 	});
 });
+
+// Import roomStore to set up goal associations for goal badge tests
+import { roomStore } from '../../lib/room-store.ts';
+import { currentRoomTabSignal } from '../../lib/signals.ts';
+
+describe('TaskView — goal badge', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		// Clear goals between tests
+		roomStore.goals.value = [];
+		currentRoomTabSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+		roomStore.goals.value = [];
+		currentRoomTabSignal.value = null;
+	});
+
+	it('shows goal badge when task is linked to a goal', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		roomStore.goals.value = [
+			{
+				id: 'goal-1',
+				roomId: 'room-1',
+				title: 'Test Mission',
+				description: '',
+				status: 'active',
+				priority: 'normal',
+				progress: 0,
+				linkedTaskIds: ['task-1'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		];
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const badge = container.querySelector('[data-testid="task-view-goal-badge"]');
+		expect(badge).toBeTruthy();
+		expect(badge?.textContent).toContain('Test Mission');
+	});
+
+	it('does NOT show goal badge when task has no linked goal', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		// No goals set - roomStore.goals.value is already []
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const badge = container.querySelector('[data-testid="task-view-goal-badge"]');
+		expect(badge).toBeNull();
+	});
+
+	it('sets currentRoomTabSignal to "goals" and navigates to room when goal badge clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		roomStore.goals.value = [
+			{
+				id: 'goal-1',
+				roomId: 'room-1',
+				title: 'Clickable Mission',
+				description: '',
+				status: 'active',
+				priority: 'normal',
+				progress: 0,
+				linkedTaskIds: ['task-1'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		];
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="task-view-goal-badge"]')).toBeTruthy();
+		});
+
+		const badge = container.querySelector(
+			'[data-testid="task-view-goal-badge"]'
+		) as HTMLButtonElement;
+		fireEvent.click(badge);
+
+		expect(currentRoomTabSignal.value).toBe('goals');
+		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+	});
+
+	it('shows goal title as tooltip on badge', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		roomStore.goals.value = [
+			{
+				id: 'goal-1',
+				roomId: 'room-1',
+				title: 'Tooltip Mission Title',
+				description: '',
+				status: 'active',
+				priority: 'normal',
+				progress: 0,
+				linkedTaskIds: ['task-1'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		];
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="task-view-goal-badge"]')).toBeTruthy();
+		});
+
+		const badge = container.querySelector('[data-testid="task-view-goal-badge"]');
+		expect(badge?.getAttribute('title')).toBe('Mission: Tooltip Mission Title');
+	});
+});

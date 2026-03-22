@@ -176,6 +176,17 @@ class RoomStore {
 		return result;
 	});
 
+	/** Reverse lookup: taskId → RoomGoal (the goal that owns this task) */
+	readonly goalByTaskId = computed(() => {
+		const result = new Map<string, RoomGoal>();
+		for (const goal of this.goals.value) {
+			for (const taskId of goal.linkedTaskIds) {
+				result.set(taskId, goal);
+			}
+		}
+		return result;
+	});
+
 	/** Tasks not linked to any goal */
 	readonly orphanTasks = computed(() => {
 		const linkedIds = new Set<string>();

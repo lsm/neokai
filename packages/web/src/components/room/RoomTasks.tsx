@@ -10,7 +10,7 @@
 
 import { useState } from 'preact/hooks';
 import { signal, effect } from '@preact/signals';
-import type { TaskSummary, TaskStatus } from '@neokai/shared';
+import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
 import { toast } from '../../lib/toast.ts';
 
 /** Tab filter types */
@@ -41,7 +41,10 @@ if (typeof window !== 'undefined') {
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
+	/** Pre-built reverse lookup from roomStore.goalByTaskId.value */
+	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -102,7 +105,9 @@ function getStatusBorderColor(status: TaskStatus): string {
 
 export function RoomTasks({
 	tasks,
+	goalByTaskId,
 	onTaskClick,
+	onGoalClick,
 	onView,
 	onReject,
 	onApprove,
@@ -175,7 +180,9 @@ export function RoomTasks({
 					tasks={filteredTasks}
 					allTasks={tasks}
 					tab={selectedTab}
+					goalByTaskId={goalByTaskId}
 					onTaskClick={onTaskClick}
+					onGoalClick={onGoalClick}
 					onView={onView}
 					onReject={onReject}
 					onApprove={onApprove}
@@ -281,7 +288,9 @@ function TaskList({
 	tasks,
 	allTasks,
 	tab,
+	goalByTaskId,
 	onTaskClick,
+	onGoalClick,
 	onView,
 	onReject,
 	onApprove,
@@ -290,7 +299,9 @@ function TaskList({
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
 	tab: TaskFilterTab;
+	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -317,7 +328,9 @@ function TaskList({
 						variant="yellow"
 						tasks={inProgress}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
 					/>
@@ -329,7 +342,9 @@ function TaskList({
 						variant="default"
 						tasks={pending}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
 					/>
@@ -341,7 +356,9 @@ function TaskList({
 						variant="gray"
 						tasks={draft}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
 					/>
@@ -363,7 +380,9 @@ function TaskList({
 						variant="purple"
 						tasks={reviewTasks}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						onView={onView}
 						onReject={onReject}
 						onApprove={onApprove}
@@ -378,7 +397,9 @@ function TaskList({
 						variant="red"
 						tasks={needsAttention}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						showAlert
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
@@ -401,7 +422,9 @@ function TaskList({
 						variant="green"
 						tasks={completed}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						onReactivate={onReactivate}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
@@ -414,7 +437,9 @@ function TaskList({
 						variant="gray"
 						tasks={cancelled}
 						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						onReactivate={onReactivate}
 						rejectingTaskId={rejectingTaskId}
 						onSetRejectingTaskId={setRejectingTaskId}
@@ -433,7 +458,9 @@ function TaskList({
 				variant="gray"
 				tasks={tasks}
 				allTasks={allTasks}
+				goalByTaskId={goalByTaskId}
 				onTaskClick={onTaskClick}
+				onGoalClick={onGoalClick}
 				rejectingTaskId={rejectingTaskId}
 				onSetRejectingTaskId={setRejectingTaskId}
 			/>
@@ -448,7 +475,9 @@ function TaskGroup({
 	variant,
 	tasks,
 	allTasks,
+	goalByTaskId,
 	onTaskClick,
+	onGoalClick,
 	onView,
 	onReject,
 	onApprove,
@@ -462,7 +491,9 @@ function TaskGroup({
 	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
+	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -528,7 +559,9 @@ function TaskGroup({
 						key={task.id}
 						task={task}
 						allTasks={allTasks}
+						goal={goalByTaskId?.get(task.id)}
 						onClick={onTaskClick}
+						onGoalClick={onGoalClick}
 						onView={onView}
 						onReject={onReject}
 						onApprove={onApprove}
@@ -553,7 +586,9 @@ function isBlocked(task: TaskSummary, allTasks: TaskSummary[]): boolean {
 function TaskItem({
 	task,
 	allTasks,
+	goal,
 	onClick,
+	onGoalClick,
 	onView,
 	onReject,
 	onApprove,
@@ -563,7 +598,9 @@ function TaskItem({
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
+	goal?: RoomGoal;
 	onClick?: (taskId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -598,7 +635,7 @@ function TaskItem({
 		>
 			<div class="flex items-start justify-between">
 				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-2">
+					<div class="flex items-center gap-2 flex-wrap">
 						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
 						{isWorking && (
 							<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/20 border border-blue-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0">
@@ -610,6 +647,27 @@ function TaskItem({
 							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
 								Blocked
 							</span>
+						)}
+						{goal && (
+							<button
+								data-testid={`task-goal-badge-${task.id}`}
+								onClick={(e) => {
+									e.stopPropagation();
+									onGoalClick?.();
+								}}
+								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0 hover:bg-emerald-900/40 transition-colors"
+								title={`Mission: ${goal.title}`}
+							>
+								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M13 10V3L4 14h7v7l9-11h-7z"
+									/>
+								</svg>
+								<span class="max-w-[120px] truncate">{goal.title}</span>
+							</button>
 						)}
 					</div>
 				</div>
