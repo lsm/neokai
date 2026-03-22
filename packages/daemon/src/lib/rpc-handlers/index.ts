@@ -166,7 +166,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
 	const roomRuntimeService = new RoomRuntimeService({
-		db: deps.db,
+		// Use reactiveDb.db (proxied Database facade) so sdk_messages writes from
+		// room worker/leader sessions trigger LiveQuery invalidation immediately.
+		db: deps.reactiveDb.db,
 		messageHub: deps.messageHub,
 		daemonHub: deps.daemonHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
