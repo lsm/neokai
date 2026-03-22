@@ -218,9 +218,10 @@ describe('room.tick via job queue (online)', () => {
 		const daemonCtx = getDaemonCtx(daemon);
 		const roomId = await createRoom(daemon, 'tick-dedup-test');
 
-		// Immediately after room creation: exactly 1 pending/processing tick exists.
-		// scheduleTick(delay=0) fires synchronously inside start(), so the job is
-		// visible right away — no race between the RPC returning and the enqueue.
+		// Wait for the tick to appear: room.created handlers fire via queueMicrotask
+		// after the RPC returns, so the enqueue is not guaranteed to have happened
+		// the moment createRoom() resolves. Poll until it does, then assert count=1.
+		await waitForTickJob(daemonCtx, roomId, ['pending', 'processing']);
 		const atStartup = listTickJobs(daemonCtx, roomId, ['pending', 'processing']);
 		expect(atStartup.length).toBe(1);
 
