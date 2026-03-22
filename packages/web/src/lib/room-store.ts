@@ -267,6 +267,7 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goals.value = [];
+		this.goalsLoading.value = false;
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
@@ -301,47 +302,85 @@ class RoomStore {
 			// Join the room channel first
 			hub.joinChannel(`room:${roomId}`);
 
-			// 1. Room overview subscription (room + sessions + tasks)
+			// 1. Room overview subscription (room + sessions only — tasks come from LiveQuery)
 			const unsubRoomOverview = hub.onEvent<RoomOverview>('room.overview', (overview) => {
 				if (overview.room.id === roomId) {
 					this.room.value = overview.room;
 					this.sessions.value = overview.sessions;
-					this.tasks.value = overview.allTasks ?? overview.activeTasks;
 				}
 			});
 			this.cleanupFunctions.push(unsubRoomOverview);
 
-			// 2. Task updates
-			const unsubTaskUpdate = hub.onEvent<{ roomId: string; task: NeoTask }>(
-				'room.task.update',
+			// 2. Tasks via LiveQuery — replaces room.task.update event listener.
+			const tasksSubId = `tasks-byRoom-${roomId}`;
+
+			const unsubTaskSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
 				(event) => {
-					if (event.roomId === roomId) {
-						const task = event.task;
-						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
-
-						// Show toast when a known task transitions into review status.
-						// Skip when prevTask is null (task not yet in local state) to avoid
-						// spurious toasts during initial hydration / reconnection.
-						if (task.status === 'review' && idx >= 0) {
-							const prevTask = this.tasks.value[idx];
-							if (prevTask.status !== 'review') {
-								toast.info(`Task ready for review: ${task.title}`);
-							}
-						}
-
-						if (idx >= 0) {
-							this.tasks.value = [
-								...this.tasks.value.slice(0, idx),
-								task,
-								...this.tasks.value.slice(idx + 1),
-							];
-						} else {
-							this.tasks.value = [...this.tasks.value, task];
-						}
+					if (event.subscriptionId === tasksSubId) {
+						this.tasks.value = event.rows as TaskSummary[];
 					}
 				}
 			);
-			this.cleanupFunctions.push(unsubTaskUpdate);
+			this.cleanupFunctions.push(unsubTaskSnapshot);
+
+			const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== tasksSubId) return;
+				let current = this.tasks.value;
+				if (event.removed?.length) {
+					const removedIds = new Set((event.removed as TaskSummary[]).map((r) => r.id));
+					current = current.filter((t) => !removedIds.has(t.id));
+				}
+				if (event.updated?.length) {
+					const updatedTasks = event.updated as TaskSummary[];
+					// Show toast when a known task transitions into review status.
+					// Skip when prevTask is absent to avoid spurious toasts during hydration.
+					for (const updatedTask of updatedTasks) {
+						if (updatedTask.status === 'review') {
+							const prevTask = current.find((t) => t.id === updatedTask.id);
+							if (prevTask && prevTask.status !== 'review') {
+								toast.info(`Task ready for review: ${updatedTask.title}`);
+							}
+						}
+					}
+					const updatedMap = new Map(updatedTasks.map((u) => [u.id, u]));
+					current = current.map((t) => updatedMap.get(t.id) ?? t);
+				}
+				if (event.added?.length) {
+					current = [...current, ...(event.added as TaskSummary[])];
+				}
+				this.tasks.value = current;
+			});
+			this.cleanupFunctions.push(unsubTaskDelta);
+
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'tasks.byRoom',
+				params: [roomId],
+				subscriptionId: tasksSubId,
+			});
+
+			// Re-subscribe on reconnect: the server-side subscription is per-connection.
+			const unsubTaskReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'tasks.byRoom',
+						params: [roomId],
+						subscriptionId: tasksSubId,
+					})
+					.catch((err) => {
+						logger.warn('Tasks LiveQuery re-subscribe failed:', err);
+					});
+			});
+			this.cleanupFunctions.push(unsubTaskReconnect);
+
+			// Cleanup: tell the server to dispose the subscription when leaving the room.
+			this.cleanupFunctions.push(() => {
+				const h = connectionManager.getHubIfConnected();
+				if (h) {
+					h.request('liveQuery.unsubscribe', { subscriptionId: tasksSubId }).catch(() => {});
+				}
+			});
 
 			// 3. Goals via LiveQuery — replaces goal.created/updated/completed event listeners.
 			// Register snapshot/delta handlers BEFORE subscribing so we never miss the
@@ -353,6 +392,7 @@ class RoomStore {
 				(event) => {
 					if (event.subscriptionId === goalsSubId) {
 						this.goals.value = event.rows as RoomGoal[];
+						this.goalsLoading.value = false;
 					}
 				}
 			);
@@ -377,6 +417,8 @@ class RoomStore {
 			this.cleanupFunctions.push(unsubGoalDelta);
 
 			// Subscribe to the goals.byRoom named query.
+			// Mark loading before subscribing; the snapshot handler clears it.
+			this.goalsLoading.value = true;
 			await hub.request('liveQuery.subscribe', {
 				queryName: 'goals.byRoom',
 				params: [roomId],
@@ -389,6 +431,7 @@ class RoomStore {
 			// snapshot handler above.
 			const unsubReconnect = hub.onConnection((state) => {
 				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				this.goalsLoading.value = true;
 				hub
 					.request('liveQuery.subscribe', {
 						queryName: 'goals.byRoom',
@@ -396,8 +439,8 @@ class RoomStore {
 						subscriptionId: goalsSubId,
 					})
 					.catch((err) => {
-						logger.warn('Goals LiveQuery re-subscribe failed, falling back to refetch:', err);
-						this.fetchGoals().catch(() => {});
+						logger.warn('Goals LiveQuery re-subscribe failed:', err);
+						this.goalsLoading.value = false;
 					});
 			});
 			this.cleanupFunctions.push(unsubReconnect);
@@ -507,12 +550,11 @@ class RoomStore {
 			if (overview) {
 				this.room.value = overview.room;
 				this.sessions.value = overview.sessions;
-				this.tasks.value = overview.allTasks ?? overview.activeTasks;
 			} else {
 				this.error.value = 'Room not found';
 			}
 
-			// Goals are delivered via the goals.byRoom LiveQuery snapshot pushed
+			// Tasks and goals are delivered via LiveQuery snapshot pushed
 			// synchronously during liveQuery.subscribe in startSubscriptions.
 
 			// Fetch runtime state
@@ -593,10 +635,7 @@ class RoomStore {
 			description,
 		});
 
-		if (task) {
-			this.tasks.value = [...this.tasks.value, task];
-		}
-
+		// Task appears in tasks.value via the tasks.byRoom LiveQuery delta.
 		return task;
 	}
 
@@ -620,7 +659,7 @@ class RoomStore {
 			taskId,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -643,7 +682,7 @@ class RoomStore {
 			status,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -666,7 +705,7 @@ class RoomStore {
 			feedback,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	// ========================================
@@ -706,31 +745,6 @@ class RoomStore {
 	// ========================================
 
 	/**
-	 * Fetch goals for the room
-	 */
-	async fetchGoals(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			this.goalsLoading.value = true;
-			const response = await hub.request<{ goals: RoomGoal[] }>('goal.list', { roomId });
-			this.goals.value = response.goals ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch goals:', err);
-		} finally {
-			this.goalsLoading.value = false;
-		}
-	}
-
-	/**
 	 * Create a new goal
 	 */
 	async createGoal(goal: CreateGoalParams): Promise<void> {
@@ -751,12 +765,7 @@ class RoomStore {
 			throw err;
 		}
 
-		// Refetch goals to ensure UI is up to date — non-fatal if it fails
-		try {
-			await this.fetchGoals();
-		} catch (err) {
-			logger.warn('Failed to refetch goals after creation:', err);
-		}
+		// goals.value is updated automatically by the goals.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -775,8 +784,7 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.update', { roomId, goalId, updates });
-			// Refetch goals to ensure UI is up to date
-			await this.fetchGoals();
+			// goals.value is updated automatically by the goals.byRoom LiveQuery delta.
 		} catch (err) {
 			logger.error('Failed to update goal:', err);
 			throw err;
@@ -799,8 +807,7 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.delete', { roomId, goalId });
-			// Refetch goals to ensure UI is up to date
-			await this.fetchGoals();
+			// goals.value is updated automatically by the goals.byRoom LiveQuery delta.
 		} catch (err) {
 			logger.error('Failed to delete goal:', err);
 			throw err;

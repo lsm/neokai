@@ -1,13 +1,12 @@
 /**
- * Tests for RoomStore goal LiveQuery subscription (Task 3.2/3.3)
+ * Tests for RoomStore tasks.byRoom LiveQuery subscription (Task 3.3)
  *
- * Verifies that goals are updated exclusively via liveQuery.snapshot /
- * liveQuery.delta events rather than legacy goal.created / goal.updated /
- * goal.completed events.
+ * Verifies that tasks are updated exclusively via liveQuery.snapshot /
+ * liveQuery.delta events rather than the legacy room.task.update event.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { RoomGoal, GoalStatus } from '@neokai/shared';
+import type { TaskSummary } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -89,23 +88,22 @@ import { roomStore } from '../room-store.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
-const ROOM_ID = 'room-test';
-const GOALS_SUB_ID = `goals-byRoom-${ROOM_ID}`;
+const ROOM_ID = 'room-tasks-test';
+const TASKS_SUB_ID = `tasks-byRoom-${ROOM_ID}`;
 
-function makeGoal(id: string, overrides: Partial<RoomGoal> = {}): RoomGoal {
+function makeTask(id: string, overrides: Partial<TaskSummary> = {}): TaskSummary {
 	return {
 		id,
 		roomId: ROOM_ID,
-		title: `Goal ${id}`,
+		title: `Task ${id}`,
 		description: '',
-		status: 'active' as GoalStatus,
+		status: 'pending',
 		priority: 'normal',
 		progress: 0,
-		linkedTaskIds: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
-	};
+	} as TaskSummary;
 }
 
 function setupHubRequests(hub: MockHub): void {
@@ -122,7 +120,7 @@ function setupHubRequests(hub: MockHub): void {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('RoomStore — goals.byRoom LiveQuery subscription', () => {
+describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 	let hub: MockHub;
 
 	beforeEach(async () => {
@@ -138,109 +136,108 @@ describe('RoomStore — goals.byRoom LiveQuery subscription', () => {
 		vi.clearAllMocks();
 	});
 
-	it('subscribes to goals.byRoom with a stable subscriptionId on room select', () => {
+	it('subscribes to tasks.byRoom with a stable subscriptionId on room select', () => {
 		const calls = hub.request.mock.calls as [string, unknown][];
 		const subscribeCall = calls.find(
 			([method, params]) =>
 				method === 'liveQuery.subscribe' &&
-				(params as { queryName: string }).queryName === 'goals.byRoom'
+				(params as { queryName: string }).queryName === 'tasks.byRoom'
 		);
 		expect(subscribeCall).toBeDefined();
 		expect(subscribeCall![1]).toMatchObject({
-			queryName: 'goals.byRoom',
+			queryName: 'tasks.byRoom',
 			params: [ROOM_ID],
-			subscriptionId: GOALS_SUB_ID,
+			subscriptionId: TASKS_SUB_ID,
 		});
 	});
 
-	it('does NOT subscribe via legacy goal.list on room select', () => {
-		const calls = hub.request.mock.calls as [string, unknown][];
-		const goalListCall = calls.find(([method]) => method === 'goal.list');
-		expect(goalListCall).toBeUndefined();
+	it('does NOT subscribe via legacy room.task.update event listener', () => {
+		// Ensure no handler is registered for the old event
+		expect(hub._handlers.has('room.task.update')).toBe(false);
 	});
 
-	it('populates goals.value from liveQuery.snapshot', () => {
-		const goals = [makeGoal('g1'), makeGoal('g2')];
-		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: goals, version: 1 });
-		expect(roomStore.goals.value).toEqual(goals);
+	it('populates tasks.value from liveQuery.snapshot', () => {
+		const tasks = [makeTask('t1'), makeTask('t2')];
+		hub.fire('liveQuery.snapshot', { subscriptionId: TASKS_SUB_ID, rows: tasks, version: 1 });
+		expect(roomStore.tasks.value).toEqual(tasks);
 	});
 
 	it('ignores liveQuery.snapshot for a different subscriptionId', () => {
 		hub.fire('liveQuery.snapshot', {
 			subscriptionId: 'other-sub',
-			rows: [makeGoal('irrelevant')],
+			rows: [makeTask('irrelevant')],
 			version: 1,
 		});
-		expect(roomStore.goals.value).toEqual([]);
+		expect(roomStore.tasks.value).toEqual([]);
 	});
 
-	it('appends goals from liveQuery.delta added', () => {
-		const g1 = makeGoal('g1');
-		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: [g1], version: 1 });
-		const g2 = makeGoal('g2');
-		hub.fire('liveQuery.delta', { subscriptionId: GOALS_SUB_ID, added: [g2], version: 2 });
-		expect(roomStore.goals.value.map((g) => g.id)).toEqual(['g1', 'g2']);
+	it('appends tasks from liveQuery.delta added', () => {
+		const t1 = makeTask('t1');
+		hub.fire('liveQuery.snapshot', { subscriptionId: TASKS_SUB_ID, rows: [t1], version: 1 });
+		const t2 = makeTask('t2');
+		hub.fire('liveQuery.delta', { subscriptionId: TASKS_SUB_ID, added: [t2], version: 2 });
+		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t1', 't2']);
 	});
 
-	it('removes goals from liveQuery.delta removed', () => {
-		const g1 = makeGoal('g1');
-		const g2 = makeGoal('g2');
-		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: [g1, g2], version: 1 });
-		hub.fire('liveQuery.delta', { subscriptionId: GOALS_SUB_ID, removed: [g1], version: 2 });
-		expect(roomStore.goals.value.map((g) => g.id)).toEqual(['g2']);
+	it('removes tasks from liveQuery.delta removed', () => {
+		const t1 = makeTask('t1');
+		const t2 = makeTask('t2');
+		hub.fire('liveQuery.snapshot', { subscriptionId: TASKS_SUB_ID, rows: [t1, t2], version: 1 });
+		hub.fire('liveQuery.delta', { subscriptionId: TASKS_SUB_ID, removed: [t1], version: 2 });
+		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t2']);
 	});
 
-	it('replaces goals from liveQuery.delta updated', () => {
-		const g1 = makeGoal('g1');
-		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: [g1], version: 1 });
-		const g1Updated = makeGoal('g1', { status: 'completed' as GoalStatus, progress: 100 });
+	it('replaces tasks from liveQuery.delta updated', () => {
+		const t1 = makeTask('t1');
+		hub.fire('liveQuery.snapshot', { subscriptionId: TASKS_SUB_ID, rows: [t1], version: 1 });
+		const t1Updated = makeTask('t1', { status: 'in_progress', progress: 50 });
 		hub.fire('liveQuery.delta', {
-			subscriptionId: GOALS_SUB_ID,
-			updated: [g1Updated],
+			subscriptionId: TASKS_SUB_ID,
+			updated: [t1Updated],
 			version: 2,
 		});
-		expect(roomStore.goals.value[0].status).toBe('completed');
-		expect(roomStore.goals.value[0].progress).toBe(100);
+		expect(roomStore.tasks.value[0].status).toBe('in_progress');
+		expect(roomStore.tasks.value[0].progress).toBe(50);
 	});
 
 	it('ignores liveQuery.delta for a different subscriptionId', () => {
-		const g1 = makeGoal('g1');
-		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: [g1], version: 1 });
+		const t1 = makeTask('t1');
+		hub.fire('liveQuery.snapshot', { subscriptionId: TASKS_SUB_ID, rows: [t1], version: 1 });
 		hub.fire('liveQuery.delta', {
 			subscriptionId: 'other-sub',
-			removed: [g1],
+			removed: [t1],
 			version: 2,
 		});
-		// g1 should still be present
-		expect(roomStore.goals.value.map((g) => g.id)).toEqual(['g1']);
+		// t1 should still be present
+		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t1']);
 	});
 
-	it('unsubscribes from goals.byRoom on room deselect', async () => {
+	it('unsubscribes from tasks.byRoom on room deselect', async () => {
 		hub.request.mockClear();
 		await roomStore.select(null);
 		const calls = hub.request.mock.calls as [string, unknown][];
 		const unsubCall = calls.find(
 			([method, params]) =>
 				method === 'liveQuery.unsubscribe' &&
-				(params as { subscriptionId: string }).subscriptionId === GOALS_SUB_ID
+				(params as { subscriptionId: string }).subscriptionId === TASKS_SUB_ID
 		);
 		expect(unsubCall).toBeDefined();
 	});
 
-	it('re-subscribes to goals.byRoom on reconnect', () => {
+	it('re-subscribes to tasks.byRoom on reconnect', () => {
 		hub.request.mockClear();
 		hub.fireConnection('connected');
 		const calls = hub.request.mock.calls as [string, unknown][];
 		const resubCall = calls.find(
 			([method, params]) =>
 				method === 'liveQuery.subscribe' &&
-				(params as { queryName: string }).queryName === 'goals.byRoom'
+				(params as { queryName: string }).queryName === 'tasks.byRoom'
 		);
 		expect(resubCall).toBeDefined();
 		expect(resubCall![1]).toMatchObject({
-			queryName: 'goals.byRoom',
+			queryName: 'tasks.byRoom',
 			params: [ROOM_ID],
-			subscriptionId: GOALS_SUB_ID,
+			subscriptionId: TASKS_SUB_ID,
 		});
 	});
 
@@ -252,61 +249,56 @@ describe('RoomStore — goals.byRoom LiveQuery subscription', () => {
 		const resubCall = calls.find(
 			([method, params]) =>
 				method === 'liveQuery.subscribe' &&
-				(params as { queryName: string }).queryName === 'goals.byRoom'
+				(params as { queryName: string }).queryName === 'tasks.byRoom'
 		);
 		expect(resubCall).toBeUndefined();
 	});
 
-	it('does not update goals on legacy goal.updated event', () => {
+	it('does not update tasks on legacy room.task.update event', () => {
 		hub.fire('liveQuery.snapshot', {
-			subscriptionId: GOALS_SUB_ID,
-			rows: [makeGoal('g1')],
+			subscriptionId: TASKS_SUB_ID,
+			rows: [makeTask('t1')],
 			version: 1,
 		});
 		// Legacy event should have no effect
-		hub.fire('goal.updated', { roomId: ROOM_ID, goalId: 'g1', goal: makeGoal('g1-modified') });
-		// goals signal unchanged from snapshot
-		expect(roomStore.goals.value[0].id).toBe('g1');
+		hub.fire('room.task.update', {
+			roomId: ROOM_ID,
+			task: makeTask('t1', { status: 'completed' }),
+		});
+		// tasks signal unchanged from snapshot
+		expect(roomStore.tasks.value[0].status).toBe('pending');
 	});
 
-	it('sets goalsLoading to true before subscribing and false on first snapshot', () => {
-		// After room select, goalsLoading is true because the mock hub did not fire a snapshot.
-		expect(roomStore.goalsLoading.value).toBe(true);
-
-		// When the server delivers the snapshot, goalsLoading clears.
+	it('resets tasks to [] on room deselect', async () => {
 		hub.fire('liveQuery.snapshot', {
-			subscriptionId: GOALS_SUB_ID,
-			rows: [makeGoal('g1')],
+			subscriptionId: TASKS_SUB_ID,
+			rows: [makeTask('t1'), makeTask('t2')],
 			version: 1,
 		});
-		expect(roomStore.goalsLoading.value).toBe(false);
-	});
-
-	it('resets goalsLoading to false on room deselect (even if snapshot never arrived)', async () => {
-		// goalsLoading is true (snapshot not yet delivered)
-		expect(roomStore.goalsLoading.value).toBe(true);
-
+		expect(roomStore.tasks.value.length).toBe(2);
 		await roomStore.select(null);
-
-		expect(roomStore.goalsLoading.value).toBe(false);
+		expect(roomStore.tasks.value).toEqual([]);
 	});
 
-	it('sets goalsLoading to true on reconnect and false on subsequent snapshot', () => {
-		// Deliver initial snapshot to clear loading
-		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: [], version: 1 });
-		expect(roomStore.goalsLoading.value).toBe(false);
-
-		// Reconnect triggers re-subscribe which sets loading = true
-		hub.request.mockClear();
-		hub.fireConnection('connected');
-		expect(roomStore.goalsLoading.value).toBe(true);
-
-		// New snapshot clears it
+	it('does not optimistically append task after task.create RPC', async () => {
 		hub.fire('liveQuery.snapshot', {
-			subscriptionId: GOALS_SUB_ID,
-			rows: [makeGoal('g1')],
-			version: 2,
+			subscriptionId: TASKS_SUB_ID,
+			rows: [],
+			version: 1,
 		});
-		expect(roomStore.goalsLoading.value).toBe(false);
+		// Make task.create return a task
+		hub.request.mockImplementation((method: string) => {
+			if (method === 'task.create') {
+				return Promise.resolve({ task: makeTask('new-task') });
+			}
+			if (method === 'room.runtime.models')
+				return Promise.resolve({ leaderModel: null, workerModel: null });
+			return Promise.resolve({ ok: true });
+		});
+
+		await roomStore.createTask('New Task', 'Description');
+
+		// tasks.value should still be empty — LiveQuery delta will populate it
+		expect(roomStore.tasks.value).toEqual([]);
 	});
 });
