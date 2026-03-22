@@ -80,9 +80,16 @@ export interface RPCHandlerDependencies {
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
-	/** Persistent job queue repository */
+	/**
+	 * Persistent job queue repository.
+	 * TODO: consumed by Milestones 2–5 handlers (session title generation,
+	 * GitHub polling, room tick, cleanup jobs).
+	 */
 	jobQueue: JobQueueRepository;
-	/** Persistent job queue processor */
+	/**
+	 * Persistent job queue processor.
+	 * TODO: consumed by Milestones 2–5 handlers for registering queue handlers.
+	 */
 	jobProcessor: JobQueueProcessor;
 }
 

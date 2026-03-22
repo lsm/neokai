@@ -3,7 +3,7 @@
  *
  * Verifies:
  * - DaemonAppContext includes jobProcessor and jobQueue
- * - Cleanup stops the processor before messageHub
+ * - Cleanup stops the processor before messageHub (ordering guaranteed by stop() resolving)
  * - maxConcurrent is configurable via NEOKAI_JOB_QUEUE_MAX_CONCURRENT env var
  */
 
@@ -36,8 +36,7 @@ const DB_SCHEMA = `
 
 describe('DaemonAppContext — jobQueue and jobProcessor fields', () => {
 	it('DaemonAppContext interface includes jobQueue and jobProcessor', () => {
-		// Verify the interface has both fields by constructing a shape check.
-		// This is a compile-time guard — if the interface lacks the fields, tsc fails.
+		// Compile-time guard: if the interface lacks these fields, tsc fails.
 		const requiredFields: Array<keyof DaemonAppContext> = ['jobQueue', 'jobProcessor'];
 		expect(requiredFields).toContain('jobQueue');
 		expect(requiredFields).toContain('jobProcessor');
@@ -58,73 +57,93 @@ describe('JobQueueProcessor lifecycle', () => {
 		db.close();
 	});
 
-	it('processor stops before messageHub — stop() resolves and marks as stopped', async () => {
+	it('stop() resolves only after all in-flight jobs finish (cleanup ordering guarantee)', async () => {
+		// Verifies that `await jobProcessor.stop()` always settles before code that follows it —
+		// this is what guarantees stop() happens before messageHub.cleanup() in app.ts.
+		let jobFinished = false;
+		let resolveJob!: () => void;
+
 		const processor = new JobQueueProcessor(repo, { pollIntervalMs: 5000 });
-		const stopOrder: string[] = [];
+		processor.register('lifecycle-queue', async () => {
+			await new Promise<void>((resolve) => {
+				resolveJob = resolve;
+			});
+			jobFinished = true;
+		});
 
-		processor.start();
+		repo.enqueue({ queue: 'lifecycle-queue', payload: {} });
+		await processor.tick();
+		// Job is now in-flight
 
-		// Simulate the cleanup ordering: stop processor first, then messageHub
-		await processor.stop();
-		stopOrder.push('processor');
-		stopOrder.push('messageHub');
+		const stopPromise = processor.stop();
+		expect(jobFinished).toBe(false); // still running
 
-		expect(stopOrder[0]).toBe('processor');
-		expect(stopOrder[1]).toBe('messageHub');
+		resolveJob();
+		await stopPromise;
+		expect(jobFinished).toBe(true); // stop() settled only after job completed
 	});
 
-	it('processor stop() resolves even with no in-flight jobs', async () => {
+	it('stop() resolves immediately when no in-flight jobs', async () => {
 		const processor = new JobQueueProcessor(repo, { pollIntervalMs: 5000 });
 		processor.start();
-
-		// Should resolve immediately when no jobs are in flight
 		await expect(processor.stop()).resolves.toBeUndefined();
 	});
 
-	it('maxConcurrent defaults to 5 when env var is unset', () => {
+	it('maxConcurrent defaults to 5 and is enforced by the processor', async () => {
 		const savedEnv = process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
 		delete process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
 
 		const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
-		expect(maxConcurrent).toBe(5);
+		const resolvers: Array<() => void> = [];
+
+		const processor = new JobQueueProcessor(repo, { maxConcurrent, pollIntervalMs: 5000 });
+		processor.register('default-limit-queue', async () => {
+			await new Promise<void>((resolve) => resolvers.push(resolve));
+		});
+
+		// Enqueue more jobs than the default limit
+		for (let i = 0; i < 8; i++) {
+			repo.enqueue({ queue: 'default-limit-queue', payload: { i } });
+		}
+
+		const claimed = await processor.tick();
+		expect(claimed).toBe(5); // processor enforces the computed maxConcurrent
+
+		for (const r of resolvers) r();
+		await processor.stop();
 
 		if (savedEnv !== undefined) {
 			process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = savedEnv;
 		}
 	});
 
-	it('maxConcurrent reads from NEOKAI_JOB_QUEUE_MAX_CONCURRENT env var', () => {
+	it('maxConcurrent reads from NEOKAI_JOB_QUEUE_MAX_CONCURRENT and is enforced by the processor', async () => {
 		const savedEnv = process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
-		process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = '10';
+		process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = '3';
 
 		const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
-		expect(maxConcurrent).toBe(10);
+		const resolvers: Array<() => void> = [];
+
+		const processor = new JobQueueProcessor(repo, { maxConcurrent, pollIntervalMs: 5000 });
+		processor.register('custom-limit-queue', async () => {
+			await new Promise<void>((resolve) => resolvers.push(resolve));
+		});
+
+		for (let i = 0; i < 5; i++) {
+			repo.enqueue({ queue: 'custom-limit-queue', payload: { i } });
+		}
+
+		const claimed = await processor.tick();
+		expect(claimed).toBe(3); // processor enforces the env-configured limit
+
+		for (const r of resolvers) r();
+		await processor.stop();
 
 		if (savedEnv !== undefined) {
 			process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT = savedEnv;
 		} else {
 			delete process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT;
 		}
-	});
-
-	it('processor with custom maxConcurrent respects the concurrency limit', async () => {
-		const maxConcurrent = 3;
-		const processor = new JobQueueProcessor(repo, { maxConcurrent, pollIntervalMs: 5000 });
-		const resolvers: Array<() => void> = [];
-
-		processor.register('test', async () => {
-			await new Promise<void>((resolve) => resolvers.push(resolve));
-		});
-
-		for (let i = 0; i < 5; i++) {
-			repo.enqueue({ queue: 'test', payload: { i } });
-		}
-
-		const claimed = await processor.tick();
-		expect(claimed).toBe(maxConcurrent);
-
-		for (const r of resolvers) r();
-		await processor.stop();
 	});
 
 	it('JobQueueRepository and JobQueueProcessor can be instantiated together', () => {
