@@ -618,6 +618,8 @@ describe('StateManager', () => {
 				expect(eventHandlers.has('room.overview')).toBe(true);
 				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
 				expect(eventHandlers.has('goal.created')).toBe(true);
+				// goal.updated was removed in PR #695 (emitGoalUpdated dropped from goal handlers)
+				expect(eventHandlers.has('goal.updated')).toBe(false);
 				expect(eventHandlers.has('goal.completed')).toBe(true);
 				expect(eventHandlers.has('goal.progressUpdated')).toBe(true);
 			});
@@ -714,6 +716,15 @@ describe('StateManager', () => {
 					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.created', data, {
 						channel: 'room:room-123',
 					});
+				});
+			});
+
+			describe('goal.updated', () => {
+				it('is not forwarded via eventBus (removed in PR #695 — goal.updated is no longer emitted by goal RPC handlers)', () => {
+					// goal.updated was removed when emitGoalUpdated was dropped from goal handlers.
+					// Verify no handler is registered for this event so CI fails loudly if it
+					// is re-introduced without a corresponding test update.
+					expect(eventHandlers.has('goal.updated')).toBe(false);
 				});
 			});
 

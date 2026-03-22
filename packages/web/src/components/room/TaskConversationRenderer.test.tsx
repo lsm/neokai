@@ -310,8 +310,11 @@ describe('TaskConversationRenderer — session question state props', () => {
 
 		await waitFor(() => {
 			const joinedRooms = mockJoinRoom.mock.calls.map((c: string[]) => c[0]);
+			// Session channels are joined via useSessionQuestionState
 			expect(joinedRooms).toContain('session:leader-session-123');
 			expect(joinedRooms).toContain('session:worker-session-456');
+			// TaskConversationRenderer no longer joins the group channel itself
+			expect(joinedRooms).not.toContain('group:group-1');
 		});
 	});
 
