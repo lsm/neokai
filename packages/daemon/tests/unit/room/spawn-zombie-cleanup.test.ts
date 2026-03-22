@@ -149,67 +149,53 @@ describe('cleanStaleGroupsForTask — exclusive territory: hard-deleted task row
 		ctx.db.close();
 	});
 
-	it('terminates zombie group invisible to getActiveGroups (task row hard-deleted) without crashing on UNIQUE constraint', async () => {
-		// This is the scenario cleanStaleGroupsForTask is designed to own exclusively.
+	it('direct call: terminates zombie whose task row is absent — recoverZombieGroups cannot interfere', async () => {
+		// This test calls cleanStaleGroupsForTask() directly (bypassing tick() and
+		// recoverZombieGroups entirely) to isolate its exclusive territory:
+		// a zombie group whose task row has been hard-deleted from the tasks table.
 		//
-		// A zombie group exists in the DB but its task row was hard-deleted from tasks.
-		// getActiveGroups() uses INNER JOIN on tasks — it misses this group entirely.
-		// recoverZombieGroups() never sees it.
-		//
-		// We simulate this by:
-		//   1. Creating a task and inserting a zombie group referencing it
-		//   2. Hard-deleting the task row (so getActiveGroups INNER JOIN misses the zombie)
-		//   3. Re-inserting a fresh pending task row with the same ID
-		//   4. Running tick() — recoverZombieGroups misses the zombie (it was absent when
-		//      getActiveGroups ran at the start of the tick, OR the re-inserted task row
-		//      means it IS found — either way, no UNIQUE constraint crash must occur)
-		//
-		// The key invariant: the zombie group is terminated and no crash occurs.
-
+		// getActiveGroups() uses INNER JOIN on tasks — with no task row, the zombie is
+		// invisible to recoverZombieGroups. getActiveGroupsForTask() has no JOIN and
+		// finds it. cleanStaleGroupsForTask() terminates the zombie without changing
+		// task status (the task object is passed in from the caller who still has it).
 		const task = await ctx.taskManager.createTask({
-			title: 'Task for exclusive cleanStaleGroupsForTask test',
-			description: 'Zombie group, hard-deleted task row gap',
+			title: 'Orphan zombie task',
+			description: 'Task row will be deleted before direct method call',
 		});
 
 		const now = Date.now();
-
-		// Insert zombie group
 		ctx.db.exec(
 			`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
-			 VALUES ('exclusive-zombie', 'task', '${task.id}', 0, '{}', ${now - 5000})`
+			 VALUES ('excl-zombie', 'task', '${task.id}', 0, '{}', ${now - 5000})`
 		);
 		ctx.db.exec(
 			`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
-			 VALUES ('exclusive-zombie', 'excl-worker', 'worker', ${now - 5000}),
-			        ('exclusive-zombie', 'excl-leader', 'leader', ${now - 5000})`
+			 VALUES ('excl-zombie', 'excl-worker', 'worker', ${now - 5000}),
+			        ('excl-zombie', 'excl-leader', 'leader', ${now - 5000})`
 		);
 
-		// Hard-delete the task row so getActiveGroups (INNER JOIN) misses this zombie
+		// Hard-delete the task row — zombie is now invisible to getActiveGroups (INNER JOIN)
 		ctx.db.exec(`DELETE FROM tasks WHERE id = '${task.id}'`);
 
-		// Confirm zombie is now invisible to getActiveGroups but visible to getActiveGroupsForTask
-		const visibleViaJoin = ctx.groupRepo.getActiveGroups('room-1');
-		expect(visibleViaJoin.find((g) => g.id === 'exclusive-zombie')).toBeUndefined();
+		// Confirm zombie is invisible via INNER JOIN but visible via direct query
+		expect(
+			ctx.groupRepo.getActiveGroups('room-1').find((g) => g.id === 'excl-zombie')
+		).toBeUndefined();
+		expect(ctx.groupRepo.getActiveGroupsForTask(task.id)).toHaveLength(1);
 
-		const visibleDirect = ctx.groupRepo.getActiveGroupsForTask(task.id);
-		expect(visibleDirect).toHaveLength(1);
-
-		// Re-insert a fresh pending task row with the same ID so the spawn loop fires
-		ctx.db.exec(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, assigned_agent, created_at)
-			 VALUES ('${task.id}', 'room-1', 'Task for exclusive cleanStaleGroupsForTask test', 'Zombie group, hard-deleted task row gap', 'pending', 'normal', '[]', 'general', ${now})`
-		);
-
-		// Both orphan sessions are missing — cleanStaleGroupsForTask should terminate the zombie
+		// Both sessions missing
 		ctx.sessionFactory.missingSessionIds = new Set(['excl-worker', 'excl-leader']);
 
-		// Tick: cleanStaleGroupsForTask cleans the zombie (getActiveGroupsForTask finds it)
-		// No UNIQUE constraint crash must occur.
-		await ctx.runtime.tick();
+		// DIRECT CALL — recoverZombieGroups never runs; only cleanStaleGroupsForTask acts
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		await (ctx.runtime as any).cleanStaleGroupsForTask(task);
 
 		// Zombie group must be terminated (completedAt set)
-		const zombieGroup = ctx.groupRepo.getGroup('exclusive-zombie');
+		const zombieGroup = ctx.groupRepo.getGroup('excl-zombie');
 		expect(zombieGroup?.completedAt).not.toBeNull();
+
+		// No active groups remain for this task
+		expect(ctx.groupRepo.getActiveGroupsForTask(task.id)).toHaveLength(0);
 
 		ctx.sessionFactory.missingSessionIds = undefined;
 	});
@@ -374,34 +360,51 @@ describe('UNIQUE constraint race condition handling', () => {
 		expect(groupB).not.toBeNull();
 	});
 
-	it('spawnGroupForTask handles concurrent race gracefully — no crash when UNIQUE constraint triggers', async () => {
-		// Simulates a concurrent-tick race: a competing tick already inserted a group
-		// for the same task between the dedup check and the INSERT in spawnGroupForTask.
-		// The UNIQUE constraint fires — spawnGroupForTask must handle this as warn (not
-		// crash) and leave the existing group intact.
+	it('spawnGroupForTask UNIQUE constraint catch path: warns and returns without throwing', async () => {
+		// Exercises the catch block in spawnGroupForTask that handles the concurrent-tick
+		// race: two ticks both pass the dedup check (getActiveGroupsForTask returns []),
+		// then both attempt INSERT — the second one hits UNIQUE constraint.
 		//
-		// We simulate this by: spawning a group normally (tick 1), then verifying
-		// that a second tick with the same task in_progress doesn't crash or double-spawn.
-		// The actual concurrent race (two ticks racing) is non-deterministic in unit tests,
-		// so we verify the observable end state: one group, task in_progress, no error thrown.
+		// We simulate the race by:
+		//   1. Insert a conflicting active group directly in the DB
+		//   2. Patch getActiveGroupsForTask to return [] — simulates the dedup check
+		//      running before the concurrent INSERT landed (the race gap)
+		//   3. Call spawnGroupForTask directly — it passes the dedup check, calls
+		//      taskGroupManager.spawn(), which calls groupRepo.createGroup() → UNIQUE
+		//      constraint fires, caught by the catch block at lines 3482-3499
+		//
+		// Expected: no exception propagates, existing group is untouched, task stays pending
+		// (createGroup fires before startTask — the task was never moved to in_progress).
 		const { task } = await createGoalAndTask(ctx);
 
-		// First tick spawns a group
-		await ctx.runtime.tick();
-		const groupsAfter1 = ctx.groupRepo.getActiveGroups('room-1');
-		expect(groupsAfter1).toHaveLength(1);
-		const firstGroupId = groupsAfter1[0].id;
+		const now = Date.now();
+		// Insert the "concurrent" active group — this will trigger UNIQUE constraint on INSERT
+		ctx.db.exec(
+			`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+			 VALUES ('racing-group', 'task', '${task.id}', 0, '{}', ${now})`
+		);
 
-		// Second tick: dedup check catches it, no UNIQUE constraint triggered
-		// (this covers the normal path; the concurrent race path is covered by the
-		// DB-level constraint test above)
-		await ctx.runtime.tick();
+		// Patch getActiveGroupsForTask → [] so the dedup check does not catch it (race gap)
+		const originalGetActive = ctx.groupRepo.getActiveGroupsForTask.bind(ctx.groupRepo);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		(ctx.groupRepo as any).getActiveGroupsForTask = (_taskId: string) => [];
 
-		const groupsAfter2 = ctx.groupRepo.getActiveGroups('room-1');
-		expect(groupsAfter2).toHaveLength(1);
-		expect(groupsAfter2[0].id).toBe(firstGroupId);
+		try {
+			// Must not throw — UNIQUE constraint is caught and logged as warn, not error
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			await (ctx.runtime as any).spawnGroupForTask(task);
+		} finally {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(ctx.groupRepo as any).getActiveGroupsForTask = originalGetActive;
+		}
 
+		// The racing group is still active (we didn't disturb it)
+		const racingGroup = ctx.groupRepo.getGroup('racing-group');
+		expect(racingGroup?.completedAt).toBeNull();
+
+		// Task is still pending — createGroup (which fires the constraint) is called
+		// BEFORE startTask in taskGroupManager.spawn(), so the task was never started.
 		const taskAfter = await ctx.taskManager.getTask(task.id);
-		expect(taskAfter?.status).toBe('in_progress');
+		expect(taskAfter?.status).toBe('pending');
 	});
 });
