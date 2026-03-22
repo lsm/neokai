@@ -5,7 +5,7 @@
  * Tests runtime state indicator, pause/resume/stop/start controls,
  * confirmation dialogs, loading state,
  * stats overview grid (sessions, pending, active, completed, failed),
- * and tasks/sessions list rendering.
+ * and task list rendering.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -443,16 +443,6 @@ describe('RoomDashboard', () => {
 
 			// navigateToRoomTask should be called exactly once (from onView), not twice
 			expect(mockNavigateToRoomTask).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	describe('Sessions Section', () => {
-		it('should show Sessions heading', () => {
-			const { container } = render(<RoomDashboard />);
-
-			const headings = container.querySelectorAll('h2');
-			const sessionsHeading = Array.from(headings).find((h) => h.textContent === 'Sessions');
-			expect(sessionsHeading).toBeTruthy();
 		});
 	});
 });
