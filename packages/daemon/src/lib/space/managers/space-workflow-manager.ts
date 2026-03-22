@@ -115,6 +115,8 @@ export class SpaceWorkflowManager {
 				id: s.id,
 				name: s.name,
 				agentId: s.agentId,
+				agents: s.agents,
+				channels: s.channels,
 				instructions: s.instructions,
 			}));
 			this.validateTransitions(
@@ -199,7 +201,9 @@ export class SpaceWorkflowManager {
 			}
 		}
 
-		// Existence validation: only when agentLookup is available
+		// Existence validation: only when agentLookup is available.
+		// Also collect agent roles here to avoid a second traversal in channel validation.
+		let knownRoles: Set<string> | null = null;
 		if (this.agentLookup) {
 			if (hasAgentId) {
 				const agent = this.agentLookup.getAgentById(spaceId, step.agentId!);
@@ -210,6 +214,7 @@ export class SpaceWorkflowManager {
 				}
 			}
 			if (hasAgents) {
+				knownRoles = new Set<string>();
 				for (let j = 0; j < step.agents!.length; j++) {
 					const entry = step.agents![j];
 					const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
@@ -218,17 +223,26 @@ export class SpaceWorkflowManager {
 							`step[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
 						);
 					}
+					knownRoles.add(agent.role);
 				}
 			}
 		}
 
-		// Channel validation (after agent validation so we can collect roles)
+		// Channel validation (after agent validation so roles are already collected)
 		if (step.channels && step.channels.length > 0) {
-			this.validateStepChannels(spaceId, step, index);
+			this.validateStepChannels(step, index, knownRoles);
 		}
 	}
 
-	private validateStepChannels(spaceId: string, step: WorkflowStepInput, stepIndex: number): void {
+	private validateStepChannels(
+		step: WorkflowStepInput,
+		stepIndex: number,
+		/**
+		 * Roles collected from agentLookup during agent existence validation.
+		 * Null when agentLookup is not configured — role-reference checks are skipped.
+		 */
+		knownRoles: Set<string> | null
+	): void {
 		const channels = step.channels!;
 
 		// Channels require the multi-agent agents[] format — single-agent steps have no peers
@@ -236,20 +250,6 @@ export class SpaceWorkflowManager {
 			throw new WorkflowValidationError(
 				`step[${stepIndex}]: channels require a multi-agent step (agents[] must be provided)`
 			);
-		}
-
-		// Collect known roles from agents when agentLookup is available
-		let knownRoles: Set<string> | null = null;
-		if (this.agentLookup) {
-			knownRoles = new Set<string>();
-			for (const agentEntry of step.agents) {
-				if (agentEntry.agentId && agentEntry.agentId.trim()) {
-					const agent = this.agentLookup.getAgentById(spaceId, agentEntry.agentId);
-					if (agent) {
-						knownRoles.add(agent.role);
-					}
-				}
-			}
 		}
 
 		const validDirections = new Set(['one-way', 'bidirectional']);

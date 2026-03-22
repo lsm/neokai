@@ -1189,7 +1189,7 @@ describe('SpaceWorkflowManager', () => {
 		).toThrow(WorkflowValidationError);
 	});
 
-	test('createWorkflow rejects channels when no agents[] provided', () => {
+	test('createWorkflow rejects channels when no agents[] provided (agentId-only step)', () => {
 		expect(() =>
 			manager.createWorkflow({
 				spaceId: 'space-1',
@@ -1199,6 +1199,72 @@ describe('SpaceWorkflowManager', () => {
 						name: 'Step',
 						agentId: 'agent-a',
 						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels when agents[] is explicitly empty', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Channels Empty Agents Array',
+				steps: [
+					{
+						id: 'step-x',
+						name: 'Step',
+						agentId: 'agent-a',
+						agents: [],
+						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels with whitespace-only from', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Whitespace From',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: '   ', to: 'reviewer', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels with whitespace-only string to', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Whitespace To',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: 'coder', to: '   ', direction: 'one-way' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects channels with whitespace-only element in array to', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Whitespace Array To Element',
+				steps: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						channels: [{ from: 'coder', to: ['reviewer', '   '], direction: 'one-way' }],
 					},
 				],
 			})
