@@ -5,7 +5,9 @@
  * All test actions and assertions must go through the browser UI.
  */
 
+import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { waitForWebSocketConnected } from './wait-helpers';
 
 /**
  * Delete a room via RPC. Best-effort — silently ignores errors so it can be
@@ -22,4 +24,19 @@ export async function deleteRoom(page: Page, roomId: string): Promise<void> {
 	} catch {
 		// Best-effort cleanup
 	}
+}
+
+/**
+ * Navigate to the Missions tab on a room page.
+ *
+ * Uses `exact: true` to avoid matching the sidebar CollapsibleSection header
+ * button (which has aria-label="Missions section" — accessible name is "Missions section",
+ * not "Missions"). Only the room tab bar button has accessible name "Missions".
+ */
+export async function openMissionsTab(page: Page): Promise<void> {
+	await waitForWebSocketConnected(page);
+	const missionsTab = page.getByRole('button', { name: 'Missions', exact: true });
+	await expect(missionsTab).toBeVisible({ timeout: 10000 });
+	await missionsTab.click();
+	await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
 }
