@@ -1308,4 +1308,133 @@ describe('SpaceRuntime — notification events', () => {
 			}
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Multi-agent partial failure notifications
+	// -------------------------------------------------------------------------
+
+	describe('multi-agent partial failure', () => {
+		const AGENT_PLANNER = 'agent-planner-notif';
+
+		beforeEach(() => {
+			seedAgentRow(db, AGENT_PLANNER, SPACE_ID, 'planner');
+		});
+
+		test('emits task_needs_attention for each failed parallel task when all are terminal', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Parallel Fail Notify ${Date.now()}`,
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Parallel Step',
+						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(2);
+
+			// Both tasks fail → all terminal
+			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Coder failed' });
+			taskRepo.updateTask(tasks[1].id, { status: 'needs_attention', error: 'Planner failed' });
+
+			await runtime.executeTick();
+
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(2);
+			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			expect(runEvents).toHaveLength(1);
+		});
+
+		test('does NOT emit workflow_run_needs_attention when sibling tasks are still running', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Partial Terminal Notify ${Date.now()}`,
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Parallel Partial',
+						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(2);
+
+			// One task fails, one still running
+			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Fail' });
+			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+
+			await runtime.executeTick();
+
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(1); // only the failed task
+
+			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			expect(runEvents).toHaveLength(0); // sibling still running
+		});
+
+		test('does NOT emit workflow_run_needs_attention for single-task step (backward compat)', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Single', agentId: AGENT_CODER },
+			]);
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1);
+
+			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Failed' });
+
+			await runtime.executeTick();
+
+			// Only task_needs_attention — no run escalation for single-task steps
+			const naEvents = sink.events.filter((e) => e.kind === 'task_needs_attention');
+			expect(naEvents).toHaveLength(1);
+
+			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			expect(runEvents).toHaveLength(0);
+		});
+
+		test('multi-agent partial failure dedup: does not re-emit run needs_attention on second tick', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Partial Fail Dedup ${Date.now()}`,
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Parallel Dedup',
+						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(tasks[1].id, { status: 'needs_attention', error: 'Fail' });
+
+			// First tick: run escalated
+			await runtime.executeTick();
+			const runEvents1 = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			expect(runEvents1).toHaveLength(1);
+
+			// Second tick: run is now needs_attention, processRunTick returns early
+			await runtime.executeTick();
+			const runEvents2 = sink.events.filter((e) => e.kind === 'workflow_run_needs_attention');
+			expect(runEvents2).toHaveLength(1); // still 1, not 2
+		});
+	});
 });

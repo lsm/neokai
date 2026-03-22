@@ -25,7 +25,9 @@ import type {
 	WorkflowCondition,
 	WorkflowTransition,
 	WorkflowStep,
+	WorkflowStepAgent,
 } from '@neokai/shared';
+import { resolveStepAgents } from '@neokai/shared';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 
@@ -110,12 +112,16 @@ export interface TaskTypeResolution {
  * customAgentId) at task-creation time. When provided, the task is created
  * complete in a single DB write — no second update required.
  *
- * May return either a single `TaskTypeResolution` (single-agent / backward-compat)
- * or an array of `TaskTypeResolution` (one per agent in a multi-agent step).
- * The executor currently uses only the first entry to create the primary task.
- * Per-agent sub-task creation for the remaining entries is deferred to a later phase.
+ * Receives the full step AND the specific agent entry being created, so the
+ * resolver can derive per-agent taskType / customAgentId for multi-agent steps.
  */
-export type TaskTypeResolver = (step: WorkflowStep) => TaskTypeResolution | TaskTypeResolution[];
+export type TaskTypeResolver = (
+	step: WorkflowStep,
+	agentEntry: WorkflowStepAgent
+) => {
+	taskType?: string;
+	customAgentId?: string;
+};
 
 // ---------------------------------------------------------------------------
 // Default timeout constants
@@ -396,7 +402,11 @@ export class WorkflowExecutor {
 		};
 	}
 
-	/** Follows a transition: updates currentStepId and creates a SpaceTask for the target step. */
+	/**
+	 * Follows a transition: updates currentStepId and creates one SpaceTask per agent
+	 * in the target step. Multi-agent steps produce multiple parallel tasks, all sharing
+	 * the same `workflowRunId` and `workflowStepId`. Single-agent steps produce one task.
+	 */
 	private async followTransition(
 		transition: WorkflowTransition
 	): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }> {
@@ -432,28 +442,36 @@ export class WorkflowExecutor {
 		if (!updatedRun) throw new Error('Failed to persist step ID update');
 		this.run = updatedRun;
 
-		// Resolve task metadata so the task is created complete in a single write.
-		// When a taskTypeResolver is provided it fully controls taskType AND customAgentId —
-		// customAgentId: undefined means "no custom agent" for preset roles (planner/coder/general).
-		// Without a resolver (backward-compat), fall back to nextStep.agentId.
-		// The resolver may return a single resolution or an array (multi-agent); use the first entry
-		// for the primary task.
-		const rawResolved = this.taskTypeResolver?.(nextStep);
-		const resolved = Array.isArray(rawResolved) ? rawResolved[0] : rawResolved;
+		// Resolve agents for this step: supports both agentId (single-agent shorthand)
+		// and agents[] (multi-agent parallel execution).
+		const stepAgents = resolveStepAgents(nextStep);
 
-		// Create a pending SpaceTask for the new step
-		const task = await this.taskManager.createTask({
-			title: nextStep.name,
-			description: nextStep.instructions ?? '',
-			workflowRunId: this.run.id,
-			workflowStepId: nextStep.id,
-			taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
-			customAgentId: resolved !== undefined ? resolved.customAgentId : nextStep.agentId,
-			status: 'pending',
-			goalId: this.run.goalId,
-		});
+		// Create one pending SpaceTask per agent. All tasks share the same workflowRunId
+		// and workflowStepId so SpaceRuntime can track them as a group.
+		// Per-agent instructions override step-level instructions when present.
+		const tasks: SpaceTask[] = [];
+		for (const agentEntry of stepAgents) {
+			// Resolve task metadata per agent so each task is created complete in one DB write.
+			// When a taskTypeResolver is provided it fully controls taskType AND customAgentId —
+			// customAgentId: undefined means "no custom agent" for preset roles (planner/coder/general).
+			// Without a resolver (backward-compat), fall back to agentEntry.agentId.
+			const resolved = this.taskTypeResolver?.(nextStep, agentEntry);
 
-		return { step: nextStep, tasks: [task] };
+			const task = await this.taskManager.createTask({
+				title: nextStep.name,
+				description: agentEntry.instructions ?? nextStep.instructions ?? '',
+				workflowRunId: this.run.id,
+				workflowStepId: nextStep.id,
+				taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
+				customAgentId: resolved !== undefined ? resolved.customAgentId : agentEntry.agentId,
+				status: 'pending',
+				goalId: this.run.goalId,
+			});
+
+			tasks.push(task);
+		}
+
+		return { step: nextStep, tasks };
 	}
 
 	/**

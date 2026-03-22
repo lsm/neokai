@@ -2063,4 +2063,243 @@ describe('WorkflowExecutor', () => {
 			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
 		});
 	});
+
+	// =========================================================================
+	// Multi-agent steps
+	// =========================================================================
+
+	describe('multi-agent steps', () => {
+		test('advance() creates one task per agent when step uses agents[] array', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-multi-agent-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Parallel Work',
+						agents: [
+							{ agentId: AGENT_A, instructions: 'Do thing A' },
+							{ agentId: AGENT_B, instructions: 'Do thing B' },
+						],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi Agent Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Two agents → two tasks
+			expect(result.tasks).toHaveLength(2);
+			expect(result.step.id).toBe(STEP_B);
+
+			// Both tasks share the same workflowRunId and workflowStepId
+			for (const task of result.tasks) {
+				expect(task.workflowRunId).toBe(run.id);
+				expect(task.workflowStepId).toBe(STEP_B);
+				expect(task.status).toBe('pending');
+			}
+		});
+
+		test('advance() creates tasks with per-agent instructions', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-per-agent-instructions-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Parallel',
+						instructions: 'Shared instructions',
+						agents: [
+							{ agentId: AGENT_A, instructions: 'Agent A override' },
+							{ agentId: AGENT_B }, // no per-agent instructions → falls back to step
+						],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Per-Agent Instructions Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			expect(result.tasks).toHaveLength(2);
+
+			// Task for AGENT_A: per-agent instructions override
+			const allTasks = await taskManager.listTasksByWorkflowRun(run.id);
+			const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
+
+			// Sort by description to make assertions deterministic
+			stepBTasks.sort((a, b) => a.description.localeCompare(b.description));
+			expect(stepBTasks[0].description).toBe('Agent A override');
+			expect(stepBTasks[1].description).toBe('Shared instructions');
+		});
+
+		test('advance() with agentId shorthand still creates exactly one task (backward compat)', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-single-agent-compat-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Backward Compat Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Single agentId → single task
+			expect(result.tasks).toHaveLength(1);
+			expect(result.tasks[0].workflowStepId).toBe(STEP_B);
+		});
+
+		test('advance() uses TaskTypeResolver per-agent for each agent entry', async () => {
+			const resolverCalls: Array<{ agentId: string }> = [];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-resolver-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Parallel',
+						agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Resolver Run',
+				currentStepId: STEP_A,
+			});
+
+			// Inject a TaskTypeResolver that records calls and assigns custom agent IDs
+			const executor = new WorkflowExecutor(
+				workflow,
+				run,
+				taskManager,
+				runRepo,
+				WORKSPACE,
+				makeOkRunner(),
+				(_step, agentEntry) => {
+					resolverCalls.push({ agentId: agentEntry.agentId });
+					return { taskType: 'coding', customAgentId: agentEntry.agentId };
+				}
+			);
+
+			const result = await executor.advance();
+
+			// Resolver called once per agent
+			expect(resolverCalls).toHaveLength(2);
+			expect(resolverCalls.map((c) => c.agentId).sort()).toEqual([AGENT_A, AGENT_B].sort());
+
+			// Tasks have correct customAgentId set by resolver
+			const agentIds = result.tasks.map((t) => t.customAgentId).sort();
+			expect(agentIds).toEqual([AGENT_A, AGENT_B].sort());
+		});
+
+		test('three-agent step creates three tasks', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-three-agents-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Triple Parallel',
+						agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }, { agentId: AGENT_C }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Triple Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			expect(result.tasks).toHaveLength(3);
+			for (const task of result.tasks) {
+				expect(task.workflowStepId).toBe(STEP_B);
+				expect(task.workflowRunId).toBe(run.id);
+			}
+		});
+
+		test('advance() on multi-agent step with cyclic transition increments iterationCount once', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-multi-${Date.now()}`,
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Parallel A',
+						agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					},
+				],
+				transitions: [
+					{
+						from: STEP_A,
+						to: STEP_A,
+						condition: { type: 'always' },
+						isCyclic: true,
+						order: 0,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Multi Run',
+				currentStepId: STEP_A,
+				maxIterations: 5,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Creates two tasks (one per agent) even on cyclic transition
+			expect(result.tasks).toHaveLength(2);
+			// Only one iteration increment per advance() call, not per task
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
+		});
+	});
 });
