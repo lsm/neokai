@@ -1,4 +1,4 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
 
 # Default workspace for development
 WORKSPACE ?= tmp/workspace
@@ -119,6 +119,15 @@ sync-sdk-types:
 # Full release pipeline: build + compile + package
 release: compile-all package-npm
 	@echo "Release artifacts ready in dist/npm/"
+
+# Prepare release sync branch for protected dev/main workflow
+# Usage: make release-prepare VERSION=0.8.0
+release-prepare:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make release-prepare VERSION=0.8.0"; \
+		exit 1; \
+	fi
+	@./scripts/release-prepare.sh --version $(VERSION)
 
 # Check for outdated dependencies across all workspace packages
 outdated:
