@@ -9,61 +9,15 @@
  * - Current model
  *
  * Actions section:
- * - Complete, Cancel, Stop, Archive buttons
+ * - Complete, Archive buttons (Cancel and Stop are standalone outside dropdown)
  * - Context-aware: hides actions not applicable to current task state
  */
 
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import { borderColors } from '../../lib/design-tokens.ts';
 import { getModelLabel } from '../../lib/session-utils.ts';
-import { copyToClipboard } from '../../lib/utils.ts';
+import { CopyButton } from '../ui/CopyButton.tsx';
 import type { SessionInfo } from '@neokai/shared';
-
-interface CopyButtonProps {
-	text: string;
-}
-
-function CopyButton({ text }: CopyButtonProps) {
-	const [copied, setCopied] = useState(false);
-
-	const handleCopy = async () => {
-		const success = await copyToClipboard(text);
-		if (success) {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 1500);
-		}
-	};
-
-	return (
-		<button
-			class={`ml-1 p-0.5 rounded transition-colors ${
-				copied ? 'text-green-400' : 'text-gray-500 hover:text-gray-300'
-			}`}
-			onClick={handleCopy}
-			title={copied ? 'Copied!' : 'Copy to clipboard'}
-		>
-			{copied ? (
-				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M5 13l4 4L19 7"
-					/>
-				</svg>
-			) : (
-				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-					/>
-				</svg>
-			)}
-		</button>
-	);
-}
 
 /**
  * Get the last N segments of a path
@@ -78,7 +32,7 @@ function getLastPathSegments(path: string, segments: number = 2): string {
 export interface TaskActionDropdownAction {
 	id: string;
 	label: string;
-	icon?: 'complete' | 'cancel' | 'stop' | 'archive';
+	icon?: 'complete' | 'archive';
 	onClick: () => void;
 	disabled?: boolean;
 	danger?: boolean;
@@ -162,10 +116,18 @@ export function TaskActionDropdown({
 
 	// Calculate dropdown position
 	useEffect(() => {
-		if (isOpen && triggerRef.current && dropdownRef.current) {
-			const triggerRect = triggerRef.current.getBoundingClientRect();
-			setDropdownBottom(window.innerHeight - triggerRect.top + 8);
-		}
+		if (!isOpen || !triggerRef.current) return;
+
+		const updatePosition = () => {
+			if (triggerRef.current) {
+				const triggerRect = triggerRef.current.getBoundingClientRect();
+				setDropdownBottom(window.innerHeight - triggerRect.top + 8);
+			}
+		};
+
+		updatePosition();
+		window.addEventListener('resize', updatePosition);
+		return () => window.removeEventListener('resize', updatePosition);
 	}, [isOpen]);
 
 	// Build action items for the dropdown (Complete, Archive - Cancel and Stop are standalone)
@@ -204,23 +166,6 @@ export function TaskActionDropdown({
 							stroke-width="2"
 							d="M5 13l4 4L19 7"
 						/>
-					</svg>
-				);
-			case 'cancel':
-				return (
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M6 18L18 6M6 6l12 12"
-						/>
-					</svg>
-				);
-			case 'stop':
-				return (
-					<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-						<rect x="6" y="6" width="12" height="12" rx="1" />
 					</svg>
 				);
 			case 'archive':
