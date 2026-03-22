@@ -7,6 +7,20 @@
  * Clients never send raw SQL.
  */
 
+import { Database as BunDatabase } from 'bun:sqlite';
+import type { MessageHub } from '@neokai/shared';
+import { createEventMessage } from '@neokai/shared';
+import type {
+	LiveQuerySubscribeRequest,
+	LiveQuerySubscribeResponse,
+	LiveQueryUnsubscribeRequest,
+	LiveQueryUnsubscribeResponse,
+	LiveQuerySnapshotEvent,
+	LiveQueryDeltaEvent,
+} from '@neokai/shared';
+import type { LiveQueryEngine, LiveQueryHandle } from '../../storage/live-query';
+import { Logger } from '../logger';
+
 // ============================================================================
 // Named-query registry types
 // ============================================================================
@@ -198,3 +212,278 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		},
 	],
 ]);
+
+// ============================================================================
+// Logger
+// ============================================================================
+
+const log = new Logger('live-query-handlers');
+
+// ============================================================================
+// RPC handler setup
+// ============================================================================
+
+/**
+ * Register `liveQuery.subscribe` and `liveQuery.unsubscribe` RPC handlers.
+ *
+ * Returns a cleanup function that disposes all active subscriptions and
+ * unregisters the client-disconnect listener.
+ */
+export function setupLiveQueryHandlers(
+	messageHub: MessageHub,
+	liveQueries: LiveQueryEngine,
+	db: BunDatabase
+): () => void {
+	// Map<clientId → Map<subscriptionId → LiveQueryHandle>>
+	const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
+
+	// Cache prepared statements once at setup time — compiled once per handler
+	// registration, not once per subscribe call (which would add compilation
+	// overhead on every subscribe RPC invocation).
+	const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
+	const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
+	const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
+
+	// -------------------------------------------------------------------------
+	// liveQuery.subscribe
+	// -------------------------------------------------------------------------
+
+	messageHub.onRequest('liveQuery.subscribe', (data, context) => {
+		const { queryName, params, subscriptionId } = data as LiveQuerySubscribeRequest;
+		const { clientId, sessionId } = context;
+
+		// 1. Require WebSocket clientId
+		if (!clientId) {
+			throw new Error('liveQuery.subscribe requires a WebSocket connection (clientId absent)');
+		}
+
+		// 2. Resolve query from registry
+		const namedQuery = NAMED_QUERY_REGISTRY.get(queryName);
+		if (!namedQuery) {
+			throw new Error(`Unknown query name: "${queryName}"`);
+		}
+
+		// 3. Validate parameter count
+		if (params.length !== namedQuery.paramCount) {
+			throw new Error(
+				`Query "${queryName}" expects ${namedQuery.paramCount} parameter(s), got ${params.length}`
+			);
+		}
+
+		// 4. Authorization checks
+		if (queryName === 'tasks.byRoom' || queryName === 'goals.byRoom') {
+			const roomId = params[0] as string;
+			if (!stmtRoom.get(roomId)) {
+				throw new Error(`Unauthorized: room "${roomId}" not found`);
+			}
+		} else if (queryName === 'sessionGroupMessages.byGroup') {
+			const groupId = params[0] as string;
+			const group = stmtGroup.get(groupId) as { ref_id: string; group_type: string } | null;
+			if (!group) {
+				throw new Error(`Unauthorized: session group "${groupId}" not found`);
+			}
+			if (group.group_type === 'task') {
+				// For task-typed groups, verify the full group → task → room chain.
+				// This ensures the requesting client has access to the room the task belongs to.
+				const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
+				if (!task) {
+					throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
+				}
+				if (!stmtRoom.get(task.room_id)) {
+					throw new Error(`Unauthorized: room "${task.room_id}" not found`);
+				}
+			}
+			// Non-task group types (e.g., 'workflow', 'global') are authorized by group
+			// existence alone.  All current non-task groups are internal daemon constructs
+			// not directly reachable by client-supplied IDs without prior knowledge.
+			// If new group types with finer-grained access control are introduced, extend
+			// this block with the appropriate chain validation.
+		}
+
+		// 5. Get or create client subscription map
+		let clientSubs = subscriptions.get(clientId);
+		if (!clientSubs) {
+			clientSubs = new Map();
+			subscriptions.set(clientId, clientSubs);
+		}
+
+		// 6. Handle subscriptionId collision — dispose existing handle silently
+		const existing = clientSubs.get(subscriptionId);
+		if (existing) {
+			log.debug(
+				`liveQuery.subscribe: replacing subscription ${subscriptionId} for client ${clientId}`
+			);
+			existing.dispose();
+			clientSubs.delete(subscriptionId);
+		}
+
+		// 7. Subscribe to LiveQueryEngine
+		const { sql, mapRow } = namedQuery;
+		const applyMapRow = (row: Record<string, unknown>) => (mapRow ? mapRow(row) : row);
+		const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
+
+		// Track whether the synchronous snapshot delivery failed so we can
+		// dispose the handle after subscribe() returns.  The snapshot is fired
+		// inside liveQueries.subscribe() before it returns the handle, so we
+		// cannot call handle.dispose() directly during the callback.
+		let snapshotDeliveryFailed = false;
+
+		const handle = liveQueries.subscribe(
+			sql,
+			params,
+			(diff: {
+				type: 'snapshot' | 'delta';
+				rows: Record<string, unknown>[];
+				added?: Record<string, unknown>[];
+				removed?: Record<string, unknown>[];
+				updated?: Record<string, unknown>[];
+				version: number;
+			}) => {
+				const router = messageHub.getRouter();
+				if (!router) {
+					// Router not yet registered or already torn down.  Mark snapshot
+					// as failed so the handle is disposed after subscribe() returns;
+					// for deltas this is a no-op since the engine will never fire
+					// another callback after the handle is disposed.
+					log.warn(
+						`liveQuery: router unavailable; skipping event (clientId=${clientId}, subscriptionId=${subscriptionId})`
+					);
+					if (diff.type === 'snapshot') {
+						snapshotDeliveryFailed = true;
+					}
+					return;
+				}
+
+				let message: ReturnType<typeof createEventMessage>;
+
+				if (diff.type === 'snapshot') {
+					const eventData: LiveQuerySnapshotEvent = {
+						subscriptionId,
+						rows: applyMapRows(diff.rows),
+						version: diff.version,
+					};
+					message = createEventMessage({
+						method: 'liveQuery.snapshot',
+						data: eventData,
+						sessionId,
+					});
+				} else {
+					const eventData: LiveQueryDeltaEvent = {
+						subscriptionId,
+						added: diff.added ? applyMapRows(diff.added) : undefined,
+						removed: diff.removed ? applyMapRows(diff.removed) : undefined,
+						updated: diff.updated ? applyMapRows(diff.updated) : undefined,
+						version: diff.version,
+					};
+					message = createEventMessage({
+						method: 'liveQuery.delta',
+						data: eventData,
+						sessionId,
+					});
+				}
+
+				const sent = router.sendToClient(clientId, message);
+				if (!sent) {
+					if (diff.type === 'snapshot') {
+						// handle not yet assigned; defer cleanup to after subscribe() returns
+						snapshotDeliveryFailed = true;
+						log.warn(
+							`liveQuery: snapshot delivery failed for client ${clientId}; subscription ${subscriptionId} will be disposed`
+						);
+					} else {
+						// Delta: client disconnected — dispose now (handle is assigned)
+						log.warn(
+							`liveQuery: delta delivery failed for client ${clientId}; disposing subscription ${subscriptionId}`
+						);
+						handle.dispose();
+						const subs = subscriptions.get(clientId);
+						if (subs) {
+							subs.delete(subscriptionId);
+							if (subs.size === 0) subscriptions.delete(clientId);
+						}
+					}
+				}
+			}
+		);
+
+		// If snapshot delivery failed (no router or client not found), clean up
+		// immediately and return ok — this is not a protocol error from the
+		// client's perspective.
+		if (snapshotDeliveryFailed) {
+			handle.dispose();
+			return { ok: true } satisfies LiveQuerySubscribeResponse;
+		}
+
+		// 8. Track the handle
+		clientSubs.set(subscriptionId, handle);
+		log.debug(
+			`liveQuery.subscribe: registered subscription ${subscriptionId} for client ${clientId}, query=${queryName}`
+		);
+
+		return { ok: true } satisfies LiveQuerySubscribeResponse;
+	});
+
+	// -------------------------------------------------------------------------
+	// liveQuery.unsubscribe
+	// -------------------------------------------------------------------------
+
+	messageHub.onRequest('liveQuery.unsubscribe', (data, context) => {
+		const { subscriptionId } = data as LiveQueryUnsubscribeRequest;
+		const { clientId } = context;
+
+		if (!clientId) {
+			throw new Error('liveQuery.unsubscribe requires a WebSocket connection (clientId absent)');
+		}
+
+		const clientSubs = subscriptions.get(clientId);
+		const handle = clientSubs?.get(subscriptionId);
+		if (handle) {
+			handle.dispose();
+			clientSubs!.delete(subscriptionId);
+			if (clientSubs!.size === 0) subscriptions.delete(clientId);
+			log.debug(
+				`liveQuery.unsubscribe: disposed subscription ${subscriptionId} for client ${clientId}`
+			);
+		} else {
+			log.debug(
+				`liveQuery.unsubscribe: subscription ${subscriptionId} not found for client ${clientId}`
+			);
+		}
+
+		return { ok: true } satisfies LiveQueryUnsubscribeResponse;
+	});
+
+	// -------------------------------------------------------------------------
+	// Client disconnect cleanup
+	// -------------------------------------------------------------------------
+
+	const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
+		const clientSubs = subscriptions.get(disconnectedClientId);
+		if (!clientSubs || clientSubs.size === 0) return;
+
+		log.debug(
+			`liveQuery: client ${disconnectedClientId} disconnected; disposing ${clientSubs.size} subscription(s)`
+		);
+		for (const [, handle] of clientSubs) {
+			handle.dispose();
+		}
+		subscriptions.delete(disconnectedClientId);
+	});
+
+	// -------------------------------------------------------------------------
+	// Cleanup function
+	// -------------------------------------------------------------------------
+
+	return () => {
+		// Dispose all active handles before unregistering the disconnect listener.
+		// This ensures handles are cleaned up against the live engine before it
+		// may be disposed by the caller (e.g., createDaemonApp shutdown sequence).
+		for (const [, clientSubs] of subscriptions) {
+			for (const [, handle] of clientSubs) {
+				handle.dispose();
+			}
+		}
+		subscriptions.clear();
+		unsubDisconnect();
+	};
+}

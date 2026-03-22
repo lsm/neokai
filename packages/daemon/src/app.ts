@@ -259,6 +259,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		reactiveDb,
+		liveQueries,
 	});
 
 	// Create WebSocket handlers
@@ -450,11 +451,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
 
-			// Dispose live query engine
-			liveQueries.dispose();
-
-			// Cleanup RPC handlers
+			// Cleanup RPC handlers (disposes live query subscriptions) before
+			// tearing down the engine so handles are disposed against a live engine.
 			rpcHandlerCleanup();
+
+			// Dispose live query engine after all subscriptions are cleared
+			liveQueries.dispose();
 
 			// Stop GitHub service
 			if (gitHubService) {

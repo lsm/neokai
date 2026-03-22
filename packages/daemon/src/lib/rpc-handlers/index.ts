@@ -71,6 +71,8 @@ import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
 import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
+import { setupLiveQueryHandlers } from './live-query-handlers';
+import { LiveQueryEngine } from '../../storage/live-query';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -97,6 +99,8 @@ export interface RPCHandlerDependencies {
 	jobProcessor: JobQueueProcessor;
 	/** Reactive database wrapper for change event emission */
 	reactiveDb: ReactiveDatabase;
+	/** Live query engine for reactive SQL subscriptions */
+	liveQueries: LiveQueryEngine;
 }
 
 const log = new Logger('rpc-handlers');
@@ -240,6 +244,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
+
+	// LiveQuery subscribe/unsubscribe handlers
+	const unsubLiveQuery = setupLiveQueryHandlers(
+		deps.messageHub,
+		deps.liveQueries,
+		deps.db.getDatabase()
+	);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
@@ -416,6 +427,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	return {
 		cleanup: () => {
 			unsubRoomCreated();
+			unsubLiveQuery();
 			roomRuntimeService.stop();
 			spaceRuntimeService.stop();
 		},
