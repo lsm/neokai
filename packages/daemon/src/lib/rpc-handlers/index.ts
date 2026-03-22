@@ -172,8 +172,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 		reactiveDb: deps.reactiveDb,
-		// Disable the internal setInterval tick — the job-queue handler drives runtime.tick() instead.
-		disableInternalTick: true,
+		// Pass the job queue so each RoomRuntime schedules ticks via enqueueRoomTick.
+		jobQueue: deps.jobQueue,
 	});
 	// Register room.tick job handler before starting the service so no tick jobs
 	// fired during recovery are picked up without a handler.

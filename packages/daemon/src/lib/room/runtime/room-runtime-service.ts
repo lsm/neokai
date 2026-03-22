@@ -9,6 +9,7 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
@@ -49,10 +50,10 @@ export interface RoomRuntimeServiceConfig {
 	/** Reactive database wrapper for change event emission */
 	reactiveDb: ReactiveDatabase;
 	/**
-	 * When true, the internal setInterval tick in each RoomRuntime is disabled.
-	 * Set this when a job-queue handler drives runtime.tick() to prevent double-firing.
+	 * Job queue passed to each RoomRuntime so scheduleTick() enqueues room.tick jobs
+	 * instead of using in-process timers.
 	 */
-	disableInternalTick?: boolean;
+	jobQueue?: JobQueueRepository;
 }
 
 export class RoomRuntimeService {
@@ -428,7 +429,7 @@ export class RoomRuntimeService {
 			getTask: (taskId) => taskManager.getTask(taskId),
 			getGoal: (goalId) => goalManager.getGoal(goalId),
 			getGlobalSettings: this.ctx.getGlobalSettings,
-			disableInternalTick: this.ctx.disableInternalTick,
+			jobQueue: this.ctx.jobQueue,
 		});
 
 		this.runtimes.set(room.id, runtime);

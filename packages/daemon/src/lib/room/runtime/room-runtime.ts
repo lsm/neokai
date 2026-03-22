@@ -77,6 +77,8 @@ import {
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 import { getNextRunAt } from './cron-utils';
 import { inferProviderForModel } from '../../providers/registry';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import { enqueueRoomTick, cancelPendingTickJobs } from '../../job-handlers/room-tick.handler';
 
 const log = new Logger('room-runtime');
 
@@ -120,14 +122,13 @@ export interface RoomRuntimeConfig {
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
-	/** Tick interval in ms (default: 30000) */
-	tickInterval?: number;
 	/**
-	 * When true, the internal setInterval periodic tick is disabled.
-	 * Use this when an external job-queue drives runtime.tick() to prevent
-	 * double-firing every interval period.
+	 * Job queue used to schedule and cancel room.tick jobs.
+	 * When provided, scheduleTick() enqueues a room.tick job via enqueueRoomTick.
+	 * When absent (e.g., in unit tests), tick scheduling is a no-op and tests
+	 * drive ticks directly via runtime.tick().
 	 */
-	disableInternalTick?: boolean;
+	jobQueue?: JobQueueRepository;
 	/**
 	 * Fetch Worker assistant messages for forwarding to Leader.
 	 * Returns messages after (exclusive) the message with afterMessageId.
@@ -158,10 +159,7 @@ function jsonResult(data: Record<string, unknown>): LeaderToolResult {
 
 export class RoomRuntime {
 	private state: RuntimeState = 'paused';
-	private tickLocked = false;
-	private tickQueued = false;
-	private tickTimer: ReturnType<typeof setInterval> | null = null;
-	private readonly disableInternalTick: boolean;
+	private readonly jobQueue: JobQueueRepository | null;
 
 	private readonly roomId: string;
 	private room: Room;
@@ -172,7 +170,6 @@ export class RoomRuntime {
 	private readonly sessionFactory: SessionFactory;
 	private maxConcurrentGroups: number;
 	private maxFeedbackIterations: number;
-	private readonly tickInterval: number;
 	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
@@ -279,8 +276,7 @@ export class RoomRuntime {
 		this.sessionFactory = config.sessionFactory;
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? DEFAULT_MAX_CONCURRENT_GROUPS;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
-		this.tickInterval = config.tickInterval ?? 30_000;
-		this.disableInternalTick = config.disableInternalTick ?? false;
+		this.jobQueue = config.jobQueue ?? null;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
@@ -427,14 +423,12 @@ export class RoomRuntime {
 
 	start(): void {
 		this.state = 'running';
-		if (!this.disableInternalTick) {
-			this.tickTimer = setInterval(() => this.tick(), this.tickInterval);
-		}
 		this.scheduleTick();
 	}
 
 	pause(): void {
 		this.state = 'paused';
+		if (this.jobQueue) cancelPendingTickJobs(this.roomId, this.jobQueue);
 	}
 
 	resume(): void {
@@ -444,10 +438,7 @@ export class RoomRuntime {
 
 	stop(): void {
 		this.state = 'stopped';
-		if (this.tickTimer) {
-			clearInterval(this.tickTimer);
-			this.tickTimer = null;
-		}
+		if (this.jobQueue) cancelPendingTickJobs(this.roomId, this.jobQueue);
 		// Clean up all mirroring subscriptions
 		for (const cleanup of this.mirroringCleanups.values()) {
 			cleanup();
@@ -2234,29 +2225,13 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Main scheduling loop. Idempotent with mutex protection.
+	 * Main scheduling loop. Concurrency is managed by the job queue — at most one
+	 * pending room.tick job exists per room, so concurrent calls are not expected
+	 * in production. In unit tests, callers drive ticks directly and sequentially.
 	 */
 	async tick(): Promise<void> {
 		if (this.state !== 'running') return;
-
-		// Mutex: only one tick at a time
-		if (this.tickLocked) {
-			this.tickQueued = true;
-			return;
-		}
-
-		this.tickLocked = true;
-		try {
-			await this.executeTick();
-		} finally {
-			this.tickLocked = false;
-			// Re-tick if queued while we were running
-			if (this.tickQueued) {
-				this.tickQueued = false;
-				// Use microtask to avoid stack depth issues
-				queueMicrotask(() => this.tick());
-			}
-		}
+		await this.executeTick();
 	}
 
 	/**
@@ -3433,39 +3408,31 @@ export class RoomRuntime {
 
 	private scheduleTick(): void {
 		if (this.state !== 'running') return;
-		// Use queueMicrotask for non-blocking tick scheduling
-		queueMicrotask(() => this.tick());
+		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, 0);
 	}
 
 	/**
 	 * Schedule a tick after rate limit reset time.
 	 * Used to resume work after API rate limit backoff period expires.
+	 *
+	 * Do NOT clearRateLimit here. The expired (non-null) rateLimit object serves as the
+	 * re-detection sentinel in onWorkerTerminalState / onLeaderTerminalState: the
+	 * `!group.rateLimit` guard uses it to distinguish "first detection" from "re-trigger
+	 * after expiry", preventing an infinite 60-second bounce loop.
+	 * The rate limit is cleared in `send_to_worker` when a new worker iteration genuinely starts.
 	 */
 	private scheduleTickAfterRateLimitReset(groupId: string): void {
 		const remainingMs = this.groupRepo.getRateLimitRemainingMs(groupId);
-		if (remainingMs <= 0) {
-			// Rate limit already expired, schedule immediate tick
-			this.scheduleTick();
-			return;
+		const delayMs = remainingMs <= 0 ? 0 : remainingMs + 5000;
+
+		if (delayMs > 0) {
+			log.info(
+				`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
+					`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
+			);
 		}
 
-		// Add a small buffer (5 seconds) to ensure rate limit has fully reset
-		const delayMs = remainingMs + 5000;
-
-		log.info(
-			`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
-				`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
-		);
-
-		setTimeout(() => {
-			// Do NOT clearRateLimit here.  The expired (non-null) rateLimit object serves as the
-			// re-detection sentinel in onWorkerTerminalState / onLeaderTerminalState: the
-			// `!group.rateLimit` guard uses it to distinguish "first detection" from "re-trigger
-			// after expiry", preventing an infinite 60-second bounce loop.
-			// The rate limit is cleared at the right place: in `send_to_worker` when a new worker
-			// iteration genuinely starts, at which point fresh 429s should be re-detected.
-			this.scheduleTick();
-		}, delayMs);
+		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, delayMs);
 	}
 
 	/**

@@ -259,7 +259,6 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		workspacePath: '/workspace',
 		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
-		tickInterval: 60_000,
 		hookOptions:
 			opts?.hookOptions ??
 			({

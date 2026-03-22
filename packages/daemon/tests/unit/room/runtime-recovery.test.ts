@@ -180,7 +180,6 @@ describe('Runtime Recovery', () => {
 			goalManager,
 			sessionFactory,
 			workspacePath: '/workspace',
-			tickInterval: 60_000,
 		});
 	});
 
