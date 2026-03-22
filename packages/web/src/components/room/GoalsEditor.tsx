@@ -667,9 +667,21 @@ interface CreateGoalWizardProps {
 
 const PRIORITY_CONFIG: Record<GoalPriority, { label: string; emoji: string; activeClass: string }> =
 	{
-		urgent: { label: 'Urgent', emoji: '🔴', activeClass: 'bg-red-900/40 text-red-300 border-red-600' },
-		high: { label: 'High', emoji: '🟠', activeClass: 'bg-orange-900/40 text-orange-300 border-orange-600' },
-		normal: { label: 'Normal', emoji: '🔵', activeClass: 'bg-blue-900/40 text-blue-300 border-blue-600' },
+		urgent: {
+			label: 'Urgent',
+			emoji: '🔴',
+			activeClass: 'bg-red-900/40 text-red-300 border-red-600',
+		},
+		high: {
+			label: 'High',
+			emoji: '🟠',
+			activeClass: 'bg-orange-900/40 text-orange-300 border-orange-600',
+		},
+		normal: {
+			label: 'Normal',
+			emoji: '🔵',
+			activeClass: 'bg-blue-900/40 text-blue-300 border-blue-600',
+		},
 		low: { label: 'Low', emoji: '⚪', activeClass: 'bg-gray-800 text-gray-300 border-gray-600' },
 	};
 
@@ -784,8 +796,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 						for="wizard-goal-description"
 						class="block text-sm font-medium text-gray-300 mb-1.5"
 					>
-						Description{' '}
-						<span class="text-xs text-gray-500 font-normal">(optional)</span>
+						Description <span class="text-xs text-gray-500 font-normal">(optional)</span>
 					</label>
 					<textarea
 						id="wizard-goal-description"
@@ -802,10 +813,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 					<Button variant="ghost" onClick={onCancel} disabled={isSubmitting}>
 						Cancel
 					</Button>
-					<Button
-						onClick={() => setStep(2)}
-						disabled={!title.trim()}
-					>
+					<Button onClick={() => setStep(2)} disabled={!title.trim()}>
 						Next →
 					</Button>
 				</div>
@@ -850,9 +858,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 									missionType === value ? 'border-blue-400' : 'border-dark-500'
 								)}
 							>
-								{missionType === value && (
-									<div class="w-2 h-2 rounded-full bg-blue-400" />
-								)}
+								{missionType === value && <div class="w-2 h-2 rounded-full bg-blue-400" />}
 							</div>
 							<div>
 								<div
@@ -997,9 +1003,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 									autonomyLevel === value ? 'border-blue-400' : 'border-dark-500'
 								)}
 							>
-								{autonomyLevel === value && (
-									<div class="w-2 h-2 rounded-full bg-blue-400" />
-								)}
+								{autonomyLevel === value && <div class="w-2 h-2 rounded-full bg-blue-400" />}
 							</div>
 							<div>
 								<div
@@ -1262,10 +1266,7 @@ function GoalItem({
 								<AutonomyBadge level={goal.autonomyLevel} />
 							)}
 						</div>
-						<div
-							class="flex items-center gap-1 flex-shrink-0"
-							onClick={(e) => e.stopPropagation()}
-						>
+						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
 								Edit
 							</Button>
@@ -1292,7 +1293,12 @@ function GoalItem({
 						</div>
 					) : missionType === 'recurring' && goal.schedule ? (
 						<div class="flex items-center gap-2 text-xs text-gray-500 mb-2">
-							<svg class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<svg
+								class="w-3 h-3 flex-shrink-0"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
@@ -1354,12 +1360,7 @@ function GoalItem({
 							{isExpanded ? (
 								<>
 									Hide details{' '}
-									<svg
-										class="w-3 h-3"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
+									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path
 											stroke-linecap="round"
 											stroke-linejoin="round"
@@ -1371,12 +1372,7 @@ function GoalItem({
 							) : (
 								<>
 									Show details{' '}
-									<svg
-										class="w-3 h-3"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
+									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path
 											stroke-linecap="round"
 											stroke-linejoin="round"
@@ -1856,15 +1852,8 @@ export function GoalsEditor({
 			)}
 
 			{/* Create Goal Modal — Two-step wizard */}
-			<Modal
-				isOpen={showCreateModal}
-				onClose={() => setShowCreateModal(false)}
-				title="Create Goal"
-			>
-				<CreateGoalWizard
-					onSubmit={onCreateGoal}
-					onCancel={() => setShowCreateModal(false)}
-				/>
+			<Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Goal">
+				<CreateGoalWizard onSubmit={onCreateGoal} onCancel={() => setShowCreateModal(false)} />
 			</Modal>
 		</div>
 	);

@@ -471,9 +471,7 @@ describe('GoalsEditor', () => {
 
 		/** Helper: fill step 1 and advance to step 2 */
 		const advanceToStep2 = (titleValue = 'Test Goal') => {
-			const titleInput = document.body.querySelector(
-				'#wizard-goal-title'
-			) as HTMLInputElement;
+			const titleInput = document.body.querySelector('#wizard-goal-title') as HTMLInputElement;
 			fireEvent.input(titleInput, { target: { value: titleValue } });
 			const nextBtn = Array.from(document.body.querySelectorAll('button')).find(
 				(btn) => btn.textContent === 'Next →'
