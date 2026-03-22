@@ -7,7 +7,7 @@
  *  - subscribe → snapshot delivered synchronously
  *  - DB write via task.create RPC → notifyChange('tasks') → delta pushed to client
  *  - unsubscribe stops further delta delivery
- *  - WebSocket disconnect disposes all subscriptions server-side
+ *  - two concurrent subscriptions each receive independent deltas from a single write
  *
  * Run:
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/rpc/rpc-live-query.test.ts
