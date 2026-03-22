@@ -26,6 +26,7 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
@@ -228,6 +229,7 @@ interface TestCtx {
 		updateSession: () => void;
 		getDatabase: () => BunDatabase;
 	};
+	sessionGroupRepo: SpaceSessionGroupRepository;
 	manager: TaskAgentManager;
 	createdSessions: Map<string, MockAgentSession>;
 	fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
@@ -245,6 +247,7 @@ function makeCtx(): TestCtx {
 
 	const agentRepo = new SpaceAgentRepository(bunDb);
 	const agentManager = new SpaceAgentManager(agentRepo);
+	const sessionGroupRepo = new SpaceSessionGroupRepository(bunDb);
 	const workflowRepo = new SpaceWorkflowRepository(bunDb);
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
@@ -329,6 +332,7 @@ function makeCtx(): TestCtx {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
+		sessionGroupRepo,
 	});
 
 	return {
@@ -347,6 +351,7 @@ function makeCtx(): TestCtx {
 		daemonHub,
 		sessionManagerDeleteCalls,
 		mockDb,
+		sessionGroupRepo,
 		manager,
 		createdSessions,
 		fromInitSpy,
@@ -417,6 +422,45 @@ describe('TaskAgentManager', () => {
 			const session = ctx.createdSessions.get(sessionId)!;
 			// Session should have had a message enqueued
 			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
+		});
+
+		test('creates a SpaceSessionGroup in DB with taskId set', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groups = ctx.sessionGroupRepo.getGroupsByTask(ctx.spaceId, task.id);
+			expect(groups).toHaveLength(1);
+			expect(groups[0].name).toBe(`task:${task.id}`);
+			expect(groups[0].taskId).toBe(task.id);
+			expect(groups[0].spaceId).toBe(ctx.spaceId);
+			expect(groups[0].status).toBe('active');
+
+			// The Task Agent session should be a member with role 'task-agent'
+			expect(groups[0].members).toHaveLength(1);
+			expect(groups[0].members[0].sessionId).toBe(sessionId);
+			expect(groups[0].members[0].role).toBe('task-agent');
+			expect(groups[0].members[0].status).toBe('active');
+		});
+
+		test('getTaskGroupId returns the group ID after spawn', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			expect(groupId).toBeDefined();
+
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			expect(group).not.toBeNull();
+			expect(group!.taskId).toBe(task.id);
+		});
+
+		test('cleanup removes taskGroupId from in-memory map', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeDefined();
+			await ctx.manager.cleanup(task.id);
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
 		});
 	});
 
