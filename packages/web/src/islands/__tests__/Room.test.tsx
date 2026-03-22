@@ -92,6 +92,8 @@ vi.mock('../../lib/room-store', () => ({
 				return mockAutoCompletedNotificationsSignal;
 			},
 			select: mockRoomStoreSelect,
+			subscribeRoom: vi.fn().mockResolvedValue(undefined),
+			unsubscribeRoom: vi.fn(),
 			createGoal: vi.fn(),
 			updateGoal: vi.fn(),
 			deleteGoal: vi.fn(),

@@ -15,6 +15,7 @@ import {
 	useInterrupt,
 	useFileAttachments,
 	useGroupMessages,
+	useRoomLiveQuery,
 } from '../index.ts';
 
 describe('Hooks Index', () => {
@@ -62,6 +63,11 @@ describe('Hooks Index', () => {
 		it('should export useGroupMessages', () => {
 			expect(useGroupMessages).toBeDefined();
 			expect(typeof useGroupMessages).toBe('function');
+		});
+
+		it('should export useRoomLiveQuery', () => {
+			expect(useRoomLiveQuery).toBeDefined();
+			expect(typeof useRoomLiveQuery).toBe('function');
 		});
 	});
 });

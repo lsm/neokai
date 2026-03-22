@@ -224,6 +224,12 @@ class RoomStore {
 	/** Subscription cleanup functions */
 	private cleanupFunctions: Array<() => void> = [];
 
+	/** Per-room LiveQuery cleanup functions — owned by subscribeRoom/unsubscribeRoom */
+	private liveQueryCleanups = new Map<string, Array<() => void>>();
+
+	/** Set of room IDs that currently have an active LiveQuery subscription intent */
+	private liveQueryActive = new Set<string>();
+
 	// ========================================
 	// Room Selection (with Promise-Chain Lock)
 	// ========================================
@@ -292,26 +298,35 @@ class RoomStore {
 	// Subscription Management
 	// ========================================
 
+	// ========================================
+	// LiveQuery Subscription Lifecycle (managed by useRoomLiveQuery hook)
+	// ========================================
+
 	/**
-	 * Start subscriptions for a room
+	 * Subscribe this room's tasks and goals via LiveQuery.
+	 *
+	 * Called by the `useRoomLiveQuery` hook on mount / room change.
+	 * Registers snapshot/delta handlers then sends liveQuery.subscribe for
+	 * both tasks.byRoom and goals.byRoom named queries.
+	 *
+	 * Guards against races: if `unsubscribeRoom(roomId)` is called before
+	 * the async hub is available, the subscription is aborted cleanly.
 	 */
-	private async startSubscriptions(roomId: string): Promise<void> {
+	async subscribeRoom(roomId: string): Promise<void> {
+		// Guard: prevent double-subscription for the same roomId
+		if (this.liveQueryActive.has(roomId)) return;
+		this.liveQueryActive.add(roomId);
+
 		try {
 			const hub = await connectionManager.getHub();
 
-			// Join the room channel first
-			hub.joinChannel(`room:${roomId}`);
+			// Guard: unsubscribeRoom was called before hub became available
+			if (!this.liveQueryActive.has(roomId)) return;
 
-			// 1. Room overview subscription (room + sessions only — tasks come from LiveQuery)
-			const unsubRoomOverview = hub.onEvent<RoomOverview>('room.overview', (overview) => {
-				if (overview.room.id === roomId) {
-					this.room.value = overview.room;
-					this.sessions.value = overview.sessions;
-				}
-			});
-			this.cleanupFunctions.push(unsubRoomOverview);
+			const cleanups: Array<() => void> = [];
+			this.liveQueryCleanups.set(roomId, cleanups);
 
-			// 2. Tasks via LiveQuery — replaces room.task.update event listener.
+			// --- Tasks via LiveQuery ---
 			const tasksSubId = `tasks-byRoom-${roomId}`;
 
 			const unsubTaskSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
@@ -322,7 +337,7 @@ class RoomStore {
 					}
 				}
 			);
-			this.cleanupFunctions.push(unsubTaskSnapshot);
+			cleanups.push(unsubTaskSnapshot);
 
 			const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== tasksSubId) return;
@@ -351,7 +366,7 @@ class RoomStore {
 				}
 				this.tasks.value = current;
 			});
-			this.cleanupFunctions.push(unsubTaskDelta);
+			cleanups.push(unsubTaskDelta);
 
 			await hub.request('liveQuery.subscribe', {
 				queryName: 'tasks.byRoom',
@@ -359,9 +374,22 @@ class RoomStore {
 				subscriptionId: tasksSubId,
 			});
 
+			// Guard: abort if unsubscribed while awaiting the subscribe request
+			if (!this.liveQueryActive.has(roomId)) {
+				for (const fn of cleanups) {
+					try {
+						fn();
+					} catch {
+						/* ignore */
+					}
+				}
+				this.liveQueryCleanups.delete(roomId);
+				return;
+			}
+
 			// Re-subscribe on reconnect: the server-side subscription is per-connection.
 			const unsubTaskReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
 				hub
 					.request('liveQuery.subscribe', {
 						queryName: 'tasks.byRoom',
@@ -372,17 +400,17 @@ class RoomStore {
 						logger.warn('Tasks LiveQuery re-subscribe failed:', err);
 					});
 			});
-			this.cleanupFunctions.push(unsubTaskReconnect);
+			cleanups.push(unsubTaskReconnect);
 
 			// Cleanup: tell the server to dispose the subscription when leaving the room.
-			this.cleanupFunctions.push(() => {
+			cleanups.push(() => {
 				const h = connectionManager.getHubIfConnected();
 				if (h) {
 					h.request('liveQuery.unsubscribe', { subscriptionId: tasksSubId }).catch(() => {});
 				}
 			});
 
-			// 3. Goals via LiveQuery — replaces goal.created/updated/completed event listeners.
+			// --- Goals via LiveQuery ---
 			// Register snapshot/delta handlers BEFORE subscribing so we never miss the
 			// initial snapshot that the server pushes synchronously before replying.
 			const goalsSubId = `goals-byRoom-${roomId}`;
@@ -396,7 +424,7 @@ class RoomStore {
 					}
 				}
 			);
-			this.cleanupFunctions.push(unsubGoalSnapshot);
+			cleanups.push(unsubGoalSnapshot);
 
 			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== goalsSubId) return;
@@ -414,7 +442,7 @@ class RoomStore {
 				}
 				this.goals.value = current;
 			});
-			this.cleanupFunctions.push(unsubGoalDelta);
+			cleanups.push(unsubGoalDelta);
 
 			// Subscribe to the goals.byRoom named query.
 			// Mark loading before subscribing; the snapshot handler clears it.
@@ -425,12 +453,25 @@ class RoomStore {
 				subscriptionId: goalsSubId,
 			});
 
+			// Guard: abort if unsubscribed while awaiting the subscribe request
+			if (!this.liveQueryActive.has(roomId)) {
+				for (const fn of cleanups) {
+					try {
+						fn();
+					} catch {
+						/* ignore */
+					}
+				}
+				this.liveQueryCleanups.delete(roomId);
+				return;
+			}
+
 			// Re-subscribe on reconnect: the server-side subscription is per-connection
 			// and is gone after a disconnect. Requesting liveQuery.subscribe again with
 			// the same subscriptionId delivers a fresh snapshot to the already-registered
 			// snapshot handler above.
-			const unsubReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || this.roomId.value !== roomId) return;
+			const unsubGoalReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
 				this.goalsLoading.value = true;
 				hub
 					.request('liveQuery.subscribe', {
@@ -443,17 +484,67 @@ class RoomStore {
 						this.goalsLoading.value = false;
 					});
 			});
-			this.cleanupFunctions.push(unsubReconnect);
+			cleanups.push(unsubGoalReconnect);
 
 			// Cleanup: tell the server to dispose the subscription when leaving the room.
-			this.cleanupFunctions.push(() => {
+			cleanups.push(() => {
 				const h = connectionManager.getHubIfConnected();
 				if (h) {
 					h.request('liveQuery.unsubscribe', { subscriptionId: goalsSubId }).catch(() => {});
 				}
 			});
+		} catch (err) {
+			this.liveQueryActive.delete(roomId);
+			this.liveQueryCleanups.delete(roomId);
+			logger.error('Failed to subscribe room LiveQuery:', err);
+		}
+	}
 
-			// 3b. Auto-completed task notifications (semi-autonomous mode)
+	/**
+	 * Unsubscribe LiveQuery subscriptions for a room.
+	 *
+	 * Called by the `useRoomLiveQuery` hook on unmount / room change.
+	 * Idempotent: safe to call even if subscribeRoom was never called.
+	 */
+	unsubscribeRoom(roomId: string): void {
+		this.liveQueryActive.delete(roomId);
+		const cleanups = this.liveQueryCleanups.get(roomId);
+		if (cleanups) {
+			for (const fn of cleanups) {
+				try {
+					fn();
+				} catch {
+					/* ignore */
+				}
+			}
+			this.liveQueryCleanups.delete(roomId);
+		}
+	}
+
+	// ========================================
+	// Channel + Event Subscriptions
+	// ========================================
+
+	/**
+	 * Start subscriptions for a room
+	 */
+	private async startSubscriptions(roomId: string): Promise<void> {
+		try {
+			const hub = await connectionManager.getHub();
+
+			// Join the room channel first
+			hub.joinChannel(`room:${roomId}`);
+
+			// 1. Room overview subscription (room + sessions only — tasks/goals come from LiveQuery)
+			const unsubRoomOverview = hub.onEvent<RoomOverview>('room.overview', (overview) => {
+				if (overview.room.id === roomId) {
+					this.room.value = overview.room;
+					this.sessions.value = overview.sessions;
+				}
+			});
+			this.cleanupFunctions.push(unsubRoomOverview);
+
+			// 2. Auto-completed task notifications (semi-autonomous mode)
 			const unsubAutoCompleted = hub.onEvent<{
 				roomId: string;
 				goalId: string;
@@ -477,7 +568,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubAutoCompleted);
 
-			// 4. Runtime state changes
+			// 3. Runtime state changes
 			const unsubRuntimeState = hub.onEvent<{ roomId: string; state: RuntimeState }>(
 				'room.runtime.stateChanged',
 				(event) => {
@@ -488,7 +579,7 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Session lifecycle events (delete / status change)
+			// 4. Session lifecycle events (delete / status change)
 			// Re-fetch the authoritative session list from the server on meaningful session
 			// changes. This avoids manual array splicing and self-heals events missed during
 			// WebSocket reconnect gaps.
@@ -528,7 +619,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubSessionUpdated);
 
-			// 6. Fetch initial state via RPC
+			// 5. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);

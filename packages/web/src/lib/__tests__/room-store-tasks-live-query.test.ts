@@ -129,9 +129,13 @@ describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(hub as never);
 		await roomStore.select(ROOM_ID);
+		// LiveQuery subscriptions are now managed by useRoomLiveQuery hook;
+		// simulate hook mount by calling subscribeRoom directly.
+		await roomStore.subscribeRoom(ROOM_ID);
 	});
 
 	afterEach(async () => {
+		roomStore.unsubscribeRoom(ROOM_ID);
 		await roomStore.select(null);
 		vi.clearAllMocks();
 	});
@@ -212,9 +216,9 @@ describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t1']);
 	});
 
-	it('unsubscribes from tasks.byRoom on room deselect', async () => {
+	it('unsubscribes from tasks.byRoom when unsubscribeRoom is called (hook unmount)', () => {
 		hub.request.mockClear();
-		await roomStore.select(null);
+		roomStore.unsubscribeRoom(ROOM_ID);
 		const calls = hub.request.mock.calls as [string, unknown][];
 		const unsubCall = calls.find(
 			([method, params]) =>
@@ -241,8 +245,8 @@ describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 		});
 	});
 
-	it('does NOT re-subscribe on reconnect after room is deselected', async () => {
-		await roomStore.select(null);
+	it('does NOT re-subscribe on reconnect after unsubscribeRoom (hook unmount)', () => {
+		roomStore.unsubscribeRoom(ROOM_ID);
 		hub.request.mockClear();
 		hub.fireConnection('connected');
 		const calls = hub.request.mock.calls as [string, unknown][];
