@@ -26,11 +26,16 @@ Build a small helper component that renders runtime messages (status dividers, r
    - Copy the rendering JSX from `TaskConversationRenderer.tsx` for these specific message types. This is intentional duplication of ~50 lines of JSX, scoped to only runtime message rendering.
    - **Field access pattern**: The `RuntimeMessage` wrapper contains `message: SDKMessage`. To access type-specific fields (e.g., `resetsAt` and `sessionRole` for rate_limited, `fromModel`/`toModel` for model_fallback), access them from `runtimeMsg.message` and cast as needed: `const raw = runtimeMsg.message as Record<string, unknown>`. This matches the existing pattern in `TaskConversationRenderer.tsx`.
    - `data-testid="runtime-message"` on the root element
-3. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
+3. Write unit tests in `packages/web/src/components/room/__tests__/RuntimeMessageRenderer.test.tsx`:
+   - Test rendering of each of the four message types (status, rate_limited, model_fallback, leader_summary).
+   - Verify correct styling/classes for each type.
+   - Verify field access from `message` property works correctly for typed fields (resetsAt, fromModel, etc.).
+4. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
 **Acceptance Criteria:**
 - Component correctly renders all four runtime message types with appropriate styling.
 - Visually matches the V1 rendering of these message types.
+- Unit tests cover all four message types.
 - `data-testid` attribute is present.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
@@ -59,10 +64,13 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
      - `type: 'runtime'` items render as `RuntimeMessageRenderer` components
    - Manage slide-out panel state: `selectedTurn: TurnBlock | null`
    - When a `TurnSummaryBlock` is clicked, set `selectedTurn` to open the `SlideOutPanel`
+   - Use `conversationKey` from `useTaskViewData` as part of the key for the turn blocks list, so approve/reject actions force a re-fetch of messages (same remount pattern as V1)
    - Reuse shared sub-components from Task 1.1:
      - `HumanInputArea` for the human message input
-     - `TaskActionBar` for action buttons
+     - `TaskHeaderActions` for the header action buttons (cancel, stop/interrupt, reactivate, dropdown)
      - `TaskActionDialogs` for complete/cancel/archive dialogs
+     - `TaskReviewBar` for the approve/reject review bar (shown when `group?.submittedForReview` is true)
+     - `RejectModal` (imported from `../ui/RejectModal`) — wired to `rejectReviewedTask` and `rejectModal` state from `useTaskViewData`
    - Include the same header structure as V1 (task name, status, model info)
    - Auto-scroll behavior: scroll to bottom when new turn blocks arrive (reuse `useAutoScroll` if available)
 3. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
@@ -72,7 +80,9 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
 - Runtime messages (status, rate_limited, model_fallback, leader_summary) appear inline between turn blocks.
 - Clicking a turn block opens the slide-out panel with the correct session chat.
 - Only one slide-out panel is open at a time.
-- Shared sub-components (input area, action bar, dialogs) work correctly.
+- Shared sub-components (input area, header actions, dialogs, review bar, reject modal) work correctly.
+- Approve/reject actions bump `conversationKey` and force message re-fetch (same behavior as V1).
+- Review bar appears when `group?.submittedForReview` is true.
 - Auto-scroll works correctly for new turn blocks.
 - The existing TaskView.tsx and TaskConversationRenderer.tsx are NOT modified (beyond the import refactors done in Task 1.1).
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.

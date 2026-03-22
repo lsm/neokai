@@ -17,9 +17,23 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
 
 1. Run `bun install` at the worktree root.
 2. Extract `ROLE_COLORS` from `TaskConversationRenderer.tsx` into a new shared file `packages/web/src/lib/task-constants.ts`. Update `TaskConversationRenderer.tsx` to import from the shared location. This is a pure mechanical refactor — no logic changes.
-3. Extract the data-fetching logic from `TaskView.tsx` into `packages/web/src/hooks/useTaskViewData.ts`:
-   - `useTaskViewData(roomId, taskId)` — returns `{ task, group, sessions, workerSession, leaderSession, isLoading, error }`.
-   - This covers the `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, session model fetch, and loading/error states.
+3. Extract the data-fetching and action logic from `TaskView.tsx` into `packages/web/src/hooks/useTaskViewData.ts`:
+   - `useTaskViewData(roomId, taskId)` — returns:
+     ```
+     {
+       task, group, sessions, workerSession, leaderSession, isLoading, error,
+       conversationKey,          // integer bumped to force conversation remount after approve/reject
+       approveReviewedTask,      // async handler: calls task.approve RPC, bumps conversationKey
+       rejectReviewedTask,       // async handler(feedback): calls task.reject RPC, bumps conversationKey
+       approving, rejecting,     // loading states for approve/reject
+       reviewError,              // error string from approve/reject
+       rejectModal,              // { isOpen, open, close } state for the RejectModal
+       interruptTask,            // handler: calls task.interrupt RPC
+       reactivateTask,           // handler: calls task.reactivate RPC
+       canCancel, canInterrupt, canReactivate, // derived permission flags
+     }
+     ```
+   - This covers: `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, session model fetch, loading/error states, `conversationKey` state (used to force `TaskConversationRenderer` remount after approve/reject), and all task action handlers (approve, reject, interrupt, reactivate) with their loading/error states.
    - Update `TaskView.tsx` to call `useTaskViewData()` instead of inline logic. Verify V1 behavior is unchanged.
 4. Extract the group message fetching and parsing logic from `TaskConversationRenderer.tsx` into `packages/web/src/hooks/useGroupMessages.ts`:
    - Define the `ParsedGroupMessage` type alias: this is `SDKMessage` with `_taskMeta` (containing `authorRole`, `authorSessionId`, etc.) attached during parsing. Formally: `type ParsedGroupMessage = SDKMessage & { _taskMeta?: { authorRole: string; authorSessionId: string; [key: string]: unknown } }`. Export this type from the hook file so downstream consumers (e.g., `useTurnBlocks`) can import it.
@@ -28,19 +42,20 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
    - This covers: `task.getGroupMessages` RPC, `state.groupMessages.delta` subscription, `parseGroupMessage()` parsing, pagination buffer, deduplication, and the `fetchingRef`/`pendingDeltasRef` race-condition handling.
    - Update `TaskConversationRenderer.tsx` to call `useGroupMessages()` instead of inline logic. Verify V1 behavior is unchanged.
 5. Extract shared sub-components from `TaskView.tsx` into `packages/web/src/components/room/task-shared/`:
-   - `HumanInputArea.tsx` — the human message input component
-   - `TaskActionDialogs.tsx` — `CompleteTaskDialog`, `CancelTaskDialog`, `ArchiveTaskDialog`
-   - `TaskActionBar.tsx` — the action button bar
-   - These are currently private inner components of `TaskView.tsx`. Extract them as named exports. Update `TaskView.tsx` to import them.
+   - `HumanInputArea.tsx` — the human message input component (inner function `HumanInputArea` at ~line 81)
+   - `TaskActionDialogs.tsx` — `CompleteTaskDialog` (~line 267), `CancelTaskDialog` (~line 378), `ArchiveTaskDialog` (~line 468). Note: `RejectModal` is already a shared component imported from `../ui/RejectModal` — it does not need extraction, but V2 must import and wire it (see Task 4.2).
+   - `TaskHeaderActions.tsx` — extract the inline header action button row (~lines 946-1015) into a new component. This is NOT an existing inner function — it is inline JSX containing the Cancel, Stop/Interrupt, Reactivate buttons and `TaskActionDropdown`. Extract this JSX into a `TaskHeaderActions` component that accepts the relevant handlers and permission flags as props.
+   - `TaskReviewBar.tsx` — extract the review `ActionBar` rendering (~lines 1019-1043) into a component that accepts `approveReviewedTask`, `rejectModal.open`, `approving`, `rejecting`, `reviewError`, and `reviewPrMeta` as props. This is the `<ActionBar type="review" ...>` block shown when `group?.submittedForReview` is true.
+   - These are inner components or inline JSX regions of `TaskView.tsx`. Extract them as named exports. Update `TaskView.tsx` to import them.
 6. Run `bun run typecheck` and `bun run lint` to verify no regressions.
 7. Run existing unit tests for TaskView/TaskConversationRenderer to verify behavior is unchanged.
 8. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
 **Acceptance Criteria:**
 - `ROLE_COLORS` is exported from `packages/web/src/lib/task-constants.ts` and imported by both V1 and (later) V2.
-- `useTaskViewData` hook encapsulates all task/group/session data fetching.
+- `useTaskViewData` hook encapsulates all task/group/session data fetching AND task action handlers (approve, reject, interrupt, reactivate) with `conversationKey` reload mechanism.
 - `useGroupMessages` hook encapsulates group message fetching, parsing, deduplication, delta subscription, and pagination.
-- `HumanInputArea`, `TaskActionDialogs`, `TaskActionBar` are extracted into shared files.
+- `HumanInputArea`, `TaskActionDialogs`, `TaskHeaderActions`, `TaskReviewBar` are extracted into shared files.
 - `TaskView.tsx` and `TaskConversationRenderer.tsx` import from the new shared locations.
 - V1 behavior is identical — all existing tests pass, no visual changes.
 - **Note on test updates**: Existing test files (`TaskView.test.tsx`, `TaskConversationRenderer.test.tsx`) may need mock target adjustments (e.g., mocking the new shared hook modules instead of inline logic). These import/mock swaps are expected and acceptable — they are part of the refactor, not a behavioral change.

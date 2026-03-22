@@ -20,7 +20,7 @@ Create a `SlideOutPanel` component that slides in from the right side of the tas
    - Check session selection state management (line 84+) and cleanup logic (line 521) for conflicts.
    - **Known issue**: `ChatContainer` calls `sessionStore.select()` which modifies global signal state. The `readonly` prop exists but does not suppress this call. Preact signals are global singletons and cannot be scoped with a context provider.
    - **Preferred strategy**: Add a new prop `suppressSelection?: boolean` to `ChatContainer` that skips the `sessionStore.select()` call when true. The slide-out panel passes `suppressSelection={true}`. This is a minimal, targeted change to `ChatContainer` (adding a conditional guard around one line) that doesn't affect existing callers.
-   - **Fallback strategy**: If modifying `ChatContainer` proves too risky (e.g., the selection call has downstream effects), create a thin wrapper `ReadonlyChatContainer` that mounts `ChatContainer` after saving/restoring the session selection state via `useEffect` cleanup.
+   - **Fallback strategy**: If modifying `ChatContainer` proves too risky (e.g., the selection call has downstream effects), create a thin wrapper `ReadonlyChatContainer` that mounts `ChatContainer` after saving/restoring the session selection state via `useEffect` cleanup. **Caveat**: The existing cleanup in `ChatContainer` uses `setTimeout(() => {}, 0)` (deferred), so the save/restore wrapper must account for this async timing — use a matching `setTimeout` in the restore to run after ChatContainer's deferred cleanup.
    - Document the chosen approach and any findings in the PR description.
 3. Create `packages/web/src/components/room/SlideOutPanel.tsx` with the following:
    - **Props**:
@@ -76,7 +76,7 @@ Create a `SlideOutPanel` component that slides in from the right side of the tas
 - All `data-testid` attributes are present.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-**Dependencies:** None (ChatContainer already exists and accepts `sessionId` prop)
+**Dependencies:** None (ChatContainer already exists and accepts `sessionId` prop). **Note**: The preferred isolation strategy adds a `suppressSelection` prop to `ChatContainer.tsx` — this is a minimal one-line conditional guard, not a structural change to the component.
 
 ---
 
@@ -102,6 +102,7 @@ Write unit tests for the SlideOutPanel component covering open/close behavior, r
    - **Null sessionId**: When sessionId is null and isOpen is true, panel shows a placeholder or does not mount ChatContainer.
    - **Accessibility attributes**: Verify `role="dialog"`, `aria-modal="true"`, and `aria-label` are present.
    - **data-testid attributes**: Verify all required `data-testid` attributes are present.
+   - **suppressSelection isolation**: Verify that when ChatContainer is mounted in the slide-out panel, it receives `suppressSelection={true}`. Spy on `sessionStore.select` and confirm it is NOT called when the panel opens (verifying the isolation strategy from Task 3.1).
 5. Run tests and verify all pass.
 6. Commit and push to the same feature branch, update PR.
 
