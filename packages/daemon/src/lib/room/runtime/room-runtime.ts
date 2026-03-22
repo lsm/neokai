@@ -2677,31 +2677,53 @@ export class RoomRuntime {
 	 *
 	 * Unlike cleanStaleGroups() which checks task terminal status, this checks session
 	 * liveness directly and terminates the group without changing task status.
+	 *
+	 * NOTE on ordering vs recoverZombieGroups():
+	 * recoverZombieGroups() runs inside executeTick() BEFORE the spawn loop, so in the
+	 * normal zombie case (task row still present), it will always handle the zombie
+	 * first (failing the group and moving the task to needs_attention). This method's
+	 * exclusive territory is zombie groups whose task row has been hard-deleted from
+	 * the tasks table: getActiveGroups() uses an INNER JOIN and misses those, but
+	 * getActiveGroupsForTask() (no JOIN) still finds them. This method terminates those
+	 * groups without changing task status so the new group can be inserted.
 	 */
 	private async cleanStaleGroupsForTask(task: NeoTask): Promise<void> {
 		const activeGroups = this.groupRepo.getActiveGroupsForTask(task.id);
 		for (const group of activeGroups) {
-			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
-			const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
-			// Only terminate if both sessions are gone — a group with one live session
-			// may still be in progress or submitted for review.
-			if (!workerMissing || !leaderMissing) continue;
+			try {
+				const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
+				const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
+				// Only terminate if both sessions are gone — a group with one live session
+				// may still be in progress or submitted for review.
+				if (!workerMissing || !leaderMissing) continue;
 
-			log.warn(
-				`[cleanStaleGroupsForTask] Group ${group.id} for task ${task.id} ` +
-					`has no live sessions — auto-cleaning before spawn`
-			);
+				log.warn(
+					`[cleanStaleGroupsForTask] Group ${group.id} for task ${task.id} ` +
+						`has no live sessions — auto-cleaning before spawn`
+				);
 
-			// Stop any live sessions (best-effort — both are missing here but defensive).
-			await this.terminateGroupSessions(group);
+				// Stop any live sessions (best-effort — both are missing here but defensive).
+				await this.terminateGroupSessions(group);
 
-			// Mark group as terminal without failing the task.
-			// The task remains pending so spawnGroupForTask can create a fresh group.
-			if (group.completedAt === null) {
-				await this.taskGroupManager.terminateGroup(group.id);
+				// Mark group as terminal without failing the task.
+				// The task remains pending so spawnGroupForTask can create a fresh group.
+				if (group.completedAt === null) {
+					const result = await this.taskGroupManager.terminateGroup(group.id);
+					if (result === null) {
+						log.warn(
+							`[cleanStaleGroupsForTask] terminateGroup returned null for group ${group.id} ` +
+								`(version conflict) — slot may not be freed; spawn will hit UNIQUE constraint`
+						);
+					}
+				}
+
+				this.cleanupMirroring(group.id, 'Zombie group auto-cleaned before spawn.');
+			} catch (error) {
+				log.error(
+					`[cleanStaleGroupsForTask] Failed to clean zombie group ${group.id} for task ${task.id} — skipping:`,
+					error
+				);
 			}
-
-			this.cleanupMirroring(group.id, 'Zombie group auto-cleaned before spawn.');
 		}
 	}
 
