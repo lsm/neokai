@@ -268,7 +268,7 @@ export class TaskAgentManager {
 
 			// --- Build and attach MCP server with live runtime dependencies
 			const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
-			const subSessionFactory = this.createSubSessionFactory(taskId);
+			const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
@@ -321,6 +321,21 @@ export class TaskAgentManager {
 					});
 					this.taskGroupIds.set(taskId, group.id);
 					log.info(`TaskAgentManager: created session group ${group.id} for task ${taskId}`);
+					// Fetch the group with members populated for the event payload
+					const groupWithMembers = this.config.sessionGroupRepo.getGroup(group.id) ?? group;
+					this.config.daemonHub
+						.emit('spaceSessionGroup.created', {
+							sessionId: `space:${spaceId}`,
+							spaceId,
+							taskId,
+							group: groupWithMembers,
+						})
+						.catch((err) => {
+							log.warn(
+								`TaskAgentManager: failed to emit spaceSessionGroup.created for group ${group.id}:`,
+								err
+							);
+						});
 				} catch (addErr) {
 					// addMember failed — remove the orphaned group row before propagating
 					try {
@@ -636,7 +651,7 @@ export class TaskAgentManager {
 	 * Create a `SubSessionFactory` implementation bound to a specific taskId.
 	 * Passed to `createTaskAgentMcpServer()` for the given Task Agent session.
 	 */
-	private createSubSessionFactory(taskId: string): SubSessionFactory {
+	private createSubSessionFactory(taskId: string, spaceId: string): SubSessionFactory {
 		return {
 			create: async (
 				init: AgentSessionInit,
@@ -659,6 +674,19 @@ export class TaskAgentManager {
 						log.info(
 							`TaskAgentManager: added sub-session ${sessionId} as member ${member.id} to group ${groupId}`
 						);
+						this.config.daemonHub
+							.emit('spaceSessionGroup.memberAdded', {
+								sessionId: `space:${spaceId}`,
+								spaceId,
+								groupId,
+								member,
+							})
+							.catch((err) => {
+								log.warn(
+									`TaskAgentManager: failed to emit spaceSessionGroup.memberAdded for member ${member.id}:`,
+									err
+								);
+							});
 					} catch (err) {
 						log.warn(
 							`TaskAgentManager: failed to add sub-session ${sessionId} to group ${groupId}:`,
@@ -781,7 +809,30 @@ export class TaskAgentManager {
 				const memberId = this.subSessionMemberIds.get(subSessionId);
 				if (!memberId) return;
 				try {
-					this.config.sessionGroupRepo.updateMemberStatus(memberId, 'failed');
+					const updatedMember = this.config.sessionGroupRepo.updateMemberStatus(memberId, 'failed');
+					if (updatedMember) {
+						const spaceId = this.getSpaceIdForSubSession(subSessionId);
+						if (spaceId) {
+							this.config.daemonHub
+								.emit('spaceSessionGroup.memberUpdated', {
+									sessionId: `space:${spaceId}`,
+									spaceId,
+									groupId: updatedMember.groupId,
+									memberId,
+									member: updatedMember,
+								})
+								.catch((err) => {
+									log.warn(
+										`TaskAgentManager: failed to emit spaceSessionGroup.memberUpdated for member ${memberId}:`,
+										err
+									);
+								});
+						} else {
+							log.warn(
+								`TaskAgentManager: could not resolve spaceId for sub-session ${subSessionId} — spaceSessionGroup.memberUpdated (failed) not emitted`
+							);
+						}
+					}
 				} catch (err) {
 					log.warn(
 						`TaskAgentManager: failed to mark member ${memberId} as failed for sub-session ${subSessionId}:`,
@@ -839,7 +890,33 @@ export class TaskAgentManager {
 		const memberId = this.subSessionMemberIds.get(subSessionId);
 		if (memberId) {
 			try {
-				this.config.sessionGroupRepo.updateMemberStatus(memberId, 'completed');
+				const updatedMember = this.config.sessionGroupRepo.updateMemberStatus(
+					memberId,
+					'completed'
+				);
+				if (updatedMember) {
+					const spaceId = this.getSpaceIdForTask(taskId);
+					if (spaceId) {
+						this.config.daemonHub
+							.emit('spaceSessionGroup.memberUpdated', {
+								sessionId: `space:${spaceId}`,
+								spaceId,
+								groupId: updatedMember.groupId,
+								memberId,
+								member: updatedMember,
+							})
+							.catch((err) => {
+								log.warn(
+									`TaskAgentManager: failed to emit spaceSessionGroup.memberUpdated for member ${memberId}:`,
+									err
+								);
+							});
+					} else {
+						log.warn(
+							`TaskAgentManager: could not resolve spaceId for task ${taskId} — spaceSessionGroup.memberUpdated (completed) not emitted`
+						);
+					}
+				}
 			} catch (err) {
 				log.warn(
 					`TaskAgentManager: failed to mark member ${memberId} as completed for sub-session ${subSessionId}:`,
@@ -991,7 +1068,7 @@ export class TaskAgentManager {
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
 		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
-		const subSessionFactory = this.createSubSessionFactory(taskId);
+		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
@@ -1009,6 +1086,7 @@ export class TaskAgentManager {
 				this.injectSubSessionMessage(subSessionId, message),
 			onSubSessionComplete: (stepId, subSessionId) =>
 				this.handleSubSessionComplete(taskId, stepId, subSessionId),
+			daemonHub: this.config.daemonHub,
 		});
 
 		agentSession.setRuntimeMcpServers({
@@ -1181,5 +1259,18 @@ export class TaskAgentManager {
 	/** Returns the space ID for a task by reading it from the task repository. */
 	private getSpaceIdForTask(taskId: string): string | null {
 		return this.config.taskRepo.getTask(taskId)?.spaceId ?? null;
+	}
+
+	/**
+	 * Look up the spaceId for a sub-session by searching for the parent taskId.
+	 * Used when emitting events from the error handler where only subSessionId is available.
+	 */
+	private getSpaceIdForSubSession(subSessionId: string): string | null {
+		for (const [taskId, stepMap] of this.subSessions) {
+			if (stepMap.has(subSessionId)) {
+				return this.getSpaceIdForTask(taskId);
+			}
+		}
+		return null;
 	}
 }

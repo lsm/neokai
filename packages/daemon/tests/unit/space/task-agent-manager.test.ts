@@ -45,6 +45,8 @@ type EventHandler = (data: Record<string, unknown>) => void;
 
 class TestDaemonHub {
 	private listeners = new Map<string, Map<string, EventHandler>>();
+	/** Tracks all emitted events for assertion in tests */
+	readonly emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
 
 	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
 		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
@@ -58,7 +60,8 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): void {
+	emit(event: string, data: Record<string, unknown>): Promise<void> {
+		this.emitted.push({ event, data });
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		// Emit to session-specific listeners
 		if (sessionId) {
@@ -71,6 +74,7 @@ class TestDaemonHub {
 		for (const handler of this.listeners.get(`${event}:*`)?.values() ?? []) {
 			handler(data);
 		}
+		return Promise.resolve();
 	}
 }
 
@@ -2165,6 +2169,208 @@ describe('TaskAgentManager', () => {
 
 			// Group map should be populated even though the task session was not rehydrated
 			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Event emission (Task 2.3)
+	// -----------------------------------------------------------------------
+
+	describe('event emission', () => {
+		/** Helper: get the SubSessionFactory bound to a taskId via the private method */
+		function getFactory(
+			manager: TaskAgentManager,
+			taskId: string
+		): import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory {
+			return (
+				manager as unknown as {
+					createSubSessionFactory: (
+						taskId: string,
+						spaceId: string
+					) => import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
+				}
+			).createSubSessionFactory(taskId, ctx.spaceId);
+		}
+
+		test('spaceSessionGroup.created emitted after spawnTaskAgent', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const events = ctx.daemonHub.emitted.filter((e) => e.event === 'spaceSessionGroup.created');
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				taskId: string;
+				group: { id: string; members: unknown[] };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.spaceId).toBe(ctx.spaceId);
+			expect(payload.taskId).toBe(task.id);
+			expect(payload.group).toBeDefined();
+			// Group should include the task-agent member
+			expect(Array.isArray(payload.group.members)).toBe(true);
+			expect(payload.group.members.length).toBeGreaterThan(0);
+		});
+
+		test('spaceSessionGroup.created uses space-specific channel', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const evt = ctx.daemonHub.emitted.find((e) => e.event === 'spaceSessionGroup.created');
+			expect(evt?.data.sessionId).toBe(`space:${ctx.spaceId}`);
+		});
+
+		test('spaceSessionGroup.memberAdded emitted when sub-session is created', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-event-test-${task.id}`;
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			const events = ctx.daemonHub.emitted.filter(
+				(e) => e.event === 'spaceSessionGroup.memberAdded'
+			);
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				groupId: string;
+				member: { sessionId: string; role: string; agentId?: string; status: string };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.spaceId).toBe(ctx.spaceId);
+			expect(payload.groupId).toBe(ctx.manager.getTaskGroupId(task.id));
+			expect(payload.member.sessionId).toBe(subSessionId);
+			expect(payload.member.role).toBe('coder');
+			expect(payload.member.agentId).toBe(ctx.agentId);
+			expect(payload.member.status).toBe('active');
+		});
+
+		test('spaceSessionGroup.memberUpdated emitted when sub-session completes', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-complete-event-${task.id}`;
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Simulate completion via handleSubSessionComplete (private method)
+			const handleComplete = (
+				ctx.manager as unknown as {
+					handleSubSessionComplete: (
+						taskId: string,
+						stepId: string,
+						subSessionId: string
+					) => Promise<void>;
+				}
+			).handleSubSessionComplete;
+			await handleComplete.call(ctx.manager, task.id, 'step-1', subSessionId);
+
+			const events = ctx.daemonHub.emitted.filter(
+				(e) => e.event === 'spaceSessionGroup.memberUpdated'
+			);
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				groupId: string;
+				memberId: string;
+				member: { status: string };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.spaceId).toBe(ctx.spaceId);
+			expect(payload.member.status).toBe('completed');
+		});
+
+		test('spaceSessionGroup.memberUpdated emitted when sub-session errors', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-event-${task.id}`;
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Register a completion callback to activate the session.error listener
+			factory.onComplete(subSessionId, async () => {});
+
+			// Simulate session error via DaemonHub event
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'test error',
+			});
+
+			// Wait a tick for the async handler to fire
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const events = ctx.daemonHub.emitted.filter(
+				(e) => e.event === 'spaceSessionGroup.memberUpdated'
+			);
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				member: { status: string };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.member.status).toBe('failed');
+		});
+
+		test('spaceSessionGroup.memberAdded uses space-specific channel', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			await factory.create(
+				{
+					sessionId: `sub-channel-test-${task.id}`,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			const evt = ctx.daemonHub.emitted.find((e) => e.event === 'spaceSessionGroup.memberAdded');
+			expect(evt?.data.sessionId).toBe(`space:${ctx.spaceId}`);
+		});
+
+		test('no spaceSessionGroup.created event when group creation fails', async () => {
+			// Sabotage sessionGroupRepo.createGroup to throw
+			let callCount = 0;
+			ctx.sessionGroupRepo.createGroup = (..._args) => {
+				callCount++;
+				throw new Error('forced failure');
+			};
+
+			const task = await makeTask(ctx.taskManager);
+			// Should not throw — group creation is non-fatal
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			expect(callCount).toBe(1);
+			const events = ctx.daemonHub.emitted.filter((e) => e.event === 'spaceSessionGroup.created');
+			expect(events.length).toBe(0);
 		});
 	});
 });
