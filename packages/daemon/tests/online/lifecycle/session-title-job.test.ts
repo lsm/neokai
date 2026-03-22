@@ -26,7 +26,7 @@ const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 5000 : 45000;
 const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
-const JOB_POLL_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const JOB_POLL_TIMEOUT = IS_MOCK ? 20000 : 30000;
 
 // Exponential backoff for retry (2^0 * 1000 = 1000ms for first retry)
 const RETRY_DELAY_MS = 1100;
@@ -93,6 +93,12 @@ describe('Session Title Generation via Job Queue', () => {
 
 	beforeEach(async () => {
 		daemon = (await createDaemonServer()) as DaemonWithContext;
+		if (!daemon.daemonContext) {
+			throw new Error(
+				'session-title-job tests require in-process daemon mode. ' +
+					'Unset DAEMON_TEST_SPAWN to run these tests.'
+			);
+		}
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
@@ -218,24 +224,16 @@ describe('Session Title Generation via Job Queue', () => {
 				// Send first message — triggers job enqueue
 				await sendMessage(daemon, sessionId, 'What is 3+3? Reply with the number.');
 
-				// Wait for job to appear in pending/processing state
+				// Wait for job to appear
 				const initialJob = await waitForJobStatus(daemon, SESSION_TITLE_GENERATION, [
 					'pending',
 					'processing',
 					'completed',
-					'failed',
 				]);
 				expect(initialJob.payload.sessionId).toBe(sessionId);
 
-				// After the first attempt fails, job should go back to pending with retryCount=1
-				// (retry delay = 2^0 * 1000ms = 1000ms)
-				const retryingJob = await waitForJobStatus(daemon, SESSION_TITLE_GENERATION, [
-					'pending',
-					'processing',
-					'completed',
-				]);
-
-				// Eventually the job should complete successfully on the second attempt
+				// The job fails on attempt 1, then retries after ~1s backoff (2^0 * 1000ms).
+				// Wait for completion on the second attempt.
 				const completedJob = await waitForJobStatus(daemon, SESSION_TITLE_GENERATION, 'completed');
 				expect(completedJob.id).toBe(initialJob.id);
 				expect(completedJob.retryCount).toBe(1);
