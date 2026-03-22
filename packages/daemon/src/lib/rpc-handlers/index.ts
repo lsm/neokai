@@ -163,7 +163,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomManager,
 		deps.daemonHub,
 		deps.config.workspaceRoot,
-		deps.sessionManager
+		deps.sessionManager,
+		deps.jobQueue
 	);
 
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
@@ -222,7 +223,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomRuntimeService.getAgentSession(sessionId)
 	);
 
-	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService);
+	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService, deps.jobQueue);
 	setupTaskHandlers(
 		deps.messageHub,
 		roomManager,
