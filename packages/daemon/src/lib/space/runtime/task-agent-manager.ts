@@ -60,7 +60,11 @@ import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
-import type { SubSessionFactory, SubSessionState } from '../tools/task-agent-tools';
+import type {
+	SubSessionFactory,
+	SubSessionMemberInfo,
+	SubSessionState,
+} from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
@@ -137,6 +141,12 @@ export class TaskAgentManager {
 	 * Allows fast lookup when adding sub-session members to an existing group.
 	 */
 	private taskGroupIds = new Map<string, string>();
+
+	/**
+	 * Maps sub-session ID → SpaceSessionGroupMember.id for sessions that were
+	 * successfully added to a group. Used to update member status on completion.
+	 */
+	private subSessionMemberIds = new Map<string, string>();
 
 	/**
 	 * Completion callbacks registered via onComplete().
@@ -587,11 +597,12 @@ export class TaskAgentManager {
 			this.taskAgentSessions.delete(taskId);
 		}
 
-		// 3. Remove any dangling completion callbacks for known session IDs.
+		// 3. Remove any dangling completion callbacks and member ID entries for known session IDs.
 		// We use the exact session IDs collected above (sub-sessions + task agent)
 		// rather than a substring match to avoid false positives.
 		for (const sessionId of sessionIdsToClean) {
 			this.completionCallbacks.delete(sessionId);
+			this.subSessionMemberIds.delete(sessionId);
 		}
 
 		// 4. Remove session listeners for known session IDs
@@ -627,8 +638,36 @@ export class TaskAgentManager {
 	 */
 	private createSubSessionFactory(taskId: string): SubSessionFactory {
 		return {
-			create: async (init: AgentSessionInit): Promise<string> => {
-				return this.createSubSession(taskId, init.sessionId, init);
+			create: async (
+				init: AgentSessionInit,
+				memberInfo?: SubSessionMemberInfo
+			): Promise<string> => {
+				const sessionId = await this.createSubSession(taskId, init.sessionId, init);
+
+				// Add the sub-session as a member of the task's group (non-fatal).
+				const groupId = this.taskGroupIds.get(taskId);
+				if (groupId) {
+					try {
+						const orderIndex = this.config.sessionGroupRepo.getMemberCount(groupId);
+						const member = this.config.sessionGroupRepo.addMember(groupId, sessionId, {
+							role: memberInfo?.role ?? 'agent',
+							agentId: memberInfo?.agentId,
+							status: 'active',
+							orderIndex,
+						});
+						this.subSessionMemberIds.set(sessionId, member.id);
+						log.info(
+							`TaskAgentManager: added sub-session ${sessionId} as member ${member.id} to group ${groupId}`
+						);
+					} catch (err) {
+						log.warn(
+							`TaskAgentManager: failed to add sub-session ${sessionId} to group ${groupId}:`,
+							err
+						);
+					}
+				}
+
+				return sessionId;
 			},
 
 			getProcessingState: (subSessionId: string): SubSessionState | null => {
@@ -669,6 +708,7 @@ export class TaskAgentManager {
 	 * Register a completion callback for a sub-session.
 	 * Subscribes to DaemonHub session.updated events for the session.
 	 * The callback is called at most once when the session first goes idle.
+	 * Also subscribes to session.error to mark the group member as 'failed'.
 	 */
 	private registerCompletionCallback(subSessionId: string, callback: () => Promise<void>): void {
 		// Add to callback list
@@ -683,7 +723,7 @@ export class TaskAgentManager {
 		// Track whether we've fired (to make callback fire exactly once)
 		let fired = false;
 
-		const unsubscribe = this.config.daemonHub.on(
+		const unsubscribeUpdated = this.config.daemonHub.on(
 			'session.updated',
 			(event) => {
 				if (fired) return;
@@ -723,7 +763,40 @@ export class TaskAgentManager {
 			{ sessionId: subSessionId }
 		);
 
-		this.sessionListeners.set(subSessionId, unsubscribe);
+		// Subscribe to session.error to mark the group member as 'failed' when a
+		// fatal error occurs. Sets `fired = true` so that a subsequent idle transition
+		// (session keeps going after an error) does not overwrite 'failed' with 'completed'.
+		// Also self-unsubscribes both listeners to prevent multiple invocations.
+		const unsubscribeError = this.config.daemonHub.on(
+			'session.error',
+			(_event) => {
+				if (fired) return; // Already handled by completion path
+				fired = true;
+				// Tear down both listeners now that the error terminal state is handled.
+				const unsub = this.sessionListeners.get(subSessionId);
+				if (unsub) {
+					unsub();
+					this.sessionListeners.delete(subSessionId);
+				}
+				const memberId = this.subSessionMemberIds.get(subSessionId);
+				if (!memberId) return;
+				try {
+					this.config.sessionGroupRepo.updateMemberStatus(memberId, 'failed');
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: failed to mark member ${memberId} as failed for sub-session ${subSessionId}:`,
+						err
+					);
+				}
+			},
+			{ sessionId: subSessionId }
+		);
+
+		// Store a combined unsubscribe that tears down both listeners at once.
+		this.sessionListeners.set(subSessionId, () => {
+			unsubscribeUpdated();
+			unsubscribeError();
+		});
 	}
 
 	/**
@@ -759,6 +832,19 @@ export class TaskAgentManager {
 				}
 			} catch (err) {
 				log.warn(`TaskAgentManager: failed to mark step task ${stepTask.id} as completed:`, err);
+			}
+		}
+
+		// Update the group member status to 'completed'.
+		const memberId = this.subSessionMemberIds.get(subSessionId);
+		if (memberId) {
+			try {
+				this.config.sessionGroupRepo.updateMemberStatus(memberId, 'completed');
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager: failed to mark member ${memberId} as completed for sub-session ${subSessionId}:`,
+					err
+				);
 			}
 		}
 

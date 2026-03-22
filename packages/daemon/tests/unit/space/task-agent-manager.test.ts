@@ -1032,6 +1032,238 @@ describe('TaskAgentManager', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Sub-session group membership
+	// -----------------------------------------------------------------------
+
+	describe('sub-session group membership', () => {
+		/** Helper: get the SubSessionFactory bound to a taskId via the private method */
+		function getFactory(
+			manager: TaskAgentManager,
+			taskId: string
+		): import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory {
+			return (
+				manager as unknown as {
+					createSubSessionFactory: (
+						taskId: string
+					) => import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
+				}
+			).createSubSessionFactory(taskId);
+		}
+
+		test('sub-session is added as group member with correct role and agentId', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			expect(groupId).toBeDefined();
+
+			const subSessionId = `sub-session-member-test-${task.id}`;
+			const factory = getFactory(ctx.manager, task.id);
+			const actualId = await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// The factory returns the session ID unchanged
+			expect(actualId).toBe(subSessionId);
+
+			// The group should now contain the sub-session as a member
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			const member = group?.members.find((m) => m.sessionId === subSessionId);
+			expect(member).toBeDefined();
+			expect(member?.agentId).toBe(ctx.agentId);
+			expect(member?.role).toBe('coder');
+			expect(member?.status).toBe('active');
+		});
+
+		test('multiple sub-sessions for same task all appear in the same group', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			expect(groupId).toBeDefined();
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subId1 = `sub-multi-1-${task.id}`;
+			const subId2 = `sub-multi-2-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subId1,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+			await factory.create(
+				{
+					sessionId: subId2,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'reviewer' }
+			);
+
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			const subMembers = group?.members.filter((m) => [subId1, subId2].includes(m.sessionId));
+			expect(subMembers?.length).toBe(2);
+
+			// orderIndex should be incremental
+			const indices = subMembers!.map((m) => m.orderIndex).sort((a, b) => a - b);
+			expect(indices[0]).toBeLessThan(indices[1]);
+		});
+
+		test('member status transitions to completed when handleSubSessionComplete fires', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-complete-test-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Verify initial status is 'active'
+			const beforeGroup = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberBefore = beforeGroup?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberBefore?.status).toBe('active');
+
+			// Call handleSubSessionComplete to trigger the status update
+			await (
+				ctx.manager as unknown as {
+					handleSubSessionComplete: (
+						taskId: string,
+						stepId: string,
+						subSessionId: string
+					) => Promise<void>;
+				}
+			).handleSubSessionComplete(task.id, 'step-1', subSessionId);
+
+			// Member status should now be 'completed'
+			const afterGroup = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfter = afterGroup?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfter?.status).toBe('completed');
+		});
+
+		test('member status transitions to failed on session.error event', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-test-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Register a completion callback so the error listener is set up
+			factory.onComplete(subSessionId, async () => {});
+
+			// Emit a session.error event
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'Fatal API error',
+			});
+
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Member status should now be 'failed'
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			const member = group?.members.find((m) => m.sessionId === subSessionId);
+			expect(member?.status).toBe('failed');
+		});
+
+		test('idle event after session.error does not overwrite failed status with completed', async () => {
+			// If session.error fires first (setting fired=true), a subsequent
+			// session.updated → idle must NOT call handleSubSessionComplete.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-then-idle-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Simulate that the sub-session has processed messages
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			subSession._sdkMessageCount = 2;
+
+			// Register a completion callback so listeners are set up
+			let completionCallbackFired = false;
+			factory.onComplete(subSessionId, async () => {
+				completionCallbackFired = true;
+			});
+
+			// Emit session.error — sets fired=true and marks member as 'failed'
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'Fatal API error',
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Member should be 'failed'
+			const groupAfterError = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfterError = groupAfterError?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfterError?.status).toBe('failed');
+
+			// Now emit idle — should NOT fire the completion callback or change the status
+			ctx.daemonHub.emit('session.updated', {
+				sessionId: subSessionId,
+				processingState: { status: 'idle' },
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Completion callback must not have fired (fired guard blocked it)
+			expect(completionCallbackFired).toBe(false);
+
+			// Status must remain 'failed', not overwritten with 'completed'
+			const groupAfterIdle = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfterIdle = groupAfterIdle?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfterIdle?.status).toBe('failed');
+		});
+
+		test('addMember is non-fatal — sub-session is still created when group not found', async () => {
+			// Create a task but do NOT spawn its Task Agent (so no group is created).
+			const task = await makeTask(ctx.taskManager);
+
+			// The factory is created directly without spawning the task agent,
+			// meaning taskGroupIds will not have an entry for this task.
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-no-group-${task.id}`;
+
+			// Should succeed without throwing even though there is no group
+			await expect(
+				factory.create(
+					{
+						sessionId: subSessionId,
+						workspacePath: '/tmp/ws',
+					} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+					{ agentId: ctx.agentId, role: 'coder' }
+				)
+			).resolves.toBe(subSessionId);
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// Message injection
 	// -----------------------------------------------------------------------
 
