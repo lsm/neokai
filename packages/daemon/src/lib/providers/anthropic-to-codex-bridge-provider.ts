@@ -6,9 +6,10 @@
  * backed by `codex app-server`.
  *
  * Authentication discovery for API calls (priority order):
- *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable (daemon/test use only)
- *   2. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
- *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
+ *   1. CODEX_OAUTH_TOKEN environment variable — OAuth access token (preferred for CI)
+ *   2. OPENAI_API_KEY / CODEX_API_KEY environment variable — API key (daemon/test use only)
+ *   3. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
+ *   4. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
  *
  * UI authentication requires NeoKai-managed OAuth credentials in ~/.neokai/auth.json.
  * Env var credentials are used internally for API calls but not shown in the UI.
@@ -261,11 +262,26 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	/**
 	 * Return provider credentials for codex app-server, following discovery order:
-	 *   1. OPENAI_API_KEY / CODEX_API_KEY env var
-	 *   2. ~/.neokai/auth.json["openai"]
-	 *   3. One-time migration from ~/.codex/auth.json into ~/.neokai/auth.json
+	 *   1. CODEX_OAUTH_TOKEN env var (OAuth access token — preferred for CI)
+	 *   2. OPENAI_API_KEY / CODEX_API_KEY env var (API key)
+	 *   3. ~/.neokai/auth.json["openai"]
+	 *   4. One-time migration from ~/.codex/auth.json into ~/.neokai/auth.json
 	 */
 	private async getBridgeAuth(): Promise<AppServerAuth | undefined> {
+		if (this.env.CODEX_OAUTH_TOKEN) {
+			const token = this.env.CODEX_OAUTH_TOKEN;
+			const chatgptAccountId = this.extractAccountId(token);
+			if (chatgptAccountId) {
+				return {
+					type: 'chatgpt',
+					accessToken: token,
+					chatgptAccountId,
+					chatgptPlanType: this.extractPlanType(token),
+				};
+			}
+			// Fallback: treat as API key if JWT parsing fails
+			return { type: 'api_key', apiKey: token };
+		}
 		if (this.env.OPENAI_API_KEY) {
 			return { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
 		}
@@ -454,11 +470,23 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			const codexBinaryPath = this.codexFinder() ?? 'codex';
 			// buildSdkConfig() is synchronous per the Provider interface.  The async
 			// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
-			const envAuth = this.env.OPENAI_API_KEY
-				? ({ type: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
-				: this.env.CODEX_API_KEY
-					? ({ type: 'api_key', apiKey: this.env.CODEX_API_KEY } as const)
-					: undefined;
+			let envAuth: AppServerAuth | undefined;
+			if (this.env.CODEX_OAUTH_TOKEN) {
+				const token = this.env.CODEX_OAUTH_TOKEN;
+				const chatgptAccountId = this.extractAccountId(token);
+				envAuth = chatgptAccountId
+					? {
+							type: 'chatgpt',
+							accessToken: token,
+							chatgptAccountId,
+							chatgptPlanType: this.extractPlanType(token),
+						}
+					: { type: 'api_key', apiKey: token };
+			} else if (this.env.OPENAI_API_KEY) {
+				envAuth = { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
+			} else if (this.env.CODEX_API_KEY) {
+				envAuth = { type: 'api_key', apiKey: this.env.CODEX_API_KEY };
+			}
 			const fileAuth = this.cachedCredentials
 				? this.toBridgeAuth(this.cachedCredentials)
 				: undefined;

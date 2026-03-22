@@ -296,7 +296,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          OPENAI_API_KEY: ""
+          CODEX_OAUTH_TOKEN: ${{ matrix.module == 'providers-anthropic-to-codex-bridge' && secrets.CODEX_OAUTH_TOKEN || '' }}
           # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
           # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
           # If the secret is absent the env var is empty and the test FAILS (hard-fail, not skip — by design).

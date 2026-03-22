@@ -18,6 +18,16 @@ import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthr
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a fake JWT with the given payload (base64url-encoded, no real signature).
+ * Used to test JWT-based credential extraction without hitting a real auth server.
+ */
+function makeFakeJwt(payload: Record<string, unknown>): string {
+	const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+	const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+	return `${header}.${body}.fakesignature`;
+}
+
 /** Create a provider instance pointing at isolated temp auth dirs. */
 function makeProvider(
 	env: Record<string, string | undefined> = {},
@@ -81,6 +91,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
+		});
+
+		it('returns isAuthenticated=false when only CODEX_OAUTH_TOKEN env var is set (env vars are daemon/test only)', async () => {
+			const fakeToken = makeFakeJwt({
+				'https://api.openai.com/auth': { chatgpt_account_id: 'user_test123' },
+			});
+			provider = makeProvider({ CODEX_OAUTH_TOKEN: fakeToken }, emptyDir, emptyDir, fakeCodexFound);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(false);
 		});
 
 		it('returns isAuthenticated=false when only OPENAI_API_KEY env var is set (env vars are daemon/test only)', async () => {
@@ -177,6 +196,30 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 		afterEach(async () => {
 			await fs.rm(tmpDir, { recursive: true, force: true });
+		});
+
+		it('Priority 0: CODEX_OAUTH_TOKEN env var takes highest priority (over OPENAI_API_KEY)', async () => {
+			const fakeToken = makeFakeJwt({
+				'https://api.openai.com/auth': { chatgpt_account_id: 'user_test123' },
+			});
+			const neokaiDir = path.join(tmpDir, 'neokai-p0');
+			const codexDir = path.join(tmpDir, 'codex-p0');
+			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-token' });
+
+			provider = makeProvider(
+				{ CODEX_OAUTH_TOKEN: fakeToken, OPENAI_API_KEY: 'env-api-key' },
+				neokaiDir,
+				codexDir
+			);
+			// getApiKey() returns the access token from CODEX_OAUTH_TOKEN
+			expect(await provider.getApiKey()).toBe(fakeToken);
+		});
+
+		it('CODEX_OAUTH_TOKEN fallback: non-JWT token treated as API key', async () => {
+			// If the token is not a valid JWT (no chatgptAccountId), fall back to api_key auth
+			const notAJwt = 'sk-plain-bearer-token';
+			provider = makeProvider({ CODEX_OAUTH_TOKEN: notAJwt });
+			expect(await provider.getApiKey()).toBe(notAJwt);
 		});
 
 		it('Priority 1: returns OPENAI_API_KEY env var immediately', async () => {
@@ -291,6 +334,17 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(cfg.isAnthropicCompatible).toBe(true);
 			expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-default');
 			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+		});
+
+		it('buildSdkConfig() uses CODEX_OAUTH_TOKEN env var as OAuth auth', () => {
+			const fakeToken = makeFakeJwt({
+				'https://api.openai.com/auth': { chatgpt_account_id: 'user_oauth_ci' },
+			});
+			const p = makeProvider({ CODEX_OAUTH_TOKEN: fakeToken });
+			const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-oauth-token' });
+			expect(cfg.isAnthropicCompatible).toBe(true);
+			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+			p.stopAllBridgeServers();
 		});
 
 		it('buildSdkConfig() uses cached API key resolved by prior getApiKey() call', async () => {
@@ -437,6 +491,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			// getModels() uses isAvailable() which includes env-var credentials.
 			// This ensures models appear in the picker even when the user has not done NeoKai OAuth.
 			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('returns models when CODEX_OAUTH_TOKEN env var is set', async () => {
+			const fakeToken = makeFakeJwt({
+				'https://api.openai.com/auth': { chatgpt_account_id: 'user_test_models' },
+			});
+			provider = makeProvider({ CODEX_OAUTH_TOKEN: fakeToken }, tmpDir, tmpDir, fakeCodexFound);
 			const models = await provider.getModels();
 			expect(models.length).toBeGreaterThan(0);
 		});

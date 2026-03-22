@@ -5,7 +5,7 @@
  *   AnthropicToCodexBridgeProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
  *
  * REQUIREMENTS:
- * - OPENAI_API_KEY or CODEX_API_KEY must be set
+ * - CODEX_OAUTH_TOKEN (OAuth token, preferred), OPENAI_API_KEY, or CODEX_API_KEY must be set
  * - The `codex` binary must be installed and on PATH
  *
  * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
@@ -14,7 +14,7 @@
  * Codex API.
  *
  * Run with:
- *   OPENAI_API_KEY=sk-xxx bun test \
+ *   CODEX_OAUTH_TOKEN=<oauth-token> bun test \
  *     packages/daemon/tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
  */
 
@@ -218,7 +218,7 @@ describe('Codex Bridge (Online)', () => {
 		if (!(await provider.isAvailable())) {
 			throw new Error(
 				'anthropic-codex provider is not available. ' +
-					'Set OPENAI_API_KEY or CODEX_API_KEY, or run `codex login`.'
+					'Set CODEX_OAUTH_TOKEN (OAuth token), OPENAI_API_KEY, or CODEX_API_KEY, or run `codex login`.'
 			);
 		}
 
