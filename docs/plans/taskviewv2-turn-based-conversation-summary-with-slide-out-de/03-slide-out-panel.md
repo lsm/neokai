@@ -102,7 +102,7 @@ Write unit tests for the SlideOutPanel component covering open/close behavior, r
    - **Null sessionId**: When sessionId is null and isOpen is true, panel shows a placeholder or does not mount ChatContainer.
    - **Accessibility attributes**: Verify `role="dialog"`, `aria-modal="true"`, and `aria-label` are present.
    - **data-testid attributes**: Verify all required `data-testid` attributes are present.
-   - **suppressSelection isolation**: Verify that when ChatContainer is mounted in the slide-out panel, it receives `suppressSelection={true}`. Spy on `sessionStore.select` and confirm it is NOT called when the panel opens (verifying the isolation strategy from Task 3.1).
+   - **Session selection isolation**: Verify that the global active session does NOT change when the slide-out panel opens with a different session ID. This is a behavior test — spy on `sessionStore.select` (or check `sessionStore.activeSessionId`) before and after panel mount, and confirm it was not altered. The test is valid regardless of which isolation strategy was chosen (suppressSelection prop or wrapper).
 5. Run tests and verify all pass.
 6. Commit and push to the same feature branch, update PR.
 

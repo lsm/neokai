@@ -19,7 +19,7 @@ Build the `TurnSummaryBlock` component that renders a single turn block as a com
 2. Create `packages/web/src/components/room/TurnSummaryBlock.tsx` with the following structure:
    - **Props**: `{ turn: TurnBlock; onClick: (turn: TurnBlock) => void; isSelected?: boolean }`
    - **Title bar** (top row):
-     - Agent name with role color — import `ROLE_COLORS` from `packages/web/src/lib/task-constants.ts` (extracted in Task 1.1). The label is a plain role name (e.g., "Leader", "Coder", "Human") without model info — model name display is out of scope for V2 turn cards.
+     - Agent name with role color — import `ROLE_COLORS` from `packages/web/src/lib/task-constants.ts` (extracted in Task 1.1). The label is a plain role name without model info. `ROLE_COLORS` has entries for: `planner`, `coder`, `general`, `leader`, `human`, `system`, `craft`, `lead` — all must be supported.
      - Last action badge (e.g., "Read", "Edit", "Bash") — extracted from `turn.lastAction`
      - Turn duration: format as `startTime - endTime` using relative time (e.g., "2m 30s") or "running..." if `endTime` is null
    - **Stats badges** (second row):
@@ -30,7 +30,7 @@ Build the `TurnSummaryBlock` component that renders a single turn block as a com
      - Zero counts: hide the badge entirely (don't show "0")
    - **Fixed-height preview area** (bottom):
      - Max height ~80px with `overflow-y-auto`
-     - Render `turn.previewMessage` using `SDKMessageRenderer` with `taskContext` prop
+     - Render `turn.previewMessage` using `SDKMessageRenderer`. The full `SDKMessageRenderer` in `TaskConversationRenderer` takes `toolResultsMap`, `toolInputsMap`, `subagentMessagesMap`, `sessionId`, `pendingQuestion`, `resolvedQuestions`, `onQuestionResolved`, and `taskContext` props. For the compact preview, pass **empty maps** `{}` for `toolResultsMap`, `toolInputsMap`, `subagentMessagesMap`, pass `taskContext={true}`, and omit question-related props. This means tool_result previews won't show correlated tool_use inputs — this is intentional for the compact preview (full tool correlation is available in the slide-out panel).
      - If turn is active, show the live-streaming last message
      - If turn ended with error, show error message in red styling
      - If turn ended successfully, show last assistant message
