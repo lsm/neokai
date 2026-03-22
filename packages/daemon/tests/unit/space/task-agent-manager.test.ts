@@ -7,7 +7,7 @@
  *   - Sub-session creation via SubSessionFactory
  *   - Completion callback registration and firing
  *   - Sub-session completion propagation to Task Agent
- *   - Message injection (current_turn and next_turn)
+ *   - Message injection (immediate and defer)
  *   - isTaskAgentAlive detection
  *   - cleanup: stops sessions and removes DB records
  *   - Error handling
@@ -1292,7 +1292,7 @@ describe('TaskAgentManager', () => {
 		});
 	});
 
-	describe('injectMessageIntoSession — next_turn delivery', () => {
+	describe('injectMessageIntoSession — defer delivery', () => {
 		/** Helper to call the private method directly */
 		function callInjectMessage(
 			manager: TaskAgentManager,
@@ -1311,7 +1311,7 @@ describe('TaskAgentManager', () => {
 			).injectMessageIntoSession(session, message, deliveryMode);
 		}
 
-		test('saves with "saved" status and does not enqueue when session is processing', async () => {
+		test('saves with "deferred" status and does not enqueue when session is processing', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -1331,16 +1331,16 @@ describe('TaskAgentManager', () => {
 				return 'msg-id';
 			};
 
-			await callInjectMessage(ctx.manager, session, 'step done', 'next_turn');
+			await callInjectMessage(ctx.manager, session, 'step done', 'defer');
 
 			ctx.mockDb.saveUserMessage = originalSave;
 
-			expect(savedStatuses).toEqual(['saved']);
+			expect(savedStatuses).toEqual(['deferred']);
 			// No additional enqueue should have happened
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 
-		test('saves with "saved" status when session is waiting_for_input', async () => {
+		test('saves with "deferred" status when session is waiting_for_input', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -1362,19 +1362,19 @@ describe('TaskAgentManager', () => {
 				return 'msg-id';
 			};
 
-			await callInjectMessage(ctx.manager, session, 'step done', 'next_turn');
+			await callInjectMessage(ctx.manager, session, 'step done', 'defer');
 
 			ctx.mockDb.saveUserMessage = originalSave;
 
-			expect(savedStatuses).toEqual(['saved']);
+			expect(savedStatuses).toEqual(['deferred']);
 			// No additional enqueue should have happened
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 
-		test('saves with "saved" status when session is interrupted (next_turn deferred)', async () => {
-			// 'interrupted' is included in isBusy for next_turn delivery.
-			// A next_turn message to an interrupted session should be deferred, not sent
-			// blindly — the session may restart on its own or receive a current_turn message.
+		test('saves with "deferred" status when session is interrupted (defer deferred)', async () => {
+			// 'interrupted' is included in isBusy for defer delivery.
+			// A defer message to an interrupted session should be deferred, not sent
+			// blindly — the session may restart on its own or receive a immediate message.
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -1393,16 +1393,16 @@ describe('TaskAgentManager', () => {
 				return 'msg-id';
 			};
 
-			await callInjectMessage(ctx.manager, session, 'check in', 'next_turn');
+			await callInjectMessage(ctx.manager, session, 'check in', 'defer');
 
 			ctx.mockDb.saveUserMessage = originalSave;
 
-			expect(savedStatuses).toEqual(['saved']);
+			expect(savedStatuses).toEqual(['deferred']);
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 
-		test('enqueues immediately for current_turn when session is interrupted (restartable)', async () => {
-			// An interrupted session can accept a current_turn message: ensureQueryStarted
+		test('enqueues immediately for immediate when session is interrupted (restartable)', async () => {
+			// An interrupted session can accept a immediate message: ensureQueryStarted
 			// restarts the query and the message is enqueued normally.
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
@@ -1411,12 +1411,12 @@ describe('TaskAgentManager', () => {
 			session._processingState = { status: 'interrupted' } as AgentProcessingState;
 			const msgsBefore = session._enqueuedMessages.length;
 
-			await callInjectMessage(ctx.manager, session, 'restart signal', 'current_turn');
+			await callInjectMessage(ctx.manager, session, 'restart signal', 'immediate');
 
 			expect(session._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
 		});
 
-		test('enqueues immediately for next_turn when session is idle', async () => {
+		test('enqueues immediately for defer when session is idle', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -1424,7 +1424,7 @@ describe('TaskAgentManager', () => {
 
 			const msgsBefore = session._enqueuedMessages.length;
 
-			await callInjectMessage(ctx.manager, session, 'idle delivery', 'next_turn');
+			await callInjectMessage(ctx.manager, session, 'idle delivery', 'defer');
 
 			expect(session._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
 		});

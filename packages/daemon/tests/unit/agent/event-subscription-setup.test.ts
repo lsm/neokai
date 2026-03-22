@@ -60,7 +60,7 @@ describe('EventSubscriptionSetup', () => {
 
 		mockQueryModeHandler = {
 			handleQueryTrigger: mock(async () => ({ success: true, messageCount: 1 })),
-			sendQueuedMessagesOnTurnEnd: mock(async () => {}),
+			sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
 		} as unknown as QueryModeHandler;
 
 		// Create mock session
@@ -106,7 +106,7 @@ describe('EventSubscriptionSetup', () => {
 			expect(registeredCallbacks.has('agent.resetRequest')).toBe(true);
 			expect(registeredCallbacks.has('message.persisted')).toBe(true);
 			expect(registeredCallbacks.has('query.trigger')).toBe(true);
-			expect(registeredCallbacks.has('query.sendQueuedOnTurnEnd')).toBe(true);
+			expect(registeredCallbacks.has('query.sendEnqueuedOnTurnEnd')).toBe(true);
 		});
 
 		it('should pass sessionId to subscription options', () => {
@@ -248,14 +248,14 @@ describe('EventSubscriptionSetup', () => {
 			});
 		});
 
-		describe('query.sendQueuedOnTurnEnd handler', () => {
-			it('should call queryModeHandler.sendQueuedMessagesOnTurnEnd', async () => {
+		describe('query.sendEnqueuedOnTurnEnd handler', () => {
+			it('should call queryModeHandler.sendEnqueuedMessagesOnTurnEnd', async () => {
 				setup.setup();
 
-				const callback = registeredCallbacks.get('query.sendQueuedOnTurnEnd')!;
+				const callback = registeredCallbacks.get('query.sendEnqueuedOnTurnEnd')!;
 				await callback({ sessionId: 'test-session-id' });
 
-				expect(mockQueryModeHandler.sendQueuedMessagesOnTurnEnd).toHaveBeenCalled();
+				expect(mockQueryModeHandler.sendEnqueuedMessagesOnTurnEnd).toHaveBeenCalled();
 			});
 		});
 	});

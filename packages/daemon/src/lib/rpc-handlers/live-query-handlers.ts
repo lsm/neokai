@@ -236,7 +236,7 @@ SELECT
 FROM target_group tg
 JOIN session_group_members gm ON gm.group_id = tg.id
 JOIN sdk_messages sm ON sm.session_id = gm.session_id
-WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'sent') IN ('sent', 'failed'))
+WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 UNION ALL
 SELECT
   'event'                       AS sourceType,

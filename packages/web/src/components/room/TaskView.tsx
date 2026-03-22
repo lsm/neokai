@@ -69,6 +69,16 @@ interface HumanInputAreaProps {
 	taskStatus: string;
 	roomId: string;
 	taskId: string;
+	leaderSessionId?: string;
+	workerSessionId?: string;
+}
+
+interface QueuedOverlayMessage {
+	dbId: string;
+	uuid: string;
+	text: string;
+	timestamp: number;
+	status: 'deferred' | 'enqueued' | 'consumed';
 }
 
 const TARGET_LABELS: Record<HumanMessageTarget, string> = {
@@ -76,7 +86,14 @@ const TARGET_LABELS: Record<HumanMessageTarget, string> = {
 	leader: 'Leader',
 };
 
-function HumanInputArea({ hasGroup, taskStatus, roomId, taskId }: HumanInputAreaProps) {
+function HumanInputArea({
+	hasGroup,
+	taskStatus,
+	roomId,
+	taskId,
+	leaderSessionId,
+	workerSessionId,
+}: HumanInputAreaProps) {
 	const { request } = useMessageHub();
 	const {
 		content: messageText,
@@ -88,13 +105,24 @@ function HumanInputArea({ hasGroup, taskStatus, roomId, taskId }: HumanInputArea
 	const [inputError, setInputError] = useState<string | null>(null);
 	const [target, setTarget] = useState<HumanMessageTarget>('leader');
 	const [menuOpen, setMenuOpen] = useState(false);
+	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
+	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const isTouchDeviceRef = useRef(false);
+	const isMountedRef = useRef(true);
+	const queueRequestVersionRef = useRef(0);
 
 	useEffect(() => {
 		isTouchDeviceRef.current =
 			window.matchMedia('(pointer: coarse)').matches ||
 			('ontouchstart' in window && window.innerWidth < 768);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			isMountedRef.current = false;
+			queueRequestVersionRef.current += 1;
+		};
 	}, []);
 
 	useEffect(() => {
@@ -112,6 +140,57 @@ function HumanInputArea({ hasGroup, taskStatus, roomId, taskId }: HumanInputArea
 	const isArchived = taskStatus === 'archived';
 	const canReactivateWithMessage = taskStatus === 'completed' || taskStatus === 'cancelled';
 	const canSend = !isArchived && (hasGroup || canReactivateWithMessage);
+	const targetSessionId = target === 'leader' ? leaderSessionId : workerSessionId;
+
+	const refreshQueuedMessages = useCallback(async () => {
+		const requestVersion = ++queueRequestVersionRef.current;
+		if (!hasGroup || !targetSessionId) {
+			if (!isMountedRef.current || requestVersion !== queueRequestVersionRef.current) {
+				return;
+			}
+			setQueuedForCurrentTurn([]);
+			setQueuedForNextTurn([]);
+			return;
+		}
+
+		try {
+			const [enqueuedResponse, deferredResponse] = (await Promise.all([
+				request('session.messages.byStatus', {
+					sessionId: targetSessionId,
+					status: 'enqueued',
+					limit: 20,
+				}),
+				request('session.messages.byStatus', {
+					sessionId: targetSessionId,
+					status: 'deferred',
+					limit: 20,
+				}),
+			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
+
+			if (!isMountedRef.current || requestVersion !== queueRequestVersionRef.current) {
+				return;
+			}
+
+			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
+			setQueuedForNextTurn(deferredResponse.messages ?? []);
+		} catch {
+			// Best-effort queue refresh.
+		}
+	}, [hasGroup, request, targetSessionId]);
+
+	useEffect(() => {
+		void refreshQueuedMessages();
+	}, [refreshQueuedMessages]);
+
+	useEffect(() => {
+		if (!hasGroup || (queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)) {
+			return;
+		}
+		const timer = setInterval(() => {
+			void refreshQueuedMessages();
+		}, 700);
+		return () => clearInterval(timer);
+	}, [hasGroup, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
 
 	const sendMessage = async () => {
 		if (sending || !messageText.trim() || !canSend) return;
@@ -125,6 +204,7 @@ function HumanInputArea({ hasGroup, taskStatus, roomId, taskId }: HumanInputArea
 				target,
 			});
 			clearDraft();
+			await refreshQueuedMessages();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
 		} finally {
@@ -159,6 +239,46 @@ function HumanInputArea({ hasGroup, taskStatus, roomId, taskId }: HumanInputArea
 					>
 						Discard draft
 					</button>
+				</div>
+			)}
+			{(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0) && canSend && (
+				<div class="flex flex-col items-end gap-1.5" data-testid="queue-overlay">
+					{queuedForCurrentTurn.slice(0, 3).map((queued, index) => (
+						<div
+							key={queued.dbId}
+							class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
+							data-testid="queued-current-turn-bubble"
+						>
+							<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+							<span class="truncate">
+								{index === 0 && <span class="mr-1 text-amber-300">Now</span>}
+								{queued.text}
+							</span>
+						</div>
+					))}
+					{queuedForNextTurn.slice(0, 3).map((queued, index) => (
+						<div
+							key={queued.dbId}
+							class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
+							data-testid="queued-next-turn-bubble"
+						>
+							<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+							<span class="truncate">
+								{index === 0 && <span class="mr-1 text-blue-300">Next</span>}
+								{queued.text}
+							</span>
+						</div>
+					))}
+					{queuedForCurrentTurn.length > 3 && (
+						<p class="pointer-events-none text-xs text-amber-200/80">
+							+{queuedForCurrentTurn.length - 3} more pending
+						</p>
+					)}
+					{queuedForNextTurn.length > 3 && (
+						<p class="pointer-events-none text-xs text-blue-200/80">
+							+{queuedForNextTurn.length - 3} more deferred
+						</p>
+					)}
 				</div>
 			)}
 			<InputTextarea
@@ -1397,6 +1517,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				taskStatus={task.status}
 				roomId={roomId}
 				taskId={taskId}
+				leaderSessionId={group?.leaderSessionId}
+				workerSessionId={group?.workerSessionId}
 			/>
 
 			{/* Task action dialogs */}

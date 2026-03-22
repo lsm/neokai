@@ -393,9 +393,9 @@ describe('RoomRuntimeService message persistence reactivity', () => {
 			const after = reactiveDb.getTableVersion('sdk_messages');
 
 			expect(after).toBeGreaterThan(before);
-			const queued = reactiveDb.db.getMessagesByStatus('session-reactive-1', 'queued');
-			expect(queued).toHaveLength(1);
-			expect(queued[0]?.type).toBe('user');
+			const enqueued = reactiveDb.db.getMessagesByStatus('session-reactive-1', 'enqueued');
+			expect(enqueued).toHaveLength(1);
+			expect(enqueued[0]?.type).toBe('user');
 		} finally {
 			appDb.close();
 			try {

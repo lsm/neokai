@@ -480,7 +480,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		const call = sessionFactory.calls[0];
 		expect(call.sessionId).toBe('spaces:global');
 		expect(call.message).toContain('[TASK_EVENT]');
-		expect(call.opts?.deliveryMode).toBe('next_turn');
+		expect(call.opts?.deliveryMode).toBe('defer');
 	});
 
 	// -------------------------------------------------------------------------
@@ -801,7 +801,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		expect(lastCall.message).toContain('space-001');
 		expect(lastCall.message).toContain('completed');
 		expect(lastCall.message).toContain('Feature implemented successfully.');
-		expect(lastCall.opts?.deliveryMode).toBe('next_turn');
+		expect(lastCall.opts?.deliveryMode).toBe('defer');
 	});
 
 	test('injects failed notification into global session when space.task.failed fires', async () => {
@@ -829,7 +829,7 @@ describe('provisionGlobalSpacesAgent — task completion event subscriptions', (
 		expect(lastCall.message).toContain('space-001');
 		expect(lastCall.message).toContain('failed');
 		expect(lastCall.message).toContain('Tests are failing.');
-		expect(lastCall.opts?.deliveryMode).toBe('next_turn');
+		expect(lastCall.opts?.deliveryMode).toBe('defer');
 	});
 
 	test('uses "cancelled" label in notification when status is cancelled', async () => {

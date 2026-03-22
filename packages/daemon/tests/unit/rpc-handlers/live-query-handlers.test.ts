@@ -280,7 +280,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
 				 VALUES ('${id}', '${sessionId}', 'assistant', NULL,
 				 '${JSON.stringify({ type: 'assistant', uuid: id, message: { content: [] } })}',
-				 '${new Date(timestampMs).toISOString()}', 'sent')`
+				 '${new Date(timestampMs).toISOString()}', 'consumed')`
 			);
 		}
 

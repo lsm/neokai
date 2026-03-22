@@ -597,6 +597,197 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		expect(getByTestId('task-target-button').textContent).toContain('Leader');
 	});
 
+	it('shows pending queue overlay for the selected target session', async () => {
+		mockRequest.mockImplementation(async (method, payload) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.messages.byStatus') {
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'l-e1',
+								uuid: 'l-e1',
+								text: 'leader-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'deferred') {
+					return {
+						messages: [
+							{
+								dbId: 'l-d1',
+								uuid: 'l-d1',
+								text: 'leader-next',
+								timestamp: Date.now(),
+								status: 'deferred',
+							},
+						],
+					};
+				}
+				return { messages: [] };
+			}
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('queue-overlay')).toBeTruthy();
+			expect(getByTestId('queue-overlay').textContent).toContain('leader-now');
+			expect(getByTestId('queue-overlay').textContent).toContain('leader-next');
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
+			sessionId: 'sess-l',
+			status: 'enqueued',
+			limit: 20,
+		});
+		expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
+			sessionId: 'sess-l',
+			status: 'deferred',
+			limit: 20,
+		});
+	});
+
+	it('refreshes pending queue overlay when target switches to worker', async () => {
+		mockRequest.mockImplementation(async (method, payload) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.messages.byStatus') {
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'l-e1',
+								uuid: 'l-e1',
+								text: 'leader-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				if (payload?.sessionId === 'sess-w' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'w-e1',
+								uuid: 'w-e1',
+								text: 'worker-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				return { messages: [] };
+			}
+			return {};
+		});
+
+		const { getByTestId, queryByText } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(queryByText('leader-now')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-worker'));
+
+		await waitFor(() => {
+			expect(queryByText('worker-now')).toBeTruthy();
+			expect(queryByText('leader-now')).toBeNull();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
+			sessionId: 'sess-w',
+			status: 'enqueued',
+			limit: 20,
+		});
+	});
+
+	it('ignores stale queue responses after target switch', async () => {
+		let resolveLeaderEnqueued: ((value: { messages: QueuedMessage[] }) => void) | undefined;
+		type QueuedMessage = {
+			dbId: string;
+			uuid: string;
+			text: string;
+			timestamp: number;
+			status: 'deferred' | 'enqueued' | 'consumed';
+		};
+		const leaderEnqueuedPromise = new Promise<{ messages: QueuedMessage[] }>((resolve) => {
+			resolveLeaderEnqueued = resolve;
+		});
+
+		mockRequest.mockImplementation(async (method, payload) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.messages.byStatus') {
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
+					return leaderEnqueuedPromise;
+				}
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'deferred') {
+					return { messages: [] };
+				}
+				if (payload?.sessionId === 'sess-w' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'w-e1',
+								uuid: 'w-e1',
+								text: 'worker-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				if (payload?.sessionId === 'sess-w' && payload?.status === 'deferred') {
+					return { messages: [] };
+				}
+				return { messages: [] };
+			}
+			return {};
+		});
+
+		const { getByTestId, queryByText } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('task-target-button')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-worker'));
+
+		await waitFor(() => {
+			expect(queryByText('worker-now')).toBeTruthy();
+		});
+
+		await act(async () => {
+			resolveLeaderEnqueued?.({
+				messages: [
+					{
+						dbId: 'l-e-stale',
+						uuid: 'l-e-stale',
+						text: 'leader-stale',
+						timestamp: Date.now(),
+						status: 'enqueued',
+					},
+				],
+			});
+			await Promise.resolve();
+		});
+
+		await waitFor(() => {
+			expect(queryByText('worker-now')).toBeTruthy();
+			expect(queryByText('leader-stale')).toBeNull();
+		});
+	});
+
 	it('sends message when Enter is pressed (desktop)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };

@@ -161,6 +161,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 43: Drop legacy session_group_messages projection table.
 	runMigration43(db);
+
+	// Migration 44: Rename sdk_messages send_status values to deferred/enqueued/consumed.
+	runMigration44(db);
 }
 
 /**
@@ -2515,4 +2518,67 @@ function runMigration42(db: BunDatabase): void {
 function runMigration43(db: BunDatabase): void {
 	db.exec(`DROP INDEX IF EXISTS idx_sgm_group`);
 	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
+}
+
+/**
+ * Migration 44: Rename sdk_messages.send_status values.
+ *
+ * Old values: saved, queued, sent, failed
+ * New values: deferred, enqueued, consumed, failed
+ */
+function runMigration44(db: BunDatabase): void {
+	if (!tableExists(db, 'sdk_messages')) {
+		return;
+	}
+
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sdk_messages'`)
+		.get() as { sql: string } | null;
+
+	if (!tableInfo) {
+		return;
+	}
+
+	// Already migrated
+	if (tableInfo.sql.includes("'deferred'") && tableInfo.sql.includes("'consumed'")) {
+		return;
+	}
+
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		db.exec(`PRAGMA ignore_check_constraints = 1`);
+		db.exec(`
+			UPDATE sdk_messages
+			SET send_status = CASE
+				WHEN send_status = 'saved' THEN 'deferred'
+				WHEN send_status = 'queued' THEN 'enqueued'
+				WHEN send_status = 'sent' THEN 'consumed'
+				WHEN send_status IS NULL THEN 'consumed'
+				ELSE send_status
+			END
+		`);
+		db.exec(`PRAGMA ignore_check_constraints = 0`);
+
+		db.exec(`
+			CREATE TABLE sdk_messages_new (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				message_subtype TEXT,
+				sdk_message TEXT NOT NULL,
+				timestamp TEXT NOT NULL,
+				send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`INSERT INTO sdk_messages_new SELECT * FROM sdk_messages`);
+		db.exec(`DROP TABLE sdk_messages`);
+		db.exec(`ALTER TABLE sdk_messages_new RENAME TO sdk_messages`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_id ON sdk_messages(session_id)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
+		);
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
 }

@@ -2,7 +2,7 @@
  * Leader Agent Factory - Creates AgentSessionInit for Leader (reviewer) sessions
  *
  * The Leader agent reviews worker output and routes outcomes via MCP tools:
- * - send_to_worker(message, mode) - Forward feedback to worker (steer/queue)
+ * - send_to_worker(message, mode) - Forward feedback to worker (immediate/defer)
  * - complete_task(summary) - Accept work, mark task done
  * - fail_task(reason) - Task is not achievable
  * - replan_goal(reason) - Fail task and trigger replanning with context
@@ -55,7 +55,7 @@ export interface LeaderToolCallbacks {
 	sendToWorker(
 		groupId: string,
 		message: string,
-		mode?: 'steer' | 'queue',
+		mode?: 'immediate' | 'defer',
 		progressSummary?: string
 	): Promise<LeaderToolResult>;
 	completeTask(
@@ -162,8 +162,8 @@ You MUST call tools (no text-only final responses).
 
 ### Review Tools (primary actions)
 - \`send_to_worker\` — Forward feedback to worker without changing group ownership
-  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)
-  - mode=\`steer\`: inject for current-turn steering
+  - mode=\`defer\`: enqueue for next-turn processing (default, preferred for review URLs)
+  - mode=\`immediate\`: inject for current-turn steering
 - \`complete_task\` — Accept the work if it meets all requirements
 - \`fail_task\` — Mark the task as not achievable
 - \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried
@@ -203,7 +203,7 @@ When the human message indicates approval (e.g., "approved", "merge it", "looks 
 For planning tasks the planner must run a second phase to create tasks.
 **Do NOT merge the plan PR yourself — the planner handles merge + task creation.**
 
-1. **Send the planner back** — Call \`send_to_worker\` (mode: "queue") with:
+1. **Send the planner back** — Call \`send_to_worker\` (mode: "defer") with:
    "The plan is approved. Please:
    1. Merge the plan PR: \`gh pr merge <PR_NUMBER>\`
    2. Read the plan file under docs/plans/
@@ -240,7 +240,7 @@ function leaderPostRejectionSection(): string {
 
 When the human message indicates rejection with feedback (e.g., "fix the tests", "needs changes"):
 
-1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "queue") with the human's feedback
+1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "defer") with the human's feedback
 
 After the worker addresses feedback and exits again, you will receive the updated output for review.`;
 }
@@ -250,7 +250,7 @@ function leaderWorkerQuestionsSection(): string {
 ## Handling Worker Questions
 
 If the worker output shows \`Terminal state: waiting_for_input\`, the worker is asking a question.
-- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "steer") with the answer
+- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "immediate") with the answer
 - If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`;
 }
 
@@ -291,7 +291,7 @@ You are a coordinator. You do NOT review the plan yourself. You delegate reviews
 ### Step 1: Understand the Plan
 Read the planner's output to understand what plan was created and what PR was opened.
 Extract the PR number (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).
-If no PR was created, call \`send_to_worker\` (mode: "queue") asking the planner to create one before review can proceed.
+If no PR was created, call \`send_to_worker\` (mode: "defer") asking the planner to create one before review can proceed.
 
 ### Step 2: Dispatch Reviewer Sub-agents
 Use the Task tool to dispatch each reviewer to review the plan PR. Spawn all reviewers in parallel.
@@ -303,7 +303,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 4: Route
 
-- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
+- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
 - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval
 - **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
@@ -322,10 +322,10 @@ ${helperSection}## Plan Review Guidelines
 
 **Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:
 1. Read the planner output and extract the PR number/URL.
-2. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one.
+2. If no PR exists yet, use \`send_to_worker\` (mode: "defer") to request one.
 3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
-   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
+   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
    - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.
    - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
 5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
@@ -371,7 +371,7 @@ You are a coordinator. You do NOT review code yourself. You delegate reviews to 
 ### Step 1: Understand What Was Done
 Read the worker's output to understand what was implemented and which files changed.
 Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).
-If no PR was created, call \`send_to_worker\` (mode: "queue") asking the worker to create one before review can proceed.
+If no PR was created, call \`send_to_worker\` (mode: "defer") asking the worker to create one before review can proceed.
 
 ### Step 2: Dispatch Reviewer Sub-agents
 Use the Task tool to dispatch each reviewer. Spawn all reviewers in parallel.
@@ -383,7 +383,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 4: Route
 
-- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
+- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
 - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL
 - **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
@@ -400,10 +400,10 @@ ${helperSection}## Code Review Guidelines
 
 **Every iteration follows the same workflow** — including after the worker addresses feedback.
 1. Read the worker output and extract the PR number/URL.
-2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one.
+2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "defer") to request one.
 3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
-   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
+   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
    - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.
    - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
 
@@ -456,7 +456,7 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 	return {
 		async send_to_worker(args: {
 			message: string;
-			mode?: 'steer' | 'queue';
+			mode?: 'immediate' | 'defer';
 			progress_summary?: string;
 		}): Promise<LeaderToolResult> {
 			return callbacks.sendToWorker(groupId, args.message, args.mode, args.progress_summary);
@@ -505,13 +505,13 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 	const tools = [
 		tool(
 			'send_to_worker',
-			'Send feedback to the worker agent. mode=queue (default) enqueues for next turn; mode=steer injects current-turn guidance.',
+			'Send feedback to the worker agent. mode=defer (default) enqueues for next turn; mode=immediate injects current-turn guidance.',
 			{
 				message: z.string().describe('Specific, actionable feedback for the worker agent'),
 				mode: z
-					.enum(['steer', 'queue'])
+					.enum(['immediate', 'defer'])
 					.optional()
-					.describe('Delivery mode: queue (default) or steer (immediate)'),
+					.describe('Delivery mode: defer (default) or immediate (inject now)'),
 				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.send_to_worker(args)

@@ -141,7 +141,11 @@ export class Database {
 	}
 
 	// Message Query Mode operations
-	saveUserMessage(sessionId: string, message: SDKMessage, sendStatus: SendStatus = 'sent'): string {
+	saveUserMessage(
+		sessionId: string,
+		message: SDKMessage,
+		sendStatus: SendStatus = 'consumed'
+	): string {
 		return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus);
 	}
 
