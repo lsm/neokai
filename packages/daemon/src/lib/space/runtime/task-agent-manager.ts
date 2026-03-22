@@ -642,8 +642,7 @@ export class TaskAgentManager {
 				const groupId = this.taskGroupIds.get(taskId);
 				if (groupId) {
 					try {
-						const group = this.config.sessionGroupRepo.getGroup(groupId);
-						const orderIndex = group?.members.length ?? 0;
+						const orderIndex = this.config.sessionGroupRepo.getMemberCount(groupId);
 						const member = this.config.sessionGroupRepo.addMember(groupId, sessionId, {
 							role: memberInfo?.role ?? 'agent',
 							agentId: memberInfo?.agentId,
@@ -759,11 +758,20 @@ export class TaskAgentManager {
 		);
 
 		// Subscribe to session.error to mark the group member as 'failed' when a
-		// fatal error occurs. This is independent of the completion callback.
+		// fatal error occurs. Sets `fired = true` so that a subsequent idle transition
+		// (session keeps going after an error) does not overwrite 'failed' with 'completed'.
+		// Also self-unsubscribes both listeners to prevent multiple invocations.
 		const unsubscribeError = this.config.daemonHub.on(
 			'session.error',
 			(_event) => {
 				if (fired) return; // Already handled by completion path
+				fired = true;
+				// Tear down both listeners now that the error terminal state is handled.
+				const unsub = this.sessionListeners.get(subSessionId);
+				if (unsub) {
+					unsub();
+					this.sessionListeners.delete(subSessionId);
+				}
 				const memberId = this.subSessionMemberIds.get(subSessionId);
 				if (!memberId) return;
 				try {

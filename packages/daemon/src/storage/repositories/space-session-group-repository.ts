@@ -333,6 +333,17 @@ export class SpaceSessionGroupRepository {
 	}
 
 	/**
+	 * Return the current number of members in a group using a COUNT query.
+	 * Used to assign the next orderIndex without fetching all member rows.
+	 */
+	getMemberCount(groupId: string): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as cnt FROM space_session_group_members WHERE group_id = ?`)
+			.get(groupId) as { cnt: number } | undefined;
+		return row?.cnt ?? 0;
+	}
+
+	/**
 	 * Get a single member record by ID
 	 */
 	getMember(id: string): SpaceSessionGroupMember | null {

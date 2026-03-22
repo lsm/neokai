@@ -1185,6 +1185,62 @@ describe('TaskAgentManager', () => {
 			expect(member?.status).toBe('failed');
 		});
 
+		test('idle event after session.error does not overwrite failed status with completed', async () => {
+			// If session.error fires first (setting fired=true), a subsequent
+			// session.updated → idle must NOT call handleSubSessionComplete.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-then-idle-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Simulate that the sub-session has processed messages
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			subSession._sdkMessageCount = 2;
+
+			// Register a completion callback so listeners are set up
+			let completionCallbackFired = false;
+			factory.onComplete(subSessionId, async () => {
+				completionCallbackFired = true;
+			});
+
+			// Emit session.error — sets fired=true and marks member as 'failed'
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'Fatal API error',
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Member should be 'failed'
+			const groupAfterError = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfterError = groupAfterError?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfterError?.status).toBe('failed');
+
+			// Now emit idle — should NOT fire the completion callback or change the status
+			ctx.daemonHub.emit('session.updated', {
+				sessionId: subSessionId,
+				processingState: { status: 'idle' },
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Completion callback must not have fired (fired guard blocked it)
+			expect(completionCallbackFired).toBe(false);
+
+			// Status must remain 'failed', not overwritten with 'completed'
+			const groupAfterIdle = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfterIdle = groupAfterIdle?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfterIdle?.status).toBe('failed');
+		});
+
 		test('addMember is non-fatal — sub-session is still created when group not found', async () => {
 			// Create a task but do NOT spawn its Task Agent (so no group is created).
 			const task = await makeTask(ctx.taskManager);
