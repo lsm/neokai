@@ -219,8 +219,7 @@ export class SessionManager {
 	}
 
 	/**
-	 * Get the session lifecycle manager (exposed for testing)
-	 * @internal
+	 * Get the session lifecycle manager.
 	 */
 	getSessionLifecycle(): SessionLifecycle {
 		return this.sessionLifecycle;

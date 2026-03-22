@@ -93,4 +93,13 @@ describe('handleSessionTitleGeneration', () => {
 			'Job payload missing required field: userMessageText'
 		);
 	});
+
+	it('throws when userMessageText is an empty string', async () => {
+		const lifecycle = makeSessionLifecycle();
+		const job = makeJob({ sessionId: 'session-123', userMessageText: '' });
+
+		await expect(handleSessionTitleGeneration(job, lifecycle)).rejects.toThrow(
+			'Job payload missing required field: userMessageText'
+		);
+	});
 });

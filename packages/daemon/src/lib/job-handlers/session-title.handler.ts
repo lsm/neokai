@@ -17,7 +17,7 @@ export async function handleSessionTitleGeneration(
 	if (!sessionId || typeof sessionId !== 'string') {
 		throw new Error('Job payload missing required field: sessionId');
 	}
-	if (typeof userMessageText !== 'string') {
+	if (!userMessageText || typeof userMessageText !== 'string') {
 		throw new Error('Job payload missing required field: userMessageText');
 	}
 
