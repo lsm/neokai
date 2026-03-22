@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 
 describe('SessionGroupRepository', () => {
 	let db: Database;
@@ -72,7 +73,7 @@ describe('SessionGroupRepository', () => {
 			INSERT INTO tasks (id, room_id, title, description, created_at) VALUES ('${taskId}', '${roomId}', 'Test Task', 'desc', ${Date.now()});
 			INSERT INTO tasks (id, room_id, title, description, created_at) VALUES ('task-2', '${roomId}', 'Task 2', 'desc', ${Date.now()});
 		`);
-		repo = new SessionGroupRepository(db as never);
+		repo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 	});
 
 	afterEach(() => {

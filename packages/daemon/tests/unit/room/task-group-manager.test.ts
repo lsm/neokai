@@ -6,6 +6,7 @@ import {
 	type WorkerConfig,
 } from '../../../src/lib/room/runtime/task-group-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
@@ -265,7 +266,7 @@ describe('TaskGroupManager', () => {
 		`);
 
 		const mockHub = createMockDaemonHub();
-		groupRepo = new SessionGroupRepository(db as never);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
 		taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
 		goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);

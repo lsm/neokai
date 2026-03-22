@@ -18,6 +18,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { GateFailureRecord } from '../runtime/dead-loop-detector';
 
 /** Rate limit backoff state stored in group metadata */
@@ -204,7 +205,10 @@ export interface TaskGroupEvent {
 }
 
 export class SessionGroupRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb: ReactiveDatabase
+	) {}
 
 	// ===== Group lifecycle =====
 
@@ -219,19 +223,33 @@ export class SessionGroupRepository {
 		const now = Date.now();
 		const metadata: TaskGroupMetadata = { ...defaultMetadata(), workerRole, workspacePath };
 
-		this.db
-			.prepare(
-				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+		// reactiveDb.beginTransaction() batches change events only — not a DB transaction.
+		// this.db.transaction() provides actual SQLite atomicity so the second INSERT
+		// failure rolls back the first.
+		this.reactiveDb.beginTransaction();
+		try {
+			this.db.transaction(() => {
+				this.db
+					.prepare(
+						`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES (?, 'task', ?, 0, ?, ?)`
-			)
-			.run(id, taskId, JSON.stringify(metadata), now);
+					)
+					.run(id, taskId, JSON.stringify(metadata), now);
 
-		this.db
-			.prepare(
-				`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				this.db
+					.prepare(
+						`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
 			 VALUES (?, ?, 'worker', ?), (?, ?, 'leader', ?)`
-			)
-			.run(id, workerSessionId, now, id, leaderSessionId, now);
+					)
+					.run(id, workerSessionId, now, id, leaderSessionId, now);
+			})();
+
+			this.reactiveDb.notifyChange('session_groups');
+			this.reactiveDb.commitTransaction();
+		} catch (e) {
+			this.reactiveDb.abortTransaction();
+			throw e;
+		}
 
 		return this.getGroup(id)!;
 	}
@@ -300,6 +318,7 @@ export class SessionGroupRepository {
 			)
 			.run(now, groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -312,6 +331,7 @@ export class SessionGroupRepository {
 			)
 			.run(now, groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -322,6 +342,9 @@ export class SessionGroupRepository {
 	 */
 	deleteGroup(groupId: string): boolean {
 		const result = this.db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(groupId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
 		return result.changes > 0;
 	}
 
@@ -345,6 +368,7 @@ export class SessionGroupRepository {
 			.run(groupId);
 
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -376,6 +400,7 @@ export class SessionGroupRepository {
 			.run(JSON.stringify(resetMetadata), groupId);
 
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -406,6 +431,7 @@ export class SessionGroupRepository {
 			)
 			.run(JSON.stringify(merged), groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -430,6 +456,7 @@ export class SessionGroupRepository {
 			)
 			.run(JSON.stringify(merged), groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -477,6 +504,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -495,6 +523,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -513,6 +542,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -531,6 +561,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -560,6 +591,7 @@ export class SessionGroupRepository {
 				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 				.run(JSON.stringify(merged), groupId);
 		}
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -579,6 +611,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -597,6 +630,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -619,6 +653,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -639,6 +674,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -657,6 +693,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -675,6 +712,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	// ===== Rate Limit Backoff =====
@@ -695,6 +733,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -733,23 +772,32 @@ export class SessionGroupRepository {
 	 * Keeps the last 50 records to bound storage size.
 	 */
 	recordGateFailure(groupId: string, gateName: string, reason: string): void {
-		this.db.transaction(() => {
-			const raw = (
-				this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
-					string,
-					unknown
-				>
-			)?.metadata as string;
-			const currentMeta = this.parseMetadata(raw);
-			const existing = currentMeta.gateFailures ?? [];
-			const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
-			// Cap at 50 records — old entries are unlikely to matter for detection
-			const updated = [...existing, record].slice(-50);
-			const merged = { ...currentMeta, gateFailures: updated };
-			this.db
-				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
-				.run(JSON.stringify(merged), groupId);
-		})();
+		// reactiveDb.beginTransaction() batches change events only — not a DB transaction.
+		// this.db.transaction() provides actual SQLite atomicity for the read-modify-write.
+		this.reactiveDb.beginTransaction();
+		try {
+			this.db.transaction(() => {
+				const raw = (
+					this.db
+						.prepare(`SELECT metadata FROM session_groups WHERE id = ?`)
+						.get(groupId) as Record<string, unknown>
+				)?.metadata as string;
+				const currentMeta = this.parseMetadata(raw);
+				const existing = currentMeta.gateFailures ?? [];
+				const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
+				// Cap at 50 records — old entries are unlikely to matter for detection
+				const updated = [...existing, record].slice(-50);
+				const merged = { ...currentMeta, gateFailures: updated };
+				this.db
+					.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+					.run(JSON.stringify(merged), groupId);
+			})();
+			this.reactiveDb.notifyChange('session_groups');
+			this.reactiveDb.commitTransaction();
+		} catch (e) {
+			this.reactiveDb.abortTransaction();
+			throw e;
+		}
 	}
 
 	/**
@@ -776,6 +824,7 @@ export class SessionGroupRepository {
 				`UPDATE session_group_members SET session_id = ? WHERE group_id = ? AND role = 'worker'`
 			)
 			.run(newSessionId, groupId);
+		this.reactiveDb.notifyChange('session_group_members');
 	}
 
 	updateLastForwardedMessageId(
@@ -797,6 +846,7 @@ export class SessionGroupRepository {
 			 VALUES (?, ?, ?, ?)`
 			)
 			.run(params.groupId, params.kind, params.payloadJson ?? null, Date.now());
+		this.reactiveDb.notifyChange('task_group_events');
 		return Number(result.lastInsertRowid);
 	}
 

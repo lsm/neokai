@@ -55,6 +55,8 @@ export function setupTaskHandlers(
 		new TaskManager(d.getDatabase(), roomId, reactiveDb),
 	runtimeService?: RoomRuntimeService
 ): void {
+	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);
+
 	/**
 	 * Emit room.task.update event to notify UI clients
 	 */
@@ -449,7 +451,7 @@ export function setupTaskHandlers(
 		// completed → in_progress uses lightweight revival (group preserved, no full wipe).
 		if (task.status === 'needs_attention' || task.status === 'cancelled') {
 			if (params.status === 'pending' || params.status === 'in_progress') {
-				const groupRepo = new SessionGroupRepository(db.getDatabase());
+				const groupRepo = makeGroupRepo();
 				const group = groupRepo.getGroupByTaskId(params.taskId);
 				if (group) {
 					const reset = groupRepo.resetGroupForRestart(group.id);
@@ -508,7 +510,7 @@ export function setupTaskHandlers(
 			throw new Error(`No runtime found for room: ${params.roomId}`);
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroupByTaskId(params.taskId);
 		if (!group) {
 			throw new Error('No active session group for this task');
@@ -538,7 +540,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroupByTaskId(params.taskId);
 
 		if (!group) {
@@ -581,7 +583,7 @@ export function setupTaskHandlers(
 			throw new Error('Group ID is required');
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroup(params.groupId);
 		if (!group) {
 			return {
@@ -865,7 +867,7 @@ export function setupTaskHandlers(
 			return { success: true };
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
