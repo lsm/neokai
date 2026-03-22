@@ -1,57 +1,54 @@
 /**
- * Comprehensive unit tests for cross-agent messaging.
+ * Integration-level tests for cross-agent messaging.
  *
- * Covers the full messaging stack in one place:
+ * Exercises the full messaging stack with a real SQLite DB and mock injectors
+ * (no real agent sessions). Focuses on end-to-end behavioral enforcement:
  *
- *   ChannelResolver       — canSend(), getPermittedTargets(), all topology patterns
  *   send_feedback         — channel validation, target modes, fan-out, hub-spoke
  *   request_peer_input    — Task Agent mediated async flow
  *   list_peers            — peer discovery with channel info
  *   list_group_members    — Task Agent group view
  *   relay_message         — Task Agent unrestricted relay, cross-group rejection
  *
- * All topology patterns are tested:
+ * Channel topology patterns tested end-to-end through tool handlers:
  *   A → B          one-way point-to-point
  *   A ↔ B          bidirectional point-to-point
  *   A → [B,C,D]    fan-out one-way
  *   A ↔ [B,C,D]    hub-spoke bidirectional (spoke isolation enforced)
- *   * → B          wildcard from (any role sends to B, after expansion)
- *   A → *          wildcard to   (A sends to all roles, after expansion)
+ *
+ * Pure ChannelResolver unit tests (canSend, getPermittedTargets, fromRunConfig
+ * invalid-entry filtering) live in channel-resolver.test.ts.
  *
  * Group scoping is explicitly tested: messages must never cross task-group
  * boundaries (relay_message rejects out-of-group target session IDs).
- *
- * Tests use a real SQLite database (via runMigrations) and mock injectors —
- * no real agent sessions are created.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../src/storage/schema/index.ts';
-import { SpaceSessionGroupRepository } from '../../src/storage/repositories/space-session-group-repository.ts';
-import { SpaceWorkflowRepository } from '../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskRepository } from '../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentManager } from '../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager } from '../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceTaskManager } from '../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceManager } from '../../src/lib/space/managers/space-manager.ts';
-import { SpaceRuntime } from '../../src/lib/space/runtime/space-runtime.ts';
-import { ChannelResolver } from '../../src/lib/space/runtime/channel-resolver.ts';
+import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
+import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import {
 	createStepAgentToolHandlers,
 	type StepAgentToolsConfig,
-} from '../../src/lib/space/tools/step-agent-tools.ts';
+} from '../../../src/lib/space/tools/step-agent-tools.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
 	type SubSessionMemberInfo,
 	type SubSessionState,
 	type TaskAgentToolsConfig,
-} from '../../src/lib/space/tools/task-agent-tools.ts';
+} from '../../../src/lib/space/tools/task-agent-tools.ts';
 import type { ResolvedChannel, Space, SpaceWorkflow } from '@neokai/shared';
 
 // ===========================================================================
@@ -95,7 +92,7 @@ function seedAgent(
 }
 
 // ===========================================================================
-// ResolvedChannel builder helpers
+// ResolvedChannel builder helper
 // ===========================================================================
 
 function ch(fromRole: string, toRole: string, isHubSpoke = false): ResolvedChannel {
@@ -111,6 +108,7 @@ function ch(fromRole: string, toRole: string, isHubSpoke = false): ResolvedChann
 
 // ===========================================================================
 // Step-agent test context
+// Each call creates its own isolated SQLite DB so tests never share state.
 // ===========================================================================
 
 interface StepCtx {
@@ -119,8 +117,10 @@ interface StepCtx {
 	spaceId: string;
 	sessionGroupRepo: SpaceSessionGroupRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** ID of the single workflow run created at context construction time. */
+	runId: string;
 	groupId: string;
-	/** Set channels in the active workflow run config */
+	/** Store resolved channels in the active workflow run config. */
 	setChannels: (channels: ResolvedChannel[]) => void;
 }
 
@@ -128,6 +128,7 @@ function makeStepCtx(
 	members: Array<{ sessionId: string; role: string; status?: string }>
 ): StepCtx {
 	const { db, dir } = makeDb();
+	// Each DB is isolated; using a fixed spaceId within the DB is safe.
 	const spaceId = 'space-cam-step';
 	seedSpace(db, spaceId);
 
@@ -146,7 +147,7 @@ function makeStepCtx(
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const runRepo = new SpaceWorkflowRunRepository(db);
 
-	// Create a minimal workflow + run so we can attach a config
+	// Create a minimal workflow + run so we can attach a _resolvedChannels config.
 	const wf = workflowRepo.createWorkflow({
 		spaceId,
 		name: 'cam-wf',
@@ -169,6 +170,7 @@ function makeStepCtx(
 		spaceId,
 		sessionGroupRepo,
 		workflowRunRepo: runRepo,
+		runId: run.id,
 		groupId: group.id,
 		setChannels: (channels: ResolvedChannel[]) => {
 			runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
@@ -188,15 +190,11 @@ function makeStepConfig(
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
 	const taskAgentMessages: string[] = [];
 
-	// Find the active run to use as workflowRunId
-	const runs = ctx.workflowRunRepo.listBySpace(ctx.spaceId);
-	const runId = runs[0]?.id ?? '';
-
 	const config = {
 		mySessionId,
 		myRole,
 		taskId: 'cam-task-1',
-		workflowRunId: runId,
+		workflowRunId: ctx.runId,
 		sessionGroupRepo: ctx.sessionGroupRepo,
 		getGroupId: () => ctx.groupId,
 		workflowRunRepo: ctx.workflowRunRepo,
@@ -233,6 +231,7 @@ interface TaskCtx {
 
 function makeTaskCtx(): TaskCtx {
 	const { db, dir } = makeDb();
+	// Each DB is isolated; using a fixed spaceId within the DB is safe.
 	const spaceId = 'space-cam-task';
 	seedSpace(db, spaceId);
 
@@ -374,183 +373,7 @@ function parse(result: { content: Array<{ text: string }> }): Record<string, unk
 }
 
 // ===========================================================================
-// 1. ChannelResolver — canSend() basic correctness
-// ===========================================================================
-
-describe('ChannelResolver.canSend — permit / deny', () => {
-	test('permits declared one-way channel', () => {
-		const resolver = new ChannelResolver([ch('A', 'B')]);
-		expect(resolver.canSend('A', 'B')).toBe(true);
-	});
-
-	test('denies reverse direction of one-way channel', () => {
-		const resolver = new ChannelResolver([ch('A', 'B')]);
-		expect(resolver.canSend('B', 'A')).toBe(false);
-	});
-
-	test('permits both directions for bidirectional (two one-way entries)', () => {
-		const resolver = new ChannelResolver([ch('A', 'B'), ch('B', 'A')]);
-		expect(resolver.canSend('A', 'B')).toBe(true);
-		expect(resolver.canSend('B', 'A')).toBe(true);
-	});
-
-	test('denies all directions when resolver is empty', () => {
-		const resolver = new ChannelResolver([]);
-		expect(resolver.canSend('A', 'B')).toBe(false);
-		expect(resolver.canSend('B', 'A')).toBe(false);
-	});
-
-	test('denies undeclared roles', () => {
-		const resolver = new ChannelResolver([ch('A', 'B')]);
-		expect(resolver.canSend('C', 'A')).toBe(false);
-		expect(resolver.canSend('A', 'C')).toBe(false);
-	});
-});
-
-// ===========================================================================
-// 2. ChannelResolver — all topology patterns
-// ===========================================================================
-
-describe('ChannelResolver — topology: A → B one-way', () => {
-	test('A can send to B, B cannot send to A', () => {
-		const resolver = new ChannelResolver([ch('A', 'B')]);
-		expect(resolver.canSend('A', 'B')).toBe(true);
-		expect(resolver.canSend('B', 'A')).toBe(false);
-	});
-
-	test('getPermittedTargets(A) = [B], getPermittedTargets(B) = []', () => {
-		const resolver = new ChannelResolver([ch('A', 'B')]);
-		expect(resolver.getPermittedTargets('A')).toEqual(['B']);
-		expect(resolver.getPermittedTargets('B')).toEqual([]);
-	});
-});
-
-describe('ChannelResolver — topology: A ↔ B bidirectional', () => {
-	test('both directions permitted', () => {
-		const resolver = new ChannelResolver([ch('A', 'B'), ch('B', 'A')]);
-		expect(resolver.canSend('A', 'B')).toBe(true);
-		expect(resolver.canSend('B', 'A')).toBe(true);
-	});
-
-	test('no other roles are permitted', () => {
-		const resolver = new ChannelResolver([ch('A', 'B'), ch('B', 'A')]);
-		expect(resolver.canSend('A', 'C')).toBe(false);
-		expect(resolver.canSend('C', 'A')).toBe(false);
-	});
-});
-
-describe('ChannelResolver — topology: A → [B, C, D] fan-out one-way', () => {
-	test('A can send to B, C, D; none can reply', () => {
-		const resolver = new ChannelResolver([ch('A', 'B'), ch('A', 'C'), ch('A', 'D')]);
-		expect(resolver.canSend('A', 'B')).toBe(true);
-		expect(resolver.canSend('A', 'C')).toBe(true);
-		expect(resolver.canSend('A', 'D')).toBe(true);
-		expect(resolver.canSend('B', 'A')).toBe(false);
-		expect(resolver.canSend('C', 'A')).toBe(false);
-		expect(resolver.canSend('D', 'A')).toBe(false);
-	});
-
-	test('spokes cannot communicate with each other', () => {
-		const resolver = new ChannelResolver([ch('A', 'B'), ch('A', 'C'), ch('A', 'D')]);
-		expect(resolver.canSend('B', 'C')).toBe(false);
-		expect(resolver.canSend('C', 'D')).toBe(false);
-		expect(resolver.canSend('D', 'B')).toBe(false);
-	});
-
-	test('getPermittedTargets(A) returns all spokes; spokes return empty', () => {
-		const resolver = new ChannelResolver([ch('A', 'B'), ch('A', 'C'), ch('A', 'D')]);
-		expect(resolver.getPermittedTargets('A').sort()).toEqual(['B', 'C', 'D']);
-		expect(resolver.getPermittedTargets('B')).toEqual([]);
-		expect(resolver.getPermittedTargets('C')).toEqual([]);
-		expect(resolver.getPermittedTargets('D')).toEqual([]);
-	});
-});
-
-describe('ChannelResolver — topology: A ↔ [B, C, D] hub-spoke', () => {
-	// Hub A ↔ spokes B, C, D — expanded to hub→each + each→hub, isHubSpoke=true
-	function makeHubSpokeResolver() {
-		return new ChannelResolver([
-			ch('A', 'B', true),
-			ch('B', 'A', true),
-			ch('A', 'C', true),
-			ch('C', 'A', true),
-			ch('A', 'D', true),
-			ch('D', 'A', true),
-		]);
-	}
-
-	test('hub can send to all spokes', () => {
-		const resolver = makeHubSpokeResolver();
-		expect(resolver.canSend('A', 'B')).toBe(true);
-		expect(resolver.canSend('A', 'C')).toBe(true);
-		expect(resolver.canSend('A', 'D')).toBe(true);
-	});
-
-	test('spokes can reply to hub', () => {
-		const resolver = makeHubSpokeResolver();
-		expect(resolver.canSend('B', 'A')).toBe(true);
-		expect(resolver.canSend('C', 'A')).toBe(true);
-		expect(resolver.canSend('D', 'A')).toBe(true);
-	});
-
-	test('spoke-to-spoke is NOT permitted (spoke isolation)', () => {
-		const resolver = makeHubSpokeResolver();
-		expect(resolver.canSend('B', 'C')).toBe(false);
-		expect(resolver.canSend('C', 'D')).toBe(false);
-		expect(resolver.canSend('D', 'B')).toBe(false);
-		expect(resolver.canSend('B', 'D')).toBe(false);
-	});
-
-	test('isHubSpoke flag is preserved on resolved channels', () => {
-		const resolver = makeHubSpokeResolver();
-		const channels = resolver.getResolvedChannels();
-		expect(channels.every((c) => c.isHubSpoke)).toBe(true);
-	});
-});
-
-describe('ChannelResolver — topology: * → B (wildcard from, after expansion)', () => {
-	// resolveStepChannels expands '* → B' into one entry per role → B.
-	// After expansion the resolver holds concrete role pairs, not wildcards.
-	test('any role in the expansion can send to B', () => {
-		// Simulating '* → B' expanded for roles X, Y, Z
-		const resolver = new ChannelResolver([ch('X', 'B'), ch('Y', 'B'), ch('Z', 'B')]);
-		expect(resolver.canSend('X', 'B')).toBe(true);
-		expect(resolver.canSend('Y', 'B')).toBe(true);
-		expect(resolver.canSend('Z', 'B')).toBe(true);
-	});
-
-	test('B cannot send back to expanded roles (one-way wildcard)', () => {
-		const resolver = new ChannelResolver([ch('X', 'B'), ch('Y', 'B'), ch('Z', 'B')]);
-		expect(resolver.canSend('B', 'X')).toBe(false);
-		expect(resolver.canSend('B', 'Y')).toBe(false);
-		expect(resolver.canSend('B', 'Z')).toBe(false);
-	});
-});
-
-describe('ChannelResolver — topology: A → * (wildcard to, after expansion)', () => {
-	// resolveStepChannels expands 'A → *' into A→role for each role in the step
-	test('A can send to all expanded roles', () => {
-		const resolver = new ChannelResolver([ch('A', 'X'), ch('A', 'Y'), ch('A', 'Z')]);
-		expect(resolver.canSend('A', 'X')).toBe(true);
-		expect(resolver.canSend('A', 'Y')).toBe(true);
-		expect(resolver.canSend('A', 'Z')).toBe(true);
-	});
-
-	test('expanded roles cannot send back to A (one-way wildcard)', () => {
-		const resolver = new ChannelResolver([ch('A', 'X'), ch('A', 'Y'), ch('A', 'Z')]);
-		expect(resolver.canSend('X', 'A')).toBe(false);
-		expect(resolver.canSend('Y', 'A')).toBe(false);
-		expect(resolver.canSend('Z', 'A')).toBe(false);
-	});
-
-	test('getPermittedTargets(A) returns all expanded roles', () => {
-		const resolver = new ChannelResolver([ch('A', 'X'), ch('A', 'Y'), ch('A', 'Z')]);
-		expect(resolver.getPermittedTargets('A').sort()).toEqual(['X', 'Y', 'Z']);
-	});
-});
-
-// ===========================================================================
-// 3. send_feedback — channel validation and target modes
+// 1. send_feedback — channel validation and target modes
 // ===========================================================================
 
 describe('send_feedback — point-to-point (target: role)', () => {
@@ -681,10 +504,44 @@ describe('send_feedback — multicast (target: [role1, role2])', () => {
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
 	});
+
+	test('partial delivery: success reported for injected sessions, failures listed separately', async () => {
+		// hub→B succeeds, hub→C injection throws — partialFailures field populated
+		ctx = makeStepCtx([
+			{ sessionId: 'sess-hub', role: 'hub' },
+			{ sessionId: 'sess-B', role: 'B' },
+			{ sessionId: 'sess-C', role: 'C' },
+		]);
+		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C')]);
+
+		let callCount = 0;
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			messageInjector: async (sessionId: string, message: string) => {
+				callCount++;
+				if (sessionId === 'sess-C') throw new Error('Session C unavailable');
+				cfg.injectedMessages.push({ sessionId, message });
+			},
+		});
+		const handlers = createStepAgentToolHandlers(cfg);
+
+		const result = parse(
+			await handlers.send_feedback({ target: ['B', 'C'], message: 'Multicast partial' })
+		);
+		// Partial success: B delivered, C failed
+		expect(result.success).toBe(true);
+		const delivered = result.delivered as Array<{ sessionId: string }>;
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0].sessionId).toBe('sess-B');
+		const failures = result.partialFailures as Array<{ sessionId: string; error: string }>;
+		expect(failures).toHaveLength(1);
+		expect(failures[0].sessionId).toBe('sess-C');
+		expect(failures[0].error).toContain('Session C unavailable');
+		expect(callCount).toBe(2); // Both injection attempts were made
+	});
 });
 
 // ===========================================================================
-// 4. send_feedback — no channels declared (empty topology)
+// 2. send_feedback — no channels declared (empty topology)
 // ===========================================================================
 
 describe('send_feedback — no channels declared', () => {
@@ -712,7 +569,7 @@ describe('send_feedback — no channels declared', () => {
 });
 
 // ===========================================================================
-// 5. send_feedback — fan-out one-way topology
+// 3. send_feedback — fan-out one-way topology
 // ===========================================================================
 
 describe('send_feedback — fan-out one-way: hub → spokes, spokes cannot reply', () => {
@@ -762,12 +619,12 @@ describe('send_feedback — fan-out one-way: hub → spokes, spokes cannot reply
 		const handlers = createStepAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_feedback({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
-		expect(result.success).toBe(false);
+		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
 	});
 });
 
 // ===========================================================================
-// 6. send_feedback — hub-spoke bidirectional topology
+// 4. send_feedback — hub-spoke bidirectional topology
 // ===========================================================================
 
 describe('send_feedback — hub-spoke bidirectional: hub broadcasts, spokes reply to hub only', () => {
@@ -832,11 +689,12 @@ describe('send_feedback — hub-spoke bidirectional: hub broadcasts, spokes repl
 		const handlers = createStepAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_feedback({ target: 'B', message: 'Hi B' }));
 		expect(result.success).toBe(false);
+		expect((result.unauthorizedRoles as string[]).includes('B')).toBe(true);
 	});
 });
 
 // ===========================================================================
-// 7. request_peer_input — Task Agent mediated async flow
+// 5. request_peer_input — Task Agent mediated async flow
 // ===========================================================================
 
 describe('request_peer_input — async routing through Task Agent', () => {
@@ -866,7 +724,7 @@ describe('request_peer_input — async routing through Task Agent', () => {
 		expect(cfg.taskAgentMessages).toHaveLength(1);
 	});
 
-	test('routing message includes sender identity and target role', async () => {
+	test('routing message includes sender identity, session ID, and target role', async () => {
 		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
 		const handlers = createStepAgentToolHandlers(cfg);
@@ -926,7 +784,7 @@ describe('request_peer_input — async routing through Task Agent', () => {
 });
 
 // ===========================================================================
-// 8. list_peers — peer discovery
+// 6. list_peers — peer discovery
 // ===========================================================================
 
 describe('list_peers — peer discovery with channel info', () => {
@@ -998,7 +856,7 @@ describe('list_peers — peer discovery with channel info', () => {
 });
 
 // ===========================================================================
-// 9. list_group_members (Task Agent tool)
+// 7. list_group_members (Task Agent tool)
 // ===========================================================================
 
 describe('list_group_members — Task Agent group view', () => {
@@ -1101,7 +959,7 @@ describe('list_group_members — Task Agent group view', () => {
 });
 
 // ===========================================================================
-// 10. relay_message (Task Agent tool) — unrestricted relay + cross-group rejection
+// 8. relay_message (Task Agent tool) — unrestricted relay + cross-group rejection
 // ===========================================================================
 
 describe('relay_message — Task Agent unrestricted relay', () => {
@@ -1183,10 +1041,42 @@ describe('relay_message — Task Agent unrestricted relay', () => {
 		expect(result.success).toBe(false);
 		expect(result.error as string).toContain('task-agent');
 	});
+
+	test('relaying to a completed member calls injector (failure surfaced from injector)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'completed-session', {
+			role: 'coder',
+			status: 'completed',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+				messageInjector: async () => {
+					throw new Error('Sub-session gone');
+				},
+			})
+		);
+
+		// relay_message does not pre-check member status; injector failure surfaces as error
+		const result = parse(
+			await handlers.relay_message({ target_session_id: 'completed-session', message: 'Hi' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.error as string).toContain('Sub-session gone');
+	});
 });
 
 // ===========================================================================
-// 11. Group scoping — cross-group message isolation
+// 9. Group scoping — cross-group message isolation
 // ===========================================================================
 
 describe('Group scoping — messages cannot leak between task groups', () => {
@@ -1239,7 +1129,7 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 	});
 
 	test('send_feedback only delivers within the step agent own group', async () => {
-		// Two independent step contexts (different groups)
+		// Two independent step contexts (different groups, different DBs)
 		const ctxA = makeStepCtx([
 			{ sessionId: 'sess-hub-A', role: 'hub' },
 			{ sessionId: 'sess-B-A', role: 'B' },
@@ -1261,9 +1151,7 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 			expect(resultA.success).toBe(true);
 			expect(cfgA.injectedMessages[0].sessionId).toBe('sess-B-A');
 
-			// Group B's sessions are not in group A; they are invisible to handlers in group A
-			// (group A only sees members of its own group)
-			// Verify no cross-group injection happened
+			// Group B's sessions are in a different DB; they are invisible to group A
 			const cfgB = makeStepConfig(ctxB, 'sess-hub-B', 'hub');
 			expect(cfgB.injectedMessages).toHaveLength(0);
 		} finally {
@@ -1276,10 +1164,10 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 });
 
 // ===========================================================================
-// 12. Error cases — completed/failed members, non-existent sessions
+// 10. Error cases — non-existent sessions, injection failures
 // ===========================================================================
 
-describe('Error cases — completed / failed / non-existent targets', () => {
+describe('Error cases — non-existent targets and injection failures', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
@@ -1298,7 +1186,7 @@ describe('Error cases — completed / failed / non-existent targets', () => {
 		expect((result.error as string).toLowerCase()).toContain('no active sessions');
 	});
 
-	test('send_feedback injection failure returns error with details', async () => {
+	test('send_feedback injection failure returns all-failed error', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
@@ -1316,93 +1204,10 @@ describe('Error cases — completed / failed / non-existent targets', () => {
 		expect(result.success).toBe(false);
 		expect((result.error as string).toLowerCase()).toContain('failed to deliver');
 	});
-
-	test('relay_message to completed member calls injector (failure handled by injector layer)', async () => {
-		ctx = makeTaskCtx() as unknown as StepCtx;
-		// Use TaskCtx for this test
-		const taskCtx = ctx as unknown as TaskCtx;
-		const wf = buildSingleStepWf(taskCtx);
-		const { run, mainTask } = await startRun(taskCtx, wf);
-
-		const group = taskCtx.sessionGroupRepo.createGroup({
-			spaceId: taskCtx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		taskCtx.sessionGroupRepo.addMember(group.id, 'completed-session', {
-			role: 'coder',
-			status: 'completed',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(taskCtx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-				messageInjector: async () => {
-					throw new Error('Sub-session gone');
-				},
-			})
-		);
-
-		const result = parse(
-			await handlers.relay_message({ target_session_id: 'completed-session', message: 'Hi' })
-		);
-		// relay_message passes through to injector; injector failure surfaces as error
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('Sub-session gone');
-	});
 });
 
 // ===========================================================================
-// 13. Step with no channels declared — open model (all via request_peer_input)
-// ===========================================================================
-
-describe('Step with no channels declared — open model', () => {
-	let ctx: StepCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('send_feedback always fails; request_peer_input always succeeds', async () => {
-		ctx = makeStepCtx([
-			{ sessionId: 'sess-a', role: 'agent-a' },
-			{ sessionId: 'sess-b', role: 'agent-b' },
-		]);
-		// No channels declared — resolver is empty
-
-		const cfgA = makeStepConfig(ctx, 'sess-a', 'agent-a');
-		const handlersA = createStepAgentToolHandlers(cfgA);
-
-		const fbResult = parse(
-			await handlersA.send_feedback({ target: 'agent-b', message: 'Direct msg' })
-		);
-		expect(fbResult.success).toBe(false);
-		expect(fbResult.suggestion).toBe('request_peer_input');
-
-		const rpResult = parse(
-			await handlersA.request_peer_input({ target_role: 'agent-b', question: 'Q?' })
-		);
-		expect(rpResult.success).toBe(true);
-		expect(rpResult.async).toBe(true);
-	});
-
-	test('list_peers shows no permitted targets when no channels declared', async () => {
-		ctx = makeStepCtx([
-			{ sessionId: 'sess-a', role: 'agent-a' },
-			{ sessionId: 'sess-b', role: 'agent-b' },
-		]);
-
-		const cfg = makeStepConfig(ctx, 'sess-a', 'agent-a');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(await handlers.list_peers({}));
-		expect(result.channelTopologyDeclared).toBe(false);
-		expect(result.permittedTargets as string[]).toHaveLength(0);
-	});
-});
-
-// ===========================================================================
-// 14. relay_message — cross-group rejection (Task Agent validation)
+// 11. relay_message — cross-group rejection (Task Agent validation)
 // ===========================================================================
 
 describe('relay_message — cross-group rejection', () => {
@@ -1459,7 +1264,56 @@ describe('relay_message — cross-group rejection', () => {
 });
 
 // ===========================================================================
-// 15. message attribution — sender identity prefixed
+// 12. Step with no channels declared — open model (all via request_peer_input)
+// ===========================================================================
+
+describe('Step with no channels declared — open model', () => {
+	let ctx: StepCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('send_feedback always fails; request_peer_input always succeeds', async () => {
+		ctx = makeStepCtx([
+			{ sessionId: 'sess-a', role: 'agent-a' },
+			{ sessionId: 'sess-b', role: 'agent-b' },
+		]);
+		// No channels declared — resolver is empty
+
+		const cfgA = makeStepConfig(ctx, 'sess-a', 'agent-a');
+		const handlersA = createStepAgentToolHandlers(cfgA);
+
+		const fbResult = parse(
+			await handlersA.send_feedback({ target: 'agent-b', message: 'Direct msg' })
+		);
+		expect(fbResult.success).toBe(false);
+		expect(fbResult.suggestion).toBe('request_peer_input');
+
+		const rpResult = parse(
+			await handlersA.request_peer_input({ target_role: 'agent-b', question: 'Q?' })
+		);
+		expect(rpResult.success).toBe(true);
+		expect(rpResult.async).toBe(true);
+	});
+
+	test('list_peers shows no permitted targets when no channels declared', async () => {
+		ctx = makeStepCtx([
+			{ sessionId: 'sess-a', role: 'agent-a' },
+			{ sessionId: 'sess-b', role: 'agent-b' },
+		]);
+
+		const cfg = makeStepConfig(ctx, 'sess-a', 'agent-a');
+		const handlers = createStepAgentToolHandlers(cfg);
+
+		const result = parse(await handlers.list_peers({}));
+		expect(result.channelTopologyDeclared).toBe(false);
+		expect(result.permittedTargets as string[]).toHaveLength(0);
+	});
+});
+
+// ===========================================================================
+// 13. Message attribution — sender identity prefix
 // ===========================================================================
 
 describe('send_feedback — sender attribution prefix', () => {
