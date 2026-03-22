@@ -139,6 +139,7 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.pause();
+		this.persistRuntimePreference(roomId, 'paused');
 		return true;
 	}
 
@@ -146,6 +147,7 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.resume();
+		this.persistRuntimePreference(roomId, 'running');
 		return true;
 	}
 
@@ -154,6 +156,8 @@ export class RoomRuntimeService {
 		if (!runtime) return false;
 		runtime.stop();
 		this.runtimes.delete(roomId);
+		this.observers.delete(roomId);
+		this.persistRuntimePreference(roomId, 'stopped');
 		return true;
 	}
 
@@ -177,6 +181,7 @@ export class RoomRuntimeService {
 
 		// Create a fresh runtime - autoStart=true starts it immediately
 		this.createOrGetRuntime(room, /* autoStart */ true);
+		this.persistRuntimePreference(roomId, 'running');
 		return true;
 	}
 
@@ -193,6 +198,28 @@ export class RoomRuntimeService {
 		}
 		this.unsubscribers = [];
 		log.info('RoomRuntimeService stopped');
+	}
+
+	private getPersistedRuntimePreference(room: Room): RuntimeState {
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		const state = config.runtimeState;
+		if (state === 'running' || state === 'paused' || state === 'stopped') {
+			return state;
+		}
+		return 'running';
+	}
+
+	private persistRuntimePreference(roomId: string, state: RuntimeState): void {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return;
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		if (config.runtimeState === state) return;
+		this.ctx.roomManager.updateRoom(roomId, {
+			config: {
+				...config,
+				runtimeState: state,
+			},
+		});
 	}
 
 	private createSessionFactory(): SessionFactory {
@@ -593,17 +620,26 @@ export class RoomRuntimeService {
 	private async initializeExistingRooms(): Promise<void> {
 		const rooms = this.ctx.roomManager.listRooms();
 
-		// Recover all rooms in parallel for faster startup
+		// Initialize all rooms in parallel for faster startup
 		await Promise.all(
 			rooms.map(async (room) => {
 				try {
-					// Don't auto-start - wait until after recovery completes to prevent
-					// zombie detection from injecting duplicate continuation messages
+					const runtimePreference = this.getPersistedRuntimePreference(room);
+					if (runtimePreference === 'stopped') {
+						log.info(`Room ${room.id}: runtime preference is stopped; skipping auto-start`);
+						return;
+					}
+
+					// Don't auto-start - wait until after state reattach completes.
 					const runtime = this.createOrGetRuntime(room, /* autoStart */ false);
 					const observer = this.observers.get(room.id)!;
-					await this.recoverRoomRuntime(room.id, runtime, observer);
-					// Start the runtime tick loop after recovery is complete
-					runtime.start();
+					const resumeAgents = runtimePreference === 'running';
+					await this.recoverRoomRuntime(room.id, runtime, observer, resumeAgents);
+
+					if (runtimePreference === 'running') {
+						// Start the runtime tick loop after reattach is complete.
+						runtime.start();
+					}
 				} catch (error) {
 					log.error(`Failed to initialize runtime for room ${room.id}:`, error);
 				}
@@ -614,7 +650,8 @@ export class RoomRuntimeService {
 	private async recoverRoomRuntime(
 		roomId: string,
 		runtime: RoomRuntime,
-		observer: SessionObserver
+		observer: SessionObserver,
+		resumeAgents = true
 	): Promise<void> {
 		const rawDb = this.ctx.db.getDatabase();
 		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
@@ -655,12 +692,16 @@ export class RoomRuntimeService {
 				const activeGroups = groupRepo.getActiveGroups(roomId);
 				for (const group of activeGroups) {
 					try {
-						// Re-attach runtime-only sdk.message mirroring before any continuation
-						// message is injected so recovered TaskView timelines keep streaming.
+						// Re-attach runtime-only sdk.message listeners before any continuation
+						// message is injected (rate-limit detection and compatibility hooks).
 						runtime.restoreRecoveredGroupMirroring(group);
 
 						// Restore MCP servers (planner-tools, leader-agent-tools)
 						await runtime.restoreMcpServersForGroup(group);
+
+						if (!resumeAgents) {
+							continue;
+						}
 
 						// Resume work after restart.
 						// - Groups awaiting human review: no message needed, human will provide one.

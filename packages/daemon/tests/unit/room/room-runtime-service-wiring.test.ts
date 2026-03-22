@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
+import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import {
 	RoomRuntimeService,
@@ -8,6 +8,7 @@ import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-
 import { createRoomTickHandler } from '../../../src/lib/job-handlers/room-tick.handler';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
 import type { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
+import type { Room, RuntimeState } from '@neokai/shared';
 
 const CREATE_TABLE_SQL = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -70,6 +71,21 @@ function makeConfig(overrides: Partial<RoomRuntimeServiceConfig> = {}): RoomRunt
 		settingsManager: { getEnabledMcpServersConfig: () => ({}) } as never,
 		reactiveDb: {} as never,
 		...overrides,
+	};
+}
+
+function makeRoom(id: string, runtimeState?: RuntimeState): Room {
+	const config = runtimeState ? { runtimeState } : undefined;
+	return {
+		id,
+		name: `Room ${id}`,
+		allowedPaths: [{ path: '/tmp' }],
+		defaultPath: '/tmp',
+		sessionIds: [],
+		status: 'active',
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		config,
 	};
 }
 
@@ -178,6 +194,127 @@ describe('RoomRuntimeService.startRuntime()', () => {
 	it('returns false when the room does not exist', () => {
 		const service = new RoomRuntimeService(makeConfig());
 		expect(service.startRuntime('non-existent')).toBe(false);
+	});
+});
+
+describe('RoomRuntimeService startup runtime preferences', () => {
+	it('does not auto-start paused/stopped rooms on daemon startup', async () => {
+		const runningRoom = makeRoom('room-running', 'running');
+		const pausedRoom = makeRoom('room-paused', 'paused');
+		const stoppedRoom = makeRoom('room-stopped', 'stopped');
+		const rooms = [runningRoom, pausedRoom, stoppedRoom];
+		const byId = new Map(rooms.map((r) => [r.id, r]));
+
+		const roomManager = {
+			listRooms: () => rooms,
+			getRoom: (id: string) => byId.get(id) ?? null,
+			updateRoom: mock(() => null),
+		};
+
+		const service = new RoomRuntimeService(makeConfig({ roomManager: roomManager as never }));
+		const createdRoomIds: string[] = [];
+		const startedRoomIds: string[] = [];
+		const recoverCalls: Array<{ roomId: string; resumeAgents: boolean }> = [];
+
+		const serviceAny = service as unknown as {
+			createOrGetRuntime: (room: Room, autoStart?: boolean) => RoomRuntime;
+			recoverRoomRuntime: (
+				roomId: string,
+				runtime: RoomRuntime,
+				observer: unknown,
+				resumeAgents?: boolean
+			) => Promise<void>;
+			runtimes: Map<string, RoomRuntime>;
+			observers: Map<string, unknown>;
+		};
+
+		serviceAny.createOrGetRuntime = ((room: Room) => {
+			createdRoomIds.push(room.id);
+			const runtime = {
+				start: () => startedRoomIds.push(room.id),
+				pause: () => {},
+				stop: () => {},
+				getState: () => 'paused',
+			} as unknown as RoomRuntime;
+			serviceAny.runtimes.set(room.id, runtime);
+			serviceAny.observers.set(room.id, {});
+			return runtime;
+		}) as unknown as (room: Room, autoStart?: boolean) => RoomRuntime;
+
+		serviceAny.recoverRoomRuntime = (async (
+			roomId: string,
+			_runtime: RoomRuntime,
+			_observer: unknown,
+			resumeAgents = true
+		) => {
+			recoverCalls.push({ roomId, resumeAgents });
+		}) as unknown as (
+			roomId: string,
+			runtime: RoomRuntime,
+			observer: unknown,
+			resumeAgents?: boolean
+		) => Promise<void>;
+
+		await service.start();
+
+		expect(createdRoomIds).toContain('room-running');
+		expect(createdRoomIds).toContain('room-paused');
+		expect(createdRoomIds).not.toContain('room-stopped');
+		expect(startedRoomIds).toEqual(['room-running']);
+		expect(recoverCalls).toEqual([
+			{ roomId: 'room-running', resumeAgents: true },
+			{ roomId: 'room-paused', resumeAgents: false },
+		]);
+	});
+});
+
+describe('RoomRuntimeService runtime state persistence', () => {
+	it('persists paused runtime preference on pauseRuntime()', () => {
+		const room = makeRoom('room-1');
+		const updateRoom = mock(() => room);
+		const roomManager = {
+			getRoom: () => room,
+			updateRoom,
+			listRooms: () => [],
+		};
+
+		const service = new RoomRuntimeService(makeConfig({ roomManager: roomManager as never }));
+		(service as unknown as { runtimes: Map<string, RoomRuntime> }).runtimes.set('room-1', {
+			pause: () => {},
+			resume: () => {},
+			stop: () => {},
+			start: () => {},
+			getState: () => 'running',
+		} as unknown as RoomRuntime);
+
+		expect(service.pauseRuntime('room-1')).toBe(true);
+		expect(updateRoom).toHaveBeenCalledWith('room-1', {
+			config: { runtimeState: 'paused' },
+		});
+	});
+
+	it('persists stopped runtime preference on stopRuntime()', () => {
+		const room = makeRoom('room-1', 'running');
+		const updateRoom = mock(() => room);
+		const roomManager = {
+			getRoom: () => room,
+			updateRoom,
+			listRooms: () => [],
+		};
+
+		const service = new RoomRuntimeService(makeConfig({ roomManager: roomManager as never }));
+		(service as unknown as { runtimes: Map<string, RoomRuntime> }).runtimes.set('room-1', {
+			pause: () => {},
+			resume: () => {},
+			stop: () => {},
+			start: () => {},
+			getState: () => 'running',
+		} as unknown as RoomRuntime);
+
+		expect(service.stopRuntime('room-1')).toBe(true);
+		expect(updateRoom).toHaveBeenCalledWith('room-1', {
+			config: { runtimeState: 'stopped' },
+		});
 	});
 });
 

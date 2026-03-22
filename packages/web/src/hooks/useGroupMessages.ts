@@ -1,12 +1,14 @@
 /**
  * useGroupMessages Hook
  *
- * Subscribes to session group messages via LiveQuery for real-time streaming.
- * Messages are delivered via an initial snapshot followed by append-only deltas.
+ * Subscribes to group timeline messages via LiveQuery for real-time streaming.
+ * Messages are delivered via an initial snapshot followed by delta updates.
  *
  * Design constraints:
- * - Append-only invariant: session_group_messages rows are never updated or deleted.
- *   Only `added` from delta events is processed; `updated`/`removed` are ignored.
+ * - Canonical source: timeline rows are queried from persisted sdk_messages +
+ *   task_group_events (not a runtime projection table).
+ * - Delta handling supports added/updated/removed rows to stay correct even when
+ *   row mappers evolve or ordering metadata changes.
  * - Stale-event guard: tracks the active subscriptionId and discards events from
  *   prior group subscriptions during rapid task switching.
  * - Reconnect handling: `isConnected` is included in the effect dependency array
@@ -18,7 +20,7 @@ import { useMessageHub } from './useMessageHub';
 import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
 
 export interface SessionGroupMessage {
-	id: number;
+	id: number | string;
 	groupId: string;
 	sessionId: string | null;
 	role: string;
@@ -102,10 +104,33 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 
 		const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 			if (event.subscriptionId !== activeSubIdRef.current) return;
-			// Append-only: only process `added`; ignore `updated` and `removed`.
-			if (event.added && event.added.length > 0) {
-				setMessages((prev) => [...prev, ...(event.added as SessionGroupMessage[])]);
-			}
+			setMessages((prev) => {
+				let next = prev;
+
+				if (event.removed && event.removed.length > 0) {
+					const removedIds = new Set(
+						(event.removed as SessionGroupMessage[]).map((row) => String(row.id))
+					);
+					next = next.filter((row) => !removedIds.has(String(row.id)));
+				}
+
+				if (event.updated && event.updated.length > 0) {
+					const updatedById = new Map(
+						(event.updated as SessionGroupMessage[]).map((row) => [String(row.id), row])
+					);
+					next = next.map((row) => updatedById.get(String(row.id)) ?? row);
+				}
+
+				if (event.added && event.added.length > 0) {
+					next = [...next, ...(event.added as SessionGroupMessage[])];
+				}
+
+				next.sort((a, b) => {
+					if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+					return String(a.id).localeCompare(String(b.id));
+				});
+				return next;
+			});
 		});
 
 		// Send the subscribe request with retry on failure.

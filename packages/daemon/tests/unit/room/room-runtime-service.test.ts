@@ -367,7 +367,7 @@ describe('RoomRuntimeService restart recovery', () => {
 		} satisfies SessionFactory;
 	}
 
-	it('reattaches group mirroring during restart recovery so TaskView timelines keep streaming', async () => {
+	it('reattaches group mirroring during startup resume without writing projection rows', async () => {
 		rawDb = new Database(':memory:');
 		rawDb.exec(`
 			CREATE TABLE rooms (
@@ -547,7 +547,7 @@ describe('RoomRuntimeService restart recovery', () => {
 		const mirrored = rawDb
 			.prepare(`SELECT COUNT(*) AS count FROM session_group_messages WHERE group_id = ?`)
 			.get(group.id) as { count: number };
-		expect(mirrored.count).toBe(1);
+		expect(mirrored.count).toBe(0);
 
 		runtime.stop();
 	});

@@ -2142,11 +2142,10 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Re-attach runtime-only message mirroring for a recovered group.
+	 * Re-attach runtime-only message mirroring for a resumed group.
 	 *
-	 * The TaskView timeline now reads exclusively from `session_group_messages`,
-	 * so recovered groups must re-subscribe to sdk.message events before any
-	 * continuation message is injected after restart.
+	 * TaskView now reads canonical persisted rows (sdk_messages + task_group_events),
+	 * but mirroring is still kept for legacy projection rows and compatibility paths.
 	 */
 	restoreRecoveredGroupMirroring(group: SessionGroup): void {
 		this.cleanupMirroring(group.id);
@@ -2160,10 +2159,10 @@ export class RoomRuntime {
 	/**
 	 * Set up live message monitoring for a group's worker/leader sessions.
 	 *
-	 * Subscribes to DaemonHub sdk.message events, persists each enriched message
-	 * to session_group_messages (for LiveQuery). Does NOT broadcast
-	 * state.groupMessages.delta — message delivery to the frontend is handled
-	 * by the LiveQuery subscription (sessionGroupMessages.byGroup).
+	 * Subscribes to DaemonHub sdk.message events for runtime-only side effects
+	 * (rate-limit detection, fallback notices, dead-loop heuristics).
+	 * Canonical TaskView timeline data is read directly from sdk_messages +
+	 * task_group_events.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -2171,8 +2170,6 @@ export class RoomRuntime {
 		const mirroredUuids = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
-			const shortSessionId = sessionId.slice(0, 8);
-
 			return this.daemonHub!.on(
 				'sdk.message',
 				(event) => {
@@ -2201,34 +2198,8 @@ export class RoomRuntime {
 						}
 					}
 
-					// Read current iteration from DB to stay accurate across feedback cycles
-					const currentGroup = this.groupRepo.getGroup(group.id);
-					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
-					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
-
-					// Persist to session_group_messages so LiveQuery subscribers receive the event.
-					const enrichedMessage = {
-						...event.message,
-						_taskMeta: {
-							authorRole: role,
-							authorSessionId: sessionId,
-							turnId,
-							iteration,
-						},
-					};
-					const sdkNow = Date.now();
-					const sdkMsgType =
-						'type' in event.message && typeof event.message.type === 'string'
-							? event.message.type
-							: 'assistant';
-					this.groupRepo.appendGroupMessage({
-						groupId: group.id,
-						sessionId,
-						role,
-						messageType: sdkMsgType,
-						content: JSON.stringify(enrichedMessage),
-						createdAt: sdkNow,
-					});
+					// Canonical timeline rows are persisted by the SDK/session layer into
+					// sdk_messages. No per-message projection write is needed here.
 				},
 				{ sessionId }
 			);
@@ -2258,43 +2229,6 @@ export class RoomRuntime {
 			kind,
 			payloadJson: payload ? JSON.stringify(payload) : undefined,
 		});
-		const now = Date.now();
-		// Map event kinds to message types for the frontend.
-		// 'leader_summary' is a special case (rendered as a distinct card).
-		// 'rate_limited' and 'model_fallback' get their own type so the frontend
-		// can render them as prominent notifications.
-		const messageType =
-			kind === 'leader_summary'
-				? 'leader_summary'
-				: kind === 'rate_limited'
-					? 'rate_limited'
-					: kind === 'model_fallback'
-						? 'model_fallback'
-						: 'status';
-
-		// Persist to session_group_messages so LiveQuery subscribers receive the event.
-		// For rich event types (rate_limited, model_fallback) store the full payload as
-		// JSON so the frontend can render extra fields (resetsAt, sessionRole, etc.).
-		// For simple status/leader_summary, store just the text.
-		const content =
-			messageType === 'rate_limited' || messageType === 'model_fallback'
-				? JSON.stringify({ ...payload, type: messageType })
-				: (payload?.text ?? kind);
-		try {
-			this.groupRepo.appendGroupMessage({
-				groupId,
-				sessionId: null,
-				role: 'system',
-				messageType,
-				content,
-				createdAt: now,
-			});
-		} catch (err) {
-			log.warn(
-				`appendGroupEvent: failed to persist group message for group ${groupId} (type=${messageType}, secondary write — ignored):`,
-				err
-			);
-		}
 	}
 
 	private cleanupMirroring(groupId: string, statusText?: string): void {
