@@ -280,4 +280,68 @@ describe('LiveQuery — end-to-end reactive pipeline', () => {
 			await daemon.messageHub.request('liveQuery.unsubscribe', { subscriptionId: subId2 });
 		}
 	}, 20_000);
+
+	// -----------------------------------------------------------------------
+	// Test 5: task.fail triggers liveQuery.delta (no handler-layer emit needed)
+	// -----------------------------------------------------------------------
+
+	test('task.fail RPC triggers a liveQuery.delta for tasks.byRoom subscriber', async () => {
+		const roomId = await createRoom('task-fail-delta');
+		const subId = 'sub-task-fail-1';
+
+		// First create a task to fail
+		const task = await createTask(roomId, 'Task To Fail');
+
+		const snapshots: LiveQuerySnapshotEvent[] = [];
+		const deltas: LiveQueryDeltaEvent[] = [];
+
+		const unsubSnap = daemon.messageHub.onEvent<LiveQuerySnapshotEvent>(
+			'liveQuery.snapshot',
+			(ev) => {
+				if (ev.subscriptionId === subId) snapshots.push(ev);
+			}
+		);
+		const unsubDelta = daemon.messageHub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (ev) => {
+			if (ev.subscriptionId === subId) deltas.push(ev);
+		});
+
+		try {
+			// Subscribe after task is created
+			await daemon.messageHub.request('liveQuery.subscribe', {
+				queryName: 'tasks.byRoom',
+				params: [roomId],
+				subscriptionId: subId,
+			});
+
+			// Wait for snapshot
+			await waitFor(() => snapshots.length > 0, DELTA_WAIT_TIMEOUT_MS, 'snapshot before fail');
+			const snapshotVersion = snapshots[0].version;
+
+			// Fail the task — triggers notifyChange('tasks') via TaskManager, no handler-layer emit
+			await daemon.messageHub.request('task.fail', {
+				roomId,
+				taskId: task.id,
+				error: 'Simulated failure',
+			});
+
+			// A delta must arrive reflecting the status change
+			await waitFor(() => deltas.length > 0, DELTA_WAIT_TIMEOUT_MS, 'delta after task.fail');
+
+			const delta = deltas[0];
+			expect(delta.subscriptionId).toBe(subId);
+			expect(delta.version).toBeGreaterThan(snapshotVersion);
+
+			// The updated task must appear in the delta
+			const allChanges = [...(delta.added ?? []), ...(delta.updated ?? [])];
+			const updatedTask = allChanges.find((r) => (r as Record<string, unknown>).id === task.id) as
+				| Record<string, unknown>
+				| undefined;
+			expect(updatedTask).toBeDefined();
+			expect(updatedTask!.status).toBe('needs_attention');
+		} finally {
+			unsubSnap();
+			unsubDelta();
+			await daemon.messageHub.request('liveQuery.unsubscribe', { subscriptionId: subId });
+		}
+	}, 20_000);
 });
