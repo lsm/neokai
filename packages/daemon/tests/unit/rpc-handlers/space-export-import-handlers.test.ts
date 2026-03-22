@@ -1886,6 +1886,7 @@ describe('full export→import round-trip', () => {
 	let spaceManager: SpaceManager;
 	let handlers: Map<string, RequestHandler>;
 	let daemonHub: DaemonHub;
+	let emittedEvents: Array<{ name: string; data: unknown }>;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
@@ -1909,6 +1910,7 @@ describe('full export→import round-trip', () => {
 		handlers = mockHub.handlers;
 		const mockDaemonHub = createMockDaemonHub();
 		daemonHub = mockDaemonHub.hub;
+		emittedEvents = mockDaemonHub.emittedEvents;
 
 		setupSpaceExportImportHandlers(
 			mockHub.hub,
@@ -2002,6 +2004,14 @@ describe('full export→import round-trip', () => {
 		const rule = importedWf.rules[0];
 		expect(rule.name).toBe('Tests must pass');
 		expect(rule.appliesTo).toEqual([step.id]);
+
+		// Events emitted for real-time frontend updates
+		const agentCreatedEvents = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
+		const wfCreatedEvents = emittedEvents.filter((e) => e.name === 'spaceWorkflow.created');
+		expect(agentCreatedEvents).toHaveLength(1);
+		expect(wfCreatedEvents).toHaveLength(1);
+		expect((agentCreatedEvents[0].data as any).agent.name).toBe('My Coder');
+		expect((wfCreatedEvents[0].data as any).workflow.name).toBe('Code Pipeline');
 	});
 
 	it('multi-agent step round-trip: export → import preserves agents array and channels', async () => {
@@ -2328,8 +2338,11 @@ describe('full export→import round-trip', () => {
 		expect(collabStep.channels).toHaveLength(1);
 		expect(collabStep.channels![0].direction).toBe('one-way');
 
-		// Transition preserved
+		// Transition preserved with remapped step UUID endpoints
 		expect(importedWf.transitions).toHaveLength(1);
+		const transition = importedWf.transitions[0];
+		expect(transition.from).toBe(planStep.id);
+		expect(transition.to).toBe(collabStep.id);
 		expect(importedWf.startStepId).toBe(planStep.id);
 
 		// Tags preserved
@@ -2462,5 +2475,53 @@ describe('full export→import round-trip', () => {
 
 		expect(preview.validationErrors.length).toBeGreaterThan(0);
 		expect(preview.validationErrors.some((e) => e.includes('nonexistent-role'))).toBe(true);
+	});
+
+	it('error: execute rejects workflow with invalid channel role and rolls back', async () => {
+		// This test verifies that spaceImport.execute — not just preview — enforces
+		// channel role validation via SpaceWorkflowManager.createWorkflow().
+		// A regression that bypasses validateChannelRoleRef in the execute path
+		// would leave the DB in a partial state; this test catches that.
+		const agentSrc: SpaceAgent = {
+			id: 'src-exec-solo',
+			spaceId: 'other-space',
+			name: 'Exec Coder',
+			role: 'coder',
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const wfSrc: SpaceWorkflow = {
+			id: 'src-wf-exec-badch',
+			spaceId: 'other-space',
+			name: 'Exec Bad Channel Workflow',
+			steps: [
+				{
+					id: 'step-exec-bc',
+					name: 'Work',
+					agents: [{ agentId: 'src-exec-solo' }],
+					channels: [
+						// 'bad-exec-role' does not match the agent's role 'coder'
+						{ from: 'bad-exec-role', to: 'coder', direction: 'one-way' },
+					],
+				},
+			],
+			transitions: [],
+			startStepId: 'step-exec-bc',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+
+		const bundle = exportBundle([agentSrc], [wfSrc], 'Exec Bad Channel Export');
+
+		// execute must throw — WorkflowValidationError from validateChannelRoleRef
+		await expect(
+			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+		).rejects.toThrow();
+
+		// Transaction rolled back: agent was created then rolled back along with workflow
+		expect(agentRepo.getBySpaceId(SPACE_ID)).toHaveLength(0);
+		expect(workflowRepo.listWorkflows(SPACE_ID)).toHaveLength(0);
 	});
 });
