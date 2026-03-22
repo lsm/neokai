@@ -22,6 +22,8 @@ import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-serv
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
+import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
+import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -360,6 +362,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	if (gitHubService) {
 		gitHubService.start();
 		logInfo('[Daemon] GitHub service started');
+	}
+
+	// Register job handlers BEFORE starting the processor so no pending job
+	// from a previous run is dequeued without a handler available.
+	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
+
+	// Enqueue the initial cleanup job if none is already pending.
+	const pendingCleanup = jobQueue.listJobs({
+		queue: JOB_QUEUE_CLEANUP,
+		status: 'pending',
+		limit: 1,
+	});
+	if (pendingCleanup.length === 0) {
+		jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() });
+		logInfo('[Daemon] Enqueued initial job_queue.cleanup job');
 	}
 
 	// Start job queue processor last (after all handler registrations)
