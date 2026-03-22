@@ -180,6 +180,7 @@ jobs:
           - module: features-2
             test_path: >-
               tests/online/features/github-poll-job.test.ts
+              tests/online/features/job-queue-crash-recovery.test.ts
               tests/online/features/message-persistence.test.ts
             mock_sdk: true
           - module: git

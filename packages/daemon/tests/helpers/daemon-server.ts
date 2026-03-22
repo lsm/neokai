@@ -54,6 +54,16 @@ export interface DaemonServerOptions {
 	 * Default: false
 	 */
 	useDevProxy?: boolean;
+
+	/**
+	 * Custom database file path for the daemon.
+	 * When provided, overrides the default workspace-derived DB path.
+	 * Useful for crash-recovery tests where two daemon instances must share
+	 * the same persistent SQLite database file.
+	 *
+	 * The file is NOT deleted on cleanup — callers are responsible for removal.
+	 */
+	dbPath?: string;
 }
 
 export interface DaemonServerContext {
@@ -508,6 +518,7 @@ async function createInProcessDaemonServer(
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
+		dbPath: customDbPath,
 	} = options;
 
 	// Start Dev Proxy if requested
@@ -559,7 +570,9 @@ async function createInProcessDaemonServer(
 	process.env.NEOKAI_WORKSPACE_PATH = workspace;
 	const config = getConfig();
 	config.port = userPort;
-	config.dbPath = `${workspace}/daemon.db`;
+	// Use caller-provided dbPath (e.g., for crash-recovery tests sharing a DB across restarts)
+	// or fall back to the workspace-local path.
+	config.dbPath = customDbPath ?? `${workspace}/daemon.db`;
 
 	// Create daemon app in-process (starts its own server)
 	const daemonContext = await createDaemonApp({
