@@ -2,18 +2,16 @@
  * Tests for TaskConversationRenderer Component
  *
  * Verifies that the component:
- * - Renders messages provided by useGroupMessages
+ * - Renders messages fetched from task.getGroupMessages
  * - Calls onMessageCountChange when the message list changes
- * - Shows a loading state while useGroupMessages is loading
- * - Renders status messages as centered dividers
+ * - Supports pagination with "Load older messages" button
  * - Does NOT own a scroll container (no overflow-y-auto div)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, waitFor, act } from '@testing-library/preact';
+import { render, cleanup, waitFor, act, fireEvent } from '@testing-library/preact';
 
 import { TaskConversationRenderer } from './TaskConversationRenderer';
-import type { SessionGroupMessage } from '../../hooks/useGroupMessages';
 
 // -------------------------------------------------------
 // Mocks
@@ -43,16 +41,7 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 		onEvent: mockOnEvent,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
-		isConnected: true,
 	}),
-}));
-
-// Mock useGroupMessages — tests control the returned messages/loading state
-let mockGroupMessages: SessionGroupMessage[] = [];
-let mockGroupIsLoading = false;
-
-vi.mock('../../hooks/useGroupMessages.ts', () => ({
-	useGroupMessages: () => ({ messages: mockGroupMessages, isLoading: mockGroupIsLoading }),
 }));
 
 // SDKMessageRenderer mock that captures rendered props for inspection
@@ -92,7 +81,7 @@ function fireSessionStateEvent(channel: string, data: unknown): void {
 // Helpers
 // -------------------------------------------------------
 
-function makeRawMessage(id: number, role: string, uuid: string): SessionGroupMessage {
+function makeRawMessage(id: number, role: string, uuid: string) {
 	return {
 		id,
 		groupId: 'group-1',
@@ -104,15 +93,31 @@ function makeRawMessage(id: number, role: string, uuid: string): SessionGroupMes
 	};
 }
 
-function makeStatusMessage(id: number, text: string): SessionGroupMessage {
+function makeStatusMessage(id: number, text: string) {
 	return {
 		id,
 		groupId: 'group-1',
-		sessionId: null,
+		sessionId: null as string | null,
 		role: 'system',
 		messageType: 'status',
 		content: text,
 		createdAt: Date.now(),
+	};
+}
+
+// Default API response format
+type TestMessage = ReturnType<typeof makeRawMessage> | ReturnType<typeof makeStatusMessage>;
+
+function makeApiResponse(
+	messages: TestMessage[],
+	options?: { hasOlder?: boolean; oldestCursor?: string | null }
+) {
+	return {
+		messages,
+		hasMore: false,
+		nextCursor: messages.length > 0 ? 'cursor-end' : null,
+		hasOlder: options?.hasOlder ?? false,
+		oldestCursor: options?.oldestCursor ?? (messages.length > 0 ? 'cursor-start' : null),
 	};
 }
 
@@ -126,8 +131,6 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
-		mockGroupMessages = [];
-		mockGroupIsLoading = false;
 		sessionStateHandlers.length = 0;
 		capturedSDKProps.length = 0;
 	});
@@ -137,10 +140,11 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('calls onMessageCountChange with the initial message count', async () => {
-		mockGroupMessages = [
+		const messages = [
 			makeRawMessage(1, 'assistant', 'uuid-1'),
 			makeRawMessage(2, 'assistant', 'uuid-2'),
 		];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		const onCountChange = vi.fn();
 		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
@@ -150,9 +154,9 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		});
 	});
 
-	it('calls onMessageCountChange with 0 while loading', () => {
-		mockGroupIsLoading = true;
-		mockGroupMessages = [];
+	it('calls onMessageCountChange with 0 during loading', () => {
+		// Request never resolves → still loading
+		mockRequest.mockImplementation(() => new Promise(() => {}));
 
 		const onCountChange = vi.fn();
 		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
@@ -160,34 +164,9 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		expect(onCountChange).toHaveBeenCalledWith(0);
 	});
 
-	it('calls onMessageCountChange with updated count when messages change', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
-		const onCountChange = vi.fn();
-		const { rerender } = render(
-			<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />
-		);
-
-		await waitFor(() => {
-			expect(onCountChange).toHaveBeenCalledWith(1);
-		});
-
-		// Simulate new message arriving via LiveQuery
-		mockGroupMessages = [
-			makeRawMessage(1, 'assistant', 'uuid-1'),
-			makeRawMessage(2, 'assistant', 'uuid-2'),
-		];
-		act(() => {
-			rerender(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
-		});
-
-		await waitFor(() => {
-			expect(onCountChange).toHaveBeenCalledWith(2);
-		});
-	});
-
 	it('does NOT render a scroll container (no overflow-y-auto on root element)', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		const { container } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
@@ -205,7 +184,8 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('renders status messages as centered dividers', async () => {
-		mockGroupMessages = [makeStatusMessage(1, 'Task started')];
+		const messages = [makeStatusMessage(1, 'Task started')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		const { container } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
@@ -217,7 +197,8 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('works without onMessageCountChange prop', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		let container: Element | undefined;
 		expect(() => {
@@ -229,27 +210,239 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 			expect(container?.firstChild).not.toBeNull();
 		});
 	});
+});
 
-	it('shows loading state while useGroupMessages is loading', () => {
-		mockGroupIsLoading = true;
-		mockGroupMessages = [];
-
-		const { container } = render(
-			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
-		);
-
-		expect(container.textContent).toContain('Loading conversation');
+describe('TaskConversationRenderer — pagination', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockClear();
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		sessionStateHandlers.length = 0;
+		capturedSDKProps.length = 0;
 	});
 
-	it('shows empty state when not loading and no messages', () => {
-		mockGroupIsLoading = false;
-		mockGroupMessages = [];
+	afterEach(() => {
+		cleanup();
+	});
 
-		const { container } = render(
+	it('shows "Load older messages" button when hasOlder is true', async () => {
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () =>
+			makeApiResponse(messages, { hasOlder: true, oldestCursor: 'cursor-older' })
+		);
+
+		const { getByText } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
 		);
 
-		expect(container.textContent).toContain('Waiting for agent activity');
+		await waitFor(() => {
+			expect(getByText('Load older messages')).toBeDefined();
+		});
+	});
+
+	it('does not show "Load older messages" button when hasOlder is false', async () => {
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () =>
+			makeApiResponse(messages, { hasOlder: false, oldestCursor: null })
+		);
+
+		const { queryByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		await waitFor(() => {
+			expect(queryByText('Load older messages')).toBeNull();
+		});
+	});
+
+	it('loads older messages when button is clicked', async () => {
+		const initialMessages = [makeRawMessage(3, 'assistant', 'uuid-3')];
+		const olderMessages = [
+			makeRawMessage(1, 'assistant', 'uuid-1'),
+			makeRawMessage(2, 'assistant', 'uuid-2'),
+		];
+
+		let callCount = 0;
+		mockRequest.mockImplementation(async (method: string, params: { before?: string }) => {
+			if (method === 'task.getGroupMessages') {
+				callCount++;
+				if (params.before) {
+					// Second call - loading older
+					return makeApiResponse(olderMessages, { hasOlder: false, oldestCursor: 'cursor-oldest' });
+				}
+				// First call - initial load
+				return makeApiResponse(initialMessages, { hasOlder: true, oldestCursor: 'cursor-older' });
+			}
+			return {};
+		});
+
+		const onCountChange = vi.fn();
+		const { getByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />
+		);
+
+		// Wait for initial load
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(1);
+		});
+
+		// Click "Load older messages"
+		await act(async () => {
+			fireEvent.click(getByText('Load older messages'));
+		});
+
+		// Should have called API twice (initial + load older)
+		await waitFor(() => {
+			expect(callCount).toBe(2);
+		});
+
+		// Should have 3 messages now (2 older + 1 initial)
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(3);
+		});
+	});
+
+	it('shows loading state while loading older messages', async () => {
+		const initialMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		let resolveOlder: () => void;
+
+		mockRequest.mockImplementation(async (method: string, params: { before?: string }) => {
+			if (method === 'task.getGroupMessages') {
+				if (params.before) {
+					// Delay the older messages response
+					return new Promise((resolve) => {
+						resolveOlder = () => resolve(makeApiResponse([], { hasOlder: false }));
+					});
+				}
+				return makeApiResponse(initialMessages, { hasOlder: true, oldestCursor: 'cursor-older' });
+			}
+			return {};
+		});
+
+		const { getByText, queryByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		// Wait for initial load
+		await waitFor(() => {
+			expect(getByText('Load older messages')).toBeDefined();
+		});
+
+		// Click "Load older messages"
+		await act(async () => {
+			fireEvent.click(getByText('Load older messages'));
+		});
+
+		// Button should show loading state
+		await waitFor(() => {
+			expect(getByText('Loading…')).toBeDefined();
+		});
+
+		// Resolve the older messages request
+		await act(async () => {
+			resolveOlder!();
+		});
+
+		// Button should return to normal state (hidden since no more older messages)
+		await waitFor(() => {
+			expect(queryByText('Loading…')).toBeNull();
+		});
+	});
+
+	it('shows error message when initial fetch fails with no buffered messages', async () => {
+		mockRequest.mockRejectedValue(new Error('Network error'));
+
+		const { getByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		await waitFor(() => {
+			expect(getByText('Network error')).toBeDefined();
+		});
+
+		// Should show retry button
+		expect(getByText('Retry')).toBeDefined();
+	});
+
+	it('retry button refetches messages instead of reloading page', async () => {
+		let fetchCount = 0;
+
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.getGroupMessages') {
+				fetchCount++;
+				if (fetchCount === 1) {
+					throw new Error('Network error');
+				}
+				// Second fetch succeeds
+				return makeApiResponse([makeRawMessage(1, 'assistant', 'uuid-1')]);
+			}
+			return {};
+		});
+
+		const { getByText, queryByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		// Wait for initial error
+		await waitFor(() => {
+			expect(getByText('Network error')).toBeDefined();
+		});
+
+		expect(fetchCount).toBe(1);
+
+		// Click retry button
+		await act(async () => {
+			fireEvent.click(getByText('Retry'));
+		});
+
+		// Should have made a second fetch request
+		await waitFor(() => {
+			expect(fetchCount).toBe(2);
+		});
+
+		// Error should be cleared and messages should render
+		await waitFor(() => {
+			expect(queryByText('Network error')).toBeNull();
+		});
+	});
+
+	it('shows error message when loading older messages fails', async () => {
+		const initialMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		let olderCallCount = 0;
+
+		mockRequest.mockImplementation(async (method: string, params: { before?: string }) => {
+			if (method === 'task.getGroupMessages') {
+				if (params.before) {
+					olderCallCount++;
+					throw new Error('Failed to load older');
+				}
+				return makeApiResponse(initialMessages, { hasOlder: true, oldestCursor: 'cursor-older' });
+			}
+			return {};
+		});
+
+		const { getByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		// Wait for initial load
+		await waitFor(() => {
+			expect(getByText('Load older messages')).toBeDefined();
+		});
+
+		// Click "Load older messages"
+		await act(async () => {
+			fireEvent.click(getByText('Load older messages'));
+		});
+
+		// Should show error message
+		await waitFor(() => {
+			expect(getByText('Failed to load older')).toBeDefined();
+		});
+
+		// Button should still be visible for retry
+		expect(getByText('Load older messages')).toBeDefined();
 	});
 });
 
@@ -259,8 +452,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
-		mockGroupMessages = [];
-		mockGroupIsLoading = false;
 		sessionStateHandlers.length = 0;
 		capturedSDKProps.length = 0;
 	});
@@ -270,7 +461,8 @@ describe('TaskConversationRenderer — session question state props', () => {
 	});
 
 	it('accepts leaderSessionId and workerSessionId props without errors', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		const { container } = render(
 			<TaskConversationRenderer
@@ -286,7 +478,8 @@ describe('TaskConversationRenderer — session question state props', () => {
 	});
 
 	it('renders without leaderSessionId or workerSessionId (backward-compatible)', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		const { container } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
@@ -297,7 +490,8 @@ describe('TaskConversationRenderer — session question state props', () => {
 	});
 
 	it('joins session channels for leader and worker when both session IDs provided', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
 		render(
 			<TaskConversationRenderer
@@ -310,6 +504,7 @@ describe('TaskConversationRenderer — session question state props', () => {
 
 		await waitFor(() => {
 			const joinedRooms = mockJoinRoom.mock.calls.map((c: string[]) => c[0]);
+			expect(joinedRooms).toContain('group:group-1');
 			expect(joinedRooms).toContain('session:leader-session-123');
 			expect(joinedRooms).toContain('session:worker-session-456');
 		});
@@ -325,7 +520,8 @@ describe('TaskConversationRenderer — session question state props', () => {
 			iteration: 0,
 		};
 		leaderMsg.content = JSON.stringify(parsed);
-		mockGroupMessages = [leaderMsg];
+
+		mockRequest.mockImplementation(async () => makeApiResponse([leaderMsg]));
 
 		render(
 			<TaskConversationRenderer
@@ -366,7 +562,7 @@ describe('TaskConversationRenderer — session question state props', () => {
 		};
 		workerMsg.content = JSON.stringify(parsedWorker);
 
-		mockGroupMessages = [leaderMsg, workerMsg];
+		mockRequest.mockImplementation(async () => makeApiResponse([leaderMsg, workerMsg]));
 
 		render(
 			<TaskConversationRenderer
@@ -420,7 +616,8 @@ describe('TaskConversationRenderer — session question state props', () => {
 			iteration: 0,
 		};
 		unknownMsg.content = JSON.stringify(parsedUnknown);
-		mockGroupMessages = [unknownMsg];
+
+		mockRequest.mockImplementation(async () => makeApiResponse([unknownMsg]));
 
 		render(
 			<TaskConversationRenderer
