@@ -581,6 +581,7 @@ test.describe('Room Sidebar Sections', () => {
 
 			await hub.request('goal.linkTask', { roomId, goalId, taskId });
 
+			await hub.request('task.setStatus', { roomId, taskId, status: 'in_progress' });
 			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
 
 			return roomId;
@@ -640,6 +641,7 @@ test.describe('Room Sidebar Sections', () => {
 			const taskId = (taskRes as { task: { id: string } }).task.id;
 
 			await hub.request('goal.linkTask', { roomId, goalId, taskId });
+			await hub.request('task.setStatus', { roomId, taskId, status: 'in_progress' });
 			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
 
 			return roomId;
