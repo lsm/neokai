@@ -827,6 +827,10 @@ export class TaskAgentManager {
 										err
 									);
 								});
+						} else {
+							log.warn(
+								`TaskAgentManager: could not resolve spaceId for sub-session ${subSessionId} — spaceSessionGroup.memberUpdated (failed) not emitted`
+							);
 						}
 					}
 				} catch (err) {
@@ -907,6 +911,10 @@ export class TaskAgentManager {
 									err
 								);
 							});
+					} else {
+						log.warn(
+							`TaskAgentManager: could not resolve spaceId for task ${taskId} — spaceSessionGroup.memberUpdated (completed) not emitted`
+						);
 					}
 				}
 			} catch (err) {
@@ -1078,6 +1086,7 @@ export class TaskAgentManager {
 				this.injectSubSessionMessage(subSessionId, message),
 			onSubSessionComplete: (stepId, subSessionId) =>
 				this.handleSubSessionComplete(taskId, stepId, subSessionId),
+			daemonHub: this.config.daemonHub,
 		});
 
 		agentSession.setRuntimeMcpServers({

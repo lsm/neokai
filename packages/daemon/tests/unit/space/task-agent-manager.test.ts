@@ -2339,14 +2339,29 @@ describe('TaskAgentManager', () => {
 			expect(payload.member.status).toBe('failed');
 		});
 
+		test('spaceSessionGroup.memberAdded uses space-specific channel', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			await factory.create(
+				{
+					sessionId: `sub-channel-test-${task.id}`,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			const evt = ctx.daemonHub.emitted.find((e) => e.event === 'spaceSessionGroup.memberAdded');
+			expect(evt?.data.sessionId).toBe(`space:${ctx.spaceId}`);
+		});
+
 		test('no spaceSessionGroup.created event when group creation fails', async () => {
 			// Sabotage sessionGroupRepo.createGroup to throw
-			const origCreate = ctx.sessionGroupRepo.createGroup.bind(ctx.sessionGroupRepo);
 			let callCount = 0;
-			ctx.sessionGroupRepo.createGroup = (...args) => {
+			ctx.sessionGroupRepo.createGroup = (..._args) => {
 				callCount++;
 				throw new Error('forced failure');
-				return origCreate(...args);
 			};
 
 			const task = await makeTask(ctx.taskManager);
