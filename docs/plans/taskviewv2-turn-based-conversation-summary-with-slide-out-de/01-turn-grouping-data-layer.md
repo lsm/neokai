@@ -30,22 +30,22 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
        approveReviewedTask,      // async handler: calls task.approve RPC, bumps conversationKey
        rejectReviewedTask,       // async handler(feedback): calls task.reject RPC, bumps conversationKey
        interruptSession,         // handler: calls task.interruptSession RPC (named to match source)
-       reactivateTask,           // handler: calls task.reactivate RPC
-       completeTask,             // handler: calls task.complete RPC
+       reactivateTask,           // handler: calls task.setStatus with status: 'in_progress'
+       completeTask,             // handler: calls task.setStatus with status: 'completed'
        cancelTask,               // handler: calls task.cancel RPC
-       archiveTask,              // handler: calls task.archive RPC
+       archiveTask,              // handler: calls task.setStatus with status: 'archived'
 
        // Loading states
-       approving, rejecting, interrupting,
+       approving, rejecting, interrupting, reactivating,
 
        // Error states
        reviewError,              // error string from approve/reject
 
-       // Modal state
-       rejectModal,              // { isOpen, open, close } — for RejectModal
-       completeModal,            // { isOpen, open, close } — for CompleteTaskDialog
-       cancelModal,              // { isOpen, open, close } — for CancelTaskDialog
-       archiveModal,             // { isOpen, open, close } — for ArchiveTaskDialog
+       // Modal state (full UseModalResult from useModal hook: { isOpen, open, close, toggle, setIsOpen })
+       rejectModal,              // UseModalResult — for RejectModal
+       completeModal,            // UseModalResult — for CompleteTaskDialog
+       cancelModal,              // UseModalResult — for CancelTaskDialog
+       archiveModal,             // UseModalResult — for ArchiveTaskDialog
 
        // Derived permission flags (from task.status)
        canCancel, canInterrupt, canReactivate, canComplete, canArchive,
@@ -55,7 +55,8 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
    - **Note**: The source uses `interruptSession` as the handler name (line 791, calling `task.interruptSession` RPC). Keep this name in the hook for consistency.
    - Update `TaskView.tsx` to call `useTaskViewData()` instead of inline logic. Verify V1 behavior is unchanged.
 4. Extract the group message fetching and parsing logic from `TaskConversationRenderer.tsx` into `packages/web/src/hooks/useGroupMessages.ts`:
-   - Define the `ParsedGroupMessage` type alias: this is `SDKMessage` with `_taskMeta` (containing `authorRole`, `authorSessionId`, etc.) attached during parsing. Formally: `type ParsedGroupMessage = SDKMessage & { _taskMeta?: { authorRole: string; authorSessionId: string; [key: string]: unknown } }`. Export this type from the hook file so downstream consumers (e.g., `useTurnBlocks`) can import it.
+   - **Data flow clarification**: The RPC `task.getGroupMessages` returns `GroupMessage` objects (raw DB records with fields `id`, `groupId`, `sessionId`, `role`, `messageType`, `content`, `createdAt` — see `TaskConversationRenderer.tsx` lines 44-52). The `parseGroupMessage()` function transforms each `GroupMessage` into an `SDKMessage`, attaching `_taskMeta` on specific synthetic messages (status, leader_summary, etc.). The hook consumes `GroupMessage` from the RPC and returns the parsed `SDKMessage` results.
+   - Define the `ParsedGroupMessage` type alias for the hook's output: `type ParsedGroupMessage = SDKMessage & { _taskMeta?: { authorRole: string; authorSessionId: string; [key: string]: unknown } }`. This is just `SDKMessage` with the optional `_taskMeta` field that `parseGroupMessage()` already attaches in practice. Export this type from the hook file so downstream consumers (e.g., `useTurnBlocks`) can import it.
    - `useGroupMessages(groupId)` — returns `{ messages: ParsedGroupMessage[], isLoading, loadOlder, hasOlder, isAtTail: boolean, error: string | null, loadingOlder: boolean, retryInitialFetch: () => void }`.
      - `error`: error string from initial fetch or delta subscription failures (displayed in empty-state error screen)
      - `loadingOlder`: loading state for the "Load older" button indicator
@@ -75,7 +76,7 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
 
 **Acceptance Criteria:**
 - `ROLE_COLORS` is exported from `packages/web/src/lib/task-constants.ts` and imported by both V1 and (later) V2.
-- `useTaskViewData` hook encapsulates all task/group/session data fetching, all task action handlers (approve, reject, interrupt, reactivate, complete, cancel, archive), all modal states, all derived permission flags (`canCancel`, `canInterrupt`, `canReactivate`, `canComplete`, `canArchive`), `conversationKey` reload mechanism, `interrupting` loading state, and `associatedGoal`.
+- `useTaskViewData` hook encapsulates all task/group/session data fetching, all task action handlers (approve, reject, interrupt, reactivate, complete, cancel, archive), all loading states (`approving`, `rejecting`, `interrupting`, `reactivating`), all modal states (full `UseModalResult` objects), all derived permission flags (`canCancel`, `canInterrupt`, `canReactivate`, `canComplete`, `canArchive`), `conversationKey` reload mechanism, and `associatedGoal`.
 - `useGroupMessages` hook encapsulates group message fetching, parsing, deduplication, delta subscription, and pagination.
 - `HumanInputArea`, `TaskActionDialogs`, `TaskHeaderActions`, `TaskReviewBar` are extracted into shared files.
 - `TaskView.tsx` and `TaskConversationRenderer.tsx` import from the new shared locations.
