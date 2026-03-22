@@ -31,7 +31,7 @@
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/features/job-queue-crash-recovery.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createDaemonApp, type DaemonAppContext } from '../../../src/app';
@@ -270,6 +270,16 @@ afterEach(async () => {
 		}
 	} catch {
 		// Directory may not exist yet or already deleted — not a failure.
+	}
+});
+
+afterAll(() => {
+	// Remove the TEST_DB_DIR directory itself once all tests have finished.
+	// Per-test afterEach handles individual files; afterAll handles the container.
+	try {
+		fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
+	} catch {
+		// Best-effort — a leftover empty directory is not a test failure.
 	}
 });
 
@@ -518,22 +528,38 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		expect(completed).toBeDefined();
 		expect(completed!.status).toBe('completed');
 
-		// After completion, the cleanup handler self-schedules the next run.
-		// Accept 'pending' or 'processing' — the processor may have picked it up
-		// already by the time waitForJob polls.
-		const nextCleanup = await waitForJob(
-			h2.ctx,
-			JOB_QUEUE_CLEANUP,
-			['pending', 'processing'],
-			JOB_WAIT_TIMEOUT_MS
-		);
-		expect(nextCleanup).toBeDefined();
-
-		// The next cleanup job must be a *different* job (not the stale one that
-		// just ran) and must be scheduled ~24 h in the future.
-		expect(nextCleanup!.id).not.toBe(staleCleanupId);
-		const minExpected = Date.now() + 23 * 60 * 60 * 1000; // 23 h from now
-		expect(nextCleanup!.runAt).toBeGreaterThan(minExpected);
+		// After the stale cleanup job completes, the cleanup handler self-schedules
+		// a follow-up run ~24 h from now.
+		//
+		// IMPORTANT: app.ts also enqueues an immediate startup cleanup job when
+		// daemon-2 starts (because the stale job was 'processing', not 'pending',
+		// so the startup dedup check sees no pending jobs and adds one with
+		// runAt ≈ now).  Two cleanup jobs therefore race:
+		//   • stale (reclaimed, runAt ≈ now-6min)
+		//   • startup (runAt ≈ now)
+		//
+		// The cleanup handler only self-schedules if `pending.length === 0`.
+		// Whichever job runs last will find the other gone and will self-schedule
+		// the 24 h follow-up.  So in all interleavings exactly one 24 h job is
+		// eventually enqueued — but we must wait for it explicitly rather than
+		// grabbing the first pending/processing job (which may be the immediate
+		// startup job, not the 24 h one).
+		const minFutureRunAt = Date.now() + 23 * 60 * 60 * 1000; // 23 h from now
+		const scheduledFollowUp = await (async () => {
+			const deadline = Date.now() + JOB_WAIT_TIMEOUT_MS;
+			while (Date.now() < deadline) {
+				const jobs = h2.ctx.jobQueue.listJobs({
+					queue: JOB_QUEUE_CLEANUP,
+					status: ['pending', 'processing', 'completed'],
+				});
+				const match = jobs.find((j) => j.id !== staleCleanupId && j.runAt > minFutureRunAt);
+				if (match) return match;
+				await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+			}
+			return undefined;
+		})();
+		expect(scheduledFollowUp).toBeDefined();
+		expect(scheduledFollowUp!.runAt).toBeGreaterThan(minFutureRunAt);
 
 		await stopDaemon(h2);
 	}, 30_000);
