@@ -73,7 +73,7 @@ describe('GoalManager', () => {
 		goalManager = new GoalManager(db, roomId);
 
 		// Create task manager for testing task linking
-		taskManager = new TaskManager(db, roomId);
+		taskManager = new TaskManager(db, roomId, { notifyChange: () => {} } as never);
 	});
 
 	afterEach(() => {
@@ -391,7 +391,7 @@ describe('GoalManager', () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 			const task = await taskManager2.createTask({ title: 'Room 2 Task', description: '' });
 
 			await expect(goalManager.linkTaskToGoal(goal.id, task.id)).rejects.toThrow(

@@ -266,7 +266,7 @@ describe('TaskGroupManager', () => {
 		const mockHub = createMockDaemonHub();
 		groupRepo = new SessionGroupRepository(db as never);
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
-		taskManager = new TaskManager(db as never, 'room-1');
+		taskManager = new TaskManager(db as never, 'room-1', { notifyChange: () => {} } as never);
 		goalManager = new GoalManager(db as never, 'room-1');
 		sessionFactory = createMockSessionFactory();
 

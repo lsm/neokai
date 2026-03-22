@@ -117,7 +117,7 @@ describe('Room Agent Tools', () => {
 		`);
 
 		goalManager = new GoalManager(db as never, roomId);
-		taskManager = new TaskManager(db as never, roomId);
+		taskManager = new TaskManager(db as never, roomId, { notifyChange: () => {} } as never);
 		groupRepo = new SessionGroupRepository(db as never);
 		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});
