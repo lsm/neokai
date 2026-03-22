@@ -577,17 +577,17 @@ describe('SpaceSessionGroupRepository — updated schema', () => {
 			expect(fetched!.agentId).toBeUndefined();
 		});
 
-		it('re-adding with explicit null agentId stores null in DB', () => {
+		it('re-adding with agentId: undefined clears a previously set agentId', () => {
 			const group = repo.createGroup({ spaceId, name: 'G' });
-			// Add with agentId
+			// First add with agentId
 			repo.addMember(group.id, 'session-1', { role: 'coder', agentId: 'agent-1' });
-			// Re-add without agentId (should remain from update, but role changes)
+			// Re-add with agentId: undefined — addMember always writes agentId ?? null, so it clears
 			const updated = repo.addMember(group.id, 'session-1', {
 				role: 'reviewer',
 				agentId: undefined,
 			});
 
-			// agentId: undefined in params → stored as null → returned as undefined
+			// agentId: undefined → stored as null → mapped back as undefined
 			expect(updated.agentId).toBeUndefined();
 		});
 	});
@@ -635,6 +635,202 @@ describe('SpaceSessionGroupRepository — updated schema', () => {
 			expect(result!.role).toBe('coder');
 			expect(result!.agentId).toBe('agent-1');
 			expect(result!.status).toBe('active');
+		});
+	});
+
+	// ─── updateGroup with new fields ────────────────────────────────────────────
+
+	describe('updateGroup() with new taskId and status fields', () => {
+		it('updates taskId to a new value', () => {
+			const group = repo.createGroup({ spaceId, name: 'G', taskId: 'task-old' });
+			const updated = repo.updateGroup(group.id, { taskId: 'task-new' });
+			expect(updated!.taskId).toBe('task-new');
+		});
+
+		it('clears taskId by passing null', () => {
+			const group = repo.createGroup({ spaceId, name: 'G', taskId: 'task-1' });
+			const updated = repo.updateGroup(group.id, { taskId: null });
+			expect(updated!.taskId).toBeUndefined();
+		});
+
+		it('updates group status to completed', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			expect(group.status).toBe('active');
+
+			const updated = repo.updateGroup(group.id, { status: 'completed' });
+			expect(updated!.status).toBe('completed');
+		});
+
+		it('updates group status to failed', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const updated = repo.updateGroup(group.id, { status: 'failed' });
+			expect(updated!.status).toBe('failed');
+		});
+
+		it('updates both taskId and status together', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const updated = repo.updateGroup(group.id, { taskId: 'task-done', status: 'completed' });
+			expect(updated!.taskId).toBe('task-done');
+			expect(updated!.status).toBe('completed');
+		});
+
+		it('preserves existing fields when only updating taskId', () => {
+			const group = repo.createGroup({
+				spaceId,
+				name: 'My Group',
+				description: 'Desc',
+				taskId: 'task-orig',
+				status: 'active',
+			});
+			const updated = repo.updateGroup(group.id, { taskId: 'task-new' });
+			expect(updated!.name).toBe('My Group');
+			expect(updated!.description).toBe('Desc');
+			expect(updated!.status).toBe('active');
+			expect(updated!.taskId).toBe('task-new');
+		});
+
+		it('returns null for unknown group ID', () => {
+			expect(repo.updateGroup('nonexistent', { status: 'completed' })).toBeNull();
+		});
+	});
+
+	// ─── deleteGroup ────────────────────────────────────────────────────────────
+
+	describe('deleteGroup()', () => {
+		it('deletes an existing group and returns true', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			expect(repo.deleteGroup(group.id)).toBe(true);
+			expect(repo.getGroup(group.id)).toBeNull();
+		});
+
+		it('returns false for a non-existent group ID', () => {
+			expect(repo.deleteGroup('nonexistent')).toBe(false);
+		});
+
+		it('cascades deletion to all members', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const m1 = repo.addMember(group.id, 'session-1', { role: 'coder' });
+			const m2 = repo.addMember(group.id, 'session-2', { role: 'reviewer' });
+
+			repo.deleteGroup(group.id);
+
+			expect(repo.getMember(m1.id)).toBeNull();
+			expect(repo.getMember(m2.id)).toBeNull();
+		});
+
+		it('does not affect other groups in the same space', () => {
+			const g1 = repo.createGroup({ spaceId, name: 'G1' });
+			const g2 = repo.createGroup({ spaceId, name: 'G2' });
+
+			repo.deleteGroup(g1.id);
+
+			expect(repo.getGroup(g1.id)).toBeNull();
+			expect(repo.getGroup(g2.id)).not.toBeNull();
+		});
+	});
+
+	// ─── getGroupsBySpace ────────────────────────────────────────────────────────
+
+	describe('getGroupsBySpace()', () => {
+		it('returns all groups for a space including new fields', () => {
+			repo.createGroup({ spaceId, name: 'G1', taskId: 'task-1', status: 'active' });
+			repo.createGroup({ spaceId, name: 'G2', taskId: 'task-2', status: 'completed' });
+
+			const groups = repo.getGroupsBySpace(spaceId);
+			expect(groups).toHaveLength(2);
+
+			const names = groups.map((g) => g.name);
+			expect(names).toContain('G1');
+			expect(names).toContain('G2');
+		});
+
+		it('returns groups with their taskId and status populated', () => {
+			repo.createGroup({ spaceId, name: 'G', taskId: 'task-x', status: 'failed' });
+			const groups = repo.getGroupsBySpace(spaceId);
+			expect(groups[0].taskId).toBe('task-x');
+			expect(groups[0].status).toBe('failed');
+		});
+
+		it('includes members (with agentId and status) in each group', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			repo.addMember(group.id, 'session-1', {
+				role: 'coder',
+				agentId: 'agent-42',
+				status: 'completed',
+			});
+
+			const groups = repo.getGroupsBySpace(spaceId);
+			expect(groups[0].members).toHaveLength(1);
+			expect(groups[0].members[0].agentId).toBe('agent-42');
+			expect(groups[0].members[0].status).toBe('completed');
+		});
+
+		it('returns empty array for an unknown space', () => {
+			repo.createGroup({ spaceId, name: 'G' });
+			expect(repo.getGroupsBySpace('unknown-space')).toHaveLength(0);
+		});
+
+		it('orders groups by created_at ascending', async () => {
+			repo.createGroup({ spaceId, name: 'First' });
+			await new Promise((r) => setTimeout(r, 2));
+			repo.createGroup({ spaceId, name: 'Second' });
+
+			const groups = repo.getGroupsBySpace(spaceId);
+			expect(groups[0].name).toBe('First');
+			expect(groups[1].name).toBe('Second');
+		});
+	});
+
+	// ─── removeMember ───────────────────────────────────────────────────────────
+
+	describe('removeMember()', () => {
+		it('removes an existing member and returns true', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			repo.addMember(group.id, 'session-1', { role: 'coder' });
+
+			const removed = repo.removeMember(group.id, 'session-1');
+			expect(removed).toBe(true);
+			expect(repo.getGroup(group.id)!.members).toHaveLength(0);
+		});
+
+		it('returns false when member does not exist', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			expect(repo.removeMember(group.id, 'nonexistent-session')).toBe(false);
+		});
+
+		it('touches group updated_at on successful removal', async () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			repo.addMember(group.id, 'session-1', { role: 'coder' });
+			const before = repo.getGroup(group.id)!.updatedAt;
+
+			await new Promise((r) => setTimeout(r, 5));
+			repo.removeMember(group.id, 'session-1');
+
+			const after = repo.getGroup(group.id)!.updatedAt;
+			expect(after).toBeGreaterThan(before);
+		});
+
+		it('does not touch group updated_at when member does not exist', async () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const before = repo.getGroup(group.id)!.updatedAt;
+
+			await new Promise((r) => setTimeout(r, 5));
+			repo.removeMember(group.id, 'nonexistent-session');
+
+			const after = repo.getGroup(group.id)!.updatedAt;
+			expect(after).toBe(before);
+		});
+
+		it('removes only the target member, leaving others intact', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			repo.addMember(group.id, 'session-1', { role: 'coder' });
+			repo.addMember(group.id, 'session-2', { role: 'reviewer' });
+
+			repo.removeMember(group.id, 'session-1');
+
+			const found = repo.getGroup(group.id)!;
+			expect(found.members).toHaveLength(1);
+			expect(found.members[0].sessionId).toBe('session-2');
 		});
 	});
 });
