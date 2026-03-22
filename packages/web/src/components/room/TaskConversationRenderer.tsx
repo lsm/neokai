@@ -159,7 +159,7 @@ export function TaskConversationRenderer({
 	const workerQuestionState = useSessionQuestionState(workerSessionId);
 
 	// Subscribe to group messages via LiveQuery (handles initial snapshot + live deltas)
-	const { messages: rawMessages, isLoading } = useGroupMessages(groupId);
+	const { messages: rawMessages, isLoading, isReconnecting } = useGroupMessages(groupId);
 
 	const messages = useMemo(
 		() => rawMessages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null),
@@ -256,6 +256,14 @@ export function TaskConversationRenderer({
 		}
 		return transitions;
 	}, [messages]);
+
+	if (isReconnecting) {
+		return (
+			<div class="flex-1 flex items-center justify-center">
+				<p class="text-gray-400 text-sm">Reconnecting…</p>
+			</div>
+		);
+	}
 
 	if (isLoading) {
 		return (

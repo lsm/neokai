@@ -823,18 +823,31 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 		const fetchGroup = async () => {
 			const seq = ++fetchGroupSeq;
-			try {
-				const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
-					roomId,
-					taskId,
-				});
-				if (!cancelled && seq === fetchGroupSeq) {
-					setGroup(res.group);
-					// Fetch session info for worker and leader
-					void fetchSessionInfo(res.group);
+
+			const tryFetch = async (): Promise<{ group: TaskGroupInfo | null } | null> => {
+				try {
+					return await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
+						roomId,
+						taskId,
+					});
+				} catch {
+					return null;
 				}
-			} catch {
-				// Group fetch failure is non-fatal — task may not have a group yet
+			};
+
+			let res = await tryFetch();
+			// Retry once after 1s if the first attempt fails (e.g. daemon just restarted)
+			if (res === null && !cancelled && seq === fetchGroupSeq) {
+				await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+				if (!cancelled && seq === fetchGroupSeq) {
+					res = await tryFetch();
+				}
+			}
+
+			if (res !== null && !cancelled && seq === fetchGroupSeq) {
+				setGroup(res.group);
+				// Fetch session info for worker and leader
+				void fetchSessionInfo(res.group);
 			}
 		};
 
@@ -1323,7 +1336,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					) : (
 						<div class="flex-1 flex items-center justify-center text-center p-8">
 							<div>
-								<p class="text-gray-400 mb-1">No active agent group</p>
+								<p class="text-gray-400 mb-1">
+									{task.status === 'review'
+										? 'Loading conversation history…'
+										: 'No active agent group'}
+								</p>
 								<p class="text-sm text-gray-500">
 									{task.status === 'pending'
 										? 'Waiting for the runtime to pick up this task.'
@@ -1332,7 +1349,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 											: task.status === 'needs_attention'
 												? 'This task needs attention.'
 												: task.status === 'review'
-													? 'This task is awaiting human review.'
+													? 'If this takes too long, try reloading the page.'
 													: task.status === 'draft'
 														? 'This task is a draft and has not been scheduled yet.'
 														: task.status === 'cancelled'

@@ -30,6 +30,8 @@ export interface SessionGroupMessage {
 export interface UseGroupMessagesResult {
 	messages: SessionGroupMessage[];
 	isLoading: boolean;
+	/** True when the WebSocket is disconnected but a groupId is set — messages will reload on reconnect. */
+	isReconnecting: boolean;
 }
 
 let _subscriptionCounter = 0;
@@ -106,16 +108,33 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 			}
 		});
 
-		// Send the subscribe request. Errors are non-fatal: clear loading state.
-		request('liveQuery.subscribe', {
-			queryName: 'sessionGroupMessages.byGroup',
-			params: [groupId],
-			subscriptionId,
-		}).catch(() => {
-			if (activeSubIdRef.current === subscriptionId) {
-				setIsLoading(false);
-			}
-		});
+		// Send the subscribe request with retry on failure.
+		// Up to MAX_RETRIES additional attempts after the first, with increasing delays.
+		const MAX_RETRIES = 2;
+		const RETRY_DELAYS_MS = [500, 1500];
+
+		const subscribeWithRetry = (attempt: number): void => {
+			request('liveQuery.subscribe', {
+				queryName: 'sessionGroupMessages.byGroup',
+				params: [groupId],
+				subscriptionId,
+			}).catch(() => {
+				if (activeSubIdRef.current !== subscriptionId) return;
+				if (attempt < MAX_RETRIES) {
+					setTimeout(() => {
+						if (activeSubIdRef.current === subscriptionId) {
+							subscribeWithRetry(attempt + 1);
+						}
+					}, RETRY_DELAYS_MS[attempt]);
+				} else {
+					if (activeSubIdRef.current === subscriptionId) {
+						setIsLoading(false);
+					}
+				}
+			});
+		};
+
+		subscribeWithRetry(0);
 
 		return () => {
 			// Remove event listeners first.
@@ -135,5 +154,5 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 		};
 	}, [groupId, isConnected, request, onEvent]);
 
-	return { messages, isLoading };
+	return { messages, isLoading, isReconnecting: !isConnected && groupId !== null };
 }

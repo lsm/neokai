@@ -2605,3 +2605,84 @@ describe('TaskView — goal badge', () => {
 		expect(badge?.getAttribute('title')).toBe('Mission: Tooltip Mission Title');
 	});
 });
+
+describe('TaskView — task.getGroup retry on failure', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		cleanup();
+	});
+
+	it('retries task.getGroup once after 1s if first attempt throws', async () => {
+		let getGroupCallCount = 0;
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') {
+				getGroupCallCount++;
+				if (getGroupCallCount === 1) throw new Error('daemon not ready');
+				return { group: makeGroup('awaiting_human') };
+			}
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Initial render (task.get resolves, task.getGroup fails).
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		// First getGroup call failed — advance the 1s retry delay.
+		await act(async () => {
+			vi.advanceTimersByTime(1000);
+			await Promise.resolve();
+		});
+
+		// Retry succeeded — group should now be loaded.
+		await waitFor(() => {
+			expect(getGroupCallCount).toBe(2);
+		});
+
+		// The "Awaiting your review" badge (from group.submittedForReview) should be visible.
+		await waitFor(() => {
+			expect(container.querySelector('.animate-pulse')?.textContent).toContain(
+				'Awaiting your review'
+			);
+		});
+	});
+
+	it('shows "Loading conversation history" for review task while group is null', async () => {
+		// task.getGroup always returns null (daemon just restarted, group not yet returned).
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Should show the helpful "Loading conversation history" message, not the generic empty state.
+		expect(container.textContent).toContain('Loading conversation history');
+		// Should NOT show the old generic "No active agent group" title for review tasks.
+		expect(container.textContent).not.toContain('No active agent group');
+	});
+});
