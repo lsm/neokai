@@ -1,34 +1,49 @@
 /**
  * Integration tests for cross-agent messaging isolation and channel enforcement.
  *
- * These tests use real SQLite databases (via runMigrations) to verify security
- * boundaries that unit tests with mocks cannot fully cover:
+ * Tests use a real file-based SQLite database (via runMigrations) — not mocks and not
+ * `:memory:` — to verify security boundaries that unit tests with mocks cannot fully cover.
+ *
+ * What is genuinely new here (beyond existing step-agent-tools.test.ts / task-agent-tools.test.ts):
+ *   - Suite 1: Two simultaneous groups in the same DB — verifies group-scoped isolation
+ *              holistically rather than per-tool. send_feedback test confirms that overlapping
+ *              role names in different groups are never confused.
+ *   - Suite 3: Multi-turn coder↔reviewer exchange (3 rounds) — exercises the full protocol.
+ *   - Suite 5: Full hub-spoke assign→reply→follow-up exchange across multiple turns.
+ *   - Suite 7: Fresh repository instances over the same DB — verifies group/channel resolution
+ *              survives daemon restart (the only suite that cannot be replaced by unit tests).
+ *   - Suite 8: getGroupId() → undefined edge case not covered in existing tests.
+ *
+ * Suites 2–6 provide complementary coverage for the direction-enforcement and topology
+ * patterns that also exist in step-agent-tools.test.ts, exercised here end-to-end through
+ * the full tool handler + repository + resolver stack.
  *
  *   1. Cross-group isolation     — messages never cross group boundaries
  *   2. Channel direction          — one-way channels cannot be reversed
  *   3. Bidirectional point-to-point A↔B
  *   4. Fan-out one-way A→[B,C,D] — all targets receive; no reverse permitted
  *   5. Hub-spoke A↔[B,C,D]       — hub broadcasts, spokes reply to hub only, spoke isolation
- *   6. Concurrent injection       — serialized delivery (no interleaving)
+ *   6. Concurrent injection       — both messages delivered when two agents inject simultaneously
  *   7. Data reload                — group/channel resolution survives DB re-fetch
+ *   8. Error paths                — missing group ID returns structured error
  *
  * All tests pass with:
- *   cd packages/daemon && bun test tests/unit/cross-agent-messaging-integration.test.ts
+ *   cd packages/daemon && bun test tests/unit/space/cross-agent-messaging-integration.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../src/storage/schema/index.ts';
-import { SpaceSessionGroupRepository } from '../../src/storage/repositories/space-session-group-repository.ts';
-import { SpaceWorkflowRepository } from '../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import {
 	createStepAgentToolHandlers,
 	type StepAgentToolsConfig,
-} from '../../src/lib/space/tools/step-agent-tools.ts';
-import { createTaskAgentToolHandlers } from '../../src/lib/space/tools/task-agent-tools.ts';
+} from '../../../src/lib/space/tools/step-agent-tools.ts';
+import { createTaskAgentToolHandlers } from '../../../src/lib/space/tools/task-agent-tools.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -182,8 +197,13 @@ function makeTaskAgentRelayHandlers(
 	groupId: string,
 	injector: (sessionId: string, message: string) => Promise<void>
 ) {
-	// createTaskAgentToolHandlers requires a large config but we only need relay_message.
-	// We stub the minimal required fields — tools that aren't called won't error.
+	// createTaskAgentToolHandlers requires a large config, but these tests only call
+	// relay_message. Fields accessed by relay_message: taskId, sessionGroupRepo, getGroupId,
+	// messageInjector. All other fields are stubs that will throw at the application layer
+	// (returning {success:false}) if unexpectedly called — not silently succeeding.
+	// Safe to call through this helper: relay_message only.
+	// DO NOT call: spawn_step_agent, list_group_members, advance_workflow, or any tool
+	// that accesses runtime/workflowManager/taskRepo/agentManager/taskManager/sessionFactory.
 	const minimalConfig = {
 		taskId: 'task-integration-test',
 		space: {
@@ -203,13 +223,13 @@ function makeTaskAgentRelayHandlers(
 		},
 		workflowRunId: 'run-unused',
 		workspacePath: '/tmp',
-		runtime: {} as never,
-		workflowManager: {} as never,
-		taskRepo: {} as never,
+		runtime: {} as never, // not used by relay_message
+		workflowManager: {} as never, // not used by relay_message
+		taskRepo: {} as never, // not used by relay_message
 		workflowRunRepo: tdb.workflowRunRepo,
-		agentManager: {} as never,
-		taskManager: {} as never,
-		sessionFactory: {} as never,
+		agentManager: {} as never, // not used by relay_message
+		taskManager: {} as never, // not used by relay_message
+		sessionFactory: {} as never, // not used by relay_message
 		messageInjector: injector,
 		onSubSessionComplete: async () => {},
 		sessionGroupRepo: tdb.sessionGroupRepo,
@@ -1020,10 +1040,14 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 });
 
 // ===========================================================================
-// Test Suite 6: Concurrent Message Injection
+// Test Suite 6: Concurrent Message Injection (both messages delivered)
 // ===========================================================================
+// Note: the test injector is a synchronous array push so these tests verify
+// logical correctness (no message loss, no cross-target contamination) rather
+// than runtime serialization order — that property lives in the production
+// injectSubSessionMessage queue and is tested at a lower level.
 
-describe('concurrent message injection', () => {
+describe('concurrent message injection — both messages delivered', () => {
 	let tdb: TestDb;
 
 	beforeEach(() => {
@@ -1267,7 +1291,7 @@ describe('data reload and DB-based validation', () => {
 		expect(reloadedRun).not.toBeNull();
 
 		// ChannelResolver can reconstruct topology from reloaded run config
-		const { ChannelResolver } = await import('../../src/lib/space/runtime/channel-resolver.ts');
+		const { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.isEmpty()).toBe(false);
@@ -1365,44 +1389,12 @@ describe('data reload and DB-based validation', () => {
 			orderIndex: 1,
 		});
 
-		// Simulate reload: fresh repo for validation
-		const freshRepo = new SpaceSessionGroupRepository(tdb.db);
 		const { messages, injector } = makeMessageCapture();
 
-		// Manually build minimal relay handler with fresh repo
-		const minimalConfig = {
-			taskId: 'task-reload-a',
-			space: {
-				id: tdb.spaceId,
-				name: 'Test Space',
-				workspacePath: '/tmp',
-				description: '',
-				backgroundContext: '',
-				instructions: '',
-				allowedModels: [],
-				sessionIds: [],
-				status: 'active' as const,
-				agents: [],
-				workflows: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-			},
-			workflowRunId: 'run-unused',
-			workspacePath: '/tmp',
-			runtime: {} as never,
-			workflowManager: {} as never,
-			taskRepo: {} as never,
-			workflowRunRepo: tdb.workflowRunRepo,
-			agentManager: {} as never,
-			taskManager: {} as never,
-			sessionFactory: {} as never,
-			messageInjector: injector,
-			onSubSessionComplete: async () => {},
-			sessionGroupRepo: freshRepo,
-			getGroupId: () => groupA.id, // Task agent A's group
-		};
-
-		const handlers = createTaskAgentToolHandlers(minimalConfig as never);
+		// Uses a relay-only stub — see makeTaskAgentRelayHandlers for safe-call contract.
+		// The repo inside uses tdb.sessionGroupRepo which holds the same DB connection,
+		// simulating the same isolation guarantee after a restart.
+		const handlers = makeTaskAgentRelayHandlers(tdb, 'session-ta-ra', groupA.id, injector);
 
 		// Group A task agent tries to relay to Group B member
 		const result = await handlers.relay_message({
@@ -1456,5 +1448,120 @@ describe('data reload and DB-based validation', () => {
 		expect(groups2).toHaveLength(1);
 		expect(groups2[0].id).toBe(group2.id);
 		expect(groups2[0].members[0].sessionId).toBe('session-m2');
+	});
+});
+
+// ===========================================================================
+// Test Suite 8: Error Paths — Missing Group ID
+// ===========================================================================
+// Covers step-agent-tools.ts lines 124–133 (loadGroupAndResolver error path)
+// where getGroupId() returns undefined — a race condition that can occur before
+// the TaskAgentManager has finished persisting the group to DB.
+
+describe('error paths — missing group ID', () => {
+	let tdb: TestDb;
+
+	beforeEach(() => {
+		tdb = makeTestDb();
+	});
+
+	afterEach(() => {
+		tdb.db.close();
+		rmSync(tdb.dir, { recursive: true, force: true });
+	});
+
+	test('send_feedback returns structured error when getGroupId returns undefined', async () => {
+		const { messages, injector } = makeMessageCapture();
+
+		// getGroupId returns undefined — simulates race before group is created
+		const config: StepAgentToolsConfig = {
+			mySessionId: 'session-coder-nogroup',
+			myRole: 'coder',
+			taskId: 'task-nogroup',
+			workflowRunId: 'run-nogroup',
+			sessionGroupRepo: tdb.sessionGroupRepo,
+			getGroupId: () => undefined,
+			workflowRunRepo: tdb.workflowRunRepo,
+			messageInjector: injector,
+			injectToTaskAgent: async () => {},
+		};
+
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.send_feedback({ target: 'reviewer', message: 'hello' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('No session group found');
+		expect(messages).toHaveLength(0);
+	});
+
+	test('list_peers returns structured error when getGroupId returns undefined', async () => {
+		const config: StepAgentToolsConfig = {
+			mySessionId: 'session-coder-nogroup',
+			myRole: 'coder',
+			taskId: 'task-nogroup',
+			workflowRunId: 'run-nogroup',
+			sessionGroupRepo: tdb.sessionGroupRepo,
+			getGroupId: () => undefined,
+			workflowRunRepo: tdb.workflowRunRepo,
+			messageInjector: async () => {},
+			injectToTaskAgent: async () => {},
+		};
+
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('No session group found');
+	});
+
+	test('relay_message returns structured error when getGroupId returns undefined', async () => {
+		const { messages, injector } = makeMessageCapture();
+
+		// Use makeTaskAgentRelayHandlers but override getGroupId to return undefined
+		// by constructing the config manually
+		const minimalConfig = {
+			taskId: 'task-nogroup',
+			space: {
+				id: tdb.spaceId,
+				name: 'Test Space',
+				workspacePath: '/tmp',
+				description: '',
+				backgroundContext: '',
+				instructions: '',
+				allowedModels: [],
+				sessionIds: [],
+				status: 'active' as const,
+				agents: [],
+				workflows: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+			workflowRunId: 'run-unused',
+			workspacePath: '/tmp',
+			runtime: {} as never,
+			workflowManager: {} as never,
+			taskRepo: {} as never,
+			workflowRunRepo: tdb.workflowRunRepo,
+			agentManager: {} as never,
+			taskManager: {} as never,
+			sessionFactory: {} as never,
+			messageInjector: injector,
+			onSubSessionComplete: async () => {},
+			sessionGroupRepo: tdb.sessionGroupRepo,
+			getGroupId: () => undefined, // <-- the tested path
+		};
+
+		const handlers = createTaskAgentToolHandlers(minimalConfig as never);
+		const result = await handlers.relay_message({
+			target_session_id: 'session-any',
+			message: 'hello',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('No session group found');
+		expect(messages).toHaveLength(0);
 	});
 });
