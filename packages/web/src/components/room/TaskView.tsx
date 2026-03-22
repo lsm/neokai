@@ -572,6 +572,16 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// Info panel (gear button) expanded state
 	const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(false);
 
+	// Close info panel on Escape key
+	useEffect(() => {
+		if (!isInfoPanelOpen) return;
+		const handleEscape = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') setIsInfoPanelOpen(false);
+		};
+		document.addEventListener('keydown', handleEscape, true);
+		return () => document.removeEventListener('keydown', handleEscape, true);
+	}, [isInfoPanelOpen]);
+
 	// Task action modals
 	const completeModal = useModal();
 	const cancelModal = useModal();
@@ -1021,9 +1031,25 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				workerSession={workerSession}
 				leaderSession={leaderSession}
 				actions={{
-					onComplete: canComplete && task.status !== 'review' ? completeModal.open : undefined,
-					onCancel: canCancel ? cancelModal.open : undefined,
-					onArchive: canArchive ? archiveModal.open : undefined,
+					onComplete:
+						canComplete && task.status !== 'review'
+							? () => {
+									setIsInfoPanelOpen(false);
+									completeModal.open();
+								}
+							: undefined,
+					onCancel: canCancel
+						? () => {
+								setIsInfoPanelOpen(false);
+								cancelModal.open();
+							}
+						: undefined,
+					onArchive: canArchive
+						? () => {
+								setIsInfoPanelOpen(false);
+								archiveModal.open();
+							}
+						: undefined,
 				}}
 				visibleActions={{
 					complete: canComplete && task.status !== 'review',

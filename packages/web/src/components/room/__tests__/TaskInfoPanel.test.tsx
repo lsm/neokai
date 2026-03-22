@@ -4,15 +4,11 @@
  * Tests the inline expandable info panel that replaces the old dropdown.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { TaskInfoPanel } from '../TaskInfoPanel';
 
 describe('TaskInfoPanel', () => {
-	beforeEach(() => {
-		cleanup();
-	});
-
 	afterEach(() => {
 		cleanup();
 	});

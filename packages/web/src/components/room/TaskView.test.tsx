@@ -1344,6 +1344,115 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
 		});
 	});
+
+	it('closes info panel when Complete action is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Click Complete — panel should close
+		const completeBtn = container.querySelector(
+			'[data-testid="task-info-panel-complete"]'
+		) as HTMLElement;
+		fireEvent.click(completeBtn);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
+
+	it('closes info panel when Cancel action is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Click Cancel — panel should close
+		const cancelBtn = container.querySelector(
+			'[data-testid="task-info-panel-cancel"]'
+		) as HTMLElement;
+		fireEvent.click(cancelBtn);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
+
+	it('closes info panel when Archive action is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Click Archive — panel should close
+		const archiveBtn = container.querySelector(
+			'[data-testid="task-info-panel-archive"]'
+		) as HTMLElement;
+		fireEvent.click(archiveBtn);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
+
+	it('closes info panel when Escape key is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Press Escape — panel should close
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
 });
 
 // ─── Interrupt Button Tests ───
