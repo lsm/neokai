@@ -316,15 +316,23 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 
 			if (failed.length > 0) {
 				// Partial or total delivery failure — report what was and was not delivered.
+				if (delivered.length > 0) {
+					// Partial success: at least one delivery succeeded
+					return jsonResult({
+						success: true,
+						delivered,
+						partialFailures: failed,
+						notFoundRoles: notFound.length > 0 ? notFound : undefined,
+						message: `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`,
+					});
+				}
+				// All deliveries failed
 				return jsonResult({
-					success: delivered.length > 0 ? 'partial' : false,
+					success: false,
 					delivered,
-					failed,
+					partialFailures: failed,
 					notFoundRoles: notFound.length > 0 ? notFound : undefined,
-					message:
-						delivered.length > 0
-							? `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`
-							: `Message delivery failed for all ${failed.length} target(s).`,
+					error: `Failed to deliver message to all ${failed.length} target(s).`,
 				});
 			}
 

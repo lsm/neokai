@@ -567,9 +567,9 @@ describe('step-agent-tools: send_feedback', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		// Partial success — one delivered, one failed
-		expect(data.success).toBe('partial');
+		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
-		expect(data.failed).toHaveLength(1);
+		expect(data.partialFailures).toHaveLength(1);
 		// Both targets were attempted (best-effort, not stop-on-first-error)
 		expect(callCount).toBe(2);
 	});
@@ -589,7 +589,7 @@ describe('step-agent-tools: send_feedback', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.failed).toHaveLength(1);
+		expect(data.partialFailures).toHaveLength(1);
 		expect(data.delivered).toHaveLength(0);
 	});
 
@@ -646,10 +646,10 @@ describe('step-agent-tools: send_feedback', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		// Should NOT return success: false for total failure — it's partial
-		expect(data.success).toBe('partial');
+		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
-		expect(data.failed).toHaveLength(1);
-		expect(data.failed[0].error).toContain('session not available');
+		expect(data.partialFailures).toHaveLength(1);
+		expect(data.partialFailures[0].error).toContain('session not available');
 		// Both targets were attempted (best-effort, not stop-on-first-error)
 		expect(callCount).toBe(2);
 	});
@@ -671,7 +671,7 @@ describe('step-agent-tools: send_feedback', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.delivered).toHaveLength(0);
-		expect(data.failed).toHaveLength(1);
+		expect(data.partialFailures).toHaveLength(1);
 	});
 });
 
