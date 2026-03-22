@@ -15,6 +15,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { RoomRepository } from '../../../storage/repositories/room-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	Room,
 	CreateRoomParams,
@@ -30,10 +31,10 @@ export class RoomManager {
 	private taskRepo: TaskRepository;
 	private sessionRepo: SessionRepository;
 
-	constructor(db: BunDatabase) {
+	constructor(db: BunDatabase, reactiveDb: ReactiveDatabase) {
 		this.db = db;
 		this.roomRepo = new RoomRepository(db);
-		this.taskRepo = new TaskRepository(db);
+		this.taskRepo = new TaskRepository(db, reactiveDb);
 		this.sessionRepo = new SessionRepository(db);
 	}
 

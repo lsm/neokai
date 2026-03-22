@@ -22,6 +22,7 @@ import {
 	VALID_STATUS_TRANSITIONS,
 } from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 describe('TaskManager', () => {
 	let db: Database;
@@ -36,7 +37,7 @@ describe('TaskManager', () => {
 		createTables(db);
 
 		// Create room manager and a room
-		roomManager = new RoomManager(db);
+		roomManager = new RoomManager(db, noOpReactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace/test' }],
@@ -1194,7 +1195,7 @@ describe('setTaskStatus — manual mode', () => {
 	beforeEach(() => {
 		db = new Database(':memory:');
 		createTables(db);
-		const roomManager = new RoomManager(db);
+		const roomManager = new RoomManager(db, noOpReactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace/test' }],

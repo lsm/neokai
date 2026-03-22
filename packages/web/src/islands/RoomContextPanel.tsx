@@ -281,9 +281,9 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
-				{/* Goals section */}
+				{/* Missions section */}
 				<CollapsibleSection
-					title="Goals"
+					title="Missions"
 					count={activeGoals.length}
 					headerRight={
 						<button
@@ -318,7 +318,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 					}
 				>
 					{activeGoals.length === 0 ? (
-						<div class="px-4 py-3 text-xs text-gray-600">No goals</div>
+						<div class="px-4 py-3 text-xs text-gray-600">No missions</div>
 					) : (
 						activeGoals.map((goal) => {
 							const isExpanded = expandedGoals.has(goal.id);

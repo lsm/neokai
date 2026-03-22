@@ -9,9 +9,13 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { NeoTask, TaskFilter, CreateTaskParams, UpdateTaskParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database';
 
 export class TaskRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb: ReactiveDatabase
+	) {}
 
 	/**
 	 * Create a new task
@@ -40,6 +44,7 @@ export class TaskRepository {
 			now
 		);
 
+		this.reactiveDb.notifyChange('tasks');
 		return this.getTask(id)!;
 	}
 
@@ -53,6 +58,9 @@ export class TaskRepository {
 				`UPDATE tasks SET status = 'pending', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
 			.run(Date.now(), createdByTaskId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 		return result.changes;
 	}
 
@@ -196,6 +204,7 @@ export class TaskRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			this.reactiveDb.notifyChange('tasks');
 		}
 
 		return this.getTask(id);
@@ -207,6 +216,7 @@ export class TaskRepository {
 	deleteTask(id: string): void {
 		const stmt = this.db.prepare(`DELETE FROM tasks WHERE id = ?`);
 		stmt.run(id);
+		this.reactiveDb.notifyChange('tasks');
 	}
 
 	/**
@@ -221,6 +231,7 @@ export class TaskRepository {
 			`UPDATE tasks SET status = 'archived', archived_at = ?, active_session = NULL, updated_at = ? WHERE id = ?`
 		);
 		stmt.run(now, now, id);
+		this.reactiveDb.notifyChange('tasks');
 		return this.getTask(id);
 	}
 

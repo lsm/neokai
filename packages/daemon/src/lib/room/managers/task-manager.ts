@@ -59,7 +59,7 @@ export class TaskManager {
 		private roomId: string,
 		private reactiveDb: ReactiveDatabase
 	) {
-		this.taskRepo = new TaskRepository(db);
+		this.taskRepo = new TaskRepository(db, this.reactiveDb);
 	}
 
 	/**

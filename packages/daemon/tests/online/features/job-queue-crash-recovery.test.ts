@@ -370,7 +370,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 		try {
 			// Create a room directly via RoomManager (bypasses RPC, no AI calls needed).
 			// The room is persisted in the shared DB so daemon2 will load it on startup.
-			const roomManager1 = new RoomManager(daemon1.db.getDatabase());
+			const roomManager1 = new RoomManager(daemon1.db.getDatabase(), daemon1.reactiveDb);
 			const room = roomManager1.createRoom({
 				name: 'Crash Recovery Test Room',
 			});

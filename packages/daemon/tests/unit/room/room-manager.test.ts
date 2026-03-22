@@ -26,7 +26,7 @@ describe('RoomManager', () => {
 		db = new Database(':memory:');
 		const reactiveDb = createReactiveDatabase(db);
 		await db.initialize(reactiveDb);
-		roomManager = new RoomManager(db.getDatabase());
+		roomManager = new RoomManager(db.getDatabase(), reactiveDb);
 	});
 
 	afterEach(() => {

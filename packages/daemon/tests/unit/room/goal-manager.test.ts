@@ -62,7 +62,7 @@ describe('GoalManager', () => {
 		`);
 
 		// Create room manager and a room
-		roomManager = new RoomManager(db);
+		roomManager = new RoomManager(db, noOpReactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace/test' }],
