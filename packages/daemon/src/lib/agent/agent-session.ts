@@ -723,6 +723,20 @@ export class AgentSession
 		await this.lifecycleManager.restartQuery();
 	}
 
+	/**
+	 * Force-restart the query, preserving the SDK session if possible.
+	 *
+	 * Unlike restartQuery() which defers restart if the queue isn't running,
+	 * this method always stops and restarts the query immediately.
+	 * Preserves pending messages and attempts to resume the SDK session.
+	 *
+	 * Use case: Manual restart from UI to apply model/provider changes
+	 * while preserving conversation history.
+	 */
+	async restart(): Promise<void> {
+		await this.lifecycleManager.restart();
+	}
+
 	// ============================================================================
 	// Rewind Feature (delegated to RewindHandler)
 	// ============================================================================

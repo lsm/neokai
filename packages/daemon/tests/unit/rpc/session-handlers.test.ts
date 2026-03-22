@@ -115,6 +115,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getCurrentModel: ReturnType<typeof mock>;
 		handleModelSwitch: ReturnType<typeof mock>;
 		resetQuery: ReturnType<typeof mock>;
+		restart: ReturnType<typeof mock>;
 		handleQueryTrigger: ReturnType<typeof mock>;
 		setMaxThinkingTokens: ReturnType<typeof mock>;
 		setPermissionMode: ReturnType<typeof mock>;
@@ -148,6 +149,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getCurrentModel: mock(() => ({ id: 'claude-sonnet-4-20250514' })),
 		handleModelSwitch: mock(async () => ({ success: true, model: 'claude-opus-4-6' })),
 		resetQuery: mock(async () => ({ success: true })),
+		restart: mock(async () => {}),
 		handleQueryTrigger: mock(async () => ({ triggered: true, count: 1 })),
 		setMaxThinkingTokens: mock(async () => ({ success: true })),
 		setPermissionMode: mock(async () => ({ success: true })),
@@ -1167,6 +1169,46 @@ describe('Session RPC Handlers', () => {
 
 		it('throws error when session not found', async () => {
 			const handler = messageHubData.handlers.get('session.resetQuery');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
+	describe('session.restart', () => {
+		it('restarts query and preserves SDK session', async () => {
+			const handler = messageHubData.handlers.get('session.restart');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.restart.mockResolvedValueOnce();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ success: true });
+			expect(mocks.restart).toHaveBeenCalled();
+		});
+
+		it('returns error when restart fails', async () => {
+			const handler = messageHubData.handlers.get('session.restart');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.restart.mockRejectedValueOnce(new Error('Restart failed'));
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ success: false, error: 'Restart failed' });
+		});
+
+		it('throws error when session not found', async () => {
+			const handler = messageHubData.handlers.get('session.restart');
 			expect(handler).toBeDefined();
 
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);

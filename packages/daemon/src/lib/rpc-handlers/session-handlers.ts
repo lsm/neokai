@@ -761,6 +761,31 @@ export function setupSessionHandlers(
 		return result;
 	});
 
+	// Handle restarting the query while preserving the SDK session.
+	// Unlike resetQuery which clears pending messages and resets state,
+	// this method preserves pending messages and attempts to resume
+	// the same SDK session for conversation continuity.
+	// Use case: Manual restart from UI to refresh the agent without losing context
+	messageHub.onRequest('session.restart', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Verify session exists
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		try {
+			// Call restart directly - preserves SDK session and pending messages
+			await agentSession.restart();
+
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			return { success: false, error: errorMessage };
+		}
+	});
+
 	// Handle triggering saved messages to be sent (Manual query mode)
 	// Use case: When user wants to manually send all saved messages in Manual mode
 	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession handles the actual sending
