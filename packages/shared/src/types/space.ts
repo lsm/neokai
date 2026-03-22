@@ -827,27 +827,53 @@ export interface UpdateSpaceWorkflowParams {
 // ============================================================================
 
 /**
+ * A single agent entry within a multi-agent exported workflow step.
+ * Mirrors `WorkflowStepAgent` but uses a portable `agentRef` name instead of a UUID.
+ */
+export interface ExportedWorkflowStepAgent {
+	/** Name of the SpaceAgent (portable, not a UUID) */
+	agentRef: string;
+	/** Per-agent instructions override */
+	instructions?: string;
+}
+
+/**
  * A single workflow step (graph node) in the exported format.
  *
  * Differences from `WorkflowStep`:
  * - `id` is stripped (space-specific, regenerated on import)
  * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
  *   reference portable across Space instances that may have different UUIDs.
+ * - `agents[]` entries have their `agentId` UUIDs replaced by `agentRef` names.
+ * - `channels[]` are exported as-is — they already use role strings, not UUIDs.
  *
  * Step names are used as cross-references throughout the exported format
  * (in `ExportedWorkflowTransition.fromStep`/`toStep`,
  * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
  * Step names must therefore be unique within an exported workflow.
  *
- * **Multi-agent limitation (Milestone 5):** The export format currently only supports
- * single-agent steps via `agentRef`. Multi-agent steps (`agents[]`) and channel topology
- * (`channels[]`) are not yet represented here. When exporting a multi-agent step, the
- * primary agent's name is used as `agentRef` and the remaining agents are dropped.
- * Full multi-agent export/import support is planned for Milestone 5.
+ * Exactly one of `agentRef` or `agents` must be present:
+ * - Single-agent steps use `agentRef` (shorthand, backward-compatible).
+ * - Multi-agent steps use `agents` (array of `ExportedWorkflowStepAgent` entries).
  */
 export interface ExportedWorkflowStep {
-	/** Name of the SpaceAgent assigned to this step (portable, not a UUID) */
-	agentRef: string;
+	/**
+	 * Name of the SpaceAgent assigned to this step (portable, not a UUID).
+	 * Used for single-agent steps. Mutually exclusive with `agents`.
+	 */
+	agentRef?: string;
+	/**
+	 * Multiple agents for parallel execution.
+	 * Used for multi-agent steps. Mutually exclusive with `agentRef`.
+	 * When present (non-empty), `agentRef` must be absent.
+	 */
+	agents?: ExportedWorkflowStepAgent[];
+	/**
+	 * Directed messaging topology between agents in this step.
+	 * Uses role strings (portable — not UUIDs). Exported and imported as-is.
+	 * Absent or empty means agents are fully isolated (no messaging).
+	 */
+	channels?: WorkflowChannel[];
 	/** Human-readable step name — used as the stable cross-reference key in the export */
 	name: string;
 	/** Step-specific instructions appended to the agent's system prompt */

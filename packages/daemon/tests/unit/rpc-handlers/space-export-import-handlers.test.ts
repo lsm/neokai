@@ -1288,6 +1288,278 @@ describe('Space Export/Import RPC Handlers', () => {
 	});
 });
 
+// ─── Multi-agent step import tests ────────────────────────────────────────────
+
+describe('multi-agent step import', () => {
+	let db: Database;
+	let agentRepo: SpaceAgentRepository;
+	let workflowRepo: SpaceWorkflowRepository;
+	let workflowManager: SpaceWorkflowManager;
+	let spaceManager: SpaceManager;
+	let handlers: Map<string, RequestHandler>;
+	let daemonHub: DaemonHub;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSchema(db);
+		insertSpace(db, SPACE_ID, 'My Space');
+
+		agentRepo = new SpaceAgentRepository(db as any);
+		workflowRepo = new SpaceWorkflowRepository(db as any);
+
+		const agentLookup: SpaceAgentLookup = {
+			getAgentById(spaceId: string, id: string) {
+				const agent = agentRepo.getById(id);
+				if (!agent || agent.spaceId !== spaceId) return null;
+				return { id: agent.id, name: agent.name };
+			},
+		};
+		workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
+		spaceManager = createMockSpaceManager(SPACE_ID);
+		const mockHub = createMockHub();
+		handlers = mockHub.handlers;
+		const mockDaemonHub = createMockDaemonHub();
+		daemonHub = mockDaemonHub.hub;
+
+		setupSpaceExportImportHandlers(
+			mockHub.hub,
+			spaceManager,
+			agentRepo,
+			workflowRepo,
+			workflowManager,
+			db as any,
+			daemonHub
+		);
+	});
+
+	it('imports multi-agent step and resolves each agentRef → agentId', async () => {
+		const bundle = makeMultiAgentBundle(
+			[
+				{ name: 'Coder', role: 'coder' },
+				{ name: 'Reviewer', role: 'reviewer' },
+			],
+			[
+				{
+					name: 'Collab Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [
+									{ agentRef: 'Coder', instructions: 'Write code' },
+									{ agentRef: 'Reviewer' },
+								],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		expect(result.agents).toHaveLength(2);
+		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+		const step = wf.steps[0];
+
+		// Multi-agent step should have agents array, not single agentId
+		expect(step.agents).toHaveLength(2);
+		expect(step.agentId).toBeUndefined();
+
+		// Each agent should be resolved to its UUID
+		const coderAgent = agentRepo.getById(result.agents.find((a) => a.name === 'Coder')!.id)!;
+		const reviewerAgent = agentRepo.getById(result.agents.find((a) => a.name === 'Reviewer')!.id)!;
+		const agentIds = step.agents!.map((a) => a.agentId);
+		expect(agentIds).toContain(coderAgent.id);
+		expect(agentIds).toContain(reviewerAgent.id);
+	});
+
+	it('preserves per-agent instructions in imported multi-agent step', async () => {
+		const bundle = makeMultiAgentBundle(
+			[
+				{ name: 'Coder', role: 'coder' },
+				{ name: 'Reviewer', role: 'reviewer' },
+			],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [
+									{ agentRef: 'Coder', instructions: 'Implement the feature' },
+									{ agentRef: 'Reviewer', instructions: 'Review thoroughly' },
+								],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+		const agentEntries = wf.steps[0].agents!;
+		const byAgentId = new Map(agentEntries.map((a) => [a.agentId, a]));
+
+		const coderId = result.agents.find((a) => a.name === 'Coder')!.id;
+		const reviewerId = result.agents.find((a) => a.name === 'Reviewer')!.id;
+		expect(byAgentId.get(coderId)?.instructions).toBe('Implement the feature');
+		expect(byAgentId.get(reviewerId)?.instructions).toBe('Review thoroughly');
+	});
+
+	it('imports channels as-is in multi-agent step', async () => {
+		const bundle = makeMultiAgentBundle(
+			[
+				{ name: 'Coder', role: 'coder' },
+				{ name: 'Reviewer', role: 'reviewer' },
+			],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
+								channels: [
+									{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
+								],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+		const step = wf.steps[0];
+		expect(step.channels).toHaveLength(1);
+		expect(step.channels![0].from).toBe('coder');
+		expect(step.channels![0].to).toBe('reviewer');
+		expect(step.channels![0].direction).toBe('bidirectional');
+		expect(step.channels![0].label).toBe('feedback');
+	});
+
+	it('throws when multi-agent step has unresolved agent ref', async () => {
+		const bundle = makeMultiAgentBundle(
+			[{ name: 'Coder', role: 'coder' }],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [
+									{ agentRef: 'Coder' },
+									{ agentRef: 'GhostAgent' }, // not in bundle or space
+								],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		await expect(
+			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+		).rejects.toThrow('unresolved agent reference');
+	});
+
+	it('preview: flags unresolved agent ref in multi-agent step', async () => {
+		const bundle = makeMultiAgentBundle(
+			[{ name: 'Coder', role: 'coder' }],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [{ agentRef: 'Coder' }, { agentRef: 'Missing' }],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		expect(result.validationErrors.some((e) => e.includes('Missing'))).toBe(true);
+	});
+
+	it('backward compat: single agentRef step still imports as agentId', async () => {
+		const bundle = makeSingleAgentBundle('Coder', 'coder', 'Legacy Step');
+
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+		const step = wf.steps[0];
+		// Single-agent step uses agentId field, not agents[]
+		const coderId = result.agents[0].id;
+		expect(step.agentId).toBe(coderId);
+		expect(step.agents).toBeUndefined();
+	});
+
+	it('resolves multi-agent step refs from existing space agents', async () => {
+		const existing1 = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder', role: 'coder' });
+		const existing2 = agentRepo.create({
+			spaceId: SPACE_ID,
+			name: 'LocalReviewer',
+			role: 'reviewer',
+		});
+
+		// Bundle has no agents — refs resolve from existing space agents
+		const bundle = makeMultiAgentBundle(
+			[],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [{ agentRef: 'LocalCoder' }, { agentRef: 'LocalReviewer' }],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+		const agentIds = wf.steps[0].agents!.map((a) => a.agentId);
+		expect(agentIds).toContain(existing1.id);
+		expect(agentIds).toContain(existing2.id);
+	});
+});
+
 // ─── Bundle builder helpers ───────────────────────────────────────────────────
 
 type BundleAgent = { name: string; role: string; systemPrompt?: string; model?: string };
@@ -1406,6 +1678,97 @@ function makeTwoStepBundle(): object {
 				],
 				transitions: [{ fromStep: 'Code', toStep: 'Review' }],
 				startStep: 'Code',
+				rules: [],
+				tags: [],
+			},
+		],
+		exportedAt: Date.now(),
+	};
+}
+
+// ─── Multi-agent bundle builder helpers ──────────────────────────────────────
+
+type MultiAgentStepEntry =
+	| { agentRef: string; name: string; instructions?: string }
+	| {
+			multiAgentStep: {
+				name: string;
+				agents: Array<{ agentRef: string; instructions?: string }>;
+				channels?: Array<{
+					from: string;
+					to: string | string[];
+					direction: 'one-way' | 'bidirectional';
+					label?: string;
+				}>;
+				instructions?: string;
+			};
+	  };
+
+function makeMultiAgentBundle(
+	agents: BundleAgent[],
+	workflows: Array<{
+		name: string;
+		steps: MultiAgentStepEntry[];
+	}>
+): object {
+	return {
+		version: 1,
+		type: 'bundle',
+		name: 'Multi-Agent Bundle',
+		agents: agents.map((a) => ({
+			version: 1,
+			type: 'agent',
+			name: a.name,
+			role: a.role,
+		})),
+		workflows: workflows.map((w) => ({
+			version: 1,
+			type: 'workflow',
+			name: w.name,
+			steps: w.steps.map((s) => {
+				if ('multiAgentStep' in s) {
+					const ms = s.multiAgentStep;
+					const step: Record<string, unknown> = {
+						name: ms.name,
+						agents: ms.agents,
+					};
+					if (ms.channels) step.channels = ms.channels;
+					if (ms.instructions) step.instructions = ms.instructions;
+					return step;
+				}
+				return {
+					agentRef: s.agentRef,
+					name: s.name,
+					...(s.instructions ? { instructions: s.instructions } : {}),
+				};
+			}),
+			transitions: [],
+			startStep: w.steps[0]
+				? 'multiAgentStep' in w.steps[0]
+					? w.steps[0].multiAgentStep.name
+					: w.steps[0].name
+				: '',
+			rules: [],
+			tags: [],
+		})),
+		exportedAt: Date.now(),
+	};
+}
+
+function makeSingleAgentBundle(agentName: string, agentRole: string, stepName: string): object {
+	return {
+		version: 1,
+		type: 'bundle',
+		name: 'Single Agent Bundle',
+		agents: [{ version: 1, type: 'agent', name: agentName, role: agentRole }],
+		workflows: [
+			{
+				version: 1,
+				type: 'workflow',
+				name: 'Legacy Workflow',
+				steps: [{ agentRef: agentName, name: stepName }],
+				transitions: [],
+				startStep: stepName,
 				rules: [],
 				tags: [],
 			},

@@ -172,23 +172,37 @@ function buildWorkflowCreateParams(
 
 	// Build WorkflowStepInput list — resolve agentRef names → UUIDs
 	const steps: WorkflowStepInput[] = exported.steps.map((exportedStep) => {
-		const agentId =
-			importedAgentNameToId.get(exportedStep.agentRef) ??
-			existingAgentNameToId.get(exportedStep.agentRef) ??
-			null;
-
-		if (!agentId) {
-			warnings.push(
-				`step "${exportedStep.name}" references unknown agent "${exportedStep.agentRef}"`
-			);
-		}
-
 		const step: WorkflowStepInput = {
 			id: stepNameToId.get(exportedStep.name)!,
 			name: exportedStep.name,
-			agentId: agentId ?? '',
 		};
+
+		if (exportedStep.agents && exportedStep.agents.length > 0) {
+			// Multi-agent step: resolve each agentRef name → UUID
+			step.agents = exportedStep.agents.map((a) => {
+				const agentId =
+					importedAgentNameToId.get(a.agentRef) ?? existingAgentNameToId.get(a.agentRef) ?? null;
+				if (!agentId) {
+					warnings.push(`step "${exportedStep.name}" references unknown agent "${a.agentRef}"`);
+				}
+				const entry: { agentId: string; instructions?: string } = { agentId: agentId ?? '' };
+				if (a.instructions !== undefined) entry.instructions = a.instructions;
+				return entry;
+			});
+		} else {
+			// Single-agent step (backward compat): resolve scalar agentRef → agentId
+			const agentRef = exportedStep.agentRef ?? '';
+			const agentId =
+				importedAgentNameToId.get(agentRef) ?? existingAgentNameToId.get(agentRef) ?? null;
+			if (!agentId && agentRef) {
+				warnings.push(`step "${exportedStep.name}" references unknown agent "${agentRef}"`);
+			}
+			step.agentId = agentId ?? '';
+		}
+
 		if (exportedStep.instructions !== undefined) step.instructions = exportedStep.instructions;
+		if (exportedStep.channels && exportedStep.channels.length > 0)
+			step.channels = exportedStep.channels;
 		return step;
 	});
 
@@ -252,10 +266,23 @@ function validateWorkflowForPreview(
 	const errors: string[] = [];
 
 	for (const step of exported.steps) {
-		if (!importedAgentNames.has(step.agentRef) && !existingAgentNameToId.has(step.agentRef)) {
-			errors.push(
-				`step "${step.name}" references unknown agent "${step.agentRef}" — not found in bundle or target space`
-			);
+		if (step.agents && step.agents.length > 0) {
+			// Multi-agent step: validate each agent ref
+			for (const a of step.agents) {
+				if (!importedAgentNames.has(a.agentRef) && !existingAgentNameToId.has(a.agentRef)) {
+					errors.push(
+						`step "${step.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
+					);
+				}
+			}
+		} else {
+			// Single-agent step: validate scalar agentRef
+			const agentRef = step.agentRef ?? '';
+			if (agentRef && !importedAgentNames.has(agentRef) && !existingAgentNameToId.has(agentRef)) {
+				errors.push(
+					`step "${step.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
+				);
+			}
 		}
 	}
 
@@ -314,7 +341,13 @@ export function setupSpaceExportImportHandlers(
 
 		const referencedNames = new Set<string>();
 		for (const wf of full.workflows) {
-			for (const step of wf.steps) referencedNames.add(step.agentRef);
+			for (const step of wf.steps) {
+				if (step.agents && step.agents.length > 0) {
+					for (const a of step.agents) referencedNames.add(a.agentRef);
+				} else if (step.agentRef) {
+					referencedNames.add(step.agentRef);
+				}
+			}
 		}
 
 		const bundle: SpaceExportBundle = {

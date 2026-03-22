@@ -24,6 +24,7 @@ import type {
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
 	ExportedWorkflowStep,
+	ExportedWorkflowStepAgent,
 	ExportedWorkflowTransition,
 	ExportedWorkflowRule,
 	SpaceExportBundle,
@@ -58,11 +59,36 @@ const workflowConditionSchema = z
 		}
 	});
 
-const exportedWorkflowStepSchema = z.object({
+const exportedWorkflowStepAgentSchema = z.object({
 	agentRef: z.string().min(1),
-	name: z.string().min(1),
 	instructions: z.string().optional(),
 });
+
+const workflowChannelSchema = z.object({
+	from: z.string().min(1),
+	to: z.union([z.string().min(1), z.array(z.string().min(1))]),
+	direction: z.enum(['one-way', 'bidirectional']),
+	label: z.string().optional(),
+});
+
+const exportedWorkflowStepSchema = z
+	.object({
+		agentRef: z.string().min(1).optional(),
+		agents: z.array(exportedWorkflowStepAgentSchema).optional(),
+		channels: z.array(workflowChannelSchema).optional(),
+		name: z.string().min(1),
+		instructions: z.string().optional(),
+	})
+	.superRefine((val, ctx) => {
+		const hasAgentRef = val.agentRef !== undefined && val.agentRef.length > 0;
+		const hasAgents = val.agents !== undefined && val.agents.length > 0;
+		if (!hasAgentRef && !hasAgents) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'step must have either agentRef or agents (non-empty)',
+			});
+		}
+	});
 
 const exportedWorkflowTransitionSchema = z.object({
 	fromStep: z.string().min(1),
@@ -188,15 +214,32 @@ export function exportWorkflow(
 		agentIdToName.set(agent.id, agent.name);
 	}
 
-	// Export steps — strip `id`, remap agentId UUID → agent name.
-	// NOTE: Multi-agent steps (agents[] format) are exported using the primary agentId for
-	// backward compatibility. Full multi-agent export/import support is deferred to Milestone 5.
+	// Export steps — strip `id`, remap agentId UUIDs → agent names.
+	// Multi-agent steps (agents[] non-empty) export an `agents` array.
+	// Single-agent steps export a scalar `agentRef` (backward-compatible shorthand).
+	// Channels are exported as-is (they already use role strings, not UUIDs).
 	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		// Prefer agentId; for multi-agent steps fall back to the first agents[] entry.
-		const primaryAgentId = step.agentId ?? step.agents?.[0]?.agentId ?? '';
-		const agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
-		const exported: ExportedWorkflowStep = { agentRef, name: step.name };
+		const exported: ExportedWorkflowStep = { name: step.name };
+
+		if (step.agents && step.agents.length > 0) {
+			// Multi-agent step: export agents array with agentRef names
+			const exportedAgents: ExportedWorkflowStepAgent[] = step.agents.map((a) => {
+				const entry: ExportedWorkflowStepAgent = {
+					agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
+				};
+				if (a.instructions !== undefined) entry.instructions = a.instructions;
+				return entry;
+			});
+			exported.agents = exportedAgents;
+		} else {
+			// Single-agent step: export as scalar agentRef
+			const primaryAgentId = step.agentId ?? '';
+			exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
+		}
+
 		if (step.instructions !== undefined) exported.instructions = step.instructions;
+		if (step.channels && step.channels.length > 0) exported.channels = step.channels;
+
 		return exported;
 	});
 
