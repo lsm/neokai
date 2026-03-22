@@ -1024,7 +1024,7 @@ describe('TaskView — Task options dropdown menu', () => {
 		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
 	});
 
-	it('shows cancel and complete buttons for in_progress tasks', async () => {
+	it('shows cancel button and dropdown with complete action for in_progress tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1037,8 +1037,15 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
+		// Cancel is a standalone button
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).not.toBeNull();
+		// Complete is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-complete"]')).not.toBeNull();
 	});
 
 	it('shows cancel button for review tasks (no complete button — review status)', async () => {
@@ -1055,7 +1062,13 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
+		// Complete is hidden for review tasks - open dropdown to verify it's not there
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-complete"]')).toBeNull();
 	});
 
 	it('does NOT show action buttons for completed tasks', async () => {
@@ -1071,8 +1084,15 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
+		// No cancel button for completed tasks
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
+		// No complete in dropdown for completed tasks
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-complete"]')).toBeNull();
 	});
 
 	it('does NOT show cancel button for needs_attention tasks', async () => {
@@ -1122,8 +1142,8 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).not.toBeNull();
+		// Action dropdown trigger should be visible (actions are inside dropdown)
+		expect(container.querySelector('[data-testid="task-action-dropdown-trigger"]')).not.toBeNull();
 	});
 
 	it('shows only cancel button (no complete) for pending task', async () => {
@@ -1139,8 +1159,8 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
+		// Action dropdown trigger should be visible
+		expect(container.querySelector('[data-testid="task-action-dropdown-trigger"]')).not.toBeNull();
 	});
 
 	it('opens cancel dialog when cancel button is clicked', async () => {
@@ -1156,6 +1176,7 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
+		// Cancel is a standalone button, not in dropdown
 		const cancelButton = container.querySelector(
 			'[data-testid="task-cancel-button"]'
 		) as HTMLElement;
@@ -1181,8 +1202,16 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
+		// Open dropdown first
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+
+		// Now click complete inside dropdown
 		const completeButton = container.querySelector(
-			'[data-testid="task-complete-button"]'
+			'[data-testid="task-action-complete"]'
 		) as HTMLElement;
 		expect(completeButton).not.toBeNull();
 		fireEvent.click(completeButton);
@@ -1207,7 +1236,7 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Click cancel button directly
+		// Cancel is a standalone button, not in dropdown
 		const cancelButton = container.querySelector(
 			'[data-testid="task-cancel-button"]'
 		) as HTMLElement;
@@ -1248,9 +1277,15 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Click complete button directly
+		// Open dropdown first
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(dropdownTrigger);
+
+		// Click complete inside dropdown
 		const completeButton = container.querySelector(
-			'[data-testid="task-complete-button"]'
+			'[data-testid="task-action-complete"]'
 		) as HTMLElement;
 		fireEvent.click(completeButton);
 
@@ -1782,7 +1817,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 		expect(container.querySelector('[data-testid="task-reactivate-button"]')).not.toBeNull();
 	});
 
-	it('shows Archive button for completed task', async () => {
+	it('shows Archive action in dropdown for completed task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1795,7 +1830,13 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-archive-button"]')).not.toBeNull();
+		// Archive is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-archive"]')).not.toBeNull();
 	});
 
 	it('shows Reactivate button for cancelled task', async () => {
@@ -1881,7 +1922,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 		});
 	});
 
-	it('shows Archive button for needs_attention task', async () => {
+	it('shows Archive action in dropdown for needs_attention task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'needs_attention') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1894,7 +1935,13 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-archive-button"]')).not.toBeNull();
+		// Archive is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-archive"]')).not.toBeNull();
 	});
 
 	it('calls task.setStatus with archived when Archive dialog is confirmed', async () => {
@@ -1911,9 +1958,16 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open the archive dialog
+		// Open dropdown first
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+
+		// Click archive inside dropdown
 		const archiveButton = container.querySelector(
-			'[data-testid="task-archive-button"]'
+			'[data-testid="task-action-archive"]'
 		) as HTMLElement;
 		expect(archiveButton).not.toBeNull();
 		fireEvent.click(archiveButton);
@@ -1954,7 +2008,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 		expect(container.textContent).not.toContain('Sending a message will reactivate this task.');
 	});
 
-	it('shows Archive button for cancelled task', async () => {
+	it('shows Archive action in dropdown for cancelled task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
@@ -1967,7 +2021,13 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-archive-button"]')).not.toBeNull();
+		// Archive is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-archive"]')).not.toBeNull();
 	});
 
 	it('does NOT show Reactivate button for in_progress task', async () => {
@@ -2002,7 +2062,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 		expect(container.querySelector('[data-testid="task-reactivate-button"]')).toBeNull();
 	});
 
-	it('does NOT show Archive button for in_progress task', async () => {
+	it('does NOT show Archive action in dropdown for in_progress task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -2015,10 +2075,16 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-archive-button"]')).toBeNull();
+		// Archive is in the dropdown - open dropdown to verify it's NOT there
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-archive"]')).toBeNull();
 	});
 
-	it('does NOT show Archive button for archived task', async () => {
+	it('does NOT show Archive action in dropdown for archived task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
 			if (method === 'task.getGroup') return { group: null };
@@ -2031,7 +2097,13 @@ describe('TaskView — Reactivate and Archive actions', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.querySelector('[data-testid="task-archive-button"]')).toBeNull();
+		// Archive is in the dropdown - open dropdown to verify it's NOT there
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-archive"]')).toBeNull();
 	});
 
 	it('archived status badge has text-gray-600 class', async () => {
