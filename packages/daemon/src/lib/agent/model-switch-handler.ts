@@ -52,7 +52,6 @@ export interface ModelSwitchHandlerContext {
 
 	// SDK state
 	readonly queryObject: Query | null;
-	readonly firstMessageReceived: boolean;
 }
 
 /**
@@ -226,6 +225,15 @@ export class ModelSwitchHandler {
 
 				// Update context tracker model
 				contextTracker.setModel(resolvedModel);
+
+				// Emit session.updated event so state-manager and UI know the model changed
+				// This prevents stale model display during the restart window before
+				// the restarted query emits a fresh system:init with the new model
+				await daemonHub.emit('session.updated', {
+					sessionId: session.id,
+					source: 'model-switch',
+					session: { config: session.config },
+				});
 
 				// Restart the query via lifecycle manager
 				// This spawns a new SDK subprocess with the new model configuration

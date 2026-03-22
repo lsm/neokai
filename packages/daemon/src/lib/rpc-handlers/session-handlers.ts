@@ -779,9 +779,17 @@ export function setupSessionHandlers(
 			// Call restart directly - preserves SDK session and pending messages
 			await agentSession.restart();
 
+			// Emit event so StateManager and UI can react to the restart
+			await daemonHub.emit('agent.restart', { sessionId: targetSessionId, success: true });
+
 			return { success: true };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			await daemonHub.emit('agent.restart', {
+				sessionId: targetSessionId,
+				success: false,
+				error: errorMessage,
+			});
 			return { success: false, error: errorMessage };
 		}
 	});
