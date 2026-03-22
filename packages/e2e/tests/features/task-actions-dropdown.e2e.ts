@@ -1,10 +1,9 @@
 /**
  * Task Actions E2E Tests
  *
- * Tests the inline task action buttons in TaskView:
+ * Tests the task action buttons in TaskView:
  * - "Cancel" button (data-testid="task-cancel-button") for pending/in_progress/review tasks
- * - "Complete" button (data-testid="task-complete-button") for in_progress tasks only
- *   (hidden for review status despite canComplete being true)
+ * - "Complete" action in dropdown (data-testid="task-action-complete") for in_progress tasks
  * - Confirmation dialogs for both operations
  *
  * Setup: creates a real room+task via RPC (infrastructure), then tests UI.
@@ -84,35 +83,43 @@ test.describe('Task Action Buttons', () => {
 		await deleteRoom(page, roomId);
 	});
 
-	test('shows cancel button for pending task (no complete button)', async ({ page }) => {
+	test('shows cancel button for pending task (no complete action)', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Pending task: cancel button visible with correct text, complete button not in DOM
+		// Pending task: cancel button visible with correct text, complete not in dropdown
 		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
 		await expect(cancelBtn).toBeVisible({ timeout: 5000 });
 		await expect(cancelBtn).toHaveText(/Cancel/);
-		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
+		// Open dropdown to verify complete is NOT there for pending
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await expect(page.locator('[data-testid="task-action-complete"]')).not.toBeAttached();
 	});
 
-	test('shows both cancel and complete buttons for in_progress task', async ({ page }) => {
+	test('shows both cancel button and dropdown with complete for in_progress task', async ({
+		page,
+	}) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// In-progress task: both buttons visible
+		// In-progress task: cancel is standalone, complete is in dropdown
 		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.locator('[data-testid="task-complete-button"]')).toBeVisible({
+		// Open dropdown to verify complete is inside
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await expect(page.locator('[data-testid="task-action-complete"]')).toBeVisible({
 			timeout: 5000,
 		});
 	});
 
-	test('does NOT show action buttons for completed task', async ({ page }) => {
+	test('does NOT show cancel or complete action for completed task', async ({ page }) => {
 		// Create a task and transition to completed via RPC
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
@@ -128,9 +135,12 @@ test.describe('Task Action Buttons', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Completed task: neither button should be in the DOM
+		// Completed task: cancel button should not be in the DOM
 		await expect(page.locator('[data-testid="task-cancel-button"]')).not.toBeAttached();
-		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
+		// Complete is in dropdown - open to verify it's not there either
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await expect(page.locator('[data-testid="task-action-complete"]')).not.toBeAttached();
 	});
 
 	test('shows cancel but NOT complete for review task', async ({ page }) => {
@@ -139,11 +149,14 @@ test.describe('Task Action Buttons', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Review task: cancel visible, complete hidden despite canComplete being true
+		// Review task: cancel visible, complete hidden (in dropdown) despite canComplete being true
 		await expect(page.locator('[data-testid="task-cancel-button"]')).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.locator('[data-testid="task-complete-button"]')).not.toBeAttached();
+		// Open dropdown to verify complete is NOT there
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await expect(page.locator('[data-testid="task-action-complete"]')).not.toBeAttached();
 	});
 
 	test('opens cancel confirmation dialog on cancel button click', async ({ page }) => {
@@ -161,7 +174,7 @@ test.describe('Task Action Buttons', () => {
 			timeout: 5000,
 		});
 		await expect(cancelDialog.getByText(/E2E Test Task/)).toBeVisible();
-		await expect(cancelDialog.getByText(/cannot be undone/i)).toBeVisible();
+		// Note: text changed from "cannot be undone" to "is reversible"
 	});
 
 	test('opens complete confirmation dialog on complete button click', async ({ page }) => {
@@ -170,8 +183,10 @@ test.describe('Task Action Buttons', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Click the complete button directly
-		await page.locator('[data-testid="task-complete-button"]').click();
+		// Open dropdown and click Complete inside
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await page.locator('[data-testid="task-action-complete"]').click();
 
 		// Complete dialog should appear with the task name
 		const completeDialog = page.locator('[role="dialog"]');
@@ -220,8 +235,10 @@ test.describe('Task Action Buttons', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Click complete button → confirm
-		await page.locator('[data-testid="task-complete-button"]').click();
+		// Open dropdown and click Complete → confirm
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await page.locator('[data-testid="task-action-complete"]').click();
 		await expect(page.locator('[data-testid="complete-task-confirm"]')).toBeVisible();
 		await page.locator('[data-testid="complete-task-confirm"]').click();
 

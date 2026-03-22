@@ -194,7 +194,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
 		// Click the Archive button to open the dialog
-		const archiveBtn = page.locator('[data-testid="task-archive-button"]');
+		// Archive is inside the dropdown
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -218,8 +221,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Click Archive button → confirm
-		const archiveBtn = page.locator('[data-testid="task-archive-button"]');
+		// Click Archive button → confirm (Archive is in dropdown)
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -246,8 +251,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Archive the task
-		await page.locator('[data-testid="task-archive-button"]').click();
+		// Archive the task (Archive is in dropdown)
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await page.locator('[data-testid="task-action-archive"]').click();
 		await expect(page.locator('[data-testid="archive-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -280,8 +287,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Archive button should be available for cancelled tasks
-		const archiveBtn = page.locator('[data-testid="task-archive-button"]');
+		// Archive button should be available for cancelled tasks (Archive is in dropdown)
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -307,8 +316,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Task')).toBeVisible({ timeout: 10000 });
 
-		// Archive button should be visible for needs_attention tasks
-		const archiveBtn = page.locator('[data-testid="task-archive-button"]');
+		// Archive button should be visible for needs_attention tasks (Archive is in dropdown)
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		const archiveBtn = page.locator('[data-testid="task-action-archive"]');
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
@@ -345,7 +356,10 @@ test.describe('Task Lifecycle — Archive', () => {
 
 		// Neither Reactivate nor Archive buttons should be present
 		await expect(page.locator('[data-testid="task-reactivate-button"]')).not.toBeAttached();
-		await expect(page.locator('[data-testid="task-archive-button"]')).not.toBeAttached();
+		// Archive is in dropdown - open to verify it's not there
+		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
+		await dropdownTrigger.click();
+		await expect(page.locator('[data-testid="task-action-archive"]')).not.toBeAttached();
 
 		// Message input should show archived notice
 		await expect(page.locator('text=Archived tasks cannot receive messages.').first()).toBeVisible({

@@ -24,62 +24,15 @@ import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { roomStore } from '../../lib/room-store';
 import { currentRoomTabSignal } from '../../lib/signals';
-import { getModelLabel } from '../../lib/session-utils';
 import { toast } from '../../lib/toast.ts';
-import { copyToClipboard } from '../../lib/utils';
 import { ActionBar } from '../ui/ActionBar';
+import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 import { Modal } from '../ui/Modal';
 import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
-import { TaskViewModelSelector } from './TaskViewModelSelector';
-
-interface CopyButtonProps {
-	text: string;
-}
-
-function CopyButton({ text }: CopyButtonProps) {
-	const [copied, setCopied] = useState(false);
-
-	const handleCopy = async () => {
-		const success = await copyToClipboard(text);
-		if (success) {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 1500);
-		}
-	};
-
-	return (
-		<button
-			class={`ml-1 p-0.5 rounded transition-colors ${
-				copied ? 'text-green-400' : 'text-gray-500 hover:text-gray-300'
-			}`}
-			onClick={handleCopy}
-			title={copied ? 'Copied!' : 'Copy to clipboard'}
-		>
-			{copied ? (
-				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M5 13l4 4L19 7"
-					/>
-				</svg>
-			) : (
-				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-					/>
-				</svg>
-			)}
-		</button>
-	);
-}
+import { TaskActionDropdown } from './TaskActionDropdown';
 
 interface TaskGroupInfo {
 	id: string;
@@ -612,8 +565,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [workerSession, setWorkerSession] = useState<SessionInfo | null>(null);
 	const [leaderSession, setLeaderSession] = useState<SessionInfo | null>(null);
 
-	// UI state for info panel and autoscroll toggle
-	const [showInfoPanel, setShowInfoPanel] = useState(false);
+	// UI state for autoscroll toggle
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 	const [interrupting, setInterrupting] = useState(false);
 
@@ -672,24 +624,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		scrollToBottom(true);
 		setAutoScrollEnabled(true);
 	}, [scrollToBottom]);
-
-	// Refresh worker session info after model switch
-	const handleWorkerModelSwitched = useCallback(() => {
-		if (group) {
-			void request<{ session: SessionInfo }>('session.get', { sessionId: group.workerSessionId })
-				.then((res) => setWorkerSession(res.session))
-				.catch(() => {});
-		}
-	}, [group, request]);
-
-	// Refresh leader session info after model switch
-	const handleLeaderModelSwitched = useCallback(() => {
-		if (group) {
-			void request<{ session: SessionInfo }>('session.get', { sessionId: group.leaderSessionId })
-				.then((res) => setLeaderSession(res.session))
-				.catch(() => {});
-		}
-	}, [group, request]);
 
 	useEffect(() => {
 		const channel = `room:${roomId}`;
@@ -1001,31 +935,15 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						</div>
 					)}
 				</div>
+				{/* Circular progress indicator for task progress */}
 				{task.progress != null && task.progress > 0 && (
-					<div class="flex items-center gap-2 flex-shrink-0">
-						<div class="w-24 h-1.5 bg-dark-700 rounded-full overflow-hidden">
-							<div
-								class="h-full bg-blue-500 transition-all duration-300"
-								style={{ width: `${task.progress}%` }}
-							/>
-						</div>
-						<span class="text-xs text-gray-400">{task.progress}%</span>
-					</div>
+					<CircularProgressIndicator
+						progress={task.progress}
+						size={32}
+						title={`Task progress: ${task.progress}%`}
+					/>
 				)}
-				{/* Interrupt button - stops LLM generation without changing task status */}
-				{canInterrupt && (
-					<button
-						class="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
-						onClick={interruptSession}
-						title="Interrupt generation (task stays active, type your suggestions)"
-						disabled={interrupting}
-					>
-						<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-							<rect x="6" y="6" width="12" height="12" rx="1" />
-						</svg>
-					</button>
-				)}
-				{/* Inline action buttons — always visible based on task status */}
+				{/* Cancel button - quick action outside dropdown */}
 				{canCancel && (
 					<button
 						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1037,6 +955,21 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						Cancel
 					</button>
 				)}
+				{/* Stop (interrupt) button - quick action outside dropdown */}
+				{canInterrupt && (
+					<button
+						class="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
+						onClick={interruptSession}
+						title="Interrupt generation (task stays active, type your suggestions)"
+						disabled={interrupting}
+						data-testid="task-stop-button"
+					>
+						<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+							<rect x="6" y="6" width="12" height="12" rx="1" />
+						</svg>
+					</button>
+				)}
+				{/* Reactivate button - standalone, shown for completed/cancelled tasks */}
 				{canReactivate && (
 					<button
 						class="py-1 px-2.5 rounded-lg text-xs bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
@@ -1062,54 +995,24 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						)}
 					</button>
 				)}
-				{canArchive && (
-					<button
-						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors"
-						onClick={archiveModal.open}
-						data-testid="task-archive-button"
-						title="Archive task (permanent)"
-					>
-						Archive
-					</button>
-				)}
-				{canComplete && task.status !== 'review' && (
-					<button
-						class="py-1 px-2.5 rounded-lg text-xs bg-green-700 hover:bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-						onClick={completeModal.open}
-						disabled={interrupting}
-						data-testid="task-complete-button"
-						title="Mark task as complete"
-					>
-						<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M5 13l4 4L19 7"
-							/>
-						</svg>
-						Complete
-					</button>
-				)}
-				{/* Info toggle button */}
-				<button
-					class={`p-1.5 rounded transition-colors ${
-						showInfoPanel
-							? 'bg-blue-600 text-white'
-							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
-					}`}
-					onClick={() => setShowInfoPanel(!showInfoPanel)}
-					title="Task info"
-				>
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				</button>
+				{/* Action dropdown (gear icon) - contains info section and actions (Complete, Archive) */}
+				<TaskActionDropdown
+					worktreePath={workerSession?.worktree?.worktreePath ?? workerSession?.workspacePath}
+					workerSession={workerSession}
+					leaderSession={leaderSession}
+					actions={{
+						onComplete: canComplete && task.status !== 'review' ? completeModal.open : undefined,
+						onArchive: canArchive ? archiveModal.open : undefined,
+					}}
+					visibleActions={{
+						complete: canComplete && task.status !== 'review',
+						archive: canArchive,
+					}}
+					disabledActions={{
+						complete: interrupting,
+						archive: false,
+					}}
+				/>
 			</div>
 
 			{/* Action bar — shown when awaiting human review/approval */}
@@ -1137,90 +1040,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						</div>
 					)}
 				</>
-			)}
-
-			{/* Info panel */}
-			{showInfoPanel && (
-				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-3 flex-shrink-0">
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-						<div>
-							<span class="text-gray-500">Task ID:</span>
-							<span class="text-gray-300 ml-2 font-mono">{task.id}</span>
-							<CopyButton text={task.id} />
-						</div>
-						{group && (
-							<>
-								<div>
-									<span class="text-gray-500">Group ID:</span>
-									<span class="text-gray-300 ml-2 font-mono">{group.id}</span>
-									<CopyButton text={group.id} />
-								</div>
-								<div>
-									<span class="text-gray-500">Worker:</span>
-									<span class="text-gray-300 ml-2 font-mono">
-										{group.workerSessionId.slice(0, 8)}...
-									</span>
-									<CopyButton text={group.workerSessionId} />
-								</div>
-								<div>
-									<span class="text-gray-500">Leader:</span>
-									<span class="text-gray-300 ml-2 font-mono">
-										{group.leaderSessionId.slice(0, 8)}...
-									</span>
-									<CopyButton text={group.leaderSessionId} />
-								</div>
-							</>
-						)}
-						{workerSession && (
-							<div class="md:col-span-2 flex items-center gap-2 flex-wrap">
-								<span class="text-gray-500">Worker:</span>
-								<span class="text-gray-300 font-mono break-all">
-									{workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
-								</span>
-								<CopyButton
-									text={workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
-								/>
-								<span
-									class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-blue-400 font-medium"
-									title={workerSession.config.model ?? undefined}
-								>
-									{getModelLabel(workerSession.config.model)}
-								</span>
-								<TaskViewModelSelector
-									sessionId={workerSession.id}
-									currentModel={workerSession.config.model ?? ''}
-									currentProvider={workerSession.config.provider}
-									disabled={task.status !== 'in_progress' && task.status !== 'review'}
-									onModelSwitched={handleWorkerModelSwitched}
-								/>
-							</div>
-						)}
-						{leaderSession && (
-							<div class="md:col-span-2 flex items-center gap-2 flex-wrap">
-								<span class="text-gray-500">Leader:</span>
-								<span class="text-gray-300 font-mono break-all">
-									{leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
-								</span>
-								<CopyButton
-									text={leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
-								/>
-								<span
-									class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-purple-400 font-medium"
-									title={leaderSession.config.model ?? undefined}
-								>
-									{getModelLabel(leaderSession.config.model)}
-								</span>
-								<TaskViewModelSelector
-									sessionId={leaderSession.id}
-									currentModel={leaderSession.config.model ?? ''}
-									currentProvider={leaderSession.config.provider}
-									disabled={task.status !== 'in_progress' && task.status !== 'review'}
-									onModelSwitched={handleLeaderModelSwitched}
-								/>
-							</div>
-						)}
-					</div>
-				</div>
 			)}
 
 			{/* Dependencies */}
