@@ -1311,7 +1311,7 @@ describe('TaskAgentManager', () => {
 			).injectMessageIntoSession(session, message, deliveryMode);
 		}
 
-		test('saves with "saved" status and does not enqueue when session is processing', async () => {
+		test('saves with "deferred" status and does not enqueue when session is processing', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -1335,12 +1335,12 @@ describe('TaskAgentManager', () => {
 
 			ctx.mockDb.saveUserMessage = originalSave;
 
-			expect(savedStatuses).toEqual(['saved']);
+			expect(savedStatuses).toEqual(['deferred']);
 			// No additional enqueue should have happened
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 
-		test('saves with "saved" status when session is waiting_for_input', async () => {
+		test('saves with "deferred" status when session is waiting_for_input', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const session = ctx.createdSessions.get(sessionId)!;
@@ -1366,12 +1366,12 @@ describe('TaskAgentManager', () => {
 
 			ctx.mockDb.saveUserMessage = originalSave;
 
-			expect(savedStatuses).toEqual(['saved']);
+			expect(savedStatuses).toEqual(['deferred']);
 			// No additional enqueue should have happened
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 
-		test('saves with "saved" status when session is interrupted (defer deferred)', async () => {
+		test('saves with "deferred" status when session is interrupted (defer deferred)', async () => {
 			// 'interrupted' is included in isBusy for defer delivery.
 			// A defer message to an interrupted session should be deferred, not sent
 			// blindly — the session may restart on its own or receive a immediate message.
@@ -1397,7 +1397,7 @@ describe('TaskAgentManager', () => {
 
 			ctx.mockDb.saveUserMessage = originalSave;
 
-			expect(savedStatuses).toEqual(['saved']);
+			expect(savedStatuses).toEqual(['deferred']);
 			expect(session._enqueuedMessages.length).toBe(enqueuedBefore);
 		});
 

@@ -126,7 +126,7 @@ export class QueryModeHandler {
 				}
 			}
 		} catch (error) {
-			logger.error('Failed to send queued messages on turn end:', error);
+			logger.error('Failed to send enqueued messages on turn end:', error);
 		}
 	}
 

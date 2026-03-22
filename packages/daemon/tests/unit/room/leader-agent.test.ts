@@ -359,7 +359,7 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue', undefined]);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'defer', undefined]);
 		});
 
 		it('should route send_to_worker with progress_summary to callback', async () => {

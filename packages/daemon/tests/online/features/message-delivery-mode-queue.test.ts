@@ -49,7 +49,7 @@ describe('Message delivery mode queue flow', () => {
 
 	async function getCountByStatus(
 		sessionId: string,
-		status: 'saved' | 'queued' | 'sent'
+		status: 'deferred' | 'enqueued' | 'consumed'
 	): Promise<number> {
 		const result = (await daemon.messageHub.request('session.messages.countByStatus', {
 			sessionId,
@@ -60,7 +60,7 @@ describe('Message delivery mode queue flow', () => {
 
 	async function waitForCount(
 		sessionId: string,
-		status: 'saved' | 'queued' | 'sent',
+		status: 'deferred' | 'enqueued' | 'consumed',
 		predicate: (count: number) => boolean,
 		timeoutMs = 15000
 	): Promise<number> {
@@ -121,11 +121,11 @@ describe('Message delivery mode queue flow', () => {
 				expect(second.messageId).toBeString();
 				expect(second.messageId).not.toBe(first.messageId);
 
-				await waitForCount(sessionId, 'saved', (count) => count >= 1, 12000);
+				await waitForCount(sessionId, 'deferred', (count) => count >= 1, 12000);
 				await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-				await waitForCount(sessionId, 'saved', (count) => count === 0, 20000);
-				const sentCount = await getCountByStatus(sessionId, 'sent');
+				await waitForCount(sessionId, 'deferred', (count) => count === 0, 20000);
+				const sentCount = await getCountByStatus(sessionId, 'consumed');
 				expect(sentCount).toBeGreaterThanOrEqual(2);
 			} finally {
 				try {
@@ -158,9 +158,9 @@ describe('Message delivery mode queue flow', () => {
 			});
 
 			// defer while idle should not remain in saved queue
-			await waitForCount(sessionId, 'saved', (count) => count === 0, 10000);
+			await waitForCount(sessionId, 'deferred', (count) => count === 0, 10000);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
-			const queuedCleared = await waitForCount(sessionId, 'queued', (count) => count === 0, 20000)
+			const queuedCleared = await waitForCount(sessionId, 'enqueued', (count) => count === 0, 20000)
 				.then(() => true)
 				.catch(() => false);
 			if (!queuedCleared) {
@@ -168,7 +168,7 @@ describe('Message delivery mode queue flow', () => {
 				return;
 			}
 
-			const sentCount = await getCountByStatus(sessionId, 'sent');
+			const sentCount = await getCountByStatus(sessionId, 'consumed');
 			expect(sentCount).toBeGreaterThanOrEqual(1);
 		},
 		TEST_TIMEOUT
@@ -214,8 +214,8 @@ describe('Message delivery mode queue flow', () => {
 				expect(steerResult.messageId).toBeString();
 
 				// The message should be queued initially
-				// Then transition to 'sent' when the generator yields it
-				await waitForCount(sessionId, 'queued', (count) => count === 0, 30000);
+				// Then transition to 'consumed' when the generator yields it
+				await waitForCount(sessionId, 'enqueued', (count) => count === 0, 30000);
 
 				// Wait for the turn to complete
 				await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
@@ -259,8 +259,8 @@ describe('Message delivery mode queue flow', () => {
 				// This proves it was positioned at SDK insertion time, not at turn end
 				expect(steeredTimestamp).toBeLessThan(resultTimestamp);
 
-				// Verify the message status is now 'sent'
-				const sentCount = await getCountByStatus(sessionId, 'sent');
+				// Verify the message status is now 'consumed'
+				const sentCount = await getCountByStatus(sessionId, 'consumed');
 				expect(sentCount).toBeGreaterThanOrEqual(2); // At least first + steered
 			} finally {
 				try {
@@ -322,12 +322,12 @@ describe('Message delivery mode queue flow', () => {
 				expect(steer2.messageId).toBeString();
 
 				// Wait for all queued messages to be consumed
-				await waitForCount(sessionId, 'queued', (count) => count === 0, 60000);
+				await waitForCount(sessionId, 'enqueued', (count) => count === 0, 60000);
 
 				// Wait for turns to complete
 				await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-				// Both steering messages should now be 'sent'
+				// Both steering messages should now be 'consumed'
 				const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 					minCount: 5,
 					timeout: 10000,
@@ -354,11 +354,11 @@ describe('Message delivery mode queue flow', () => {
 				expect(ts2).toBeGreaterThanOrEqual(ts1);
 
 				// No messages should remain in queued status
-				const queuedCount = await getCountByStatus(sessionId, 'queued');
+				const queuedCount = await getCountByStatus(sessionId, 'enqueued');
 				expect(queuedCount).toBe(0);
 
 				// All user messages should be sent
-				const sentCount = await getCountByStatus(sessionId, 'sent');
+				const sentCount = await getCountByStatus(sessionId, 'consumed');
 				expect(sentCount).toBeGreaterThanOrEqual(3); // initial + steer1 + steer2
 			} finally {
 				try {
