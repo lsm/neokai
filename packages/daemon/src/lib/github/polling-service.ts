@@ -140,6 +140,17 @@ export class GitHubPollingService {
 	}
 
 	/**
+	 * Trigger a poll immediately. No-op if a poll is already in progress.
+	 */
+	async triggerPoll(): Promise<void> {
+		if (this.isPolling) {
+			log.debug('Poll already in progress, skipping triggerPoll');
+			return;
+		}
+		await this.pollAllRepositories();
+	}
+
+	/**
 	 * Poll all configured repositories
 	 */
 	private async pollAllRepositories(): Promise<void> {

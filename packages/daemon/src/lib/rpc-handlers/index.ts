@@ -62,8 +62,9 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
-import { SESSION_TITLE_GENERATION } from '../job-queue-constants';
+import { SESSION_TITLE_GENERATION, GITHUB_POLL } from '../job-queue-constants';
 import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler';
+import { handleGitHubPoll } from '../job-handlers/github-poll.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -216,6 +217,27 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomManager,
 		deps.gitHubService ?? null
 	);
+
+	// Register github.poll job handler.
+	// pollingService is created inside GitHubService.start(), which runs in app.ts
+	// after setupRPCHandlers returns. Resolving it at call time via getPollingService()
+	// ensures the handler always sees the live instance rather than undefined.
+	// GitHubService.start() is called with useJobQueueScheduler:true so its built-in
+	// setInterval is skipped — the job-queue chain is the sole scheduler.
+	if (
+		deps.gitHubService &&
+		deps.config.githubPollingInterval &&
+		deps.config.githubPollingInterval > 0
+	) {
+		const intervalMs = deps.config.githubPollingInterval * 1000;
+		deps.jobProcessor.register(GITHUB_POLL, () =>
+			handleGitHubPoll({
+				pollingService: deps.gitHubService!.getPollingService(),
+				jobQueue: deps.jobQueue,
+				intervalMs,
+			})
+		);
+	}
 
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
