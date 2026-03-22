@@ -62,7 +62,7 @@ export const SendFeedbackSchema = z.object({
 			"Target role(s): a role name (e.g., 'coder'), '*' for broadcast to all permitted targets, or an array of role names for multicast"
 		),
 	/** The message to send to the target(s). */
-	message: z.string().min(1).describe('The message content to send to the target peer(s)'),
+	message: z.string().min(1).max(10000).describe('The message content to send to the target peer(s)'),
 });
 
 export type SendFeedbackInput = z.infer<typeof SendFeedbackSchema>;
@@ -93,6 +93,7 @@ export const RequestPeerInputSchema = z.object({
 	question: z
 		.string()
 		.min(1)
+		.max(10000)
 		.describe('The question or request to relay to the peer through the Task Agent'),
 });
 

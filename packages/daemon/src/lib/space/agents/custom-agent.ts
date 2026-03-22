@@ -191,6 +191,20 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 			`- If this step has no declared channels: all communication goes through \`request_peer_input\`\n` +
 			`- All communication is scoped to this group — you cannot message agents in other tasks`
 	);
+	sections.push(`\n### Recognizing inbound peer messages\n`);
+	sections.push(
+		`**\`[Feedback from {role}]: ...\`** — a peer has sent you a direct message via \`send_feedback\`. ` +
+			`Read and incorporate it into your work.`
+	);
+	sections.push(
+		`**\`[Peer response from {role}]: ...\`** — an async reply via the Task Agent ` +
+			`(response to a previous \`request_peer_input\` call). Read and incorporate it.`
+	);
+	sections.push(
+		`**\`[Peer input request from '{role}' ... to '{your-role}']: ...\`** ` +
+			`(where \`{your-role}\` is your own role, e.g. \`${customAgent.role}\`) — ` +
+			`a peer is requesting input from you via the Task Agent. Provide a helpful response.`
+	);
 
 	// Review feedback handling
 	sections.push(`\n## Addressing Review Feedback\n`);

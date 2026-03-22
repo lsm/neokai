@@ -682,30 +682,22 @@ export class TaskAgentManager {
 		spaceId: string,
 		workflowRunId: string
 	): SubSessionFactory {
+		if (!workflowRunId) {
+			log.warn(
+				`TaskAgentManager: createSubSessionFactory called with empty workflowRunId for task ${taskId}. ` +
+					`Step agent channel topology will be unavailable — send_feedback will report no channels declared.`
+			);
+		}
 		return {
 			create: async (
 				init: AgentSessionInit,
 				memberInfo?: SubSessionMemberInfo
 			): Promise<string> => {
-				// Build the step agent MCP server BEFORE creating the sub-session.
-				// The sessionId is known from init.sessionId (randomUUID set by spawn_step_agent).
-				// The MCP server closures capture it for group lookups and messageInjector calls.
-				const stepAgentMcpServer = createStepAgentMcpServer({
-					ownSessionId: init.sessionId,
-					ownRole: memberInfo?.role ?? 'agent',
-					taskId,
-					workflowRunId,
-					sessionGroupRepo: this.config.sessionGroupRepo,
-					workflowRunRepo: this.config.workflowRunRepo,
-					messageInjector: (targetSessionId, message) =>
-						this.injectSubSessionMessage(targetSessionId, message),
-					getGroupId: () => this.taskGroupIds.get(taskId),
-					taskAgentMessageInjector: (message) => this.injectTaskAgentMessage(taskId, message),
-				});
-
-				const sessionId = await this.createSubSession(taskId, init.sessionId, init, {
-					'step-agent': stepAgentMcpServer as unknown as McpServerConfig,
-				});
+				// Step agent MCP server is attached via buildStepAgentMcpServer callback
+				// in spawn_step_agent (task-agent-tools.ts), which injects it into init.mcpServers
+				// before calling sessionFactory.create(). createSubSession passes init through
+				// AgentSession.fromInit(), so the server is already in the session at construction.
+				const sessionId = await this.createSubSession(taskId, init.sessionId, init);
 
 				// Add the sub-session as a member of the task's group (non-fatal).
 				const groupId = this.taskGroupIds.get(taskId);
