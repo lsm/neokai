@@ -37,11 +37,14 @@ describe('handleGitHubPoll', () => {
 		listJobsMock = mock(() => []);
 	});
 
-	function makeDeps(overrides: { intervalMs?: number } = {}) {
+	function makeDeps(
+		overrides: { intervalMs?: number; pollingService?: ReturnType<typeof mock> | undefined } = {}
+	) {
 		return {
-			pollingService: {
-				triggerPoll: triggerPollMock,
-			} as never,
+			pollingService:
+				'pollingService' in overrides
+					? overrides.pollingService
+					: ({ triggerPoll: triggerPollMock } as never),
 			jobQueue: {
 				enqueue: enqueueMock,
 				listJobs: listJobsMock,
@@ -55,19 +58,19 @@ describe('handleGitHubPoll', () => {
 		expect(triggerPollMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('returns polled: true and a future nextRunAt', async () => {
+	it('returns polled: true when triggerPoll succeeds', async () => {
+		const result = await handleGitHubPoll(makeDeps());
+		expect(result.polled).toBe(true);
+	});
+
+	it('returns a nextRunAt at least intervalMs from now', async () => {
 		const before = Date.now();
 		const result = await handleGitHubPoll(makeDeps({ intervalMs: 60000 }));
-		expect(result.polled).toBe(true);
 		expect(result.nextRunAt).toBeGreaterThanOrEqual(before + 60000);
 	});
 
-	it('enqueues next job when no pending job exists', async () => {
-		listJobsMock = mock(() => []);
-		const deps = makeDeps();
-		deps.jobQueue.listJobs = listJobsMock as never;
-
-		await handleGitHubPoll(deps);
+	it('enqueues next job when no pending or processing job exists', async () => {
+		await handleGitHubPoll(makeDeps());
 
 		expect(enqueueMock).toHaveBeenCalledTimes(1);
 		const enqueueArg = (enqueueMock.mock.calls[0] as [{ queue: string; runAt: number }])[0];
@@ -76,7 +79,7 @@ describe('handleGitHubPoll', () => {
 	});
 
 	it('skips enqueueing when a pending job already exists (dedup)', async () => {
-		listJobsMock = mock(() => [makeJob()]);
+		listJobsMock = mock(() => [makeJob({ status: 'pending' })]);
 		const deps = makeDeps();
 		deps.jobQueue.listJobs = listJobsMock as never;
 		deps.jobQueue.enqueue = enqueueMock as never;
@@ -86,22 +89,35 @@ describe('handleGitHubPoll', () => {
 		expect(enqueueMock).not.toHaveBeenCalled();
 	});
 
-	it('still schedules next poll even when triggerPoll throws (finally block)', async () => {
+	it('skips enqueueing when a processing job already exists (dedup)', async () => {
+		listJobsMock = mock(() => [makeJob({ status: 'processing' })]);
+		const deps = makeDeps();
+		deps.jobQueue.listJobs = listJobsMock as never;
+		deps.jobQueue.enqueue = enqueueMock as never;
+
+		await handleGitHubPoll(deps);
+
+		expect(enqueueMock).not.toHaveBeenCalled();
+	});
+
+	it('still schedules next poll when triggerPoll throws (error is caught internally)', async () => {
 		triggerPollMock = mock(async () => {
 			throw new Error('poll failed');
 		});
 		listJobsMock = mock(() => []);
 
 		const deps = makeDeps();
-		deps.pollingService.triggerPoll = triggerPollMock as never;
+		deps.pollingService = { triggerPoll: triggerPollMock } as never;
 		deps.jobQueue.listJobs = listJobsMock as never;
 		deps.jobQueue.enqueue = enqueueMock as never;
 
-		await expect(handleGitHubPoll(deps)).rejects.toThrow('poll failed');
+		// Error is caught internally — handler resolves successfully
+		const result = await handleGitHubPoll(deps);
+		expect(result.polled).toBe(false);
 		expect(enqueueMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('queries listJobs with pending status and GITHUB_POLL queue', async () => {
+	it('queries listJobs with pending+processing statuses and GITHUB_POLL queue', async () => {
 		await handleGitHubPoll(makeDeps());
 
 		expect(listJobsMock).toHaveBeenCalledTimes(1);
@@ -109,7 +125,16 @@ describe('handleGitHubPoll', () => {
 			listJobsMock.mock.calls[0] as [{ queue: string; status: string[]; limit: number }]
 		)[0];
 		expect(listArg.queue).toBe(GITHUB_POLL);
-		expect(listArg.status).toEqual(['pending']);
+		expect(listArg.status).toEqual(['pending', 'processing']);
 		expect(listArg.limit).toBe(10);
+	});
+
+	it('returns polled: false when pollingService is undefined', async () => {
+		const deps = makeDeps({ pollingService: undefined });
+		const result = await handleGitHubPoll(deps);
+		expect(result.polled).toBe(false);
+		expect(triggerPollMock).not.toHaveBeenCalled();
+		// Still enqueues next job
+		expect(enqueueMock).toHaveBeenCalledTimes(1);
 	});
 });

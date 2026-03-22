@@ -23,7 +23,7 @@ import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
-import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
+import { GITHUB_POLL, JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -363,6 +363,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	if (gitHubService) {
 		gitHubService.start();
 		logInfo('[Daemon] GitHub service started');
+
+		// Seed the initial github.poll job if polling is configured and no job already exists.
+		// The self-scheduling chain in the handler keeps the chain alive after this seed.
+		if (config.githubPollingInterval && config.githubPollingInterval > 0) {
+			const existing = jobQueue.listJobs({
+				queue: GITHUB_POLL,
+				status: ['pending', 'processing'],
+				limit: 1,
+			});
+			if (existing.length === 0) {
+				jobQueue.enqueue({ queue: GITHUB_POLL, payload: {} });
+				logInfo('[Daemon] Seeded initial github.poll job');
+			}
+		}
 	}
 
 	// Register job handlers BEFORE starting the processor so no pending job

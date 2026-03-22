@@ -593,6 +593,13 @@ export class GitHubService {
 	isPolling(): boolean {
 		return this.pollingService?.isRunning() ?? false;
 	}
+
+	/**
+	 * Return the underlying polling service instance, or undefined if not configured.
+	 */
+	getPollingService(): GitHubPollingService | undefined {
+		return this.pollingService;
+	}
 }
 
 /**
