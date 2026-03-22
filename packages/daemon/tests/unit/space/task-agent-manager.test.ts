@@ -454,13 +454,66 @@ describe('TaskAgentManager', () => {
 			expect(group!.taskId).toBe(task.id);
 		});
 
-		test('cleanup removes taskGroupId from in-memory map', async () => {
+		test('cleanup removes taskGroupId from in-memory map and marks group completed', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
-			expect(ctx.manager.getTaskGroupId(task.id)).toBeDefined();
+			const groupId = ctx.manager.getTaskGroupId(task.id)!;
+			expect(groupId).toBeDefined();
+
 			await ctx.manager.cleanup(task.id);
+
+			// In-memory map cleared
 			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+
+			// DB group marked completed
+			const group = ctx.sessionGroupRepo.getGroup(groupId);
+			expect(group?.status).toBe('completed');
+		});
+
+		test('spawn still succeeds when createGroup throws (non-fatal)', async () => {
+			// Patch createGroup to throw
+			const origCreate = ctx.sessionGroupRepo.createGroup.bind(ctx.sessionGroupRepo);
+			let callCount = 0;
+			ctx.sessionGroupRepo.createGroup = () => {
+				callCount++;
+				throw new Error('DB error');
+			};
+
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			// Task agent session created normally
+			expect(sessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
+			expect(ctx.createdSessions.has(sessionId)).toBe(true);
+			// Group not recorded since createGroup threw
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+			// createGroup was called
+			expect(callCount).toBe(1);
+
+			// Restore
+			ctx.sessionGroupRepo.createGroup = origCreate;
+		});
+
+		test('no orphaned group when addMember throws after createGroup succeeds', async () => {
+			// Patch addMember to throw
+			const origAdd = ctx.sessionGroupRepo.addMember.bind(ctx.sessionGroupRepo);
+			ctx.sessionGroupRepo.addMember = () => {
+				throw new Error('addMember error');
+			};
+
+			const task = await makeTask(ctx.taskManager);
+			// Spawn still succeeds (non-fatal)
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			expect(sessionId).toBeDefined();
+
+			// No group persisted (orphan was deleted)
+			const groups = ctx.sessionGroupRepo.getGroupsByTask(ctx.spaceId, task.id);
+			expect(groups).toHaveLength(0);
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+
+			// Restore
+			ctx.sessionGroupRepo.addMember = origAdd;
 		});
 	});
 
@@ -1688,6 +1741,22 @@ describe('TaskAgentManager', () => {
 			}
 
 			restoreSpy.mockRestore();
+		});
+
+		test('taskGroupIds is restored from DB after rehydration', async () => {
+			const { task } = await seedInProgressTask(ctx);
+
+			// Seed a session group in the DB as if it was created during the original spawn
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+			});
+
+			await ctx.manager.rehydrate();
+
+			// getTaskGroupId should return the persisted group ID
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
 		});
 	});
 });
