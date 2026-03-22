@@ -195,8 +195,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	await eventBus.initialize();
 
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
+	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
+	// trigger LiveQuery invalidation immediately.
 	const sessionManager = new SessionManager(
-		db,
+		reactiveDb.db,
 		messageHub,
 		authManager,
 		settingsManager,
