@@ -263,6 +263,32 @@ export class SpaceSessionGroupRepository {
 	}
 
 	/**
+	 * Update status on an existing member by member ID.
+	 * Returns null if the member record does not exist.
+	 */
+	updateMemberStatus(
+		memberId: string,
+		status: 'active' | 'completed' | 'failed'
+	): SpaceSessionGroupMember | null {
+		const row = this.db
+			.prepare(`SELECT * FROM space_session_group_members WHERE id = ?`)
+			.get(memberId) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+
+		this.db
+			.prepare(`UPDATE space_session_group_members SET status = ? WHERE id = ?`)
+			.run(status, memberId);
+
+		// Touch group updated_at
+		this.db
+			.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+			.run(Date.now(), row.group_id as string);
+
+		return this.getMember(memberId);
+	}
+
+	/**
 	 * Remove a session from a group
 	 */
 	removeMember(groupId: string, sessionId: string): boolean {

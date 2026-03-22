@@ -253,6 +253,42 @@ describe('SpaceSessionGroupRepository', () => {
 		});
 	});
 
+	describe('updateMemberStatus', () => {
+		it('transitions member status by member ID', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', { role: 'coder' });
+
+			const updated = repo.updateMemberStatus(member.id, 'completed');
+			expect(updated).not.toBeNull();
+			expect(updated!.status).toBe('completed');
+			expect(updated!.role).toBe('coder');
+		});
+
+		it('transitions to failed status', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', { role: 'worker' });
+
+			const updated = repo.updateMemberStatus(member.id, 'failed');
+			expect(updated!.status).toBe('failed');
+		});
+
+		it('returns null for non-existent member ID', () => {
+			expect(repo.updateMemberStatus('nonexistent-id', 'completed')).toBeNull();
+		});
+
+		it('touches group updated_at', async () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', { role: 'coder' });
+			const before = repo.getGroup(group.id)!.updatedAt;
+
+			await new Promise((r) => setTimeout(r, 5));
+			repo.updateMemberStatus(member.id, 'completed');
+
+			const after = repo.getGroup(group.id)!.updatedAt;
+			expect(after).toBeGreaterThanOrEqual(before);
+		});
+	});
+
 	describe('removeMember', () => {
 		it('removes a member from a group', () => {
 			const group = repo.createGroup({ spaceId, name: 'G' });
