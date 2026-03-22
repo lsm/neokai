@@ -186,6 +186,28 @@ export class MessageHub {
 		};
 	}
 
+	/**
+	 * Register a handler for client disconnect events (server-side only)
+	 * Forwards to the primary transport's onClientDisconnect if supported.
+	 * Returns a no-op unsubscribe function if the transport doesn't support it.
+	 *
+	 * NOTE: The transport is resolved at the time this method is called, not when
+	 * a disconnect fires. If the primary transport changes after registration (e.g.
+	 * a new transport is registered with isPrimary:true), this handler stays bound
+	 * to the original transport. In practice this is not an issue because disconnect
+	 * handlers are registered once at server startup before any transport changes.
+	 */
+	onClientDisconnect(handler: (clientId: string) => void): UnsubscribeFn {
+		const transport = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		if (transport?.onClientDisconnect) {
+			return transport.onClientDisconnect(handler);
+		}
+		// No-op: transport doesn't support disconnect events
+		return () => {};
+	}
+
 	// ========================================
 	// Router Management (Server-side)
 	// ========================================
