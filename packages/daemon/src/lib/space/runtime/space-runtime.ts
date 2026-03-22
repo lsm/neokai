@@ -27,7 +27,7 @@ import type {
 	WorkflowRule,
 	WorkflowStep,
 } from '@neokai/shared';
-import { resolveStepAgents } from '@neokai/shared';
+import { resolveStepAgents, resolveStepChannels } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -327,22 +327,27 @@ export class SpaceRuntime {
 		}
 
 		const taskManager = this.getOrCreateTaskManager(spaceId);
-		let task: SpaceTask;
+		// Multi-agent start steps: create one SpaceTask per agent.
+		// resolveStepAgents() normalises agentId vs agents[] for backward compatibility.
+		// Keep inside the try block so a malformed step (neither agentId nor agents)
+		// triggers the rollback path and does not leave the executor/run orphaned.
+		const tasks: SpaceTask[] = [];
 		try {
-			// resolveTaskTypeForStep is inside the try/catch so that an exception from
-			// resolveStepAgents (e.g. a step with neither agentId nor agents) triggers
-			// the same executor/meta cleanup path as a task-creation failure.
-			const resolved = this.resolveTaskTypeForStep(startStep);
-			task = await taskManager.createTask({
-				title: startStep.name,
-				description: startStep.instructions ?? '',
-				workflowRunId: run.id,
-				workflowStepId: startStep.id,
-				taskType: resolved.taskType,
-				customAgentId: resolved.customAgentId,
-				status: 'pending',
-				goalId: run.goalId,
-			});
+			const startAgents = resolveStepAgents(startStep);
+			for (const agentEntry of startAgents) {
+				const resolved = this.resolveTaskTypeForAgent(agentEntry.agentId);
+				const task = await taskManager.createTask({
+					title: startStep.name,
+					description: agentEntry.instructions ?? startStep.instructions ?? '',
+					workflowRunId: run.id,
+					workflowStepId: startStep.id,
+					taskType: resolved.taskType,
+					customAgentId: resolved.customAgentId,
+					status: 'pending',
+					goalId: run.goalId,
+				});
+				tasks.push(task);
+			}
 		} catch (err) {
 			// Clean up the executor/meta entries so the run is not orphaned in the map.
 			this.executors.delete(run.id);
@@ -354,11 +359,18 @@ export class SpaceRuntime {
 			throw err;
 		}
 
-		return { run, tasks: [task] };
+		// Resolve channel topology for the start step and store in run config.
+		// TODO Milestone 6: pass resolvedChannels to session group creation in
+		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
+		this.storeResolvedChannels(run.id, space.id, startStep);
+
+		return { run, tasks };
 	}
 
 	/**
-	 * Resolve the SpaceTaskType (and optional customAgentId) for a single agentId.
+	 * Resolve the appropriate SpaceTaskType (and optional customAgentId) for a specific
+	 * agent ID. This is the canonical per-agent resolver used by the TaskTypeResolver
+	 * callback injected into WorkflowExecutor.
 	 *
 	 * Mapping rules:
 	 *   agent.role === 'planner'          → taskType: 'planning',  customAgentId: undefined
@@ -366,10 +378,11 @@ export class SpaceRuntime {
 	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
 	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
-	private resolveTaskTypeForAgent(agentId: string | undefined): ResolvedTaskType {
-		const agent = agentId ? this.config.spaceAgentManager.getById(agentId) : undefined;
+	resolveTaskTypeForAgent(agentId: string): ResolvedTaskType {
+		const agent = this.config.spaceAgentManager.getById(agentId);
 
 		if (!agent) {
+			// Unknown agent → treat as custom coding agent
 			return { taskType: 'coding', customAgentId: agentId };
 		}
 
@@ -632,6 +645,26 @@ export class SpaceRuntime {
 					});
 				}
 			}
+
+			// Partial failure gate: applies only to multi-agent steps (stepTasks.length > 1).
+			// For single-task steps the existing per-task notification is sufficient —
+			// a human can reset just the task without also needing to reset the run.
+			// For multi-agent parallel steps, wait until ALL sibling tasks reach a
+			// terminal state before escalating the run. This prevents premature
+			// escalation when one task has failed but siblings are still running.
+			if (stepTasks.length > 1) {
+				if (this.areAllStepTasksTerminal(stepTasks)) {
+					this.config.workflowRunRepo.updateStatus(runId, 'needs_attention');
+					await this.safeNotify({
+						kind: 'workflow_run_needs_attention',
+						spaceId: meta.spaceId,
+						runId,
+						reason: `One or more parallel tasks on step "${currentStep.name}" require attention`,
+						timestamp: new Date().toISOString(),
+					});
+				}
+			}
+
 			return;
 		}
 
@@ -669,14 +702,18 @@ export class SpaceRuntime {
 
 			// Step 1: Check tasks that already have a Task Agent session (in_progress).
 			// Full loop always completes so that dead-agent resets are applied to ALL
-			// tasks before deciding whether to skip. Early-returning on the first alive
-			// agent would leave dead-agent tasks unrecovered if a step has multiple tasks.
-			let anyAgentAlive = false;
+			// tasks before deciding whether to skip.
+			//
+			// NOTE: we intentionally do NOT return early when alive agents are found.
+			// For multi-agent parallel steps, some tasks may have alive agents while
+			// siblings are still pending (e.g. a spawn failure on a prior tick). An
+			// early return here would permanently skip spawning those unspawned tasks.
+			// Always proceed to Step 2 so pending tasks are always re-examined.
+			// The final `return` at the end of the TAM block still prevents advance().
 			for (const task of stepTasks) {
 				if (!task.taskAgentSessionId) continue;
 
 				if (tam.isTaskAgentAlive(task.id)) {
-					anyAgentAlive = true;
 					continue; // still check remaining tasks for dead agents
 				}
 
@@ -690,9 +727,6 @@ export class SpaceRuntime {
 					status: 'pending',
 				});
 			}
-
-			// If any Task Agent is actively running, skip this tick — it drives the workflow.
-			if (anyAgentAlive) return;
 
 			// Step 2: Spawn Task Agents for pending tasks without an agent session.
 			// Re-read from DB to pick up status resets applied in Step 1.
@@ -733,7 +767,7 @@ export class SpaceRuntime {
 		if (!stepTasks.every((t) => t.status === 'completed')) return;
 
 		try {
-			const { tasks: newTasks } = await freshExecutor.advance();
+			const { step: newStep, tasks: newTasks } = await freshExecutor.advance();
 
 			// Tasks are created with taskType already set by the TaskTypeResolver
 			// injected into the executor via buildExecutor(). No second update needed.
@@ -743,6 +777,10 @@ export class SpaceRuntime {
 				// cleanupTerminalExecutors() will emit workflow_run_completed and remove executor.
 				// No cleanup here: executors map is iterated by for..of which captures the
 				// initial key set, so the entry stays until cleanupTerminalExecutors() runs.
+			} else {
+				// Resolve channel topology for the new step.
+				// TODO Milestone 6: pass to session group creation instead of run config.
+				this.storeResolvedChannels(runId, meta.spaceId, newStep);
 			}
 		} catch (err) {
 			if (!(err instanceof WorkflowTransitionError)) {
@@ -911,8 +949,8 @@ export class SpaceRuntime {
 
 	/**
 	 * Builds a WorkflowExecutor for the given run with fresh state.
-	 * Injects the TaskTypeResolver so tasks are created with correct taskType
-	 * in a single atomic DB write.
+	 * Injects a per-agent TaskTypeResolver so each task is created with the correct
+	 * taskType / customAgentId in a single atomic DB write.
 	 */
 	private buildExecutor(
 		workflow: SpaceWorkflow,
@@ -928,7 +966,56 @@ export class SpaceRuntime {
 			this.config.workflowRunRepo,
 			workspacePath,
 			undefined, // use default commandRunner
-			(step) => this.resolveTaskTypesForStep(step) // inject TaskTypeResolver (multi-agent)
+			// Per-agent resolver: called once per agent entry in the step.
+			// This replaces the old step-level resolver so multi-agent steps produce
+			// correctly-typed tasks for each agent independently.
+			(_step, agentEntry) => this.resolveTaskTypeForAgent(agentEntry.agentId)
 		);
+	}
+
+	/**
+	 * Returns true when every task in the step has reached a terminal state.
+	 *
+	 * Terminal statuses: completed, needs_attention, cancelled, archived.
+	 *
+	 * Used to implement the partial-failure gate: for multi-agent steps, the run
+	 * must not be escalated to needs_attention until every sibling task has settled.
+	 * The caller is already inside `if (stepTasks.some(needs_attention))`, so
+	 * "any failed" is guaranteed true at the call site — no need to return it.
+	 *
+	 * @param stepTasks - Pre-fetched tasks for the current step.
+	 */
+	private areAllStepTasksTerminal(stepTasks: SpaceTask[]): boolean {
+		const TERMINAL = new Set<string>(['completed', 'needs_attention', 'cancelled', 'archived']);
+		return stepTasks.every((t) => TERMINAL.has(t.status));
+	}
+
+	/**
+	 * Resolves the channel topology for a workflow step and stores it in the run's
+	 * config for use by session group creation (Milestone 6).
+	 *
+	 * Calls `resolveStepChannels()` using all Space agents as the lookup table.
+	 * Stores the result under `run.config._resolvedChannels`.
+	 *
+	 * TODO Milestone 6: pass resolvedChannels to session group metadata in
+	 * TaskAgentManager.spawnTaskAgent() instead of storing in run config.
+	 *
+	 * Steps with no `channels` declaration produce an empty array (no-op).
+	 */
+	private storeResolvedChannels(runId: string, spaceId: string, step: WorkflowStep): void {
+		if (!step.channels || step.channels.length === 0) return;
+
+		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
+		const resolved = resolveStepChannels(step, allAgents);
+
+		if (resolved.length === 0) return;
+
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return;
+
+		const config = (run.config ?? {}) as Record<string, unknown>;
+		this.config.workflowRunRepo.updateRun(runId, {
+			config: { ...config, _resolvedChannels: resolved },
+		});
 	}
 }
