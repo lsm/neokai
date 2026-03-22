@@ -13,6 +13,10 @@
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
 import type { Config } from '../../config';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor';
+import { GITHUB_POLL } from '../job-queue-constants';
+import { handleGitHubPoll } from '../job-handlers/github-poll.handler';
 import type {
 	GitHubEvent,
 	RoutingResult,
@@ -50,6 +54,10 @@ export interface GitHubServiceOptions {
 	apiKey: string;
 	/** Optional GitHub token for polling and permission checks */
 	githubToken?: string;
+	/** Job queue repository — required to enqueue the initial github.poll job */
+	jobQueue?: JobQueueRepository;
+	/** Job queue processor — required to register the github.poll handler */
+	jobProcessor?: JobQueueProcessor;
 }
 
 /**
@@ -78,6 +86,8 @@ export class GitHubService {
 	private routerAgent: RouterAgent;
 	private inboxManager: InboxManager;
 	private webhookHandler?: (req: Request) => Promise<Response>;
+	private jobQueue?: JobQueueRepository;
+	private jobProcessor?: JobQueueProcessor;
 
 	constructor(options: GitHubServiceOptions) {
 		this.db = options.db;
@@ -85,6 +95,8 @@ export class GitHubService {
 		this.config = options.config;
 		this.apiKey = options.apiKey;
 		this.githubToken = options.githubToken;
+		this.jobQueue = options.jobQueue;
+		this.jobProcessor = options.jobProcessor;
 
 		// Initialize filter config manager
 		this.filterConfigManager = createFilterConfigManager(this.db.getDatabase());
@@ -117,16 +129,13 @@ export class GitHubService {
 	}
 
 	/**
-	 * Start the GitHub service
-	 * - Starts polling if configured
-	 * - Creates webhook handler if secret is configured
-	 *
-	 * @param options.useJobQueueScheduler - When true, the polling service is created
-	 *   but its built-in setInterval timer is NOT started. The job-queue handler owns
-	 *   the schedule entirely (via the github.poll queue), which avoids a dual-schedule
-	 *   where both the setInterval and the job-queue chain call triggerPoll independently.
+	 * Start the GitHub service.
+	 * - Creates webhook handler if secret is configured.
+	 * - Creates and starts the polling service if polling is configured.
+	 * - Registers the github.poll job handler and enqueues the initial job when
+	 *   both jobProcessor/jobQueue and polling are configured.
 	 */
-	start(options?: { useJobQueueScheduler?: boolean }): void {
+	start(): void {
 		// Initialize webhook handler if secret is configured
 		if (this.config.githubWebhookSecret) {
 			this.webhookHandler = createWebhookHandler(this.config.githubWebhookSecret, async (event) => {
@@ -141,27 +150,46 @@ export class GitHubService {
 			this.config.githubPollingInterval > 0 &&
 			this.githubToken
 		) {
+			const intervalMs = this.config.githubPollingInterval * 1000;
+
 			this.pollingService = createPollingService(
 				{
 					token: this.githubToken,
-					interval: this.config.githubPollingInterval * 1000, // Convert to ms
+					interval: intervalMs,
 				},
 				async (event) => {
 					await this.processEvent(event);
 				}
 			);
 
-			if (options?.useJobQueueScheduler) {
-				// Job queue owns the schedule — skip the built-in setInterval so only
-				// one scheduling mechanism fires per interval.
-				log.info('Polling service created (job-queue-driven, setInterval skipped)', {
-					intervalMs: this.config.githubPollingInterval * 1000,
-				});
-			} else {
+			// Register the github.poll job handler so the processor can execute it.
+			// pollingService.start() is called inside this guard so that isRunning() is
+			// consistent with whether an actual poll chain is in place — if jobQueue/
+			// jobProcessor are absent no scheduling exists and the service must not
+			// report itself as running.
+			if (this.jobProcessor && this.jobQueue) {
 				this.pollingService.start();
-				log.info('Polling service started', {
-					intervalMs: this.config.githubPollingInterval * 1000,
+				log.info('Polling service started (job-queue-driven)', { intervalMs });
+
+				this.jobProcessor.register(GITHUB_POLL, () =>
+					handleGitHubPoll({
+						pollingService: this.pollingService,
+						jobQueue: this.jobQueue!,
+						intervalMs,
+					})
+				);
+				log.info('github.poll job handler registered');
+
+				// Enqueue the initial poll immediately if no job is already in flight.
+				const existing = this.jobQueue.listJobs({
+					queue: GITHUB_POLL,
+					status: ['pending', 'processing'],
+					limit: 1,
 				});
+				if (existing.length === 0) {
+					this.jobQueue.enqueue({ queue: GITHUB_POLL, payload: {}, runAt: Date.now() });
+					log.info('Enqueued initial github.poll job');
+				}
 			}
 		}
 
