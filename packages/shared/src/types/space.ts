@@ -861,9 +861,12 @@ export interface ExportedWorkflowStepAgent {
  * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
  * Step names must therefore be unique within an exported workflow.
  *
- * Exactly one of `agentRef` or `agents` must be present:
+ * At least one of `agentRef` or `agents` (non-empty) must be present:
  * - Single-agent steps use `agentRef` (shorthand, backward-compatible).
  * - Multi-agent steps use `agents` (array of `ExportedWorkflowStepAgent` entries).
+ * - The export function never sets both simultaneously, but the type and Zod schema
+ *   do not enforce mutual exclusivity — if both are present, `agents` takes precedence
+ *   on import (consistent with `WorkflowStep` resolution semantics).
  */
 export interface ExportedWorkflowStep {
 	/**

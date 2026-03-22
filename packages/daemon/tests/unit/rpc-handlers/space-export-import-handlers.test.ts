@@ -1522,6 +1522,100 @@ describe('multi-agent step import', () => {
 		expect(step.agents).toBeUndefined();
 	});
 
+	it('preview: flags invalid channel role that does not match any step agent', async () => {
+		const bundle = makeMultiAgentBundle(
+			[
+				{ name: 'Coder', role: 'coder' },
+				{ name: 'Reviewer', role: 'reviewer' },
+			],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Parallel',
+								agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
+								channels: [
+									// 'typo-role' is not matched by coder or reviewer
+									{ from: 'typo-role', to: 'reviewer', direction: 'one-way' as const },
+								],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		expect(result.validationErrors.some((e) => e.includes('typo-role'))).toBe(true);
+	});
+
+	it('preview: wildcard channel role is always valid', async () => {
+		const bundle = makeMultiAgentBundle(
+			[{ name: 'Coder', role: 'coder' }],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Solo',
+								agents: [{ agentRef: 'Coder' }],
+								channels: [{ from: '*', to: '*', direction: 'bidirectional' as const }],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		// '*' wildcard should not produce a channel role validation error
+		expect(result.validationErrors.filter((e) => e.includes('channel'))).toHaveLength(0);
+	});
+
+	it('preview: validates channel roles from existing space agents', async () => {
+		agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder', role: 'coder' });
+
+		// Bundle has no agents — refs resolve from existing space agents
+		const bundle = makeMultiAgentBundle(
+			[],
+			[
+				{
+					name: 'Pipeline',
+					steps: [
+						{
+							multiAgentStep: {
+								name: 'Step',
+								agents: [{ agentRef: 'LocalCoder' }],
+								channels: [
+									// 'bad-role' is not matched by LocalCoder (role='coder')
+									{ from: 'bad-role', to: 'coder', direction: 'one-way' as const },
+								],
+							},
+						},
+					],
+				},
+			]
+		);
+
+		const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+			spaceId: SPACE_ID,
+			bundle,
+		});
+
+		expect(result.validationErrors.some((e) => e.includes('bad-role'))).toBe(true);
+	});
+
 	it('resolves multi-agent step refs from existing space agents', async () => {
 		const existing1 = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder', role: 'coder' });
 		const existing2 = agentRepo.create({

@@ -232,9 +232,15 @@ export function exportWorkflow(
 			});
 			exported.agents = exportedAgents;
 		} else {
-			// Single-agent step: export as scalar agentRef
-			const primaryAgentId = step.agentId ?? '';
-			exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
+			// Single-agent step: export as scalar agentRef.
+			// Only set agentRef when agentId is present — a step with neither agentId
+			// nor agents is invalid; leaving agentRef unset produces a clear Zod error
+			// ("step must have either agentRef or agents") rather than a confusing
+			// min-length failure on an empty string.
+			const primaryAgentId = step.agentId;
+			if (primaryAgentId) {
+				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
+			}
 		}
 
 		if (step.instructions !== undefined) exported.instructions = step.instructions;

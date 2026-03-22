@@ -185,6 +185,8 @@ function buildWorkflowCreateParams(
 				if (!agentId) {
 					warnings.push(`step "${exportedStep.name}" references unknown agent "${a.agentRef}"`);
 				}
+				// agentId ?? '' is a placeholder for unresolved refs — warnings.length > 0 will
+				// cause a throw before createWorkflow is called, so '' never reaches the DB.
 				const entry: { agentId: string; instructions?: string } = { agentId: agentId ?? '' };
 				if (a.instructions !== undefined) entry.instructions = a.instructions;
 				return entry;
@@ -251,21 +253,30 @@ function buildWorkflowCreateParams(
  * Validate cross-references in an exported workflow against the current import context.
  * Returns a list of human-readable error strings (empty = valid).
  *
+ * Validates:
+ * 1. Agent refs in steps: each agentRef must resolve to a known agent name.
+ * 2. Channel role refs: roles referenced in channel `from`/`to` must match the roles
+ *    of agents assigned to the step (`'*'` wildcard is always valid).
+ *
  * Note: condition expression validation is intentionally omitted here — it is
  * already enforced by the Zod schema in validateExportBundle(), so any bundle
  * that reaches this function has already had its conditions validated.
  *
  * @param importedAgentNames - Set of agent names being imported in the same bundle
  * @param existingAgentNameToId - Map of existing agent names → UUIDs in target space
+ * @param agentNameToRole - Map of agent name → role (from bundle + space agents combined)
  */
 function validateWorkflowForPreview(
 	exported: ExportedSpaceWorkflow,
 	importedAgentNames: Set<string>,
-	existingAgentNameToId: Map<string, string>
+	existingAgentNameToId: Map<string, string>,
+	agentNameToRole: Map<string, string>
 ): string[] {
 	const errors: string[] = [];
 
 	for (const step of exported.steps) {
+		// ── 1. Agent ref validation ───────────────────────────────────────────
+		const stepAgentRefs: string[] = [];
 		if (step.agents && step.agents.length > 0) {
 			// Multi-agent step: validate each agent ref
 			for (const a of step.agents) {
@@ -274,6 +285,7 @@ function validateWorkflowForPreview(
 						`step "${step.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
 					);
 				}
+				stepAgentRefs.push(a.agentRef);
 			}
 		} else {
 			// Single-agent step: validate scalar agentRef
@@ -282,6 +294,29 @@ function validateWorkflowForPreview(
 				errors.push(
 					`step "${step.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
 				);
+			}
+			if (agentRef) stepAgentRefs.push(agentRef);
+		}
+
+		// ── 2. Channel role validation ────────────────────────────────────────
+		if (step.channels && step.channels.length > 0) {
+			// Collect the set of roles for agents assigned to this step
+			const stepRoles = new Set<string>();
+			for (const agentRef of stepAgentRefs) {
+				const role = agentNameToRole.get(agentRef);
+				if (role) stepRoles.add(role);
+			}
+
+			for (const channel of step.channels) {
+				const toRoles = Array.isArray(channel.to) ? channel.to : [channel.to];
+				const rolesToCheck = [channel.from, ...toRoles];
+				for (const role of rolesToCheck) {
+					if (role !== '*' && !stepRoles.has(role)) {
+						errors.push(
+							`step "${step.name}" channel references role "${role}" which is not matched by any agent in the step`
+						);
+					}
+				}
 			}
 		}
 	}
@@ -406,6 +441,11 @@ export function setupSpaceExportImportHandlers(
 		const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
 		const existingAgentNameToId = new Map(existingAgents.map((a) => [a.name, a.id]));
 
+		// Build name → role map for channel role validation.
+		// Bundle agent roles override existing agent roles (bundle wins on same name).
+		const agentNameToRole = new Map<string, string>(existingAgents.map((a) => [a.name, a.role]));
+		for (const a of bundle.agents) agentNameToRole.set(a.name, a.role);
+
 		// Agent previews
 		const agentPreviews: ImportPreview[] = bundle.agents.map((a) => {
 			const existing = existingAgentByName.get(a.name);
@@ -427,8 +467,13 @@ export function setupSpaceExportImportHandlers(
 				workflowPreviews.push({ name: wf.name, action: 'create' });
 			}
 
-			// Cross-reference validation (unresolved agent refs)
-			const errors = validateWorkflowForPreview(wf, importedAgentNames, existingAgentNameToId);
+			// Cross-reference validation (unresolved agent refs + channel role refs)
+			const errors = validateWorkflowForPreview(
+				wf,
+				importedAgentNames,
+				existingAgentNameToId,
+				agentNameToRole
+			);
 			for (const err of errors) {
 				validationErrors.push(`Workflow "${wf.name}": ${err}`);
 			}

@@ -1306,6 +1306,47 @@ describe('exportWorkflow — multi-agent steps', () => {
 		expect(exported.steps[1].channels).toBeUndefined();
 	});
 
+	test('single-agent step with channels exports channels', () => {
+		const workflow = makeMultiAgentWorkflow({
+			steps: [
+				{
+					id: 'step-uuid-1',
+					name: 'Solo with channel',
+					agentId: 'agent-uuid-1',
+					channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
+				},
+			],
+			startStepId: 'step-uuid-1',
+			transitions: [],
+		});
+		const agents = [makeAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		const step = exported.steps[0];
+		// Should still use scalar agentRef (single-agent)
+		expect(step.agentRef).toBe('My Coder');
+		expect(step.agents).toBeUndefined();
+		// Channels should be exported as-is
+		expect(step.channels).toHaveLength(1);
+		expect(step.channels![0].from).toBe('coder');
+		expect(step.channels![0].to).toBe('*');
+		expect(step.channels![0].direction).toBe('one-way');
+	});
+
+	test('export produces no agentRef when step has neither agentId nor agents', () => {
+		const workflow = makeMultiAgentWorkflow({
+			steps: [{ id: 'step-uuid-1', name: 'Broken step' } as any],
+			startStepId: 'step-uuid-1',
+			transitions: [],
+		});
+		const exported = exportWorkflow(workflow, []);
+
+		const step = exported.steps[0];
+		// Neither agentRef nor agents should be set
+		expect(step.agentRef).toBeUndefined();
+		expect(step.agents).toBeUndefined();
+	});
+
 	test('single-agent step still exports as agentRef shorthand', () => {
 		const workflow = makeMultiAgentWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
