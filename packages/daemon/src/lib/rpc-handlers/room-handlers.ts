@@ -356,6 +356,10 @@ export function setupRoomRuntimeHandlers(
 				state: 'stopped',
 			})
 			.catch(() => {});
+		// Cancel pending tick jobs to avoid unnecessary DB churn after stop.
+		if (jobQueue) {
+			cancelPendingTickJobs(params.roomId, jobQueue);
+		}
 		return { success: true, state: 'stopped' };
 	});
 

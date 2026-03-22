@@ -207,27 +207,26 @@ describe('pause→resume tick loop re-seed', () => {
 		repo = new JobQueueRepository(db as any);
 	});
 
-	it('tick firing during pause leaves no pending jobs; re-seeding via enqueueRoomTick restores the loop', () => {
+	it('tick firing during pause leaves no pending jobs; re-seeding via enqueueRoomTick restores the loop', async () => {
 		// Step 1: tick fires while runtime is paused — no re-enqueue happens
 		const pausedRuntime = makeRuntime('paused');
 		const handler = createRoomTickHandler(() => pausedRuntime, repo, 1000);
 		const job = makeJob('room-pause-resume');
 
 		// Fire tick while paused (simulates the pending job firing after pause was called)
-		return handler(job).then((result) => {
-			expect(result).toEqual({ skipped: true, reason: 'not running' });
-			// Loop is dead: no pending tick jobs
-			const afterPause = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
-			expect(afterPause).toHaveLength(0);
+		const result = await handler(job);
+		expect(result).toEqual({ skipped: true, reason: 'not running' });
+		// Loop is dead: no pending tick jobs
+		const afterPause = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
+		expect(afterPause).toHaveLength(0);
 
-			// Step 2: resume handler calls enqueueRoomTick to re-seed
-			enqueueRoomTick('room-pause-resume', repo, 1000);
+		// Step 2: resume handler calls enqueueRoomTick to re-seed
+		enqueueRoomTick('room-pause-resume', repo, 1000);
 
-			// Loop is alive again: one pending tick job exists
-			const afterResume = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
-			expect(afterResume).toHaveLength(1);
-			expect((afterResume[0].payload as any).roomId).toBe('room-pause-resume');
-		});
+		// Loop is alive again: one pending tick job exists
+		const afterResume = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
+		expect(afterResume).toHaveLength(1);
+		expect((afterResume[0].payload as any).roomId).toBe('room-pause-resume');
 	});
 
 	it('enqueueRoomTick after resume is a no-op when a pending tick already exists (dedup guard)', () => {
