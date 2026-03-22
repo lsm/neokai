@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
 import type { SpaceTask, SpaceSessionGroup, SpaceAgent } from '@neokai/shared';
 
@@ -373,6 +373,40 @@ describe('SpaceTaskPane', () => {
 		mockAgents.value = []; // no agents loaded
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('security-auditor')).toBeTruthy();
+	});
+
+	it('updates displayed status badge when member status changes via signal', async () => {
+		const member = makeMember({ status: 'active' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+
+		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getAllByText('active').length).toBeGreaterThan(0);
+
+		// Simulate status update via signal (mirrors spaceSessionGroup.memberUpdated event)
+		await act(() => {
+			mockSessionGroups.value = [
+				makeGroup({ members: [{ ...member, status: 'completed' as const }] }),
+			];
+		});
+
+		await waitFor(() => expect(getAllByText('completed').length).toBeGreaterThan(0));
+	});
+
+	it('hides Working Agents section when last group is removed via signal', async () => {
+		const group = makeGroup({ taskId: 'task-1' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [group];
+
+		const { getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('Working Agents')).toBeTruthy();
+
+		// Simulate group deletion via signal (mirrors spaceSessionGroup.deleted event)
+		await act(() => {
+			mockSessionGroups.value = [];
+		});
+
+		await waitFor(() => expect(queryByText('Working Agents')).toBeNull());
 	});
 });
 
