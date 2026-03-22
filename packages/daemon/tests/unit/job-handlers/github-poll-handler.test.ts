@@ -126,7 +126,7 @@ describe('handleGitHubPoll', () => {
 		)[0];
 		expect(listArg.queue).toBe(GITHUB_POLL);
 		expect(listArg.status).toEqual(['pending', 'processing']);
-		expect(listArg.limit).toBe(10);
+		expect(listArg.limit).toBe(1);
 	});
 
 	it('returns polled: false when pollingService is undefined', async () => {

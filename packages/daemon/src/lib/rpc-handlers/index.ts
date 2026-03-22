@@ -219,10 +219,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	);
 
 	// Register github.poll job handler.
-	// The pollingService is lazily resolved at call time — it is created inside
-	// GitHubService.start() which runs after setupRPCHandlers returns, so we
-	// must not capture it here. Reading it via getPollingService() at call time
-	// ensures the handler always sees the live instance.
+	// pollingService is created inside GitHubService.start(), which runs in app.ts
+	// after setupRPCHandlers returns. Resolving it at call time via getPollingService()
+	// ensures the handler always sees the live instance rather than undefined.
+	// GitHubService.start() is called with useJobQueueScheduler:true so its built-in
+	// setInterval is skipped — the job-queue chain is the sole scheduler.
 	if (
 		deps.gitHubService &&
 		deps.config.githubPollingInterval &&

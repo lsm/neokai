@@ -359,9 +359,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		},
 	});
 
-	// Start GitHub service after server is ready
+	// Start GitHub service after server is ready.
+	// Pass useJobQueueScheduler when polling is configured so the pollingService's
+	// built-in setInterval is skipped — the github.poll job-queue chain owns the
+	// schedule instead, preventing a dual-schedule where both mechanisms fire independently.
 	if (gitHubService) {
-		gitHubService.start();
+		const useJobQueueScheduler = !!config.githubPollingInterval && config.githubPollingInterval > 0;
+		gitHubService.start({ useJobQueueScheduler });
 		logInfo('[Daemon] GitHub service started');
 
 		// Seed the initial github.poll job if polling is configured and no job already exists.

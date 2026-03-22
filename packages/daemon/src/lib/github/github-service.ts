@@ -120,8 +120,13 @@ export class GitHubService {
 	 * Start the GitHub service
 	 * - Starts polling if configured
 	 * - Creates webhook handler if secret is configured
+	 *
+	 * @param options.useJobQueueScheduler - When true, the polling service is created
+	 *   but its built-in setInterval timer is NOT started. The job-queue handler owns
+	 *   the schedule entirely (via the github.poll queue), which avoids a dual-schedule
+	 *   where both the setInterval and the job-queue chain call triggerPoll independently.
 	 */
-	start(): void {
+	start(options?: { useJobQueueScheduler?: boolean }): void {
 		// Initialize webhook handler if secret is configured
 		if (this.config.githubWebhookSecret) {
 			this.webhookHandler = createWebhookHandler(this.config.githubWebhookSecret, async (event) => {
@@ -130,7 +135,7 @@ export class GitHubService {
 			log.info('Webhook handler initialized');
 		}
 
-		// Start polling if interval is configured and token is available
+		// Create polling service if interval is configured and token is available
 		if (
 			this.config.githubPollingInterval &&
 			this.config.githubPollingInterval > 0 &&
@@ -145,10 +150,19 @@ export class GitHubService {
 					await this.processEvent(event);
 				}
 			);
-			this.pollingService.start();
-			log.info('Polling service started', {
-				intervalMs: this.config.githubPollingInterval * 1000,
-			});
+
+			if (options?.useJobQueueScheduler) {
+				// Job queue owns the schedule — skip the built-in setInterval so only
+				// one scheduling mechanism fires per interval.
+				log.info('Polling service created (job-queue-driven, setInterval skipped)', {
+					intervalMs: this.config.githubPollingInterval * 1000,
+				});
+			} else {
+				this.pollingService.start();
+				log.info('Polling service started', {
+					intervalMs: this.config.githubPollingInterval * 1000,
+				});
+			}
 		}
 
 		log.info('GitHub service started');

@@ -49,10 +49,11 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
 	// Only enqueue the next job if there is no pending or processing job
 	// already in the chain. Checking 'processing' prevents a duplicate chain
 	// from forming under stale-reclaim or slow-poll scenarios.
+	// limit: 1 is sufficient — we only need to know if any job exists.
 	const existingJobs = jobQueue.listJobs({
 		queue: GITHUB_POLL,
 		status: ['pending', 'processing'],
-		limit: 10,
+		limit: 1,
 	});
 
 	if (existingJobs.length === 0) {
