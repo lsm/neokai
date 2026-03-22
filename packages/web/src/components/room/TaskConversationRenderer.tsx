@@ -23,8 +23,7 @@ import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { getModelLabel } from '../../lib/session-utils';
-import { useGroupMessages } from '../../hooks/useGroupMessages';
-import type { SessionGroupMessage } from '../../hooks/useGroupMessages';
+import { useGroupMessages, type SessionGroupMessage } from '../../hooks/useGroupMessages';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -92,11 +91,18 @@ function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 
-	// Rate limited: rendered as an amber notification
+	// Rate limited: stored as JSON with rich payload (resetsAt, sessionRole).
+	// Fall back to content as plain text if not valid JSON.
 	if (msgType === 'rate_limited') {
+		let parsed: Record<string, unknown> = {};
+		try {
+			parsed = JSON.parse(msg.content) as Record<string, unknown>;
+		} catch {
+			parsed = { text: msg.content };
+		}
 		return {
+			...parsed,
 			type: 'rate_limited',
-			text: msg.content,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -106,11 +112,18 @@ function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 
-	// Model fallback: rendered as an amber notification
+	// Model fallback: stored as JSON with rich payload (fromModel, toModel, sessionRole).
+	// Fall back to content as plain text if not valid JSON.
 	if (msgType === 'model_fallback') {
+		let parsed: Record<string, unknown> = {};
+		try {
+			parsed = JSON.parse(msg.content) as Record<string, unknown>;
+		} catch {
+			parsed = { text: msg.content };
+		}
 		return {
+			...parsed,
 			type: 'model_fallback',
-			text: msg.content,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
