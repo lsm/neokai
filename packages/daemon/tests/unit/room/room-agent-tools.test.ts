@@ -105,6 +105,15 @@ describe('Room Agent Tools', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 			CREATE TABLE mission_metric_history (
 				id TEXT PRIMARY KEY,
 				goal_id TEXT NOT NULL,

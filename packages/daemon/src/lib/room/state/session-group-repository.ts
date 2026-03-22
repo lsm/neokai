@@ -935,6 +935,37 @@ export class SessionGroupRepository {
 		});
 	}
 
+	// ===== session_group_messages (LiveQuery message streaming) =====
+
+	/**
+	 * Insert a row into session_group_messages and notify LiveQuery subscribers.
+	 * Called from both setupMirroring (SDK messages) and appendGroupEvent (status/event messages).
+	 */
+	appendGroupMessage(params: {
+		groupId: string;
+		sessionId?: string | null;
+		role: string;
+		messageType: string;
+		content: string;
+		createdAt: number;
+	}): number {
+		const result = this.db
+			.prepare(
+				`INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				params.groupId,
+				params.sessionId ?? null,
+				params.role,
+				params.messageType,
+				params.content,
+				params.createdAt
+			);
+		this.reactiveDb.notifyChange('session_group_messages');
+		return Number(result.lastInsertRowid);
+	}
+
 	// ===== Group events (status/system timeline, no mirrored SDK chat) =====
 
 	appendEvent(params: { groupId: string; kind: string; payloadJson?: string }): number {
