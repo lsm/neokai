@@ -144,6 +144,7 @@ jobs:
           - rpc-1
           - rpc-2
           - rpc-3
+          - rpc-4
           - sdk
           - websocket
         include:
@@ -223,32 +224,39 @@ jobs:
           # - module: room-reviewer
           #   test_path: tests/online/room/room-reviewer-flow.test.ts
           #   timeout: 10
+          # rpc-1: heaviest files (task-lifecycle ~647 + config-handlers ~573 lines ≈ 1 220)
           - module: rpc-1
             test_path: >-
-              tests/online/rpc/rpc-agent-handlers.test.ts
               tests/online/rpc/rpc-config-handlers.test.ts
-              tests/online/rpc/rpc-draft-handlers.test.ts
-              tests/online/rpc/rpc-file-handlers.test.ts
-              tests/online/rpc/rpc-interrupt-handlers.test.ts
-              tests/online/rpc/rpc-mcp-toggle.test.ts
-              tests/online/rpc/rpc-task-draft-handlers.test.ts
               tests/online/rpc/rpc-task-lifecycle.test.ts
             mock_sdk: true
+          # rpc-2: settings + remove-output + message + agent (≈ 1 241 lines)
           - module: rpc-2
             test_path: >-
+              tests/online/rpc/rpc-agent-handlers.test.ts
               tests/online/rpc/rpc-message-handlers.test.ts
-              tests/online/rpc/rpc-model-handlers.test.ts
-              tests/online/rpc/rpc-model-switching.test.ts
               tests/online/rpc/rpc-remove-output.test.ts
-              tests/online/rpc/rpc-rewind-handlers.test.ts
-              tests/online/rpc/rpc-session-filtering.test.ts
+              tests/online/rpc/rpc-settings-handlers.test.ts
             mock_sdk: true
+          # rpc-3: session-extended + live-query + mcp + task-draft + rewind (≈ 1 356 lines)
           - module: rpc-3
             test_path: >-
               tests/online/rpc/rpc-live-query.test.ts
+              tests/online/rpc/rpc-mcp-toggle.test.ts
+              tests/online/rpc/rpc-rewind-handlers.test.ts
               tests/online/rpc/rpc-session-handlers-extended.test.ts
+              tests/online/rpc/rpc-task-draft-handlers.test.ts
+            mock_sdk: true
+          # rpc-4: remaining smaller files (≈ 1 382 lines)
+          - module: rpc-4
+            test_path: >-
+              tests/online/rpc/rpc-draft-handlers.test.ts
+              tests/online/rpc/rpc-file-handlers.test.ts
+              tests/online/rpc/rpc-interrupt-handlers.test.ts
+              tests/online/rpc/rpc-model-handlers.test.ts
+              tests/online/rpc/rpc-model-switching.test.ts
+              tests/online/rpc/rpc-session-filtering.test.ts
               tests/online/rpc/rpc-session-workflow.test.ts
-              tests/online/rpc/rpc-settings-handlers.test.ts
               tests/online/rpc/rpc-state-sync.test.ts
               tests/online/rpc/session-handlers.test.ts
             mock_sdk: true
