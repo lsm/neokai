@@ -147,7 +147,9 @@ test.describe('TaskView — Message Streaming via LiveQuery', () => {
 		test('messages pre-loaded in DB appear in TaskView on initial load', async ({ page }) => {
 			// Navigate to the task view — LiveQuery snapshot delivers the pre-existing messages
 			await page.goto(`/room/${roomId}/task/${taskId}`);
-			await expect(page.locator('text=E2E Streaming Task 1')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole('heading', { name: 'E2E Streaming Task 1' })).toBeVisible({
+				timeout: 10000,
+			});
 
 			// Both status messages should appear via the initial snapshot (no refresh needed)
 			await expect(page.locator('text=Agent started working')).toBeVisible({ timeout: 10000 });
@@ -201,7 +203,9 @@ test.describe('TaskView — Message Streaming via LiveQuery', () => {
 		test('switching between two tasks shows correct messages for each task', async ({ page }) => {
 			// Navigate to Task A
 			await page.goto(`/room/${roomId}/task/${taskId}`);
-			await expect(page.locator('text=E2E Streaming Task A')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole('heading', { name: 'E2E Streaming Task A' })).toBeVisible({
+				timeout: 10000,
+			});
 
 			// Task A's message visible; Task B's is not
 			await expect(page.locator('text=Message for Task A only')).toBeVisible({ timeout: 10000 });
@@ -209,7 +213,9 @@ test.describe('TaskView — Message Streaming via LiveQuery', () => {
 
 			// Navigate to Task B
 			await page.goto(`/room/${roomId}/task/${task2Id}`);
-			await expect(page.locator('text=E2E Streaming Task B')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole('heading', { name: 'E2E Streaming Task B' })).toBeVisible({
+				timeout: 10000,
+			});
 
 			// Task B's message visible; Task A's is not
 			await expect(page.locator('text=Message for Task B only')).toBeVisible({ timeout: 10000 });
@@ -217,7 +223,9 @@ test.describe('TaskView — Message Streaming via LiveQuery', () => {
 
 			// Navigate back to Task A — subscription must re-establish correctly
 			await page.goto(`/room/${roomId}/task/${taskId}`);
-			await expect(page.locator('text=E2E Streaming Task A')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByRole('heading', { name: 'E2E Streaming Task A' })).toBeVisible({
+				timeout: 10000,
+			});
 			await expect(page.locator('text=Message for Task A only')).toBeVisible({ timeout: 10000 });
 			await expect(page.locator('text=Message for Task B only')).not.toBeVisible();
 		});
@@ -257,7 +265,9 @@ test.describe('no loading flash when user sends a message (regression)', () => {
 	}) => {
 		// Navigate to the task view — LiveQuery snapshot delivers the pre-existing messages
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E No-Reload Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E No-Reload Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Both pre-existing messages must be visible via initial snapshot
 		await expect(page.locator('text=Pre-existing message alpha')).toBeVisible({ timeout: 10000 });

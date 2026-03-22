@@ -33,7 +33,24 @@ async function openCreateMissionModal(
 	const createButtons = page.locator('button:has-text("Create Mission")');
 	await expect(createButtons.first()).toBeVisible({ timeout: 5000 });
 	await createButtons.first().click();
-	await expect(page.locator('#goal-title')).toBeVisible({ timeout: 5000 });
+	// Wait for modal to appear — modal has wizard-goal-title input (step 1)
+	await expect(page.locator('#wizard-goal-title')).toBeVisible({ timeout: 5000 });
+}
+
+/**
+ * Advance the Create Mission wizard from step 1 to step 2.
+ * Call this after filling in the title on step 1.
+ */
+async function advanceToStep2(
+	page: Parameters<typeof waitForWebSocketConnected>[0]
+): Promise<void> {
+	const nextButton = page.getByRole('button', { name: 'Next \u2192' });
+	await expect(nextButton).toBeVisible({ timeout: 5000 });
+	await nextButton.click();
+	// Wait for step 2 to be visible
+	await expect(page.locator('[data-testid="mission-type-one_shot"]')).toBeVisible({
+		timeout: 5000,
+	});
 }
 
 /** Creates a measurable mission with one metric and returns the mission title. */
@@ -42,7 +59,8 @@ async function createMeasurableMission(
 	title: string
 ): Promise<void> {
 	await openCreateMissionModal(page);
-	await page.locator('#goal-title').fill(title);
+	await page.locator('#wizard-goal-title').fill(title);
+	await advanceToStep2(page);
 	await page.locator('[data-testid="mission-type-measurable"]').click();
 	await page.locator('[data-testid="add-metric-btn"]').click();
 	const metricNameInput = page.locator('[aria-label="Metric 1 name"]');
@@ -50,7 +68,7 @@ async function createMeasurableMission(
 	await metricNameInput.fill('Code Coverage');
 	await page.locator('[aria-label="Metric 1 target"]').fill('80');
 	await page.locator('[aria-label="Metric 1 unit"]').fill('%');
-	await page.locator('button[type="submit"]:has-text("Create")').click();
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 	await expect(page.locator(`h4:has-text("${title}")`)).toBeVisible({ timeout: 8000 });
 }
 
@@ -60,9 +78,10 @@ async function createRecurringMission(
 	title: string
 ): Promise<void> {
 	await openCreateMissionModal(page);
-	await page.locator('#goal-title').fill(title);
+	await page.locator('#wizard-goal-title').fill(title);
+	await advanceToStep2(page);
 	await page.locator('[data-testid="mission-type-recurring"]').click();
-	await page.locator('button[type="submit"]:has-text("Create")').click();
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 	await expect(page.locator(`h4:has-text("${title}")`)).toBeVisible({ timeout: 8000 });
 }
 
