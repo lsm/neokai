@@ -147,6 +147,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				{stepAgents.length === 1 && (
 					<button
 						type="button"
+						data-testid="switch-to-single-button"
 						onClick={() =>
 							onUpdate({
 								...step,

@@ -38,7 +38,7 @@ function ChannelTopologyBadge({ step }: { step: StepDraft }) {
 	};
 
 	return (
-		<div class="mt-1.5 space-y-0.5">
+		<div class="mt-1.5 space-y-0.5" data-testid="channel-topology-badge">
 			{channels.map((ch, i) => (
 				<div key={i} class="flex items-center gap-0.5 text-xs text-gray-500">
 					<span class="font-mono">{roleLabel(ch.from)}</span>
