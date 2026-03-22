@@ -2141,6 +2141,18 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Re-attach runtime-only message mirroring for a recovered group.
+	 *
+	 * The TaskView timeline now reads exclusively from `session_group_messages`,
+	 * so recovered groups must re-subscribe to sdk.message events before any
+	 * continuation message is injected after restart.
+	 */
+	restoreRecoveredGroupMirroring(group: SessionGroup): void {
+		this.cleanupMirroring(group.id);
+		this.setupMirroring(group);
+	}
+
 	// =========================================================================
 	// Message Mirroring
 	// =========================================================================
