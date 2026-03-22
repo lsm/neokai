@@ -7,7 +7,7 @@
  * 1. Task created by RPC appears in the room UI immediately (LiveQuery delta)
  * 2. Switching rooms shows only the new room's tasks within one render cycle
  *    (stale-event guard ensures no cross-room task bleed)
- * 3. Goal deleted via RPC disappears from the Missions tab UI (LiveQuery removed)
+ * 3. Goal deleted via RPC disappears from the Goals tab UI (LiveQuery removed)
  *
  * Setup: RPC is used only for test infrastructure (room/task/goal creation,
  *        teardown). All assertions are against visible DOM state.
@@ -106,42 +106,40 @@ test.describe('LiveQuery — task created by RPC appears in room UI without page
 		await deleteRoom(page, roomId);
 	});
 
-	test('task created via RPC appears in Active tab without page reload', async ({ page }) => {
+	test('task created via RPC appears in task list without page reload', async ({ page }) => {
 		roomId = await createRoom(page, 'LiveQuery Task Appear Test Room');
 
-		// Navigate to the room dashboard and wait for it to load
+		// Navigate to the room dashboard and wait for it to fully load
 		await page.goto(`/room/${roomId}`);
+		await waitForWebSocketConnected(page);
 		await expect(page.locator('text=LiveQuery Task Appear Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Ensure the Active tab is selected and currently shows no tasks
-		await page.getByRole('button', { name: /Active/ }).click();
-		await expect(page.locator('text=No active tasks')).toBeVisible({ timeout: 5000 });
+		// When a room has no tasks, RoomTasks renders "No tasks yet" (not a tab bar)
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 
 		// Create a task via RPC while the user is looking at the room dashboard
 		await createTask(page, roomId, 'LiveQuery Created Task');
 
-		// The task should appear in the Active tab WITHOUT a page reload
+		// The task should appear WITHOUT a page reload — LiveQuery delta delivers it
 		await expect(page.locator('text=LiveQuery Created Task').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Active tab count should update to reflect the new task
-		await expect(page.getByRole('button', { name: /Active/ })).toContainText('1', {
-			timeout: 5000,
-		});
+		// The "No tasks yet" placeholder should be gone
+		await expect(page.locator('text=No tasks yet')).not.toBeVisible({ timeout: 5000 });
 	});
 
-	test('multiple tasks created via RPC all appear in Active tab', async ({ page }) => {
+	test('multiple tasks created via RPC all appear in task list', async ({ page }) => {
 		roomId = await createRoom(page, 'LiveQuery Multi-Task Test Room');
 
 		await page.goto(`/room/${roomId}`);
+		await waitForWebSocketConnected(page);
 		await expect(page.locator('text=LiveQuery Multi-Task Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
-		await page.getByRole('button', { name: /Active/ }).click();
-		await expect(page.locator('text=No active tasks')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 
 		// Create two tasks back-to-back via RPC
 		await createTask(page, roomId, 'First LiveQuery Task');
@@ -175,27 +173,31 @@ test.describe("LiveQuery — switching rooms shows only the new room's tasks", (
 		await deleteRoom(page, roomBId);
 	});
 
-	test('navigating from room A to room B shows only room B tasks', async ({ page }) => {
+	test('clicking room B in the sidebar shows only room B tasks — no room A bleed', async ({
+		page,
+	}) => {
 		// Set up room A with a task
-		roomAId = await createRoom(page, 'LiveQuery Room A');
+		roomAId = await createRoom(page, 'LQ Sidebar Room A');
 		await createTask(page, roomAId, 'Room A Exclusive Task');
 
 		// Set up room B with a different task
-		roomBId = await createRoom(page, 'LiveQuery Room B');
+		roomBId = await createRoom(page, 'LQ Sidebar Room B');
 		await createTask(page, roomBId, 'Room B Exclusive Task');
 
 		// Navigate to Room A first and confirm its task is visible
 		await page.goto(`/room/${roomAId}`);
-		await expect(page.locator('text=LiveQuery Room A').first()).toBeVisible({ timeout: 10000 });
-		await page.getByRole('button', { name: /Active/ }).click();
+		await waitForWebSocketConnected(page);
+		await expect(page.locator('text=LQ Sidebar Room A').first()).toBeVisible({ timeout: 10000 });
 		await expect(page.locator('text=Room A Exclusive Task').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Switch to Room B
-		await page.goto(`/room/${roomBId}`);
-		await expect(page.locator('text=LiveQuery Room B').first()).toBeVisible({ timeout: 10000 });
-		await page.getByRole('button', { name: /Active/ }).click();
+		// Switch to Room B using the sidebar (in-page navigation, not full reload)
+		// Rooms appear as buttons in the sidebar by their name
+		await page.locator('button').filter({ hasText: 'LQ Sidebar Room B' }).first().click();
+
+		// Wait for Room B's header to appear — confirms the room switch has rendered
+		await expect(page.locator('text=LQ Sidebar Room B').first()).toBeVisible({ timeout: 10000 });
 
 		// Room B's task must appear
 		await expect(page.locator('text=Room B Exclusive Task').first()).toBeVisible({
@@ -206,31 +208,44 @@ test.describe("LiveQuery — switching rooms shows only the new room's tasks", (
 		await expect(page.locator('text=Room A Exclusive Task')).not.toBeVisible({ timeout: 3000 });
 	});
 
-	test('tasks created in room A do not appear while viewing room B', async ({ page }) => {
-		roomAId = await createRoom(page, 'LiveQuery Isolation Room A');
-		roomBId = await createRoom(page, 'LiveQuery Isolation Room B');
+	test('tasks created in room A do not bleed through while viewing room B', async ({ page }) => {
+		roomAId = await createRoom(page, 'LQ Isolation Room A');
+		roomBId = await createRoom(page, 'LQ Isolation Room B');
 
-		// Navigate to Room B and wait for it to load (empty)
+		// Navigate to Room B — empty, should show "No tasks yet"
 		await page.goto(`/room/${roomBId}`);
-		await expect(page.locator('text=LiveQuery Isolation Room B').first()).toBeVisible({
+		await waitForWebSocketConnected(page);
+		await expect(page.locator('text=LQ Isolation Room B').first()).toBeVisible({
 			timeout: 10000,
 		});
-		await page.getByRole('button', { name: /Active/ }).click();
-		await expect(page.locator('text=No active tasks')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 
 		// Create a task in Room A while the user is viewing Room B
 		await createTask(page, roomAId, 'Cross-Room Bleed Task');
 
-		// Wait a moment for any potential bleed-through
-		await page.waitForTimeout(2000);
+		// Wait until the LiveQuery delta for Room A would have had time to arrive
+		// (positive condition: poll until the hub confirms no liveQuery delta pending)
+		await page.waitForFunction(
+			() => {
+				// If Room B still shows "No tasks yet", we're clean
+				const noTasksEl = document.querySelector('p');
+				return (
+					!!noTasksEl &&
+					Array.from(document.querySelectorAll('p')).some(
+						(el) => el.textContent?.trim() === 'No tasks yet'
+					)
+				);
+			},
+			{ timeout: 5000 }
+		);
 
-		// Room B should still show no active tasks — the stale-event guard must stop bleed
-		await expect(page.locator('text=No active tasks')).toBeVisible({ timeout: 5000 });
+		// Room B should still show "No tasks yet" — the stale-event guard stopped bleed
+		await expect(page.locator('text=No tasks yet')).toBeVisible();
 		await expect(page.locator('text=Cross-Room Bleed Task')).not.toBeVisible();
 	});
 });
 
-test.describe('LiveQuery — goal deletion surfaces in Missions tab via removed delta', () => {
+test.describe('LiveQuery — goal deletion surfaces in Goals tab via removed delta', () => {
 	let roomId = '';
 
 	test.beforeEach(async ({ page }) => {
@@ -245,26 +260,25 @@ test.describe('LiveQuery — goal deletion surfaces in Missions tab via removed 
 		await deleteRoom(page, roomId);
 	});
 
-	test('goal deleted via RPC disappears from Missions tab without page reload', async ({
-		page,
-	}) => {
+	test('goal deleted via RPC disappears from Goals tab without page reload', async ({ page }) => {
 		roomId = await createRoom(page, 'LiveQuery Goal Deletion Test Room');
 		const goalId = await createGoal(page, roomId, 'Mission To Delete');
 
-		// Navigate to the room and open the Missions tab
+		// Navigate to the room and open the Goals tab
 		await page.goto(`/room/${roomId}`);
+		await waitForWebSocketConnected(page);
 		await expect(page.locator('text=LiveQuery Goal Deletion Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		const missionsTab = page.locator('button:has-text("Missions")');
-		await expect(missionsTab).toBeVisible({ timeout: 10000 });
-		await missionsTab.click();
+		const goalsTab = page.locator('button:has-text("Goals")');
+		await expect(goalsTab).toBeVisible({ timeout: 10000 });
+		await goalsTab.click();
 
-		// The mission must be visible
+		// The goal must be visible
 		await expect(page.locator('text=Mission To Delete').first()).toBeVisible({ timeout: 10000 });
 
-		// Delete the goal via RPC while the Missions tab is open
+		// Delete the goal via RPC while the Goals tab is open
 		await deleteGoal(page, roomId, goalId);
 
 		// The goal must disappear from the UI WITHOUT a page reload
@@ -276,15 +290,16 @@ test.describe('LiveQuery — goal deletion surfaces in Missions tab via removed 
 		const goalToDeleteId = await createGoal(page, roomId, 'Goal That Will Be Deleted');
 		await createGoal(page, roomId, 'Goal That Should Remain');
 
-		// Navigate to the room and open the Missions tab
+		// Navigate to the room and open the Goals tab
 		await page.goto(`/room/${roomId}`);
+		await waitForWebSocketConnected(page);
 		await expect(page.locator('text=LiveQuery Partial Goal Delete Room').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		const missionsTab = page.locator('button:has-text("Missions")');
-		await expect(missionsTab).toBeVisible({ timeout: 10000 });
-		await missionsTab.click();
+		const goalsTab = page.locator('button:has-text("Goals")');
+		await expect(goalsTab).toBeVisible({ timeout: 10000 });
+		await goalsTab.click();
 
 		// Both goals must be visible
 		await expect(page.locator('text=Goal That Will Be Deleted').first()).toBeVisible({
