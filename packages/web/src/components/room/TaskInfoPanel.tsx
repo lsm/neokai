@@ -123,9 +123,8 @@ export function TaskInfoPanel({
 		worktreePath ||
 		workerSession ||
 		leaderSession ||
-		taskCreatedAt ||
-		prUrl ||
-		prNumber;
+		taskCreatedAt !== undefined ||
+		prUrl;
 	const displayPath = worktreePath ? getLastPathSegments(worktreePath) : null;
 
 	// Git branch: prefer worker worktree branch, then worker gitBranch, then leader equivalents
@@ -273,7 +272,7 @@ export function TaskInfoPanel({
 							)}
 
 							{/* Created at */}
-							{taskCreatedAt && (
+							{taskCreatedAt !== undefined && (
 								<div class="flex items-center gap-2">
 									<span class="text-gray-500 flex-shrink-0 w-14">Created:</span>
 									<span

@@ -54,12 +54,18 @@ describe('TaskInfoPanel', () => {
 			expect(el?.textContent).toBe('task-abc123-def456-ghi789');
 		});
 
-		it('should show copy button for task ID', () => {
+		it('should show a copy button next to the task ID', () => {
 			const { container } = render(
 				<TaskInfoPanel isOpen={true} taskId="task-abc123" actions={{}} visibleActions={{}} />
 			);
 
-			expect(container.querySelector('[data-testid="task-info-panel-task-id"]')).toBeTruthy();
+			// The task ID row should contain a button (the CopyButton) with a copy title
+			const taskIdEl = container.querySelector('[data-testid="task-info-panel-task-id"]');
+			expect(taskIdEl).toBeTruthy();
+			// CopyButton renders a <button> with title="Copy" or "Copied!" in the same row
+			const row = taskIdEl?.closest('.flex');
+			const copyBtn = row?.querySelector('button[title]');
+			expect(copyBtn).toBeTruthy();
 		});
 
 		it('should not show task ID row when not provided', () => {
