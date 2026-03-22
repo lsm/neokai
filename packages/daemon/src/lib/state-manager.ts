@@ -372,6 +372,12 @@ export class StateManager {
 			});
 		});
 
+		this.eventBus.on('spaceSessionGroup.deleted', (data) => {
+			this.messageHub.event('spaceSessionGroup.deleted', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
 		// Space workflow definition events (global channel)
 		this.eventBus.on('spaceWorkflow.created', (data) => {
 			this.messageHub.event('spaceWorkflow.created', data, {
