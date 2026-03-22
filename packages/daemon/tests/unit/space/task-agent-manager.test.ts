@@ -1979,6 +1979,80 @@ describe('TaskAgentManager', () => {
 			restoreSpy.mockRestore();
 		});
 
+		test('step-agent MCP server is re-attached on rehydrated sub-sessions', async () => {
+			// Seed a workflow run so sub-sessions are rebuilt
+			const wfId = 'wf-rehydrate-step-mcp';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Step MCP', now, now);
+			const wfRunId = 'run-rehydrate-step-mcp';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_step_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const mainTask = await ctx.taskManager.createTask({
+				title: 'Main task step-mcp',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const mainSessionId = `space:${ctx.spaceId}:task:${mainTask.id}`;
+			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
+			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
+
+			// Create a sub-session task
+			const subSessionId = '550e8400-e29b-41d4-a716-step-mcp-sub01';
+			await ctx.taskManager.createTask({
+				title: 'Sub task step-mcp',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				taskAgentSessionId: subSessionId,
+			});
+			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+			// Create a group and add the sub-session as a member with role 'coder'
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${mainTask.id}`,
+				taskId: mainTask.id,
+			});
+			ctx.sessionGroupRepo.addMember(group.id, mainSessionId, {
+				role: 'task-agent',
+				status: 'active',
+				orderIndex: 0,
+			});
+			ctx.sessionGroupRepo.addMember(group.id, subSessionId, {
+				role: 'coder',
+				status: 'active',
+				orderIndex: 1,
+			});
+
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				const session = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, session);
+				return session as unknown as AgentSession;
+			});
+
+			await ctx.manager.rehydrate();
+
+			// The rehydrated sub-session should have the step-agent MCP server attached
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			expect(subSession).toBeDefined();
+			expect(Object.keys(subSession._mcpServers)).toContain('step-agent');
+
+			restoreSpy.mockRestore();
+		});
+
 		test('taskGroupIds is restored from DB after rehydration', async () => {
 			const { task } = await seedInProgressTask(ctx);
 

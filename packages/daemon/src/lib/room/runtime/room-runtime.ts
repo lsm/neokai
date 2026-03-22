@@ -87,6 +87,13 @@ export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
 /** Default when room config does not specify maxPlanningRetries (no auto-retry) */
 const DEFAULT_MAX_PLANNING_RETRIES = 0;
 
+/**
+ * Task statuses that indicate a group is stale and should be auto-cleaned.
+ * Groups whose tasks are in these terminal states but still marked active
+ * consume concurrency slots and prevent new tasks from being picked up.
+ */
+const STALE_TASK_STATUSES = new Set<string>(['completed', 'cancelled', 'archived']);
+
 export type { RuntimeState } from '@neokai/shared';
 
 export interface WorkerMessage {
@@ -1833,6 +1840,70 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Force-stop a session group by ID.
+	 *
+	 * Kills worker and leader sessions, marks the group as failed, and deletes the
+	 * group record from the DB. Used for manual cleanup of stale or stuck groups
+	 * via the `session_group.stop` RPC.
+	 *
+	 * Task status is NOT changed — the group is removed while leaving the task
+	 * in its current state. Call task.cancel separately if needed.
+	 *
+	 * Returns { success: false } if the group doesn't exist or belongs to a
+	 * different room (validated by checking the task via this room's TaskManager).
+	 */
+	async forceStopSessionGroup(groupId: string): Promise<{ success: boolean; error?: string }> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) {
+			return { success: false, error: `Session group ${groupId} not found` };
+		}
+
+		// Validate the group belongs to this room by fetching the task via this
+		// room's TaskManager (which is scoped to this.roomId).
+		const task = await this.taskManager.getTask(group.taskId);
+		if (!task) {
+			// Task not in this room or doesn't exist. Refuse to act on foreign groups.
+			return {
+				success: false,
+				error: `Group ${groupId} belongs to a different room or its task no longer exists`,
+			};
+		}
+
+		// Stop the actual agent processes first (best-effort).
+		await this.terminateGroupSessions(group);
+
+		// Mark group as terminal in the DB (unobserves sessions too).
+		if (group.completedAt === null) {
+			const terminated = await this.taskGroupManager.terminateGroup(groupId);
+			if (!terminated) {
+				// Concurrent modification (optimistic lock conflict) — the group may have
+				// already been terminated by another code path. Log and continue; the
+				// deleteGroup() below will still free the concurrency slot.
+				log.warn(
+					`[forceStopSessionGroup] terminateGroup(${groupId}) returned null — ` +
+						`possible concurrent modification; proceeding with delete`
+				);
+			}
+		}
+
+		// Clean up message mirroring subscriptions.
+		this.cleanupMirroring(groupId, 'Force-stopped by user.');
+
+		// Delete the group record from the DB (freeing the concurrency slot).
+		this.groupRepo.deleteGroup(groupId);
+
+		// Emit task update so the frontend reflects the removed group.
+		// emitGoalProgressForTask is intentionally omitted: goal progress is derived
+		// from task status, which forceStopSessionGroup deliberately leaves unchanged.
+		// There is nothing for the goal progress bar to update.
+		await this.emitTaskUpdateById(group.taskId);
+		this.scheduleTick();
+
+		log.info(`[forceStopSessionGroup] Group ${groupId} for task ${group.taskId} force-stopped`);
+		return { success: true };
+	}
+
+	/**
 	 * Interrupt the current agent session(s) for a task without changing task status.
 	 *
 	 * Unlike stopTaskSession() / cancelTask(), this:
@@ -2528,7 +2599,61 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Auto-clean stale session groups whose tasks have reached a terminal state.
+	 *
+	 * Groups become stale when a task transitions to completed/cancelled/archived
+	 * while its group was still marked active (e.g., after a daemon crash or an
+	 * external status change). Stale groups consume concurrency slots and prevent
+	 * new tasks from being picked up.
+	 *
+	 * This runs at the start of every tick as a safety net. Stale groups are
+	 * terminated (sessions stopped, group marked failed) so slots are freed.
+	 */
+	private async cleanStaleGroups(): Promise<void> {
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		if (activeGroups.length === 0) return;
+
+		// NOTE: getActiveGroups() uses an INNER JOIN on tasks — groups whose tasks
+		// were hard-deleted from the DB will not appear here. Those groups are handled
+		// by the zombie recovery path (findZombieGroups / recoverZombieGroups).
+
+		for (const group of activeGroups) {
+			try {
+				const task = await this.taskManager.getTask(group.taskId);
+				const isStale = !task || STALE_TASK_STATUSES.has(task.status);
+				if (!isStale) continue;
+
+				log.warn(
+					`[cleanStaleGroups] Group ${group.id} is stale ` +
+						`(task ${group.taskId} status=${task?.status ?? 'not found'}) — auto-cleaning`
+				);
+
+				// Stop the actual agent processes (best-effort).
+				await this.terminateGroupSessions(group);
+
+				// Mark group as terminal (unobserves sessions); no-op if already terminal.
+				if (group.completedAt === null) {
+					await this.taskGroupManager.terminateGroup(group.id);
+				}
+
+				// Clean up mirroring subscriptions.
+				this.cleanupMirroring(group.id, 'Stale group auto-cleaned by tick.');
+
+				// Emit UI updates so the frontend reflects the cleaned-up state.
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+			} catch (error) {
+				log.error(`[cleanStaleGroups] Failed to clean stale group ${group.id} — skipping:`, error);
+			}
+		}
+	}
+
 	private async executeTick(): Promise<void> {
+		// Safety net: clean up stale groups whose tasks have already reached a
+		// terminal state. This frees concurrency slots blocked by orphaned groups.
+		await this.cleanStaleGroups();
+
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
 		// Ordering: zombie recovery runs BEFORE tickRecurringMissions so that any
 		// in-flight execution from a prior restart is recovered first, preventing a

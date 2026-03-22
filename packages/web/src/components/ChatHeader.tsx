@@ -216,7 +216,7 @@ export function ChatHeader({
 							</svg>
 						</div>
 					)}
-					<h2 class="text-lg font-semibold text-gray-100 truncate">
+					<h2 data-testid="chat-header-title" class="text-lg font-semibold text-gray-100 truncate">
 						{session?.title || 'New Session'}
 					</h2>
 					<div class="flex items-center gap-3 mt-1 text-xs text-gray-400">

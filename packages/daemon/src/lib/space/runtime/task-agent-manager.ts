@@ -665,6 +665,18 @@ export class TaskAgentManager {
 	 * Passed to `createTaskAgentMcpServer()` for the given Task Agent session.
 	 */
 	private createSubSessionFactory(taskId: string, spaceId: string): SubSessionFactory {
+		// Capture workflowRunId once at factory-creation time to avoid a DB round-trip
+		// on every spawn. The run ID is immutable once assigned, so this is safe.
+		// Log a warning if the task lacks a workflow run — step-agent tools will
+		// produce an empty ChannelResolver (no declared channels) in that case.
+		const taskWorkflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId ?? '';
+		if (!taskWorkflowRunId) {
+			log.warn(
+				`TaskAgentManager.createSubSessionFactory: task ${taskId} has no workflowRunId — ` +
+					`step-agent channel topology will be unavailable (request_peer_input still works)`
+			);
+		}
+
 		return {
 			create: async (
 				init: AgentSessionInit,
@@ -1157,8 +1169,16 @@ export class TaskAgentManager {
 		// --- Rebuild subSessions map from step tasks in the same workflow run
 		// Sub-sessions are not fully rehydrated (no streaming restart) — the Task Agent
 		// will re-spawn them as needed after receiving the re-orientation message.
+		// Step-agent MCP tools are runtime-only (not persisted), so we must re-attach
+		// them here the same way createSubSessionFactory.create() does it.
 		if (task.workflowRunId) {
-			const stepTasks = this.config.taskRepo.listByWorkflowRun(task.workflowRunId);
+			const workflowRunId = task.workflowRunId;
+
+			// Load the group once; we need it to look up each sub-session's role.
+			const groupId = this.taskGroupIds.get(taskId);
+			const group = groupId ? this.config.sessionGroupRepo.getGroup(groupId) : null;
+
+			const stepTasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
 			for (const stepTask of stepTasks) {
 				const subSessionId = stepTask.taskAgentSessionId;
 				if (!subSessionId || stepTask.id === taskId) continue;
@@ -1175,6 +1195,22 @@ export class TaskAgentManager {
 					this.config.getApiKey
 				);
 				if (!subSession) continue;
+
+				// Re-attach step-agent MCP tools (runtime-only, not persisted to DB).
+				// Look up the member's role from the session group; fall back to 'agent'.
+				const memberRole =
+					group?.members.find((m) => m.sessionId === subSessionId)?.role ?? 'agent';
+
+				const stepAgentMcpServer = this.buildStepAgentMcpServerForSession(
+					taskId,
+					subSessionId,
+					memberRole,
+					spaceId,
+					workflowRunId
+				);
+				subSession.setRuntimeMcpServers({
+					'step-agent': stepAgentMcpServer as unknown as McpServerConfig,
+				});
 
 				if (!this.subSessions.has(taskId)) {
 					this.subSessions.set(taskId, new Map());
