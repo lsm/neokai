@@ -1883,6 +1883,10 @@ export class RoomRuntime {
 		// Delete the group record from the DB (freeing the concurrency slot).
 		this.groupRepo.deleteGroup(groupId);
 
+		// Emit task update so the frontend reflects the removed group.
+		// emitGoalProgressForTask is intentionally omitted: goal progress is derived
+		// from task status, which forceStopSessionGroup deliberately leaves unchanged.
+		// There is nothing for the goal progress bar to update.
 		await this.emitTaskUpdateById(group.taskId);
 		this.scheduleTick();
 
