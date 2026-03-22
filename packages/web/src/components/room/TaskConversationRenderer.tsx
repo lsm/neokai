@@ -68,6 +68,7 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 		return {
 			type: 'status',
 			text: msg.content,
+			timestamp: msg.createdAt,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -82,6 +83,7 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 		return {
 			type: 'leader_summary',
 			text: msg.content,
+			timestamp: msg.createdAt,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -103,6 +105,7 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 		return {
 			...parsed,
 			type: 'rate_limited',
+			timestamp: msg.createdAt,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -124,6 +127,7 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 		return {
 			...parsed,
 			type: 'model_fallback',
+			timestamp: msg.createdAt,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -134,7 +138,9 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 	}
 
 	try {
-		return JSON.parse(msg.content) as SDKMessage;
+		const parsed = JSON.parse(msg.content) as SDKMessage;
+		// Inject timestamp from the database row so message components render the correct creation time
+		return { ...parsed, timestamp: msg.createdAt } as unknown as SDKMessage;
 	} catch {
 		return null;
 	}

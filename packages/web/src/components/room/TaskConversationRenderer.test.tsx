@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, act } from '@testing-library/preact';
 
-import { TaskConversationRenderer } from './TaskConversationRenderer';
+import { TaskConversationRenderer, parseGroupMessage } from './TaskConversationRenderer';
 import { resetSubscriptionCounterForTesting } from '../../hooks/useGroupMessages';
 
 // -------------------------------------------------------
@@ -633,5 +633,117 @@ describe('TaskConversationRenderer — isReconnecting state', () => {
 		});
 		expect(container.textContent).not.toContain('Reconnecting');
 		expect(container.textContent).not.toContain('Loading conversation');
+	});
+});
+
+// -------------------------------------------------------
+// parseGroupMessage unit tests
+// -------------------------------------------------------
+
+describe('parseGroupMessage — timestamp preservation', () => {
+	/**
+	 * Regression test: createdAt from the database row must be injected into the
+	 * returned SDKMessage so that message components render the correct creation
+	 * time, not the current time.
+	 */
+
+	it('preserves createdAt on a regular assistant SDK message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 1,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'assistant',
+			content: JSON.stringify({ type: 'assistant', uuid: 'uuid-1', message: { content: [] } }),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a status message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 2,
+			groupId: 'group-1',
+			sessionId: null,
+			role: 'system',
+			messageType: 'status',
+			content: 'Task started',
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a leader_summary message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 3,
+			groupId: 'group-1',
+			sessionId: null,
+			role: 'system',
+			messageType: 'leader_summary',
+			content: '[Turn Summary] Some summary',
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a rate_limited message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 4,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'rate_limited',
+			content: JSON.stringify({ text: 'Rate limit reached', resetsAt: 1700000060000 }),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a model_fallback message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 5,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'model_fallback',
+			content: JSON.stringify({ fromModel: 'claude-3-5', toModel: 'claude-3-6' }),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
+	});
+
+	it('preserves createdAt on a user SDK message', () => {
+		const createdAt = 1700000000000;
+		const msg = {
+			id: 6,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'worker',
+			messageType: 'user',
+			content: JSON.stringify({
+				type: 'user',
+				uuid: 'uuid-2',
+				message: { content: [{ type: 'text', text: 'Hello' }] },
+			}),
+			createdAt,
+		};
+		const result = parseGroupMessage(msg);
+		expect(result).not.toBeNull();
+		expect((result as { timestamp?: number }).timestamp).toBe(createdAt);
 	});
 });
