@@ -4,20 +4,34 @@ import {
 	createSessionViaUI,
 	waitForAssistantResponse,
 	waitForMessageSent,
+	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
 /**
  * E2E tests for background job queue tasks.
  *
- * Verifies that background tasks (session title generation, etc.) are working
+ * Verifies that background tasks (session title generation) are working
  * correctly from the user's perspective — i.e., through visible DOM state only.
+ *
+ * The existing `tests/settings/auto-title.e2e.ts` verifies the sidebar session
+ * card (`h3`) updates. This test complements it by asserting the chat header
+ * (`h2`) also updates, confirming real-time signal propagation from the
+ * background job through to the active session view.
  */
+
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
+// The ChatHeader h2 uses these classes — scope to them so we never match
+// the sidebar's "<h2>Sessions</h2>" or any modal h2 elements.
+const CHAT_HEADER_TITLE = 'h2.text-lg.font-semibold.text-gray-100.truncate';
+
 test.describe('Background Job Queue Tasks', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+		await waitForWebSocketConnected(page);
 		sessionId = null;
 	});
 
@@ -32,47 +46,64 @@ test.describe('Background Job Queue Tasks', () => {
 		}
 	});
 
-	test('session title updates after first message (title generation job)', async ({ page }) => {
+	test('chat header title updates after first message (title generation job)', async ({ page }) => {
+		// Longer timeout: waitForAssistantResponse (90s) + title job (60s) + buffer
+		test.setTimeout(180000);
+
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
-		// Verify the session starts with the default "New Session" title in the chat header
-		const chatHeader = page.locator('h2').filter({ hasText: 'New Session' }).first();
-		await expect(chatHeader).toBeVisible({ timeout: 5000 });
+		// Verify the chat header starts with the default "New Session" title.
+		// Use the scoped class selector to avoid false matches on sidebar headings.
+		const headerTitle = page.locator(CHAT_HEADER_TITLE).first();
+		await expect(headerTitle).toHaveText('New Session', { timeout: 5000 });
 
-		// Send a short message — this triggers the session.title_generation background job
-		const testMessage = 'What is 2 + 2?';
+		// Send a short message — this triggers the session.title_generation background job.
+		// Use Enter (not Meta+Enter) so the test works on both macOS and Linux CI.
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(testMessage);
-		await page.keyboard.press('Meta+Enter');
+		await textarea.fill('What is the capital of France?');
+		await textarea.press('Enter');
 
 		// Verify user message appears in chat
-		await waitForMessageSent(page, testMessage);
+		await waitForMessageSent(page, 'What is the capital of France?');
 
 		// Wait for the assistant to respond (proves the agent ran end-to-end)
 		await waitForAssistantResponse(page);
 
-		// Wait for the session title to change from "New Session" to something
-		// meaningful — this confirms the title generation background job ran
-		// and persisted the new title back to the session.
-		// Allow up to 30s after response for the job to complete and UI to update.
-		await page.waitForFunction(
-			() => {
-				const h2 = document.querySelector('h2');
-				return h2 && h2.textContent?.trim() !== '' && h2.textContent?.trim() !== 'New Session';
-			},
-			{ timeout: 30000 }
-		);
+		if (!IS_MOCK) {
+			// Wait for the chat header title to change from "New Session" to the
+			// generated title — this confirms the background job ran and the
+			// session signal was updated in the active view.
+			// Scope to the ChatHeader h2 via its specific class combo to avoid
+			// selecting the sidebar's "<h2>Sessions</h2>".
+			await page.waitForFunction(
+				(selector) => {
+					const h2 = document.querySelector(selector);
+					const text = h2?.textContent?.trim() ?? '';
+					return text !== '' && text !== 'New Session';
+				},
+				CHAT_HEADER_TITLE,
+				{ timeout: 60000 }
+			);
 
-		// Confirm the new title is displayed in the header
-		const updatedTitle = await page.locator('h2').first().textContent();
-		expect(updatedTitle?.trim()).toBeTruthy();
-		expect(updatedTitle?.trim()).not.toBe('New Session');
+			// Confirm the new title is visible in the chat header
+			const updatedTitle = await headerTitle.textContent();
+			expect(updatedTitle?.trim()).toBeTruthy();
+			expect(updatedTitle?.trim()).not.toBe('New Session');
 
-		// Also verify the sidebar session card reflects the updated title
-		// (the session list item should no longer show the default placeholder)
-		const sessionCard = page.locator('[data-testid="session-card"]').first();
-		const cardTitle = sessionCard.locator('h3').first();
-		await expect(cardTitle).not.toHaveText('New Session', { timeout: 10000 });
+			// Also confirm the sidebar session card (scoped to this session)
+			// reflects the updated title
+			const sessionCard = page.locator(
+				`[data-testid="session-card"][data-session-id="${sessionId}"]`
+			);
+			const cardTitle = sessionCard.locator('h3').first();
+			await expect(cardTitle).not.toHaveText('New Session', { timeout: 10000 });
+		} else {
+			// In mock mode the devproxy won't generate a meaningful title;
+			// just verify the assistant responded so the job queue at least ran
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 5000,
+			});
+		}
 	});
 });
