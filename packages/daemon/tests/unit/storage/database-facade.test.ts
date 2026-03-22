@@ -9,6 +9,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import type { Session } from '@neokai/shared';
 
 // Factory function to create a test session
@@ -47,7 +48,8 @@ describe('Database Facade', () => {
 		const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
 		dbPath = `${tmpBase}/test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
 		db = new Database(dbPath);
-		await db.initialize();
+		const reactiveDb = createReactiveDatabase(db);
+		await db.initialize(reactiveDb);
 	});
 
 	afterEach(() => {

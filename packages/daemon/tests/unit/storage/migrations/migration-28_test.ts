@@ -25,6 +25,7 @@ import {
 	GoalRepository,
 	getEffectiveMaxPlanningAttempts,
 } from '../../../../src/storage/repositories/goal-repository.ts';
+import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
 // ---------------------------------------------------------------------------
 // Shared test database setup helpers
@@ -262,7 +263,7 @@ describe('GoalRepository: mission metadata CRUD', () => {
 			`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'R', ${now}, ${now})`
 		);
 		roomId = 'room-1';
-		repo = new GoalRepository(db);
+		repo = new GoalRepository(db, noOpReactiveDb);
 	});
 
 	test('createGoal defaults to one_shot / supervised', () => {
@@ -348,7 +349,7 @@ describe('GoalRepository: mission_metric_history', () => {
 		db.exec(
 			`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'R', ${now}, ${now})`
 		);
-		repo = new GoalRepository(db);
+		repo = new GoalRepository(db, noOpReactiveDb);
 		const goal = repo.createGoal({ roomId: 'room-1', title: 'Metric Goal' });
 		goalId = goal.id;
 	});
@@ -425,7 +426,7 @@ describe('GoalRepository: mission_executions', () => {
 		db.exec(
 			`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'R', ${now}, ${now})`
 		);
-		repo = new GoalRepository(db);
+		repo = new GoalRepository(db, noOpReactiveDb);
 		const goal = repo.createGoal({ roomId: 'room-1', title: 'Exec Goal' });
 		goalId = goal.id;
 	});

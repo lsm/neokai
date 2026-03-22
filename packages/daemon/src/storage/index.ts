@@ -31,6 +31,7 @@ import {
 	type UpdateGoalParams,
 } from './repositories/goal-repository';
 import { JobQueueRepository } from './repositories/job-queue-repository';
+import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
@@ -71,7 +72,7 @@ export class Database {
 		this.core = new DatabaseCore(dbPath);
 	}
 
-	async initialize(): Promise<void> {
+	async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
 		await this.core.initialize();
 
 		// Initialize repositories with the raw BunDatabase instance
@@ -81,7 +82,7 @@ export class Database {
 		this.settingsRepo = new SettingsRepository(db);
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
-		this.goalRepo = new GoalRepository(db);
+		this.goalRepo = new GoalRepository(db, reactiveDb);
 		this.jobQueueRepo = new JobQueueRepository(db);
 	}
 

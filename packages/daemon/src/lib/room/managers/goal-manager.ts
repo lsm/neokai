@@ -16,6 +16,7 @@ import {
 	type UpdateGoalParams,
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	RoomGoal,
 	GoalStatus,
@@ -43,9 +44,10 @@ export class GoalManager {
 
 	constructor(
 		private db: BunDatabase,
-		private roomId: string
+		private roomId: string,
+		reactiveDb: ReactiveDatabase
 	) {
-		this.goalRepo = new GoalRepository(db);
+		this.goalRepo = new GoalRepository(db, reactiveDb);
 		this.taskRepo = new TaskRepository(db);
 	}
 

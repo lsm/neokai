@@ -10,6 +10,7 @@ import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { LeaderToolCallbacks } from '../../../src/lib/room/agents/leader-agent';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
@@ -266,8 +267,8 @@ describe('TaskGroupManager', () => {
 		const mockHub = createMockDaemonHub();
 		groupRepo = new SessionGroupRepository(db as never);
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
-		taskManager = new TaskManager(db as never, 'room-1', { notifyChange: () => {} } as never);
-		goalManager = new GoalManager(db as never, 'room-1');
+		taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+		goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 		sessionFactory = createMockSessionFactory();
 
 		const room = makeRoom();

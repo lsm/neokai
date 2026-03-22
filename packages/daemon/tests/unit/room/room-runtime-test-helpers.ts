@@ -5,6 +5,7 @@ import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room, GlobalSettings } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks';
@@ -242,8 +243,8 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	const mockHub = createMockDaemonHub();
 	const groupRepo = new SessionGroupRepository(db as never);
 	const observer = new SessionObserver(mockHub as unknown as DaemonHub);
-	const taskManager = new TaskManager(db as never, 'room-1', { notifyChange: () => {} } as never);
-	const goalManager = new GoalManager(db as never, 'room-1');
+	const taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+	const goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 	const sessionFactory = createMockSessionFactory();
 	const room = makeRoom(opts?.room);
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
 import {
@@ -116,8 +117,8 @@ describe('Room Agent Tools', () => {
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
-		goalManager = new GoalManager(db as never, roomId);
-		taskManager = new TaskManager(db as never, roomId, { notifyChange: () => {} } as never);
+		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
+		taskManager = new TaskManager(db as never, roomId, noOpReactiveDb);
 		groupRepo = new SessionGroupRepository(db as never);
 		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});

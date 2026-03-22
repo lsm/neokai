@@ -16,6 +16,7 @@ import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { MissionMetric } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // Inline goals table DDL matching the V2 schema (mirrors what migration 28 adds)
 const GOALS_TABLE_DDL = `
@@ -106,8 +107,8 @@ describe('GoalManager — Measurable Missions', () => {
 		});
 		roomId = room.id;
 
-		goalManager = new GoalManager(db, roomId);
-		goalRepo = new GoalRepository(db);
+		goalManager = new GoalManager(db, roomId, noOpReactiveDb);
+		goalRepo = new GoalRepository(db, noOpReactiveDb);
 	});
 
 	afterEach(() => {
@@ -653,7 +654,7 @@ describe('GoalManager — Measurable Missions', () => {
 	describe('room isolation', () => {
 		it('should not allow recording metric for goal in another room', async () => {
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const goalManager2 = new GoalManager(db, room2.id);
+			const goalManager2 = new GoalManager(db, room2.id, noOpReactiveDb);
 
 			const goal = await goalManager.createGoal({
 				title: 'Room 1 Goal',

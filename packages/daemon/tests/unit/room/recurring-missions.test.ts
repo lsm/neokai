@@ -17,6 +17,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // ============================================================
 // Tests
@@ -236,7 +237,7 @@ describe('Recurring Missions: tickRecurringMissions triggers execution', () => {
 			description: 'From previous execution',
 			status: 'completed',
 		});
-		const goalRepo = new GoalRepository(ctx.db as never);
+		const goalRepo = new GoalRepository(ctx.db as never, noOpReactiveDb);
 		goalRepo.linkTaskToGoal(goal.id, oldTask.id);
 
 		ctx.runtime.start();

@@ -376,7 +376,7 @@ export class RoomRuntimeService {
 		const rawDb = this.ctx.db.getDatabase();
 		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, room.id, this.ctx.reactiveDb);
-		const goalManager = new GoalManager(rawDb, room.id);
+		const goalManager = new GoalManager(rawDb, room.id, this.ctx.reactiveDb);
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
