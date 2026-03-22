@@ -187,6 +187,9 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
+	);
+	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
 	);
 
@@ -205,4 +208,11 @@ export function createSpaceTables(db: BunDatabase): void {
 			UNIQUE(group_id, session_id)
 		)
 	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_group_id ON space_session_group_members(group_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
+	);
 }
