@@ -1233,6 +1233,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			{/* Info panel — expands below header when gear is clicked */}
 			<TaskInfoPanel
 				isOpen={isInfoPanelOpen}
+				taskId={task.id}
+				groupId={group?.id}
+				feedbackIteration={group?.feedbackIteration}
+				taskCreatedAt={task.createdAt}
+				prUrl={task.prUrl}
+				prNumber={task.prNumber}
 				worktreePath={workerSession?.worktree?.worktreePath ?? workerSession?.workspacePath}
 				workerSession={workerSession}
 				leaderSession={leaderSession}

@@ -8,6 +8,13 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { TaskInfoPanel } from '../TaskInfoPanel';
 
+// Mock TaskViewModelSelector to avoid connectionManager dependency in tests
+vi.mock('../TaskViewModelSelector.tsx', () => ({
+	TaskViewModelSelector: ({ currentModel }: { currentModel: string }) => (
+		<span data-testid="model-selector-mock">{currentModel}</span>
+	),
+}));
+
 describe('TaskInfoPanel', () => {
 	afterEach(() => {
 		cleanup();
@@ -28,6 +35,68 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.querySelector('[data-testid="task-info-panel"]')).toBeTruthy();
+		});
+	});
+
+	describe('Task ID and Group ID', () => {
+		it('should show full task ID when provided', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					taskId="task-abc123-def456-ghi789"
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Task ID:');
+			const el = container.querySelector('[data-testid="task-info-panel-task-id"]');
+			expect(el?.textContent).toBe('task-abc123-def456-ghi789');
+		});
+
+		it('should show a copy button next to the task ID', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} taskId="task-abc123" actions={{}} visibleActions={{}} />
+			);
+
+			// The task ID row should contain a button (the CopyButton) with a copy title
+			const taskIdEl = container.querySelector('[data-testid="task-info-panel-task-id"]');
+			expect(taskIdEl).toBeTruthy();
+			// CopyButton renders a <button> with title="Copy" or "Copied!" in the same row
+			const row = taskIdEl?.closest('.flex');
+			const copyBtn = row?.querySelector('button[title]');
+			expect(copyBtn).toBeTruthy();
+		});
+
+		it('should not show task ID row when not provided', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Task ID:');
+		});
+
+		it('should show full group ID when provided', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					groupId="group-xyz789-abc123"
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Group ID:');
+			const el = container.querySelector('[data-testid="task-info-panel-group-id"]');
+			expect(el?.textContent).toBe('group-xyz789-abc123');
+		});
+
+		it('should not show group ID row when not provided', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Group ID:');
 		});
 	});
 
@@ -127,9 +196,9 @@ describe('TaskInfoPanel', () => {
 			expect(container.textContent).not.toContain('Branch:');
 		});
 
-		it('should show worker session info when provided', () => {
+		it('should show full worker session ID when provided', () => {
 			const workerSession = {
-				id: 'worker-session-id-1234',
+				id: 'worker-session-id-1234-5678-abcd',
 				status: 'active',
 				config: { model: 'claude-sonnet-4-6' },
 			} as never;
@@ -144,7 +213,9 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.textContent).toContain('Worker:');
-			expect(container.textContent).toContain('worker-s'); // first 8 chars + '...'
+			// Should show the full session ID (not truncated)
+			const el = container.querySelector('[data-testid="worker-session-id"]');
+			expect(el?.textContent).toBe('worker-session-id-1234-5678-abcd');
 		});
 
 		it('should show worker session status', () => {
@@ -168,9 +239,9 @@ describe('TaskInfoPanel', () => {
 			expect(statusEl?.textContent).toBe('active');
 		});
 
-		it('should show leader session info when provided', () => {
+		it('should show full leader session ID when provided', () => {
 			const leaderSession = {
-				id: 'leader-session-id-5678',
+				id: 'leader-session-id-5678-efgh',
 				status: 'active',
 				config: { model: 'claude-sonnet-4-6' },
 			} as never;
@@ -185,7 +256,9 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.textContent).toContain('Leader:');
-			expect(container.textContent).toContain('leader-s'); // first 8 chars + '...'
+			// Should show the full session ID (not truncated)
+			const el = container.querySelector('[data-testid="leader-session-id"]');
+			expect(el?.textContent).toBe('leader-session-id-5678-efgh');
 		});
 
 		it('should show leader session status', () => {
@@ -358,9 +431,10 @@ describe('TaskInfoPanel', () => {
 			expect(container.textContent).not.toContain('task/leader-branch');
 		});
 
-		it('should show model when session has model config', () => {
+		it('should render model selector when session has model config', () => {
 			const workerSession = {
 				id: 'worker-session-id-1234',
+				status: 'active',
 				config: { model: 'claude-sonnet-4-6' },
 			} as never;
 
@@ -374,6 +448,29 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.textContent).toContain('Model:');
+			// Mock shows the model id
+			expect(container.querySelector('[data-testid="model-selector-mock"]')).toBeTruthy();
+		});
+
+		it('should use leader session for model when no worker session', () => {
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'active',
+				config: { model: 'claude-opus-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Model:');
+			const modelEl = container.querySelector('[data-testid="model-selector-mock"]');
+			expect(modelEl?.textContent).toBe('claude-opus-4-6');
 		});
 
 		it('should show empty state when no info and no actions', () => {
@@ -382,6 +479,98 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.textContent).toContain('No info or actions available');
+		});
+	});
+
+	describe('Timestamp and metadata', () => {
+		it('should show creation time when taskCreatedAt is provided', () => {
+			// Use a fixed timestamp that will be formatted consistently
+			const ts = new Date('2025-01-15T10:30:00').getTime();
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} taskCreatedAt={ts} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('Created:');
+			const el = container.querySelector('[data-testid="task-info-panel-created-at"]');
+			expect(el).toBeTruthy();
+			// Should have an ISO string as title
+			expect(el?.getAttribute('title')).toContain('2025-01-15');
+		});
+
+		it('should not show Created row when taskCreatedAt is not provided', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Created:');
+		});
+
+		it('should show feedback iteration when > 0', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					taskId="task-abc"
+					feedbackIteration={3}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Iteration:');
+			const el = container.querySelector('[data-testid="task-info-panel-iteration"]');
+			expect(el?.textContent).toBe('3');
+		});
+
+		it('should not show iteration when feedbackIteration is 0', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} feedbackIteration={0} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Iteration:');
+		});
+
+		it('should not show iteration when feedbackIteration is undefined', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Iteration:');
+		});
+
+		it('should show PR link when prUrl and prNumber are provided', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					prUrl="https://github.com/org/repo/pull/42"
+					prNumber={42}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('PR:');
+			const link = container.querySelector(
+				'[data-testid="task-info-panel-pr-link"]'
+			) as HTMLAnchorElement;
+			expect(link).toBeTruthy();
+			expect(link?.textContent).toBe('#42');
+			expect(link?.href).toContain('github.com/org/repo/pull/42');
+		});
+
+		it('should not show PR row when prUrl is not provided', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('PR:');
+		});
+
+		it('should not show PR row when only prNumber is provided but no prUrl', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} prNumber={42} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('PR:');
 		});
 	});
 
