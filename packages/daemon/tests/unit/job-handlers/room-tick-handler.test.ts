@@ -196,6 +196,39 @@ describe('enqueueRoomTick', () => {
 		expect(after[0].runAt).toBeLessThan(before[0].runAt);
 	});
 
+	it('does not delete existing pending tick before enqueue succeeds', () => {
+		const pendingJob: Job = {
+			id: 'pending-1',
+			queue: ROOM_TICK,
+			status: 'pending',
+			payload: { roomId: 'room-a' },
+			result: null,
+			error: null,
+			priority: 0,
+			maxRetries: 0,
+			retryCount: 0,
+			runAt: Date.now() + 30_000,
+			createdAt: Date.now(),
+			startedAt: null,
+			completedAt: null,
+		};
+
+		let deletedId: string | null = null;
+		const mockRepo = {
+			listJobs: () => [pendingJob],
+			enqueue: () => {
+				throw new Error('enqueue failed');
+			},
+			deleteJob: (id: string) => {
+				deletedId = id;
+				return true;
+			},
+		} as unknown as JobQueueRepository;
+
+		expect(() => enqueueRoomTick('room-a', mockRepo, 0)).toThrow('enqueue failed');
+		expect(deletedId).toBeNull();
+	});
+
 	it('allows enqueueing for different rooms independently', () => {
 		enqueueRoomTick('room-a', repo, 1000);
 		enqueueRoomTick('room-b', repo, 1000);

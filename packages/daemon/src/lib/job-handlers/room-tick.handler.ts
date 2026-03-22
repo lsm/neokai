@@ -35,8 +35,6 @@ export function enqueueRoomTick(
 	if (pendingJob) {
 		// Existing tick will fire sooner or at the same time — keep it
 		if (pendingJob.runAt <= desiredRunAt) return;
-		// New request is sooner — replace the stale tick
-		jobQueue.deleteJob(pendingJob.id);
 	}
 
 	jobQueue.enqueue({
@@ -45,6 +43,13 @@ export function enqueueRoomTick(
 		maxRetries: 0,
 		runAt: desiredRunAt,
 	});
+
+	// New request is sooner — best-effort cleanup of the stale pending tick.
+	// Enqueue first so a transient enqueue failure cannot drop the only pending
+	// tick and stall room progress.
+	if (pendingJob) {
+		jobQueue.deleteJob(pendingJob.id);
+	}
 }
 
 /**
