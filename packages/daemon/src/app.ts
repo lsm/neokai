@@ -117,6 +117,24 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		maxConcurrent,
 		staleThresholdMs: 5 * 60 * 1000,
 	});
+	// --- setInterval inventory (out-of-scope for job-queue migration) ---
+	// The following subsystems intentionally retain their own setInterval timers.
+	// They were audited as part of the background-task migration (milestone 6) and
+	// determined to be out-of-scope because they are not "business tasks" that
+	// belong in the job queue:
+	//
+	//   • JobQueueProcessor.pollTimer (job-queue-processor.ts)
+	//       IS the job-queue infrastructure itself — migrating it is circular.
+	//   • JobQueueProcessor drain-check in stop() (job-queue-processor.ts)
+	//       Short-lived shutdown poll (50 ms); not a recurring business task.
+	//   • WebSocketServerTransport.staleCheckTimer (websocket-server-transport.ts)
+	//       Transport-layer health check; no business logic, not schedulable.
+	//   • SpaceRuntime.tickTimer (space/runtime/space-runtime.ts)
+	//       Drives the SpaceRuntime workflow engine; migrate in a dedicated follow-up.
+	//   • TaskAgentManager concurrent-spawn poll (space/runtime/task-agent-manager.ts)
+	//       Ephemeral, within a single async call; cleaned up before the call returns.
+	//   • app.ts graceful-shutdown readiness check (this file, waitForPendingCalls)
+	//       One-shot shutdown polling with hard timeout; not a recurring task.
 	jobProcessor.setChangeNotifier((table) => {
 		reactiveDb.notifyChange(table);
 	});
