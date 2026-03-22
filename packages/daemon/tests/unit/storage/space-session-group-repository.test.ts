@@ -249,7 +249,7 @@ describe('SpaceSessionGroupRepository', () => {
 			repo.updateMember(group.id, 'session-1', { status: 'completed' });
 
 			const after = repo.getGroup(group.id)!.updatedAt;
-			expect(after).toBeGreaterThanOrEqual(before);
+			expect(after).toBeGreaterThan(before);
 		});
 	});
 
@@ -272,6 +272,21 @@ describe('SpaceSessionGroupRepository', () => {
 			expect(updated!.status).toBe('failed');
 		});
 
+		it('does not modify other fields (role, agentId, orderIndex)', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', {
+				role: 'security-auditor',
+				agentId: 'agent-7',
+				orderIndex: 3,
+			});
+
+			const updated = repo.updateMemberStatus(member.id, 'completed');
+			expect(updated!.status).toBe('completed');
+			expect(updated!.role).toBe('security-auditor');
+			expect(updated!.agentId).toBe('agent-7');
+			expect(updated!.orderIndex).toBe(3);
+		});
+
 		it('returns null for non-existent member ID', () => {
 			expect(repo.updateMemberStatus('nonexistent-id', 'completed')).toBeNull();
 		});
@@ -285,7 +300,7 @@ describe('SpaceSessionGroupRepository', () => {
 			repo.updateMemberStatus(member.id, 'completed');
 
 			const after = repo.getGroup(group.id)!.updatedAt;
-			expect(after).toBeGreaterThanOrEqual(before);
+			expect(after).toBeGreaterThan(before);
 		});
 	});
 

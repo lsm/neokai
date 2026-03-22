@@ -179,11 +179,16 @@ export class SpaceSessionGroupRepository {
 			.get(groupId, sessionId) as Record<string, unknown> | undefined;
 
 		if (existing) {
+			const now = Date.now();
 			this.db
 				.prepare(
 					`UPDATE space_session_group_members SET role = ?, order_index = ?, agent_id = ?, status = ? WHERE group_id = ? AND session_id = ?`
 				)
 				.run(role, orderIndex, agentId ?? null, status, groupId, sessionId);
+			// Touch group updated_at so consumers polling on the group see the change
+			this.db
+				.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+				.run(now, groupId);
 			return this.getMember(existing.id as string)!;
 		}
 
@@ -265,6 +270,7 @@ export class SpaceSessionGroupRepository {
 	/**
 	 * Update status on an existing member by member ID.
 	 * Returns null if the member record does not exist.
+	 * The member update and group timestamp touch are performed atomically.
 	 */
 	updateMemberStatus(
 		memberId: string,
@@ -276,14 +282,14 @@ export class SpaceSessionGroupRepository {
 
 		if (!row) return null;
 
-		this.db
-			.prepare(`UPDATE space_session_group_members SET status = ? WHERE id = ?`)
-			.run(status, memberId);
-
-		// Touch group updated_at
-		this.db
-			.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
-			.run(Date.now(), row.group_id as string);
+		this.db.transaction(() => {
+			this.db
+				.prepare(`UPDATE space_session_group_members SET status = ? WHERE id = ?`)
+				.run(status, memberId);
+			this.db
+				.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+				.run(Date.now(), row.group_id as string);
+		})();
 
 		return this.getMember(memberId);
 	}

@@ -178,11 +178,17 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_run_id TEXT,
 			current_step_id TEXT,
 			task_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'completed', 'failed')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
+	);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_session_group_members (
