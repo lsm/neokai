@@ -29,7 +29,7 @@ function getLastPathSegments(path: string, segments: number = 2): string {
 	return '.../' + parts.slice(-segments).join('/');
 }
 
-export interface TaskActionDropdownAction {
+interface TaskActionDropdownAction {
 	id: string;
 	label: string;
 	icon?: 'complete' | 'archive';

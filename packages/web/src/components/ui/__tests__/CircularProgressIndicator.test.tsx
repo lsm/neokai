@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup } from '@testing-library/preact';
 import { CircularProgressIndicator } from '../CircularProgressIndicator';
 
 describe('CircularProgressIndicator', () => {

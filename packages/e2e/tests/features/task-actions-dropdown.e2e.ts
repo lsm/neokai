@@ -1,10 +1,9 @@
 /**
  * Task Actions E2E Tests
  *
- * Tests the inline task action buttons in TaskView:
+ * Tests the task action buttons in TaskView:
  * - "Cancel" button (data-testid="task-cancel-button") for pending/in_progress/review tasks
- * - "Complete" button (data-testid="task-complete-button") for in_progress tasks only
- *   (hidden for review status despite canComplete being true)
+ * - "Complete" action in dropdown (data-testid="task-action-complete") for in_progress tasks
  * - Confirmation dialogs for both operations
  *
  * Setup: creates a real room+task via RPC (infrastructure), then tests UI.
