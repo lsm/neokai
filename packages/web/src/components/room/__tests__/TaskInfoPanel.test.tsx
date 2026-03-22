@@ -61,9 +61,76 @@ describe('TaskInfoPanel', () => {
 			expect(pathElement).toBeTruthy();
 		});
 
+		it('should show git branch from worktree metadata', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+				worktree: {
+					isWorktree: true,
+					branch: 'feature/my-branch',
+					worktreePath: '/tmp/wt',
+					mainRepoPath: '/tmp',
+				},
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Branch:');
+			expect(container.textContent).toContain('feature/my-branch');
+		});
+
+		it('should show git branch from session gitBranch when no worktree', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+				gitBranch: 'main',
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Branch:');
+			expect(container.textContent).toContain('main');
+		});
+
+		it('should not show branch row when no branch info available', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).not.toContain('Branch:');
+		});
+
 		it('should show worker session info when provided', () => {
 			const workerSession = {
 				id: 'worker-session-id-1234',
+				status: 'active',
 				config: { model: 'claude-sonnet-4-6' },
 			} as never;
 
@@ -80,9 +147,31 @@ describe('TaskInfoPanel', () => {
 			expect(container.textContent).toContain('worker-s'); // first 8 chars + '...'
 		});
 
+		it('should show worker session status', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="worker-session-status"]');
+			expect(statusEl).toBeTruthy();
+			expect(statusEl?.textContent).toBe('active');
+		});
+
 		it('should show leader session info when provided', () => {
 			const leaderSession = {
 				id: 'leader-session-id-5678',
+				status: 'active',
 				config: { model: 'claude-sonnet-4-6' },
 			} as never;
 
@@ -97,6 +186,27 @@ describe('TaskInfoPanel', () => {
 
 			expect(container.textContent).toContain('Leader:');
 			expect(container.textContent).toContain('leader-s'); // first 8 chars + '...'
+		});
+
+		it('should show leader session status', () => {
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'ended',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="leader-session-status"]');
+			expect(statusEl).toBeTruthy();
+			expect(statusEl?.textContent).toBe('ended');
 		});
 
 		it('should show model when session has model config', () => {

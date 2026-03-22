@@ -70,6 +70,9 @@ export function TaskInfoPanel({
 	const hasWorktreeInfo = worktreePath || workerSession || leaderSession;
 	const displayPath = worktreePath ? getLastPathSegments(worktreePath) : null;
 
+	// Git branch: prefer worktree branch, fall back to session gitBranch
+	const gitBranch = workerSession?.worktree?.branch ?? workerSession?.gitBranch ?? null;
+
 	const hasVisibleActions =
 		visibleActions.complete || visibleActions.cancel || visibleActions.archive;
 
@@ -95,12 +98,29 @@ export function TaskInfoPanel({
 								</div>
 							)}
 
+							{/* Git branch */}
+							{gitBranch && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-12">Branch:</span>
+									<span class="text-gray-300 font-mono truncate flex-1" title={gitBranch}>
+										{gitBranch}
+									</span>
+									<CopyButton text={gitBranch} />
+								</div>
+							)}
+
 							{/* Session IDs */}
 							{workerSession && (
 								<div class="flex items-center gap-2">
 									<span class="text-gray-500 flex-shrink-0 w-12">Worker:</span>
 									<span class="text-gray-300 font-mono truncate flex-1" title={workerSession.id}>
 										{workerSession.id.slice(0, 8)}...
+									</span>
+									<span
+										class={`text-xs flex-shrink-0 ${workerSession.status === 'active' ? 'text-green-400' : 'text-gray-500'}`}
+										data-testid="worker-session-status"
+									>
+										{workerSession.status}
 									</span>
 									<CopyButton text={workerSession.id} />
 								</div>
@@ -110,6 +130,12 @@ export function TaskInfoPanel({
 									<span class="text-gray-500 flex-shrink-0 w-12">Leader:</span>
 									<span class="text-gray-300 font-mono truncate flex-1" title={leaderSession.id}>
 										{leaderSession.id.slice(0, 8)}...
+									</span>
+									<span
+										class={`text-xs flex-shrink-0 ${leaderSession.status === 'active' ? 'text-green-400' : 'text-gray-500'}`}
+										data-testid="leader-session-status"
+									>
+										{leaderSession.status}
 									</span>
 									<CopyButton text={leaderSession.id} />
 								</div>
