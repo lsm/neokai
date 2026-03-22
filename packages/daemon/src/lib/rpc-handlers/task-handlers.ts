@@ -783,6 +783,96 @@ export function setupTaskHandlers(
 		return { messages, hasMore: false, nextCursor, hasOlder, oldestCursor };
 	});
 
+	// task.group.addMessage - Test/admin: insert a message into session_group_messages
+	// Used for E2E test infrastructure to inject messages without real agents.
+	messageHub.onRequest('task.group.addMessage', async (data) => {
+		const params = data as {
+			groupId: string;
+			role: string;
+			messageType: string;
+			content: string;
+			sessionId?: string;
+		};
+
+		if (!params.groupId) throw new Error('Group ID is required');
+		if (!params.role) throw new Error('Role is required');
+		if (!params.content) throw new Error('Content is required');
+
+		const dbInstance = db.getDatabase();
+		const result = dbInstance
+			.prepare(
+				`INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       RETURNING id`
+			)
+			.get(
+				params.groupId,
+				params.sessionId ?? null,
+				params.role,
+				params.messageType ?? 'assistant',
+				params.content,
+				Date.now()
+			) as { id: number };
+
+		// Notify LiveQuery engine so subscribed clients receive a delta event
+		reactiveDb.notifyChange('session_group_messages');
+
+		return { id: result.id };
+	});
+
+	// task.group.create - Test/admin: create a session group for a task
+	// Used for E2E test infrastructure to set up message streaming scenarios.
+	messageHub.onRequest('task.group.create', async (data) => {
+		const params = data as {
+			taskId: string;
+			roomId: string;
+			workerSessionId?: string;
+			leaderSessionId?: string;
+		};
+
+		if (!params.taskId) throw new Error('Task ID is required');
+		if (!params.roomId) throw new Error('Room ID is required');
+
+		const { generateUUID } = await import('@neokai/shared');
+		const groupId = generateUUID();
+		const now = Date.now();
+		const workerSessionId = params.workerSessionId ?? `e2e-worker-${groupId.slice(0, 8)}`;
+		const leaderSessionId = params.leaderSessionId ?? `e2e-leader-${groupId.slice(0, 8)}`;
+
+		const dbInstance = db.getDatabase();
+		dbInstance.run(
+			`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+       VALUES (?, 'task', ?, 0, ?, ?)`,
+			[
+				groupId,
+				params.taskId,
+				JSON.stringify({
+					feedbackIteration: 0,
+					workerRole: 'coder',
+					leaderContractViolations: 0,
+					leaderCalledTool: false,
+					lastProcessedLeaderTurnId: null,
+					lastForwardedMessageId: null,
+					activeWorkStartedAt: null,
+					activeWorkElapsed: 0,
+					hibernatedAt: null,
+					tokensUsed: 0,
+				}),
+				now,
+			]
+		);
+		dbInstance.run(
+			`INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, 'worker', ?)`,
+			[groupId, workerSessionId, now]
+		);
+		dbInstance.run(
+			`INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, 'leader', ?)`,
+			[groupId, leaderSessionId, now]
+		);
+
+		return { groupId, workerSessionId, leaderSessionId };
+	});
+
 	// task.sendHumanMessage - Send a human message to the worker or leader in a task group
 	messageHub.onRequest('task.sendHumanMessage', async (data) => {
 		const params = data as {

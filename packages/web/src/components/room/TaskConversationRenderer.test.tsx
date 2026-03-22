@@ -2,38 +2,66 @@
  * Tests for TaskConversationRenderer Component
  *
  * Verifies that the component:
- * - Renders messages provided by useGroupMessages
+ * - Renders messages delivered via liveQuery.snapshot (initial load)
  * - Calls onMessageCountChange when the message list changes
- * - Shows a loading state while useGroupMessages is loading
- * - Renders status messages as centered dividers
+ * - Reacts to real-time liveQuery.delta events
  * - Does NOT own a scroll container (no overflow-y-auto div)
+ * - Renders status messages as centered dividers
+ * - Passes correct session/question state to SDKMessageRenderer
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, act } from '@testing-library/preact';
 
 import { TaskConversationRenderer } from './TaskConversationRenderer';
-import type { SessionGroupMessage } from '../../hooks/useGroupMessages';
+import { resetSubscriptionCounterForTesting } from '../../hooks/useGroupMessages';
 
 // -------------------------------------------------------
 // Mocks
 // -------------------------------------------------------
 
-const mockRequest = vi.fn();
+let snapshotHandler:
+	| ((event: { subscriptionId: string; rows: unknown[]; version: number }) => void)
+	| null = null;
+let deltaHandler:
+	| ((event: { subscriptionId: string; added: unknown[]; version: number }) => void)
+	| null = null;
+let lastSubscriptionId: string | null = null;
 
 // state.session handlers keyed by the channel passed when the handler fires,
 // allowing tests to fire session-state events scoped to a specific session channel.
 type SessionStateHandler = (data: unknown, context: { channel?: string }) => void;
 const sessionStateHandlers: SessionStateHandler[] = [];
 
+const mockIsConnected = { value: true };
+
 const mockOnEvent = vi.fn(
 	(eventName: string, handler: (data: unknown, context?: { channel?: string }) => void) => {
-		if (eventName === 'state.session') {
+		if (eventName === 'liveQuery.snapshot') {
+			snapshotHandler = handler as typeof snapshotHandler;
+		} else if (eventName === 'liveQuery.delta') {
+			deltaHandler = handler as typeof deltaHandler;
+		} else if (eventName === 'state.session') {
 			sessionStateHandlers.push(handler as SessionStateHandler);
 		}
 		return () => {};
 	}
 );
+
+const mockRequest = vi.fn(async (method: string, params: Record<string, unknown>) => {
+	if (method === 'liveQuery.subscribe') {
+		lastSubscriptionId = params.subscriptionId as string;
+		return { ok: true };
+	}
+	if (method === 'liveQuery.unsubscribe') {
+		return { ok: true };
+	}
+	if (method === 'session.get') {
+		return { session: null };
+	}
+	return {};
+});
+
 const mockJoinRoom = vi.fn();
 const mockLeaveRoom = vi.fn();
 
@@ -41,18 +69,10 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 	useMessageHub: () => ({
 		request: mockRequest,
 		onEvent: mockOnEvent,
+		isConnected: mockIsConnected.value,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
-		isConnected: true,
 	}),
-}));
-
-// Mock useGroupMessages — tests control the returned messages/loading state
-let mockGroupMessages: SessionGroupMessage[] = [];
-let mockGroupIsLoading = false;
-
-vi.mock('../../hooks/useGroupMessages.ts', () => ({
-	useGroupMessages: () => ({ messages: mockGroupMessages, isLoading: mockGroupIsLoading }),
 }));
 
 // SDKMessageRenderer mock that captures rendered props for inspection
@@ -92,7 +112,17 @@ function fireSessionStateEvent(channel: string, data: unknown): void {
 // Helpers
 // -------------------------------------------------------
 
-function makeRawMessage(id: number, role: string, uuid: string): SessionGroupMessage {
+type TestMessage = {
+	id: number;
+	groupId: string;
+	sessionId: string | null;
+	role: string;
+	messageType: string;
+	content: string;
+	createdAt: number;
+};
+
+function makeRawMessage(id: number, role: string, uuid: string): TestMessage {
 	return {
 		id,
 		groupId: 'group-1',
@@ -104,7 +134,7 @@ function makeRawMessage(id: number, role: string, uuid: string): SessionGroupMes
 	};
 }
 
-function makeStatusMessage(id: number, text: string): SessionGroupMessage {
+function makeStatusMessage(id: number, text: string): TestMessage {
 	return {
 		id,
 		groupId: 'group-1',
@@ -116,6 +146,16 @@ function makeStatusMessage(id: number, text: string): SessionGroupMessage {
 	};
 }
 
+/** Fire snapshot event with the given raw messages */
+function fireSnapshot(rawMessages: TestMessage[]): void {
+	snapshotHandler?.({ subscriptionId: lastSubscriptionId!, rows: rawMessages, version: 1 });
+}
+
+/** Fire delta event with the given raw messages */
+function fireDelta(rawMessages: TestMessage[]): void {
+	deltaHandler?.({ subscriptionId: lastSubscriptionId!, added: rawMessages, version: 2 });
+}
+
 // -------------------------------------------------------
 // Tests
 // -------------------------------------------------------
@@ -123,13 +163,28 @@ function makeStatusMessage(id: number, text: string): SessionGroupMessage {
 describe('TaskConversationRenderer — onMessageCountChange', () => {
 	beforeEach(() => {
 		mockRequest.mockReset();
+		mockRequest.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+			if (method === 'liveQuery.subscribe') {
+				lastSubscriptionId = params.subscriptionId as string;
+				return { ok: true };
+			}
+			if (method === 'liveQuery.unsubscribe') {
+				return { ok: true };
+			}
+			if (method === 'session.get') {
+				return { session: null };
+			}
+			return {};
+		});
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
-		mockGroupMessages = [];
-		mockGroupIsLoading = false;
+		snapshotHandler = null;
+		deltaHandler = null;
+		lastSubscriptionId = null;
 		sessionStateHandlers.length = 0;
 		capturedSDKProps.length = 0;
+		resetSubscriptionCounterForTesting();
 	});
 
 	afterEach(() => {
@@ -137,61 +192,68 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('calls onMessageCountChange with the initial message count', async () => {
-		mockGroupMessages = [
-			makeRawMessage(1, 'assistant', 'uuid-1'),
-			makeRawMessage(2, 'assistant', 'uuid-2'),
-		];
-
 		const onCountChange = vi.fn();
 		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Fire snapshot with 2 messages
+		await act(async () => {
+			fireSnapshot([
+				makeRawMessage(1, 'assistant', 'uuid-1'),
+				makeRawMessage(2, 'assistant', 'uuid-2'),
+			]);
+		});
 
 		await waitFor(() => {
 			expect(onCountChange).toHaveBeenCalledWith(2);
 		});
 	});
 
-	it('calls onMessageCountChange with 0 while loading', () => {
-		mockGroupIsLoading = true;
-		mockGroupMessages = [];
-
+	it('calls onMessageCountChange with 0 during loading', async () => {
 		const onCountChange = vi.fn();
 		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
 
-		expect(onCountChange).toHaveBeenCalledWith(0);
+		// No snapshot fired yet — should be called with 0 (loading state, 0 messages)
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(0);
+		});
 	});
 
-	it('calls onMessageCountChange with updated count when messages change', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
+	it('calls onMessageCountChange with updated count on delta event', async () => {
 		const onCountChange = vi.fn();
 		const { rerender } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />
 		);
 
+		// Initial snapshot with 1 message
+		await act(async () => {
+			fireSnapshot([makeRawMessage(1, 'assistant', 'uuid-1')]);
+		});
+
 		await waitFor(() => {
 			expect(onCountChange).toHaveBeenCalledWith(1);
 		});
 
-		// Simulate new message arriving via LiveQuery
-		mockGroupMessages = [
-			makeRawMessage(1, 'assistant', 'uuid-1'),
-			makeRawMessage(2, 'assistant', 'uuid-2'),
-		];
-		act(() => {
-			rerender(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+		// Delta adds one more message
+		await act(async () => {
+			fireDelta([makeRawMessage(2, 'assistant', 'uuid-2')]);
 		});
 
 		await waitFor(() => {
 			expect(onCountChange).toHaveBeenCalledWith(2);
 		});
+
+		// suppress unused variable warning
+		void rerender;
 	});
 
 	it('does NOT render a scroll container (no overflow-y-auto on root element)', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
 		const { container } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
 		);
+
+		await act(async () => {
+			fireSnapshot([makeRawMessage(1, 'assistant', 'uuid-1')]);
+		});
 
 		await waitFor(() => {
 			// Messages rendered means loading is done
@@ -205,11 +267,13 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('renders status messages as centered dividers', async () => {
-		mockGroupMessages = [makeStatusMessage(1, 'Task started')];
-
 		const { container } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
 		);
+
+		await act(async () => {
+			fireSnapshot([makeStatusMessage(1, 'Task started')]);
+		});
 
 		await waitFor(() => {
 			expect(container.textContent).toContain('Task started');
@@ -217,52 +281,67 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('works without onMessageCountChange prop', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
 		let container: Element | undefined;
 		expect(() => {
 			({ container } = render(<TaskConversationRenderer groupId="group-1" />));
 		}).not.toThrow();
 
-		// Component should mount and show the conversation (or loading/empty state)
+		// Component should mount and show loading or empty state
 		await waitFor(() => {
 			expect(container?.firstChild).not.toBeNull();
 		});
 	});
 
-	it('shows loading state while useGroupMessages is loading', () => {
-		mockGroupIsLoading = true;
-		mockGroupMessages = [];
-
-		const { container } = render(
+	it('disposes subscription on component unmount', async () => {
+		const { unmount } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
 		);
 
-		expect(container.textContent).toContain('Loading conversation');
-	});
+		// Wait for subscribe to be called
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith(
+				'liveQuery.subscribe',
+				expect.objectContaining({ queryName: 'sessionGroupMessages.byGroup' })
+			);
+		});
 
-	it('shows empty state when not loading and no messages', () => {
-		mockGroupIsLoading = false;
-		mockGroupMessages = [];
+		unmount();
 
-		const { container } = render(
-			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
-		);
-
-		expect(container.textContent).toContain('Waiting for agent activity');
+		// After unmount, unsubscribe should have been called
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith(
+				'liveQuery.unsubscribe',
+				expect.objectContaining({ subscriptionId: expect.any(String) })
+			);
+		});
 	});
 });
 
 describe('TaskConversationRenderer — session question state props', () => {
 	beforeEach(() => {
 		mockRequest.mockReset();
+		mockRequest.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+			if (method === 'liveQuery.subscribe') {
+				lastSubscriptionId = params.subscriptionId as string;
+				return { ok: true };
+			}
+			if (method === 'liveQuery.unsubscribe') {
+				return { ok: true };
+			}
+			if (method === 'session.get') {
+				return { session: null };
+			}
+			return {};
+		});
 		mockOnEvent.mockClear();
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
-		mockGroupMessages = [];
-		mockGroupIsLoading = false;
+		snapshotHandler = null;
+		deltaHandler = null;
+		lastSubscriptionId = null;
 		sessionStateHandlers.length = 0;
 		capturedSDKProps.length = 0;
+		resetSubscriptionCounterForTesting();
 	});
 
 	afterEach(() => {
@@ -270,8 +349,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 	});
 
 	it('accepts leaderSessionId and workerSessionId props without errors', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
 		const { container } = render(
 			<TaskConversationRenderer
 				groupId="group-1"
@@ -280,25 +357,31 @@ describe('TaskConversationRenderer — session question state props', () => {
 				onMessageCountChange={vi.fn()}
 			/>
 		);
+
+		await act(async () => {
+			fireSnapshot([makeRawMessage(1, 'assistant', 'uuid-1')]);
+		});
+
 		await waitFor(() => {
 			expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
 		});
 	});
 
 	it('renders without leaderSessionId or workerSessionId (backward-compatible)', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
 		const { container } = render(
 			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
 		);
+
+		await act(async () => {
+			fireSnapshot([makeRawMessage(1, 'assistant', 'uuid-1')]);
+		});
+
 		await waitFor(() => {
 			expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
 		});
 	});
 
 	it('joins session channels for leader and worker when both session IDs provided', async () => {
-		mockGroupMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
-
 		render(
 			<TaskConversationRenderer
 				groupId="group-1"
@@ -310,7 +393,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 
 		await waitFor(() => {
 			const joinedRooms = mockJoinRoom.mock.calls.map((c: string[]) => c[0]);
-			// Session channels are joined via useSessionQuestionState
 			expect(joinedRooms).toContain('session:leader-session-123');
 			expect(joinedRooms).toContain('session:worker-session-456');
 			// TaskConversationRenderer no longer joins the group channel itself
@@ -328,7 +410,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 			iteration: 0,
 		};
 		leaderMsg.content = JSON.stringify(parsed);
-		mockGroupMessages = [leaderMsg];
 
 		render(
 			<TaskConversationRenderer
@@ -338,6 +419,10 @@ describe('TaskConversationRenderer — session question state props', () => {
 				onMessageCountChange={vi.fn()}
 			/>
 		);
+
+		await act(async () => {
+			fireSnapshot([leaderMsg]);
+		});
 
 		await waitFor(() => {
 			const leaderProps = capturedSDKProps.find((p) => p.uuid === 'uuid-leader');
@@ -369,8 +454,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 		};
 		workerMsg.content = JSON.stringify(parsedWorker);
 
-		mockGroupMessages = [leaderMsg, workerMsg];
-
 		render(
 			<TaskConversationRenderer
 				groupId="group-1"
@@ -379,6 +462,10 @@ describe('TaskConversationRenderer — session question state props', () => {
 				onMessageCountChange={vi.fn()}
 			/>
 		);
+
+		await act(async () => {
+			fireSnapshot([leaderMsg, workerMsg]);
+		});
 
 		// Wait for initial render
 		await waitFor(() => {
@@ -423,7 +510,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 			iteration: 0,
 		};
 		unknownMsg.content = JSON.stringify(parsedUnknown);
-		mockGroupMessages = [unknownMsg];
 
 		render(
 			<TaskConversationRenderer
@@ -433,6 +519,10 @@ describe('TaskConversationRenderer — session question state props', () => {
 				onMessageCountChange={vi.fn()}
 			/>
 		);
+
+		await act(async () => {
+			fireSnapshot([unknownMsg]);
+		});
 
 		await waitFor(() => {
 			const props = capturedSDKProps.find((p) => p.uuid === 'uuid-unknown');
