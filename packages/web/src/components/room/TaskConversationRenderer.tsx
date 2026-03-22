@@ -20,7 +20,7 @@ import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { getModelLabel } from '../../lib/session-utils';
-import { useGroupMessages } from '../../hooks/useGroupMessages';
+import { useGroupMessages, type SessionGroupMessage } from '../../hooks/useGroupMessages';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -34,16 +34,6 @@ interface TaskMeta {
 	authorSessionId: string;
 	turnId: string;
 	iteration: number;
-}
-
-interface GroupMessage {
-	id: number;
-	groupId: string;
-	sessionId: string | null;
-	role: string;
-	messageType: string;
-	content: string;
-	createdAt: number;
 }
 
 interface TaskConversationRendererProps {
@@ -67,7 +57,7 @@ const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: s
 	lead: { border: 'border-l-purple-500', label: 'Lead', labelColor: 'text-purple-400' },
 };
 
-function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
+function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 	// messageType is used for DB records; type is used for WebSocket real-time events.
 	// Normalize to whichever field is set.
 	const msgAny = msg as unknown as Record<string, unknown>;
@@ -101,11 +91,18 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 
-	// Rate limited: rendered as an amber notification
+	// Rate limited: stored as JSON with rich payload (resetsAt, sessionRole).
+	// Fall back to content as plain text if not valid JSON.
 	if (msgType === 'rate_limited') {
+		let parsed: Record<string, unknown> = {};
+		try {
+			parsed = JSON.parse(msg.content) as Record<string, unknown>;
+		} catch {
+			parsed = { text: msg.content };
+		}
 		return {
+			...parsed,
 			type: 'rate_limited',
-			text: msg.content,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -115,11 +112,18 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 
-	// Model fallback: rendered as an amber notification
+	// Model fallback: stored as JSON with rich payload (fromModel, toModel, sessionRole).
+	// Fall back to content as plain text if not valid JSON.
 	if (msgType === 'model_fallback') {
+		let parsed: Record<string, unknown> = {};
+		try {
+			parsed = JSON.parse(msg.content) as Record<string, unknown>;
+		} catch {
+			parsed = { text: msg.content };
+		}
 		return {
+			...parsed,
 			type: 'model_fallback',
-			text: msg.content,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',

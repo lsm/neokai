@@ -2065,12 +2065,9 @@ export class RoomRuntime {
 	/**
 	 * Set up live message forwarding for a group's worker/leader sessions.
 	 *
-	 * Subscribes to DaemonHub sdk.message events and broadcasts enriched deltas
-	 * on state.groupMessages.delta for TaskConversationRenderer.
-	 *
-	 * IMPORTANT: We intentionally do NOT mirror worker/leader SDK messages into
-	 * any group message table anymore. Task view history is reconstructed from each
-	 * session's sdk_messages stream via task.getGroupMessages.
+	 * Subscribes to DaemonHub sdk.message events, persists each enriched message
+	 * to session_group_messages (for LiveQuery), and broadcasts deltas via
+	 * state.groupMessages.delta for any legacy subscribers still present.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -2113,20 +2110,33 @@ export class RoomRuntime {
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
 					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-					// Broadcast enriched delta to subscribed frontends.
+					// Persist to session_group_messages and broadcast enriched delta to frontends.
+					const enrichedMessage = {
+						...event.message,
+						_taskMeta: {
+							authorRole: role,
+							authorSessionId: sessionId,
+							turnId,
+							iteration,
+						},
+					};
+					const sdkNow = Date.now();
+					const sdkMsgType =
+						'type' in event.message && typeof event.message.type === 'string'
+							? event.message.type
+							: 'assistant';
+					this.groupRepo.appendGroupMessage({
+						groupId: group.id,
+						sessionId,
+						role,
+						messageType: sdkMsgType,
+						content: JSON.stringify(enrichedMessage),
+						createdAt: sdkNow,
+					});
 					if (this.messageHub) {
-						const enrichedMessage = {
-							...event.message,
-							_taskMeta: {
-								authorRole: role,
-								authorSessionId: sessionId,
-								turnId,
-								iteration,
-							},
-						};
 						this.messageHub.event(
 							'state.groupMessages.delta',
-							{ added: [{ ...enrichedMessage, timestamp: Date.now() }], timestamp: Date.now() },
+							{ added: [{ ...enrichedMessage, timestamp: sdkNow }], timestamp: sdkNow },
 							{ channel: `group:${group.id}` }
 						);
 					}
@@ -2159,20 +2169,38 @@ export class RoomRuntime {
 			kind,
 			payloadJson: payload ? JSON.stringify(payload) : undefined,
 		});
+		const now = Date.now();
+		// Map event kinds to message types for the frontend.
+		// 'leader_summary' is a special case (rendered as a distinct card).
+		// 'rate_limited' and 'model_fallback' get their own type so the frontend
+		// can render them as prominent notifications.
+		const messageType =
+			kind === 'leader_summary'
+				? 'leader_summary'
+				: kind === 'rate_limited'
+					? 'rate_limited'
+					: kind === 'model_fallback'
+						? 'model_fallback'
+						: 'status';
+
+		// Persist to session_group_messages so LiveQuery subscribers receive the event.
+		// For rich event types (rate_limited, model_fallback) store the full payload as
+		// JSON so the frontend can render extra fields (resetsAt, sessionRole, etc.).
+		// For simple status/leader_summary, store just the text.
+		const content =
+			messageType === 'rate_limited' || messageType === 'model_fallback'
+				? JSON.stringify({ ...payload, type: messageType })
+				: (payload?.text ?? kind);
+		this.groupRepo.appendGroupMessage({
+			groupId,
+			sessionId: null,
+			role: 'system',
+			messageType,
+			content,
+			createdAt: now,
+		});
+
 		if (this.messageHub) {
-			const now = Date.now();
-			// Map event kinds to message types for the frontend.
-			// 'leader_summary' is a special case (rendered as a distinct card).
-			// 'rate_limited' and 'model_fallback' get their own type so the frontend
-			// can render them as prominent notifications.
-			const messageType =
-				kind === 'leader_summary'
-					? 'leader_summary'
-					: kind === 'rate_limited'
-						? 'rate_limited'
-						: kind === 'model_fallback'
-							? 'model_fallback'
-							: 'status';
 			this.messageHub.event(
 				'state.groupMessages.delta',
 				{
@@ -2181,6 +2209,7 @@ export class RoomRuntime {
 							type: messageType,
 							text: payload?.text ?? kind,
 							timestamp: now,
+							...(payload ?? {}),
 						},
 					],
 					timestamp: now,

@@ -162,6 +162,15 @@ describe('Runtime Recovery', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 

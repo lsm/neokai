@@ -68,6 +68,15 @@ describe('SessionGroupRepository', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${Date.now()}, ${Date.now()});
 			INSERT INTO tasks (id, room_id, title, description, created_at) VALUES ('${taskId}', '${roomId}', 'Test Task', 'desc', ${Date.now()});
@@ -487,6 +496,85 @@ describe('SessionGroupRepository', () => {
 			const page2 = repo.getEvents(group.id, { afterId: page1.events.at(-1)!.id });
 			expect(page2.events).toHaveLength(2);
 			expect(page2.hasMore).toBe(false);
+		});
+	});
+
+	describe('appendGroupMessage', () => {
+		it('inserts a row and returns an autoincrement id', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const id = repo.appendGroupMessage({
+				groupId: group.id,
+				sessionId: 'sess-1',
+				role: 'leader',
+				messageType: 'assistant',
+				content: JSON.stringify({ type: 'assistant', uuid: 'abc' }),
+				createdAt: Date.now(),
+			});
+			expect(id).toBeGreaterThan(0);
+		});
+
+		it('retrieves the inserted row from the DB', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const now = Date.now();
+			repo.appendGroupMessage({
+				groupId: group.id,
+				sessionId: 'sess-1',
+				role: 'coder',
+				messageType: 'assistant',
+				content: '{"type":"assistant","uuid":"u1"}',
+				createdAt: now,
+			});
+
+			const rows = db
+				.prepare('SELECT * FROM session_group_messages WHERE group_id = ?')
+				.all(group.id) as Record<string, unknown>[];
+			expect(rows).toHaveLength(1);
+			expect(rows[0].group_id).toBe(group.id);
+			expect(rows[0].session_id).toBe('sess-1');
+			expect(rows[0].role).toBe('coder');
+			expect(rows[0].message_type).toBe('assistant');
+			expect(rows[0].content).toBe('{"type":"assistant","uuid":"u1"}');
+			expect(rows[0].created_at).toBe(now);
+		});
+
+		it('allows null sessionId for system events', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.appendGroupMessage({
+				groupId: group.id,
+				sessionId: null,
+				role: 'system',
+				messageType: 'status',
+				content: 'Task started',
+				createdAt: Date.now(),
+			});
+
+			const rows = db
+				.prepare('SELECT session_id FROM session_group_messages WHERE group_id = ?')
+				.all(group.id) as Record<string, unknown>[];
+			expect(rows[0].session_id).toBeNull();
+		});
+
+		it('notifies reactiveDb so LiveQuery subscribers are triggered', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+
+			// Track notifyChange calls via a real ReactiveDatabase
+			let notified = false;
+			const rdb = createReactiveDatabase(db as never);
+			const testRepo = new SessionGroupRepository(db, rdb);
+			rdb.on('change:session_group_messages', () => {
+				notified = true;
+			});
+
+			testRepo.appendGroupMessage({
+				groupId: group.id,
+				sessionId: null,
+				role: 'system',
+				messageType: 'status',
+				content: 'hello',
+				createdAt: Date.now(),
+			});
+
+			expect(notified).toBe(true);
 		});
 	});
 
