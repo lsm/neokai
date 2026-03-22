@@ -455,7 +455,7 @@ describe('RoomContextPanel', () => {
 		expect(span?.className).toContain('text-gray-600');
 	});
 
-	it('does not show toggle button when goal has no completed tasks', () => {
+	it('toggle button is always visible in Goals header even without completed tasks', () => {
 		mockTasksSignal.value = [makeTask('t1', 'Active Task', 'in_progress')];
 		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1'])];
 		render(<RoomContextPanel roomId="room-1" />);

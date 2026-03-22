@@ -324,7 +324,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							const isExpanded = expandedGoals.has(goal.id);
 							const linkedTasks = tasksByGoalId.get(goal.id) ?? [];
 							const activeLinkedTasks = linkedTasks.filter(
-								(t) => t.status !== 'completed' && t.status !== 'cancelled'
+								(t) =>
+									t.status === 'draft' ||
+									t.status === 'pending' ||
+									t.status === 'in_progress' ||
+									t.status === 'review' ||
+									t.status === 'needs_attention'
 							);
 							const completedLinkedTasks = linkedTasks.filter(
 								(t) => t.status === 'completed' || t.status === 'cancelled'
