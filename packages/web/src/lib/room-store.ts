@@ -267,6 +267,7 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goals.value = [];
+		this.goalsLoading.value = false;
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
@@ -430,6 +431,7 @@ class RoomStore {
 			// snapshot handler above.
 			const unsubReconnect = hub.onConnection((state) => {
 				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				this.goalsLoading.value = true;
 				hub
 					.request('liveQuery.subscribe', {
 						queryName: 'goals.byRoom',
@@ -438,6 +440,7 @@ class RoomStore {
 					})
 					.catch((err) => {
 						logger.warn('Goals LiveQuery re-subscribe failed:', err);
+						this.goalsLoading.value = false;
 					});
 			});
 			this.cleanupFunctions.push(unsubReconnect);

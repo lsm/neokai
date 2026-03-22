@@ -281,4 +281,32 @@ describe('RoomStore — goals.byRoom LiveQuery subscription', () => {
 		});
 		expect(roomStore.goalsLoading.value).toBe(false);
 	});
+
+	it('resets goalsLoading to false on room deselect (even if snapshot never arrived)', async () => {
+		// goalsLoading is true (snapshot not yet delivered)
+		expect(roomStore.goalsLoading.value).toBe(true);
+
+		await roomStore.select(null);
+
+		expect(roomStore.goalsLoading.value).toBe(false);
+	});
+
+	it('sets goalsLoading to true on reconnect and false on subsequent snapshot', () => {
+		// Deliver initial snapshot to clear loading
+		hub.fire('liveQuery.snapshot', { subscriptionId: GOALS_SUB_ID, rows: [], version: 1 });
+		expect(roomStore.goalsLoading.value).toBe(false);
+
+		// Reconnect triggers re-subscribe which sets loading = true
+		hub.request.mockClear();
+		hub.fireConnection('connected');
+		expect(roomStore.goalsLoading.value).toBe(true);
+
+		// New snapshot clears it
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: GOALS_SUB_ID,
+			rows: [makeGoal('g1')],
+			version: 2,
+		});
+		expect(roomStore.goalsLoading.value).toBe(false);
+	});
 });
