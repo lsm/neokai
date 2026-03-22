@@ -4,7 +4,7 @@
  * Verifies that the LiveQuery system delivers real-time updates for tasks and
  * goals to the browser UI without requiring a page reload:
  *
- * 1. Task created by RPC appears in the room UI immediately (LiveQuery delta)
+ * 1. Task created via RPC appears in the room UI immediately (LiveQuery delta)
  * 2. Switching rooms shows only the new room's tasks within one render cycle
  *    (stale-event guard ensures no cross-room task bleed)
  * 3. Goal deleted via RPC disappears from the Goals tab UI (LiveQuery removed)
@@ -81,6 +81,7 @@ async function deleteGoal(
 	roomId: string,
 	goalId: string
 ): Promise<void> {
+	await waitForWebSocketConnected(page);
 	await page.evaluate(
 		async ({ rId, gId }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
@@ -93,11 +94,13 @@ async function deleteGoal(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-test.describe('LiveQuery — task created by RPC appears in room UI without page reload', () => {
+test.describe('LiveQuery — task created via RPC appears in room UI without page reload', () => {
 	let roomId = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		// Clear persisted tab selection so tasks (pending status → Active tab) are always visible
+		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
@@ -163,6 +166,8 @@ test.describe("LiveQuery — switching rooms shows only the new room's tasks", (
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		// Clear persisted tab selection so tasks (pending status → Active tab) are always visible
+		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
@@ -199,8 +204,13 @@ test.describe("LiveQuery — switching rooms shows only the new room's tasks", (
 		// Clicking the "Rooms" NavRail button resets isRoomDetail and shows the rooms list.
 		await page.getByRole('button', { name: 'Rooms' }).click();
 
-		// RoomList is now visible — click Room B to switch to it (client-side navigation)
-		await page.locator('button').filter({ hasText: 'LQ Switch Room B' }).first().click();
+		// Wait explicitly for Room B's button to appear in the room list before clicking,
+		// ensuring RoomList has fully rendered (important on slow CI machines).
+		const roomBButton = page.locator('button').filter({ hasText: 'LQ Switch Room B' }).first();
+		await expect(roomBButton).toBeVisible({ timeout: 10000 });
+
+		// Click Room B — client-side navigation via navigateToRoom()
+		await roomBButton.click();
 
 		// Wait for Room B's heading to appear — confirms the room switch has rendered
 		await expect(page.locator('text=LQ Switch Room B').first()).toBeVisible({ timeout: 10000 });
@@ -245,6 +255,8 @@ test.describe('LiveQuery — goal deletion surfaces in Goals tab via removed del
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		// Clear persisted tab selection so tasks (pending status → Active tab) are always visible
+		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
