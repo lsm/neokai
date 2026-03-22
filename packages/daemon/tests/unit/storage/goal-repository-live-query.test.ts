@@ -27,10 +27,7 @@ import type { QueryDiff } from '../../../src/storage/live-query';
 // ---------------------------------------------------------------------------
 
 function makeTempDbPath(): string {
-	return join(
-		tmpdir(),
-		`goal-repo-lq-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-	);
+	return join(tmpdir(), `goal-repo-lq-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 }
 
 const GOALS_SQL = `SELECT id, title, status FROM goals ORDER BY created_at ASC`;
