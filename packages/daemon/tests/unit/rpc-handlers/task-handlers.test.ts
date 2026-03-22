@@ -1441,3 +1441,104 @@ describe('task.archive RPC Handler', () => {
 		});
 	});
 });
+
+// ─── session_group.stop RPC Handler ───
+
+/**
+ * Build a mock RoomRuntimeService with a controllable forceStopSessionGroup result.
+ */
+function makeForceStopRuntimeService(result: { success: boolean; error?: string }) {
+	const forceStopSessionGroup = mock(async () => result);
+	const runtime = { forceStopSessionGroup };
+	const service = { getRuntime: mock(() => runtime) } as unknown as RoomRuntimeService;
+	return { service, runtime };
+}
+
+describe('session_group.stop RPC Handler', () => {
+	let handlers: Map<string, RequestHandler>;
+
+	function setup(opts: { runtimeService?: RoomRuntimeService } = {}) {
+		const mh = createMockMessageHub();
+		handlers = mh.handlers;
+		setupTaskHandlers(
+			mh.hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb(makeGroupRow()),
+			{ notifyChange: () => {} } as never,
+			makeTaskManagerFactory(mockTask),
+			opts.runtimeService
+		);
+	}
+
+	function getHandler(): RequestHandler {
+		const h = handlers.get('session_group.stop');
+		expect(h).toBeDefined();
+		return h!;
+	}
+
+	describe('parameter validation', () => {
+		it('throws when roomId is missing', async () => {
+			const { service } = makeForceStopRuntimeService({ success: true });
+			setup({ runtimeService: service });
+			await expect(getHandler()({ groupId: 'group-1' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when groupId is missing', async () => {
+			const { service } = makeForceStopRuntimeService({ success: true });
+			setup({ runtimeService: service });
+			await expect(getHandler()({ roomId: 'room-1' }, {})).rejects.toThrow('Group ID is required');
+		});
+	});
+
+	describe('runtime service validation', () => {
+		it('throws when runtimeService is not provided', async () => {
+			setup({ runtimeService: undefined });
+			await expect(getHandler()({ roomId: 'room-1', groupId: 'group-1' }, {})).rejects.toThrow(
+				'Runtime service is required'
+			);
+		});
+
+		it('throws when runtime is not found for the room', async () => {
+			setup({ runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', groupId: 'group-1' }, {})).rejects.toThrow(
+				'No runtime found for room'
+			);
+		});
+	});
+
+	describe('happy path', () => {
+		it('returns { success: true } and invokes forceStopSessionGroup with correct groupId', async () => {
+			const { service, runtime } = makeForceStopRuntimeService({ success: true });
+			setup({ runtimeService: service });
+
+			const result = await getHandler()({ roomId: 'room-1', groupId: 'group-abc' }, {});
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.forceStopSessionGroup).toHaveBeenCalledWith('group-abc');
+		});
+	});
+
+	describe('error propagation', () => {
+		it('throws with the error message from forceStopSessionGroup when success=false', async () => {
+			const { service } = makeForceStopRuntimeService({
+				success: false,
+				error: 'Session group group-1 not found',
+			});
+			setup({ runtimeService: service });
+
+			await expect(getHandler()({ roomId: 'room-1', groupId: 'group-1' }, {})).rejects.toThrow(
+				'Session group group-1 not found'
+			);
+		});
+
+		it('throws a generic fallback message when success=false with no error field', async () => {
+			const { service } = makeForceStopRuntimeService({ success: false });
+			setup({ runtimeService: service });
+
+			await expect(getHandler()({ roomId: 'room-1', groupId: 'group-1' }, {})).rejects.toThrow(
+				'Failed to stop session group group-1'
+			);
+		});
+	});
+});
