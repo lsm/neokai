@@ -1021,7 +1021,13 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).not.toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
+		// Complete is in dropdown - open to verify it's NOT there for pending
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-complete"]')).toBeNull();
 	});
 
 	it('shows cancel button and dropdown with complete action for in_progress tasks', async () => {
@@ -1109,7 +1115,13 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
+		// Complete is in dropdown - open to verify it's NOT there for needs_attention
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-complete"]')).toBeNull();
 	});
 
 	it('does NOT show action buttons for cancelled tasks', async () => {
@@ -1126,7 +1138,13 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 
 		expect(container.querySelector('[data-testid="task-cancel-button"]')).toBeNull();
-		expect(container.querySelector('[data-testid="task-complete-button"]')).toBeNull();
+		// Complete is in dropdown - open to verify it's NOT there for cancelled
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-action-dropdown-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-action-complete"]')).toBeNull();
 	});
 
 	it('shows both cancel and complete buttons for in_progress task', async () => {

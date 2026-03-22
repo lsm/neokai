@@ -227,25 +227,15 @@ test.describe('Circular Progress Indicator', () => {
 		await deleteRoom(page, roomId);
 	});
 
-	test('shows circular progress indicator for task with progress', async ({ page }) => {
+	test('does not show circular progress indicator for task without progress', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
-
-		// Set progress on the task via RPC
-		await page.evaluate(
-			async ({ rId, tId }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('MessageHub not available');
-				// Note: We need to set progress on the task - using task.update if available
-				// For now, this test verifies the UI renders without the progress indicator
-				// since setting task progress requires additional RPC
-			},
-			{ rId: roomId, tId: taskId }
-		);
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 
-		// The component renders but won't show progress circle without task.progress > 0
-		// This is a known limitation - progress would need task.update RPC to test properly
+		// Newly created task has no progress set (progress is null/0), so indicator should not be visible
+		// The component only renders when task.progress != null && task.progress > 0
+		const progressIndicator = page.locator('[class*="CircularProgressIndicator"]');
+		await expect(progressIndicator).not.toBeVisible();
 	});
 });
