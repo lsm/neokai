@@ -9,7 +9,7 @@ import { describe, test, expect } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub';
 import type { IMessageTransport, ConnectionState, CallContext } from '../src/message-hub/types';
 import type { HubMessage } from '../src/message-hub/types';
-import { MessageType, createRequestMessage } from '../src/message-hub/protocol';
+import { createRequestMessage } from '../src/message-hub/protocol';
 import type { HubMessageWithMetadata } from '../src/message-hub/protocol';
 
 // Minimal mock transport that lets tests inject messages directly
@@ -54,11 +54,11 @@ describe('CallContext.clientId', () => {
 	test('clientId is present in CallContext when message carries a clientId (WebSocket-like)', async () => {
 		const { hub, transport } = buildHubWithTransport();
 
-		let capturedContext: CallContext | undefined;
-
-		hub.onRequest('test.method', (_data, ctx) => {
-			capturedContext = ctx;
-			return { ok: true };
+		const handlerCalled = new Promise<CallContext>((resolve) => {
+			hub.onRequest('test.method', (_data, ctx) => {
+				resolve(ctx);
+				return { ok: true };
+			});
 		});
 
 		// Build a request message with a clientId attached (as WebSocketServerTransport does)
@@ -71,11 +71,8 @@ describe('CallContext.clientId', () => {
 
 		transport.inject(req);
 
-		// Give the async handler a tick to run
-		await new Promise<void>((resolve) => setTimeout(resolve, 10));
-
-		expect(capturedContext).toBeDefined();
-		expect(capturedContext!.clientId).toBe('ws-client-abc');
+		const capturedContext = await handlerCalled;
+		expect(capturedContext.clientId).toBe('ws-client-abc');
 
 		hub.cleanup();
 	});
@@ -83,11 +80,11 @@ describe('CallContext.clientId', () => {
 	test('clientId is absent in CallContext when message has no clientId (in-process call)', async () => {
 		const { hub, transport } = buildHubWithTransport();
 
-		let capturedContext: CallContext | undefined;
-
-		hub.onRequest('test.method', (_data, ctx) => {
-			capturedContext = ctx;
-			return { ok: true };
+		const handlerCalled = new Promise<CallContext>((resolve) => {
+			hub.onRequest('test.method', (_data, ctx) => {
+				resolve(ctx);
+				return { ok: true };
+			});
 		});
 
 		// Plain request message — no clientId attached
@@ -99,10 +96,8 @@ describe('CallContext.clientId', () => {
 
 		transport.inject(req);
 
-		await new Promise<void>((resolve) => setTimeout(resolve, 10));
-
-		expect(capturedContext).toBeDefined();
-		expect(capturedContext!.clientId).toBeUndefined();
+		const capturedContext = await handlerCalled;
+		expect(capturedContext.clientId).toBeUndefined();
 
 		hub.cleanup();
 	});
