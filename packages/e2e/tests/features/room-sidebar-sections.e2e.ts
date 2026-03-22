@@ -200,7 +200,9 @@ async function navigateToRoomAndWaitForSidebar(page: Page, roomId: string): Prom
 	await page.goto(`/room/${roomId}`);
 	await waitForWebSocketConnected(page);
 	// Wait for both Goals and Tasks section headers to be visible
-	await expect(page.locator('button[aria-label="Missions section"]')).toBeVisible({ timeout: 10000 });
+	await expect(page.locator('button[aria-label="Missions section"]')).toBeVisible({
+		timeout: 10000,
+	});
 	await expect(page.locator('button[aria-label="Tasks section"]')).toBeVisible({ timeout: 5000 });
 }
 
