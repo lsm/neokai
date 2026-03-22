@@ -87,6 +87,13 @@ export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
 /** Default when room config does not specify maxPlanningRetries (no auto-retry) */
 const DEFAULT_MAX_PLANNING_RETRIES = 0;
 
+/**
+ * Task statuses that indicate a group is stale and should be auto-cleaned.
+ * Groups whose tasks are in these terminal states but still marked active
+ * consume concurrency slots and prevent new tasks from being picked up.
+ */
+const STALE_TASK_STATUSES = new Set<string>(['completed', 'cancelled', 'archived']);
+
 export type { RuntimeState } from '@neokai/shared';
 
 export interface WorkerMessage {
@@ -1858,7 +1865,16 @@ export class RoomRuntime {
 
 		// Mark group as terminal in the DB (unobserves sessions too).
 		if (group.completedAt === null) {
-			await this.taskGroupManager.terminateGroup(groupId);
+			const terminated = await this.taskGroupManager.terminateGroup(groupId);
+			if (!terminated) {
+				// Concurrent modification (optimistic lock conflict) — the group may have
+				// already been terminated by another code path. Log and continue; the
+				// deleteGroup() below will still free the concurrency slot.
+				log.warn(
+					`[forceStopSessionGroup] terminateGroup(${groupId}) returned null — ` +
+						`possible concurrent modification; proceeding with delete`
+				);
+			}
 		}
 
 		// Clean up message mirroring subscriptions.
@@ -2585,28 +2601,38 @@ export class RoomRuntime {
 		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
 		if (activeGroups.length === 0) return;
 
-		const STALE_TASK_STATUSES = new Set<string>(['completed', 'cancelled', 'archived']);
+		// NOTE: getActiveGroups() uses an INNER JOIN on tasks — groups whose tasks
+		// were hard-deleted from the DB will not appear here. Those groups are handled
+		// by the zombie recovery path (findZombieGroups / recoverZombieGroups).
 
 		for (const group of activeGroups) {
-			const task = await this.taskManager.getTask(group.taskId);
-			const isStale = !task || STALE_TASK_STATUSES.has(task.status);
-			if (!isStale) continue;
+			try {
+				const task = await this.taskManager.getTask(group.taskId);
+				const isStale = !task || STALE_TASK_STATUSES.has(task.status);
+				if (!isStale) continue;
 
-			log.warn(
-				`[cleanStaleGroups] Group ${group.id} is stale ` +
-					`(task ${group.taskId} status=${task?.status ?? 'not found'}) — auto-cleaning`
-			);
+				log.warn(
+					`[cleanStaleGroups] Group ${group.id} is stale ` +
+						`(task ${group.taskId} status=${task?.status ?? 'not found'}) — auto-cleaning`
+				);
 
-			// Stop the actual agent processes (best-effort).
-			await this.terminateGroupSessions(group);
+				// Stop the actual agent processes (best-effort).
+				await this.terminateGroupSessions(group);
 
-			// Mark group as terminal (unobserves sessions); no-op if already terminal.
-			if (group.completedAt === null) {
-				await this.taskGroupManager.terminateGroup(group.id);
+				// Mark group as terminal (unobserves sessions); no-op if already terminal.
+				if (group.completedAt === null) {
+					await this.taskGroupManager.terminateGroup(group.id);
+				}
+
+				// Clean up mirroring subscriptions.
+				this.cleanupMirroring(group.id, 'Stale group auto-cleaned by tick.');
+
+				// Emit UI updates so the frontend reflects the cleaned-up state.
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+			} catch (error) {
+				log.error(`[cleanStaleGroups] Failed to clean stale group ${group.id} — skipping:`, error);
 			}
-
-			// Clean up mirroring subscriptions.
-			this.cleanupMirroring(group.id, 'Stale group auto-cleaned by tick.');
 		}
 	}
 

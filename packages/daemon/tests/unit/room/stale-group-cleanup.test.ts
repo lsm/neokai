@@ -62,13 +62,11 @@ describe('cleanStaleGroups (tick auto-cleanup)', () => {
 		const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
 		expect(stopCalls.length).toBeGreaterThanOrEqual(1);
 
-		// A new task can now be spawned if there are pending tasks (slot freed)
-		// Verify by checking the previously-stale group is gone
+		// cleanStaleGroups calls terminateGroup which marks the group terminal (completedAt set)
+		// but does NOT delete the record — the group remains in the DB as inactive.
 		const group = ctx.groupRepo.getGroup(groupId);
-		// Group still exists in DB (marked failed), but not active
-		if (group) {
-			expect(group.completedAt).not.toBeNull();
-		}
+		expect(group).not.toBeNull();
+		expect(group!.completedAt).not.toBeNull();
 	});
 
 	it('should auto-clean a stale group when task is cancelled', async () => {
