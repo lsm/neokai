@@ -135,6 +135,23 @@ describe('createCleanupHandler', () => {
 		expect(pending.length).toBe(1); // Still only one — dedup worked
 	});
 
+	it('deletes failed jobs older than 7 days', async () => {
+		const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+
+		// 'failed' is a legal status in the type contract; cleanup must prune it
+		// to prevent indefinite accumulation if any code path ever writes it.
+		db.exec(`
+			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
+			VALUES ('old-failed', 'some.queue', 'failed', '{}', 0, 3, 1, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
+		`);
+
+		const handler = createCleanupHandler(jobQueue);
+		const result = await handler(fakeJob);
+
+		expect(result.deletedJobs).toBe(1);
+		expect(jobQueue.getJob('old-failed')).toBeNull();
+	});
+
 	it('returns 0 deletedJobs when nothing is old enough', async () => {
 		// Only a recent completed job
 		const recentTime = Date.now() - 60_000;
