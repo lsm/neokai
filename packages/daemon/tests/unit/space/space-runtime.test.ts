@@ -2095,18 +2095,72 @@ describe('SpaceRuntime', () => {
 			expect((resolvedChannels as unknown[]).length).toBeGreaterThan(0);
 		});
 
-		test('storeResolvedChannels: step without channels does not modify run config', async () => {
+		test('storeResolvedChannels: step without channels stores an empty array (clears stale topology)', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'No Channels', agentId: AGENT_CODER },
 			]);
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Run config should NOT have _resolvedChannels
+			// Run config should have _resolvedChannels set to [] — this prevents stale
+			// topology from a prior step from leaking into the current step.
 			const updatedRun = workflowRunRepo.getRun(run.id)!;
 			const resolvedChannels = (updatedRun.config as Record<string, unknown> | undefined)
 				?._resolvedChannels;
-			expect(resolvedChannels).toBeUndefined();
+			expect(resolvedChannels).toEqual([]);
+		});
+
+		test('storeResolvedChannels: advancing from channel step to no-channel step clears topology', async () => {
+			// Step A has channels; Step B does not. After advancing, topology should be cleared.
+			const AGENT_REVIEWER = 'agent-reviewer-topo';
+			seedAgentRow(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer', 'reviewer');
+
+			const stepA = STEP_A;
+			const stepB = `step-b-${Math.random().toString(36).slice(2)}`;
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Channel then No-Channel',
+				steps: [
+					{
+						id: stepA,
+						name: 'With Channels',
+						agentId: AGENT_CODER,
+						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+					},
+					{ id: stepB, name: 'Without Channels', agentId: AGENT_CODER },
+				],
+				transitions: [{ from: stepA, to: stepB, condition: { type: 'always' } }],
+				startStepId: stepA,
+				rules: [],
+			});
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// After start, Step A's channels should be stored
+			const runAfterStart = workflowRunRepo.getRun(run.id)!;
+			const channelsAfterStart = (runAfterStart.config as Record<string, unknown>)
+				?._resolvedChannels as unknown[];
+			expect(channelsAfterStart.length).toBeGreaterThan(0);
+
+			// Mark step A tasks as completed so we can advance
+			const stepATasks = taskRepo
+				.listByWorkflowRun(run.id)
+				.filter((t) => t.workflowStepId === stepA);
+			for (const t of stepATasks) {
+				taskRepo.updateTask(t.id, { status: 'completed' });
+			}
+
+			// Advance to Step B (no channels) via the runtime tick, which is the
+			// path that calls storeResolvedChannels() after a successful advance.
+			await runtime.executeTick();
+
+			// After advancing, topology should be cleared to []
+			const runAfterAdvance = workflowRunRepo.getRun(run.id)!;
+			const channelsAfterAdvance = (runAfterAdvance.config as Record<string, unknown>)
+				?._resolvedChannels;
+			expect(channelsAfterAdvance).toEqual([]);
 		});
 	});
 });

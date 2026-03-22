@@ -360,7 +360,7 @@ export class SpaceRuntime {
 		}
 
 		// Resolve channel topology for the start step and store in run config.
-		// TODO Milestone 6: pass resolvedChannels to session group creation in
+		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
 		this.storeResolvedChannels(run.id, space.id, startStep);
 
@@ -779,7 +779,7 @@ export class SpaceRuntime {
 				// initial key set, so the entry stays until cleanupTerminalExecutors() runs.
 			} else {
 				// Resolve channel topology for the new step.
-				// TODO Milestone 6: pass to session group creation instead of run config.
+				// TODO: Milestone 6: pass to session group creation instead of run config.
 				this.storeResolvedChannels(runId, meta.spaceId, newStep);
 			}
 		} catch (err) {
@@ -1000,20 +1000,30 @@ export class SpaceRuntime {
 	 * TODO Milestone 6: pass resolvedChannels to session group metadata in
 	 * TaskAgentManager.spawnTaskAgent() instead of storing in run config.
 	 *
-	 * Steps with no `channels` declaration produce an empty array (no-op).
+	 * Steps with no `channels` declaration store an empty array, clearing any
+	 * previously stored topology from prior steps. This prevents stale topology
+	 * from a channel-declaring step from leaking into subsequent steps that have
+	 * no channels — which would cause list_group_members to report incorrect
+	 * permittedTargets and channelTopologyDeclared=true for the wrong step.
 	 */
 	private storeResolvedChannels(runId: string, spaceId: string, step: WorkflowStep): void {
-		if (!step.channels || step.channels.length === 0) return;
-
-		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-		const resolved = resolveStepChannels(step, allAgents);
-
-		if (resolved.length === 0) return;
-
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 
 		const config = (run.config ?? {}) as Record<string, unknown>;
+
+		// No channels declared: clear any previously stored topology so list_group_members
+		// does not return stale topology from a prior step.
+		if (!step.channels || step.channels.length === 0) {
+			this.config.workflowRunRepo.updateRun(runId, {
+				config: { ...config, _resolvedChannels: [] },
+			});
+			return;
+		}
+
+		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
+		const resolved = resolveStepChannels(step, allAgents);
+
 		this.config.workflowRunRepo.updateRun(runId, {
 			config: { ...config, _resolvedChannels: resolved },
 		});

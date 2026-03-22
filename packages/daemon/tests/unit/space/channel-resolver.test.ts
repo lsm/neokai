@@ -73,6 +73,44 @@ describe('ChannelResolver.fromRunConfig', () => {
 		expect(resolver.isEmpty()).toBe(false);
 		expect(resolver.getResolvedChannels()).toHaveLength(1);
 	});
+
+	test('filters out structurally invalid entries instead of casting blindly', () => {
+		// Mix of valid and invalid entries
+		const raw = [
+			oneWayChannel('coder', 'reviewer'), // valid
+			{ fromRole: 'coder', toRole: 'reviewer' }, // missing direction + isHubSpoke
+			null, // null
+			{
+				fromRole: '',
+				toRole: 'reviewer',
+				fromAgentId: 'a',
+				toAgentId: 'b',
+				direction: 'one-way',
+				isHubSpoke: false,
+			}, // empty fromRole
+			'string-entry', // wrong type
+			{
+				fromRole: 'qa',
+				toRole: 'coder',
+				fromAgentId: 'a',
+				toAgentId: 'b',
+				direction: 'one-way',
+				isHubSpoke: false,
+			}, // valid
+		];
+		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: raw });
+		// Only the 2 fully valid entries pass the structural filter
+		expect(resolver.getResolvedChannels()).toHaveLength(2);
+	});
+
+	test('getResolvedChannels returns a copy (mutations do not affect internal state)', () => {
+		const channels = [oneWayChannel('coder', 'reviewer')];
+		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: channels });
+		const first = resolver.getResolvedChannels();
+		first.push(oneWayChannel('qa', 'coder')); // mutate returned array
+		// Internal state must be unaffected
+		expect(resolver.getResolvedChannels()).toHaveLength(1);
+	});
 });
 
 // ===========================================================================
@@ -175,6 +213,29 @@ describe('ChannelResolver.getPermittedTargets', () => {
 
 	test('returns single target for one-way channel', () => {
 		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
+		expect(resolver.getPermittedTargets('coder')).toEqual(['reviewer']);
+	});
+
+	test('deduplicates target roles when multiple agent IDs share the same role', () => {
+		// Two different agent IDs both map to the 'reviewer' role
+		const ch1: ResolvedChannel = {
+			fromRole: 'coder',
+			toRole: 'reviewer',
+			fromAgentId: 'agent-coder',
+			toAgentId: 'agent-reviewer-1',
+			direction: 'one-way',
+			isHubSpoke: false,
+		};
+		const ch2: ResolvedChannel = {
+			fromRole: 'coder',
+			toRole: 'reviewer',
+			fromAgentId: 'agent-coder',
+			toAgentId: 'agent-reviewer-2',
+			direction: 'one-way',
+			isHubSpoke: false,
+		};
+		const resolver = new ChannelResolver([ch1, ch2]);
+		// 'reviewer' should appear only once despite two channel entries
 		expect(resolver.getPermittedTargets('coder')).toEqual(['reviewer']);
 	});
 });

@@ -200,7 +200,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
-			`Pass a \`prompt\` describing what decision or approval is needed. ` +
+			`Pass a \`question\` describing what decision or approval is needed. ` +
 			`Returns the human's response. ` +
 			`Call this when \`advance_workflow\` returns a \`human\` gate condition.`
 	);

@@ -825,6 +825,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
+			// Reject self-relay (Task Agent → its own session). The Task Agent is a group
+			// member with role 'task-agent'. Injecting a user-turn into its own session would
+			// produce a spurious conversation turn in the running Task Agent conversation.
+			if (targetMember.role === 'task-agent') {
+				return jsonResult({
+					success: false,
+					error:
+						`Cannot relay a message to the Task Agent's own session (role: 'task-agent'). ` +
+						`relay_message is for communicating with step agent sub-sessions only.`,
+				});
+			}
+
 			// Inject the message into the target session.
 			// messageInjector serializes writes per-session; concurrent calls queue safely.
 			try {
