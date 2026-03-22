@@ -39,6 +39,8 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		});
 		return () => {
 			roomStore.select(null);
+			// Clear any pending tab signal when leaving a room to prevent cross-room contamination
+			currentRoomTabSignal.value = null;
 		};
 	}, [roomId]);
 
@@ -52,7 +54,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			}
 			currentRoomTabSignal.value = null;
 		}
-	}, [pendingTab, taskViewId]);
+	}, [pendingTab, taskViewId, roomId]);
 
 	// Update URL when tab changes
 	const handleTabChange = (tab: RoomTab) => {

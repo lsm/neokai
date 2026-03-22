@@ -41,9 +41,10 @@ if (typeof window !== 'undefined') {
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
-	goals?: RoomGoal[];
+	/** Pre-built reverse lookup from roomStore.goalByTaskId.value */
+	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: (goalId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -104,7 +105,7 @@ function getStatusBorderColor(status: TaskStatus): string {
 
 export function RoomTasks({
 	tasks,
-	goals,
+	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
 	onView,
@@ -112,15 +113,6 @@ export function RoomTasks({
 	onApprove,
 	onReactivate,
 }: RoomTasksProps) {
-	// Build reverse lookup: taskId → RoomGoal
-	const goalByTaskId = new Map<string, RoomGoal>();
-	if (goals) {
-		for (const goal of goals) {
-			for (const taskId of goal.linkedTaskIds) {
-				goalByTaskId.set(taskId, goal);
-			}
-		}
-	}
 	let selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
 
@@ -309,7 +301,7 @@ function TaskList({
 	tab: TaskFilterTab;
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: (goalId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -501,7 +493,7 @@ function TaskGroup({
 	allTasks: TaskSummary[];
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: (goalId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -608,7 +600,7 @@ function TaskItem({
 	allTasks: TaskSummary[];
 	goal?: RoomGoal;
 	onClick?: (taskId: string) => void;
-	onGoalClick?: (goalId: string) => void;
+	onGoalClick?: () => void;
 	onView?: (taskId: string) => void;
 	onReject?: (taskId: string, feedback: string) => void;
 	onApprove?: (taskId: string) => void;
@@ -661,7 +653,7 @@ function TaskItem({
 								data-testid={`task-goal-badge-${task.id}`}
 								onClick={(e) => {
 									e.stopPropagation();
-									onGoalClick?.(goal.id);
+									onGoalClick?.();
 								}}
 								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0 hover:bg-emerald-900/40 transition-colors"
 								title={`Mission: ${goal.title}`}

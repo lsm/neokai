@@ -963,8 +963,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							<button
 								data-testid="task-view-goal-badge"
 								onClick={() => {
-									currentRoomTabSignal.value = 'goals';
+									// Navigate first so taskViewId is cleared before the signal is consumed
 									navigateToRoom(roomId);
+									currentRoomTabSignal.value = 'goals';
 								}}
 								class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 hover:bg-emerald-900/40 rounded transition-colors"
 								title={`Mission: ${associatedGoal.title}`}
