@@ -91,8 +91,8 @@ async function createTestSpaceWithTask(page: Page): Promise<CreatedSpace> {
 				spaceId,
 				title: 'E2E Test Task',
 				description: 'Task for testing Working Agents display',
-			})) as { task: { id: string } };
-			const taskId = taskRes.task.id;
+			})) as { id: string };
+			const taskId = taskRes.id;
 
 			return { spaceId, agentId, taskId };
 		},
