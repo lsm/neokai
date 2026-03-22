@@ -330,7 +330,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			// Cache so repeated calls (isAvailable, getAuthStatus, buildSdkConfig) don't re-parse.
 			this.cachedBridgeAuth = auth;
 			this.cachedApiKey =
-				auth.type === 'api_key' ? auth.apiKey : (auth as { accessToken: string }).accessToken;
+				auth.type === 'api_key'
+					? auth.apiKey
+					: (auth as Extract<AppServerAuth, { type: 'chatgpt' }>).accessToken;
 			return auth;
 		}
 		if (this.env.OPENAI_API_KEY) {
@@ -523,7 +525,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
 			let envAuth: AppServerAuth | undefined;
 			if (this.env.CODEX_OAUTH_TOKEN) {
-				envAuth = buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) => logger.warn(msg));
+				// Prefer cachedBridgeAuth populated by getBridgeAuth() to avoid re-parsing the JWT
+				// and re-emitting the warning on every new workspace.
+				envAuth =
+					this.cachedBridgeAuth ??
+					buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) => logger.warn(msg));
 			} else if (this.env.OPENAI_API_KEY) {
 				envAuth = { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
 			} else if (this.env.CODEX_API_KEY) {

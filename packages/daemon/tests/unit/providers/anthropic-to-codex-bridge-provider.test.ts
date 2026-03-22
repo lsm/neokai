@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { Logger } from '../../../src/lib/logger';
 import {
 	AnthropicToCodexBridgeProvider,
 	buildAuthFromEnvOAuthToken,
@@ -364,6 +365,26 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(cfg.isAnthropicCompatible).toBe(true);
 			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 			p.stopAllBridgeServers();
+		});
+
+		it('buildSdkConfig() does not re-emit warning after getBridgeAuth() warms the cache', async () => {
+			// Non-ChatGPT JWT triggers a warning in getBridgeAuth(). A subsequent
+			// buildSdkConfig() call must NOT re-parse and re-warn; it should use cachedBridgeAuth.
+			const subOnlyToken = makeFakeJwt({ sub: 'some-user-id' });
+			const warnSpy = spyOn(Logger.prototype, 'warn');
+			try {
+				const p = makeProvider({ CODEX_OAUTH_TOKEN: subOnlyToken });
+				await p.getApiKey(); // warms cache, emits warning #1
+				p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/double-warn-ws' });
+				// Warning should have been emitted exactly once, not twice
+				const codexWarnings = warnSpy.mock.calls.filter((args) =>
+					String(args[0]).includes('CODEX_OAUTH_TOKEN')
+				);
+				expect(codexWarnings.length).toBe(1);
+				p.stopAllBridgeServers();
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 
 		it('buildSdkConfig() uses cached API key resolved by prior getApiKey() call', async () => {

@@ -46,3 +46,4 @@ process.env.ZHIPU_API_KEY = '';
 process.env.MINIMAX_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.CODEX_API_KEY = '';
+process.env.CODEX_OAUTH_TOKEN = '';
