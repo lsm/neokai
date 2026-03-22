@@ -112,8 +112,8 @@ export interface TaskTypeResolution {
  *
  * May return either a single `TaskTypeResolution` (single-agent / backward-compat)
  * or an array of `TaskTypeResolution` (one per agent in a multi-agent step).
- * When an array is returned, the first entry is used for the primary task created
- * by the executor; individual per-agent sub-tasks use their corresponding entry.
+ * The executor currently uses only the first entry to create the primary task.
+ * Per-agent sub-task creation for the remaining entries is deferred to a later phase.
  */
 export type TaskTypeResolver = (step: WorkflowStep) => TaskTypeResolution | TaskTypeResolution[];
 

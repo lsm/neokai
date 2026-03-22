@@ -532,6 +532,90 @@ describe('SpaceRuntime', () => {
 			expect(run.goalId).toBeUndefined();
 			expect(tasks[0].goalId).toBeUndefined();
 		});
+
+		test('multi-agent start step: uses first agent taskType for the initial task', async () => {
+			// Workflow with agents[] format: planner first, then coder
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-Agent Start ${Date.now()}`,
+				description: '',
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Multi Step',
+						agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Run');
+
+			// The primary task uses the first agent's resolution (planner → planning)
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].taskType).toBe('planning');
+			expect(tasks[0].customAgentId).toBeUndefined();
+		});
+
+		test('multi-agent start step with custom-role first agent: sets customAgentId', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-Agent Custom ${Date.now()}`,
+				description: '',
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Custom Multi Step',
+						agents: [{ agentId: AGENT_CUSTOM }, { agentId: AGENT_CODER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Custom Multi Run');
+
+			expect(tasks[0].taskType).toBe('coding');
+			expect(tasks[0].customAgentId).toBe(AGENT_CUSTOM);
+		});
+
+		test('cancels run and clears executor when start step has no agent configuration', async () => {
+			// Bypass FK + manager validation to insert a step with no agentId/agents
+			db.exec('PRAGMA foreign_keys = OFF');
+			let workflow: SpaceWorkflow;
+			try {
+				const repo = new SpaceWorkflowRepository(db);
+				// Insert step JSON directly with no agentId and no agents[]
+				workflow = repo.createWorkflow({
+					spaceId: SPACE_ID,
+					name: `No Agent Step ${Date.now()}`,
+					description: '',
+					steps: [{ id: STEP_A, name: 'Broken Step' } as never],
+					transitions: [],
+					startStepId: STEP_A,
+					rules: [],
+					tags: [],
+				});
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+
+			const runsBefore = workflowRunRepo.listBySpace(SPACE_ID);
+
+			await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Broken Run')).rejects.toThrow();
+
+			// Run should be cancelled, executor map should be clean
+			const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
+			const newRun = runsAfter.find((r) => !runsBefore.some((b) => b.id === r.id));
+			expect(newRun).toBeDefined();
+			expect(newRun!.status).toBe('cancelled');
+			expect(runtime.executorCount).toBe(0);
+		});
 	});
 
 	// -------------------------------------------------------------------------

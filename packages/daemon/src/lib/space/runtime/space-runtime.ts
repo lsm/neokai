@@ -326,10 +326,13 @@ export class SpaceRuntime {
 			throw new Error(`Start step "${workflow.startStepId}" not found in workflow "${workflowId}"`);
 		}
 
-		const resolved = this.resolveTaskTypeForStep(startStep);
 		const taskManager = this.getOrCreateTaskManager(spaceId);
 		let task: SpaceTask;
 		try {
+			// resolveTaskTypeForStep is inside the try/catch so that an exception from
+			// resolveStepAgents (e.g. a step with neither agentId nor agents) triggers
+			// the same executor/meta cleanup path as a task-creation failure.
+			const resolved = this.resolveTaskTypeForStep(startStep);
 			task = await taskManager.createTask({
 				title: startStep.name,
 				description: startStep.instructions ?? '',
