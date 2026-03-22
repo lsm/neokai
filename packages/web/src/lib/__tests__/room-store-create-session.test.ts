@@ -34,6 +34,7 @@ function makeMockHub() {
 		joinChannel: vi.fn(),
 		leaveChannel: vi.fn(),
 		onEvent: vi.fn(() => () => {}),
+		onConnection: vi.fn(() => () => {}),
 		request: mockRequestFn,
 	};
 }
