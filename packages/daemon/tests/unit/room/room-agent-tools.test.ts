@@ -120,7 +120,7 @@ describe('Room Agent Tools', () => {
 
 		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
 		taskManager = new TaskManager(db as never, roomId, noOpReactiveDb);
-		groupRepo = new SessionGroupRepository(createReactiveDatabase(db));
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});
 

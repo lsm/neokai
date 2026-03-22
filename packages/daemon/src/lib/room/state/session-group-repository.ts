@@ -205,16 +205,10 @@ export interface TaskGroupEvent {
 }
 
 export class SessionGroupRepository {
-	/** Raw BunDatabase for direct SQL queries */
-	private db: BunDatabase;
-
-	constructor(private reactiveDb: ReactiveDatabase) {
-		// Extract the raw BunDatabase for direct SQL operations.
-		// In production, reactiveDb.db is the proxied Database facade (has getDatabase()).
-		// In tests, reactiveDb.db may be a raw BunDatabase directly.
-		const facade = reactiveDb.db as unknown as { getDatabase?: () => BunDatabase } & BunDatabase;
-		this.db = typeof facade.getDatabase === 'function' ? facade.getDatabase() : facade;
-	}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb: ReactiveDatabase
+	) {}
 
 	// ===== Group lifecycle =====
 

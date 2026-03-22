@@ -94,7 +94,7 @@ function createTestDb(): {
 	);
 
 	const reactiveDb = createReactiveDatabase(db);
-	const repo = new SessionGroupRepository(reactiveDb);
+	const repo = new SessionGroupRepository(db, reactiveDb);
 	return { db, reactiveDb, repo };
 }
 

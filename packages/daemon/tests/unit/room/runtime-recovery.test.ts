@@ -166,7 +166,7 @@ describe('Runtime Recovery', () => {
 		`);
 
 		const mockHub = createMockDaemonHub();
-		groupRepo = new SessionGroupRepository(createReactiveDatabase(db));
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
 		taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
 		goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);

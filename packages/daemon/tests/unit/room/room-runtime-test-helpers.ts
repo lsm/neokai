@@ -242,7 +242,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	);
 
 	const mockHub = createMockDaemonHub();
-	const groupRepo = new SessionGroupRepository(createReactiveDatabase(db));
+	const groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 	const observer = new SessionObserver(mockHub as unknown as DaemonHub);
 	const taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
 	const goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);

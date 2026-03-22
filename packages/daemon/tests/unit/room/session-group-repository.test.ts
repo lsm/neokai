@@ -73,7 +73,7 @@ describe('SessionGroupRepository', () => {
 			INSERT INTO tasks (id, room_id, title, description, created_at) VALUES ('${taskId}', '${roomId}', 'Test Task', 'desc', ${Date.now()});
 			INSERT INTO tasks (id, room_id, title, description, created_at) VALUES ('task-2', '${roomId}', 'Task 2', 'desc', ${Date.now()});
 		`);
-		repo = new SessionGroupRepository(createReactiveDatabase(db));
+		repo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 	});
 
 	afterEach(() => {

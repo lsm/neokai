@@ -55,7 +55,7 @@ export function setupTaskHandlers(
 		new TaskManager(d.getDatabase(), roomId, reactiveDb),
 	runtimeService?: RoomRuntimeService
 ): void {
-	const makeGroupRepo = () => new SessionGroupRepository(reactiveDb);
+	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);
 
 	/**
 	 * Emit room.task.update event to notify UI clients
