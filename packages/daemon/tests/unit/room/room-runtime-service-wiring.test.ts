@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { Database as BunDatabase } from 'bun:sqlite';
 import {
 	RoomRuntimeService,
 	type RoomRuntimeServiceConfig,
@@ -8,7 +8,9 @@ import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-
 import { createRoomTickHandler } from '../../../src/lib/job-handlers/room-tick.handler';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
 import type { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
-import type { Room, RuntimeState } from '@neokai/shared';
+import { Database as AppDatabase } from '../../../src/storage';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
+import type { Room, RuntimeState, Session } from '@neokai/shared';
 
 const CREATE_TABLE_SQL = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -86,6 +88,32 @@ function makeRoom(id: string, runtimeState?: RuntimeState): Room {
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		config,
+	};
+}
+
+function makeSession(id: string): Session {
+	const now = new Date().toISOString();
+	return {
+		id,
+		title: 'Test Session',
+		workspacePath: '/tmp',
+		createdAt: now,
+		lastActiveAt: now,
+		status: 'active',
+		config: {
+			model: 'test-model',
+			maxTokens: 8192,
+			temperature: 0.7,
+		},
+		metadata: {
+			messageCount: 0,
+			totalTokens: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalCost: 0,
+			toolCallCount: 0,
+		},
+		type: 'worker',
 	};
 }
 
@@ -318,10 +346,71 @@ describe('RoomRuntimeService runtime state persistence', () => {
 	});
 });
 
+describe('RoomRuntimeService message persistence reactivity', () => {
+	it('injectMessage persists via reactive db facade and bumps sdk_messages version', async () => {
+		const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+		const dbPath = `${tmpBase}/room-runtime-reactive-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+		const appDb = new AppDatabase(dbPath);
+		const reactiveDb = createReactiveDatabase(appDb);
+		await appDb.initialize(reactiveDb);
+
+		try {
+			// Insert the session row first (sdk_messages has FK -> sessions.id)
+			reactiveDb.db.createSession(makeSession('session-reactive-1'));
+
+			const roomManager = {
+				listRooms: () => [],
+				getRoom: () => null,
+				updateRoom: () => null,
+			};
+
+			const service = new RoomRuntimeService(
+				makeConfig({
+					db: reactiveDb.db as never,
+					reactiveDb: reactiveDb as never,
+					roomManager: roomManager as never,
+				})
+			);
+
+			const serviceAny = service as unknown as {
+				createSessionFactory: () => {
+					injectMessage: (sessionId: string, message: string) => Promise<void>;
+				};
+				agentSessions: Map<string, unknown>;
+			};
+
+			serviceAny.agentSessions.set('session-reactive-1', {
+				getProcessingState: () => ({ status: 'idle' }),
+				ensureQueryStarted: async () => {},
+				messageQueue: {
+					enqueueWithId: async () => {},
+				},
+			});
+
+			const sessionFactory = serviceAny.createSessionFactory();
+			const before = reactiveDb.getTableVersion('sdk_messages');
+			await sessionFactory.injectMessage('session-reactive-1', 'hello from reactive runtime');
+			const after = reactiveDb.getTableVersion('sdk_messages');
+
+			expect(after).toBeGreaterThan(before);
+			const queued = reactiveDb.db.getMessagesByStatus('session-reactive-1', 'queued');
+			expect(queued).toHaveLength(1);
+			expect(queued[0]?.type).toBe('user');
+		} finally {
+			appDb.close();
+			try {
+				require('fs').unlinkSync(dbPath);
+			} catch {
+				// best-effort cleanup
+			}
+		}
+	});
+});
+
 describe('stopRuntime() + room.tick handler interaction', () => {
 	it('tick handler returns { skipped, reason } for a room whose runtime was deleted by stopRuntime()', async () => {
 		// Set up an in-memory job queue so we can build a real handler
-		const db = new Database(':memory:');
+		const db = new BunDatabase(':memory:');
 		db.exec(CREATE_TABLE_SQL);
 		const jobQueue = new JobQueueRepository(db as never);
 
