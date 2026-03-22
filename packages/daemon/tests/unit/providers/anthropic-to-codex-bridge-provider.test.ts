@@ -367,16 +367,25 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			p.stopAllBridgeServers();
 		});
 
-		it('buildSdkConfig() does not re-emit warning after getBridgeAuth() warms the cache', async () => {
-			// Non-ChatGPT JWT triggers a warning in getBridgeAuth(). A subsequent
-			// buildSdkConfig() call must NOT re-parse and re-warn; it should use cachedBridgeAuth.
+		it('warning fires exactly once across multiple getBridgeAuth() callers and buildSdkConfig()', async () => {
+			// Non-ChatGPT JWT triggers the api_key fallback warning in getBridgeAuth().
+			// Every subsequent call — via isAvailable(), getApiKey(), getModels(), or
+			// buildSdkConfig() — must hit cachedBridgeAuth and NOT re-parse or re-warn.
 			const subOnlyToken = makeFakeJwt({ sub: 'some-user-id' });
 			const warnSpy = spyOn(Logger.prototype, 'warn');
 			try {
-				const p = makeProvider({ CODEX_OAUTH_TOKEN: subOnlyToken });
-				await p.getApiKey(); // warms cache, emits warning #1
-				p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/double-warn-ws' });
-				// Warning should have been emitted exactly once, not twice
+				const p = makeProvider(
+					{ CODEX_OAUTH_TOKEN: subOnlyToken },
+					undefined,
+					undefined,
+					fakeCodexFound
+				);
+				// Multiple async methods all call getBridgeAuth() internally
+				await p.isAvailable(); // call 1: parses JWT, emits warning, populates cache
+				await p.getApiKey(); // call 2: must return from cache, no re-warn
+				await p.getModels(); // call 3: must return from cache, no re-warn
+				// Synchronous buildSdkConfig() also must not re-parse
+				p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/no-double-warn-ws' });
 				const codexWarnings = warnSpy.mock.calls.filter((args) =>
 					String(args[0]).includes('CODEX_OAUTH_TOKEN')
 				);

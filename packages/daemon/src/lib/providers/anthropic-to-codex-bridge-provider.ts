@@ -324,10 +324,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 */
 	private async getBridgeAuth(): Promise<AppServerAuth | undefined> {
 		if (this.env.CODEX_OAUTH_TOKEN) {
+			// Return cached result so repeated calls (isAvailable, getApiKey, getModels, etc.)
+			// don't re-parse the JWT or re-emit the api_key fallback warning.
+			if (this.cachedBridgeAuth !== undefined) {
+				return this.cachedBridgeAuth ?? undefined;
+			}
 			const auth = buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) =>
 				logger.warn(msg)
 			);
-			// Cache so repeated calls (isAvailable, getAuthStatus, buildSdkConfig) don't re-parse.
 			this.cachedBridgeAuth = auth;
 			this.cachedApiKey =
 				auth.type === 'api_key'
@@ -527,9 +531,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			if (this.env.CODEX_OAUTH_TOKEN) {
 				// Prefer cachedBridgeAuth populated by getBridgeAuth() to avoid re-parsing the JWT
 				// and re-emitting the warning on every new workspace.
+				// Use !== undefined (not ??) so that null ("resolved, unavailable") is treated
+				// as a definitive cache hit and does not fall through to re-parse the token.
 				envAuth =
-					this.cachedBridgeAuth ??
-					buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) => logger.warn(msg));
+					this.cachedBridgeAuth !== undefined
+						? (this.cachedBridgeAuth ?? undefined)
+						: buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) => logger.warn(msg));
 			} else if (this.env.OPENAI_API_KEY) {
 				envAuth = { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
 			} else if (this.env.CODEX_API_KEY) {
