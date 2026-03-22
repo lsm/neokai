@@ -10,7 +10,10 @@
 
 import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { ROOM_TICK } from '../../job-queue-constants';
+import { createRoomTickHandler } from '../../job-handlers/room-tick.handler';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -54,6 +57,11 @@ export interface RoomRuntimeServiceConfig {
 	 * instead of using in-process timers.
 	 */
 	jobQueue?: JobQueueRepository;
+	/**
+	 * Job processor used to register the room.tick handler.
+	 * Must be provided for the job-queue-based tick loop to function.
+	 */
+	jobProcessor?: JobQueueProcessor;
 }
 
 export class RoomRuntimeService {
@@ -65,6 +73,14 @@ export class RoomRuntimeService {
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
 
 	async start(): Promise<void> {
+		// Register the room.tick handler synchronously before any async work so that
+		// no pending tick job is dequeued without a handler when jobProcessor starts.
+		if (this.ctx.jobProcessor && this.ctx.jobQueue) {
+			this.ctx.jobProcessor.register(
+				ROOM_TICK,
+				createRoomTickHandler((roomId) => this.runtimes.get(roomId) ?? null, this.ctx.jobQueue)
+			);
+		}
 		this.subscribeToEvents();
 		await this.initializeExistingRooms();
 		log.info('RoomRuntimeService started');
@@ -134,6 +150,7 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.stop();
+		this.runtimes.delete(roomId);
 		return true;
 	}
 
