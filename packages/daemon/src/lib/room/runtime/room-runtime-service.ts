@@ -9,6 +9,7 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -45,6 +46,8 @@ export interface RoomRuntimeServiceConfig {
 	defaultModel: string;
 	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
 	getGlobalSettings: () => GlobalSettings;
+	/** Reactive database wrapper for change event emission */
+	reactiveDb: ReactiveDatabase;
 }
 
 export class RoomRuntimeService {

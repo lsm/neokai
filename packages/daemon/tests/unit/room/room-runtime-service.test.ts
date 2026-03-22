@@ -41,6 +41,8 @@ describe('RoomRuntimeService', () => {
 			sessionManager: {} as never,
 			defaultWorkspacePath: '/tmp',
 			defaultModel: 'global-default-model',
+			getGlobalSettings: () => ({}) as never,
+			reactiveDb: {} as never,
 		};
 
 		service = new RoomRuntimeService(config);

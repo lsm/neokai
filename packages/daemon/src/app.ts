@@ -248,6 +248,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		spaceAgentManager,
 		jobQueue,
 		jobProcessor,
+		reactiveDb,
 	});
 
 	// Create WebSocket handlers
