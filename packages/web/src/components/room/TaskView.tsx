@@ -32,7 +32,7 @@ import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
-import { TaskActionDropdown } from './TaskActionDropdown';
+import { TaskInfoPanel } from './TaskInfoPanel';
 
 interface TaskGroupInfo {
 	id: string;
@@ -569,6 +569,19 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 	const [interrupting, setInterrupting] = useState(false);
 
+	// Info panel (gear button) expanded state
+	const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(false);
+
+	// Close info panel on Escape key
+	useEffect(() => {
+		if (!isInfoPanelOpen) return;
+		const handleEscape = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') setIsInfoPanelOpen(false);
+		};
+		document.addEventListener('keydown', handleEscape, true);
+		return () => document.removeEventListener('keydown', handleEscape, true);
+	}, [isInfoPanelOpen]);
+
 	// Task action modals
 	const completeModal = useModal();
 	const cancelModal = useModal();
@@ -943,18 +956,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						title={`Task progress: ${task.progress}%`}
 					/>
 				)}
-				{/* Cancel button - quick action outside dropdown */}
-				{canCancel && (
-					<button
-						class="py-1 px-2.5 rounded-lg text-xs border border-dark-600 text-gray-400 hover:text-red-400 hover:border-red-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-						onClick={cancelModal.open}
-						disabled={interrupting}
-						data-testid="task-cancel-button"
-						title="Cancel task"
-					>
-						Cancel
-					</button>
-				)}
 				{/* Stop (interrupt) button - quick action outside dropdown */}
 				{canInterrupt && (
 					<button
@@ -995,25 +996,72 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						)}
 					</button>
 				)}
-				{/* Action dropdown (gear icon) - contains info section and actions (Complete, Archive) */}
-				<TaskActionDropdown
-					worktreePath={workerSession?.worktree?.worktreePath ?? workerSession?.workspacePath}
-					workerSession={workerSession}
-					leaderSession={leaderSession}
-					actions={{
-						onComplete: canComplete && task.status !== 'review' ? completeModal.open : undefined,
-						onArchive: canArchive ? archiveModal.open : undefined,
-					}}
-					visibleActions={{
-						complete: canComplete && task.status !== 'review',
-						archive: canArchive,
-					}}
-					disabledActions={{
-						complete: interrupting,
-						archive: false,
-					}}
-				/>
+				{/* Gear button - toggles info panel below header */}
+				<button
+					class={`p-1.5 rounded transition-colors ${
+						isInfoPanelOpen
+							? 'bg-blue-600 text-white'
+							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
+					}`}
+					onClick={() => setIsInfoPanelOpen(!isInfoPanelOpen)}
+					title="Task info and actions"
+					data-testid="task-info-panel-trigger"
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+						/>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+						/>
+					</svg>
+				</button>
 			</div>
+
+			{/* Info panel — expands below header when gear is clicked */}
+			<TaskInfoPanel
+				isOpen={isInfoPanelOpen}
+				worktreePath={workerSession?.worktree?.worktreePath ?? workerSession?.workspacePath}
+				workerSession={workerSession}
+				leaderSession={leaderSession}
+				actions={{
+					onComplete:
+						canComplete && task.status !== 'review'
+							? () => {
+									setIsInfoPanelOpen(false);
+									completeModal.open();
+								}
+							: undefined,
+					onCancel: canCancel
+						? () => {
+								setIsInfoPanelOpen(false);
+								cancelModal.open();
+							}
+						: undefined,
+					onArchive: canArchive
+						? () => {
+								setIsInfoPanelOpen(false);
+								archiveModal.open();
+							}
+						: undefined,
+				}}
+				visibleActions={{
+					complete: canComplete && task.status !== 'review',
+					cancel: canCancel,
+					archive: canArchive,
+				}}
+				disabledActions={{
+					complete: interrupting,
+					cancel: interrupting,
+					archive: false,
+				}}
+			/>
 
 			{/* Action bar — shown when awaiting human review/approval */}
 			{group?.submittedForReview && (
