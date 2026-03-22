@@ -636,4 +636,30 @@ describe('JobQueueRepository', () => {
 			expect(reclaimed).toBe(4);
 		});
 	});
+
+	describe('deleteJob', () => {
+		it('returns true and removes the job when it exists', () => {
+			const job = repository.enqueue({ queue: 'test', payload: {} });
+			const deleted = repository.deleteJob(job.id);
+			expect(deleted).toBe(true);
+			expect(repository.getJob(job.id)).toBeNull();
+		});
+
+		it('returns false when the job ID does not exist', () => {
+			const deleted = repository.deleteJob('non-existent-id');
+			expect(deleted).toBe(false);
+		});
+
+		it('deletes exactly one row and leaves others untouched', () => {
+			const job1 = repository.enqueue({ queue: 'test', payload: { n: 1 } });
+			const job2 = repository.enqueue({ queue: 'test', payload: { n: 2 } });
+			const job3 = repository.enqueue({ queue: 'test', payload: { n: 3 } });
+
+			repository.deleteJob(job2.id);
+
+			expect(repository.getJob(job1.id)).not.toBeNull();
+			expect(repository.getJob(job2.id)).toBeNull();
+			expect(repository.getJob(job3.id)).not.toBeNull();
+		});
+	});
 });

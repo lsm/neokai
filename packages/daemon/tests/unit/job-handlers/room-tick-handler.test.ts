@@ -10,25 +10,6 @@ import {
 } from '../../../src/lib/job-handlers/room-tick.handler';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
 
-/** Build a minimal Job object without touching the DB — simulates a dequeued (processing) job */
-function makeJob(roomId: string): Job {
-	return {
-		id: `test-job-${roomId}`,
-		queue: ROOM_TICK,
-		status: 'processing',
-		payload: { roomId },
-		result: null,
-		error: null,
-		priority: 0,
-		maxRetries: 0,
-		retryCount: 0,
-		runAt: Date.now(),
-		createdAt: Date.now(),
-		startedAt: Date.now(),
-		completedAt: null,
-	};
-}
-
 const CREATE_TABLE_SQL = `
 	CREATE TABLE IF NOT EXISTS job_queue (
 		id TEXT PRIMARY KEY,
@@ -54,6 +35,25 @@ function makeRuntime(state: 'running' | 'paused' | 'stopped', tickFn?: () => Pro
 	return {
 		getState: () => state,
 		tick: tickFn ?? (async () => {}),
+	};
+}
+
+/** Build a minimal Job object without touching the DB — simulates a dequeued (processing) job */
+function makeJob(roomId: string): Job {
+	return {
+		id: `test-job-${roomId}`,
+		queue: ROOM_TICK,
+		status: 'processing',
+		payload: { roomId },
+		result: null,
+		error: null,
+		priority: 0,
+		maxRetries: 0,
+		retryCount: 0,
+		runAt: Date.now(),
+		createdAt: Date.now(),
+		startedAt: Date.now(),
+		completedAt: null,
 	};
 }
 
@@ -97,6 +97,18 @@ describe('createRoomTickHandler', () => {
 		const runtime = makeRuntime('paused');
 		const handler = createRoomTickHandler(() => runtime, repo, 1000);
 		const job = makeJob('room-3');
+
+		const result = await handler(job);
+
+		expect(result).toEqual({ skipped: true, reason: 'not running' });
+		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
+		expect(pending).toHaveLength(0);
+	});
+
+	it('skips and does NOT re-schedule when runtime is stopped', async () => {
+		const runtime = makeRuntime('stopped');
+		const handler = createRoomTickHandler(() => runtime, repo, 1000);
+		const job = makeJob('room-stopped');
 
 		const result = await handler(job);
 
@@ -155,30 +167,30 @@ describe('enqueueRoomTick', () => {
 		repo = new JobQueueRepository(db as any);
 	});
 
-	it('enqueues a pending tick job', async () => {
-		await enqueueRoomTick('room-a', repo, 1000);
+	it('enqueues a pending tick job', () => {
+		enqueueRoomTick('room-a', repo, 1000);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(1);
 		expect((pending[0].payload as any).roomId).toBe('room-a');
 	});
 
-	it('deduplicates: second enqueue with existing pending job is a no-op', async () => {
-		await enqueueRoomTick('room-a', repo, 1000);
-		await enqueueRoomTick('room-a', repo, 1000);
+	it('deduplicates: second enqueue with existing pending job is a no-op', () => {
+		enqueueRoomTick('room-a', repo, 1000);
+		enqueueRoomTick('room-a', repo, 1000);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(1);
 	});
 
-	it('allows enqueueing for different rooms independently', async () => {
-		await enqueueRoomTick('room-a', repo, 1000);
-		await enqueueRoomTick('room-b', repo, 1000);
+	it('allows enqueueing for different rooms independently', () => {
+		enqueueRoomTick('room-a', repo, 1000);
+		enqueueRoomTick('room-b', repo, 1000);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(2);
 	});
 
-	it('uses default delay when not specified', async () => {
+	it('uses default delay when not specified', () => {
 		const before = Date.now();
-		await enqueueRoomTick('room-x', repo);
+		enqueueRoomTick('room-x', repo);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(1);
 		expect(pending[0].runAt).toBeGreaterThanOrEqual(before + DEFAULT_TICK_INTERVAL_MS - 100);
@@ -195,26 +207,39 @@ describe('cancelPendingTickJobs', () => {
 		repo = new JobQueueRepository(db as any);
 	});
 
-	it('removes all pending tick jobs for a room', async () => {
+	it('removes all pending tick jobs for a room', () => {
 		repo.enqueue({ queue: ROOM_TICK, payload: { roomId: 'room-z' } });
 		repo.enqueue({ queue: ROOM_TICK, payload: { roomId: 'room-z' } });
-		await cancelPendingTickJobs('room-z', repo);
+		cancelPendingTickJobs('room-z', repo);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(0);
 	});
 
-	it('only removes jobs for the specified room, not others', async () => {
+	it('only removes jobs for the specified room, not others', () => {
 		repo.enqueue({ queue: ROOM_TICK, payload: { roomId: 'room-z' } });
 		repo.enqueue({ queue: ROOM_TICK, payload: { roomId: 'room-other' } });
-		await cancelPendingTickJobs('room-z', repo);
+		cancelPendingTickJobs('room-z', repo);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(1);
 		expect((pending[0].payload as any).roomId).toBe('room-other');
 	});
 
-	it('is a no-op when no pending jobs exist', async () => {
-		await cancelPendingTickJobs('room-none', repo);
+	it('is a no-op when no pending jobs exist', () => {
+		cancelPendingTickJobs('room-none', repo);
 		const pending = repo.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(0);
+	});
+
+	it('does not cancel in-flight (processing) tick jobs — they self-terminate via finally block', () => {
+		// Simulate an in-flight tick: status is processing, not pending
+		const job = repo.enqueue({ queue: ROOM_TICK, payload: { roomId: 'room-inflight' } });
+		// Move to processing state
+		repo.dequeue(ROOM_TICK, 1);
+
+		cancelPendingTickJobs('room-inflight', repo);
+
+		// The processing job is still there (not cancelled)
+		const processing = repo.listJobs({ queue: ROOM_TICK, status: ['processing'] });
+		expect(processing.some((j) => j.id === job.id)).toBe(true);
 	});
 });
