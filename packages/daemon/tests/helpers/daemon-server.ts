@@ -363,6 +363,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
+		dbPath: customDbPath,
 	} = options;
 
 	// Start Dev Proxy if requested
@@ -388,6 +389,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		PORT: userPort.toString(),
 		NODE_ENV: 'test',
 		NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
+		// Forward custom DB path via DB_PATH env var so getConfig() picks it up
+		// in the spawned process.  When undefined, the spawned process uses its
+		// own workspace-derived default path (same behaviour as before).
+		...(customDbPath ? { DB_PATH: customDbPath } : {}),
 	};
 
 	// Note: Proxy env vars are inherited from parent process via ...process.env
