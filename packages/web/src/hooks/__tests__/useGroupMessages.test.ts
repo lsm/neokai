@@ -6,7 +6,7 @@
  * - Snapshot delivery (initial message load)
  * - Delta append (new messages via real-time push)
  * - Stale-event guard (rapid task switching)
- * - Append-only invariant (ignore updated/removed)
+ * - Full CRUD delta handling (added/updated/removed)
  * - Cleanup on unmount / groupId change
  * - Reconnect: re-subscribes after WebSocket disconnect/reconnect
  */
