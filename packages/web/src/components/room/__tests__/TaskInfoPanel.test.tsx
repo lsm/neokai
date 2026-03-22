@@ -209,6 +209,155 @@ describe('TaskInfoPanel', () => {
 			expect(statusEl?.textContent).toBe('ended');
 		});
 
+		it('should apply green color for active worker session status', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="worker-session-status"]');
+			expect(statusEl?.className).toContain('text-green-400');
+		});
+
+		it('should apply amber color for paused worker session status', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'paused',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="worker-session-status"]');
+			expect(statusEl?.className).toContain('text-amber-400');
+		});
+
+		it('should apply amber color for pending_worktree_choice worker session status', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'pending_worktree_choice',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="worker-session-status"]');
+			expect(statusEl?.className).toContain('text-amber-400');
+		});
+
+		it('should apply gray color for ended leader session status', () => {
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'ended',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="leader-session-status"]');
+			expect(statusEl?.className).toContain('text-gray-500');
+		});
+
+		it('should apply gray color for archived leader session status', () => {
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'archived',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			const statusEl = container.querySelector('[data-testid="leader-session-status"]');
+			expect(statusEl?.className).toContain('text-gray-500');
+		});
+
+		it('should show branch from leader session when worker has no branch info', () => {
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+				gitBranch: 'task/leader-branch',
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('Branch:');
+			expect(container.textContent).toContain('task/leader-branch');
+		});
+
+		it('should prefer worker branch over leader branch when both are present', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+				gitBranch: 'task/worker-branch',
+			} as never;
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+				gitBranch: 'task/leader-branch',
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.textContent).toContain('task/worker-branch');
+			expect(container.textContent).not.toContain('task/leader-branch');
+		});
+
 		it('should show model when session has model config', () => {
 			const workerSession = {
 				id: 'worker-session-id-1234',
