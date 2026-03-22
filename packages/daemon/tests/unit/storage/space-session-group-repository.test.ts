@@ -37,6 +37,7 @@ describe('SpaceSessionGroupRepository', () => {
 			expect(group.name).toBe('Group A');
 			expect(group.description).toBeUndefined();
 			expect(group.taskId).toBeUndefined();
+			expect(group.status).toBe('active');
 			expect(group.members).toEqual([]);
 			expect(group.createdAt).toBeGreaterThan(0);
 		});
@@ -49,6 +50,11 @@ describe('SpaceSessionGroupRepository', () => {
 		it('creates a group with taskId', () => {
 			const group = repo.createGroup({ spaceId, name: 'Group C', taskId: 'task-42' });
 			expect(group.taskId).toBe('task-42');
+		});
+
+		it('creates a group with explicit status', () => {
+			const group = repo.createGroup({ spaceId, name: 'Group D', status: 'completed' });
+			expect(group.status).toBe('completed');
 		});
 	});
 
@@ -118,6 +124,14 @@ describe('SpaceSessionGroupRepository', () => {
 			const group = repo.createGroup({ spaceId, name: 'G', taskId: 'task-1' });
 			const updated = repo.updateGroup(group.id, { taskId: null });
 			expect(updated!.taskId).toBeUndefined();
+		});
+
+		it('updates group status', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			expect(group.status).toBe('active');
+
+			const updated = repo.updateGroup(group.id, { status: 'completed' });
+			expect(updated!.status).toBe('completed');
 		});
 
 		it('returns null for unknown ID', () => {
@@ -197,6 +211,18 @@ describe('SpaceSessionGroupRepository', () => {
 			expect(found!.members[0].sessionId).toBe('session-1');
 			expect(found!.members[1].sessionId).toBe('session-2');
 		});
+
+		it('touches group updated_at on idempotent re-add', async () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			repo.addMember(group.id, 'session-1', { role: 'worker' });
+			const before = repo.getGroup(group.id)!.updatedAt;
+
+			await new Promise((r) => setTimeout(r, 5));
+			repo.addMember(group.id, 'session-1', { role: 'reviewer' }); // re-add same session
+
+			const after = repo.getGroup(group.id)!.updatedAt;
+			expect(after).toBeGreaterThan(before);
+		});
 	});
 
 	describe('updateMember', () => {
@@ -249,7 +275,58 @@ describe('SpaceSessionGroupRepository', () => {
 			repo.updateMember(group.id, 'session-1', { status: 'completed' });
 
 			const after = repo.getGroup(group.id)!.updatedAt;
-			expect(after).toBeGreaterThanOrEqual(before);
+			expect(after).toBeGreaterThan(before);
+		});
+	});
+
+	describe('updateMemberStatus', () => {
+		it('transitions member status by member ID', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', { role: 'coder' });
+
+			const updated = repo.updateMemberStatus(member.id, 'completed');
+			expect(updated).not.toBeNull();
+			expect(updated!.status).toBe('completed');
+			expect(updated!.role).toBe('coder');
+		});
+
+		it('transitions to failed status', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', { role: 'worker' });
+
+			const updated = repo.updateMemberStatus(member.id, 'failed');
+			expect(updated!.status).toBe('failed');
+		});
+
+		it('does not modify other fields (role, agentId, orderIndex)', () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', {
+				role: 'security-auditor',
+				agentId: 'agent-7',
+				orderIndex: 3,
+			});
+
+			const updated = repo.updateMemberStatus(member.id, 'completed');
+			expect(updated!.status).toBe('completed');
+			expect(updated!.role).toBe('security-auditor');
+			expect(updated!.agentId).toBe('agent-7');
+			expect(updated!.orderIndex).toBe(3);
+		});
+
+		it('returns null for non-existent member ID', () => {
+			expect(repo.updateMemberStatus('nonexistent-id', 'completed')).toBeNull();
+		});
+
+		it('touches group updated_at', async () => {
+			const group = repo.createGroup({ spaceId, name: 'G' });
+			const member = repo.addMember(group.id, 'session-1', { role: 'coder' });
+			const before = repo.getGroup(group.id)!.updatedAt;
+
+			await new Promise((r) => setTimeout(r, 5));
+			repo.updateMemberStatus(member.id, 'completed');
+
+			const after = repo.getGroup(group.id)!.updatedAt;
+			expect(after).toBeGreaterThan(before);
 		});
 	});
 

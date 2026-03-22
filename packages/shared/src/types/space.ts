@@ -390,6 +390,8 @@ export interface SpaceSessionGroup {
 	currentStepId?: string;
 	/** ID of the SpaceTask this group serves */
 	taskId?: string;
+	/** Lifecycle status of this group */
+	status: 'active' | 'completed' | 'failed';
 	/** Members of this group */
 	members: SpaceSessionGroupMember[];
 	/** Creation timestamp (milliseconds since epoch) */
