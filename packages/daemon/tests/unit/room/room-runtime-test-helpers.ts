@@ -51,9 +51,17 @@ export function createMockSessionFactory() {
 		string,
 		'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input'
 	>();
+	/** Session IDs that should appear missing from cache — configurable in tests */
+	let missingSessionIds: Set<string> | undefined;
 	return {
 		calls,
 		processingStates,
+		get missingSessionIds() {
+			return missingSessionIds;
+		},
+		set missingSessionIds(v: Set<string> | undefined) {
+			missingSessionIds = v;
+		},
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
@@ -64,7 +72,8 @@ export function createMockSessionFactory() {
 		) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
-		hasSession(_sessionId: string) {
+		hasSession(sessionId: string) {
+			if (missingSessionIds?.has(sessionId)) return false;
 			return true;
 		},
 		getProcessingState(
@@ -84,6 +93,8 @@ export function createMockSessionFactory() {
 		},
 		async restoreSession(sessionId: string) {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
+			// Sessions in missingSessionIds cannot be restored — simulate permanent loss
+			if (missingSessionIds?.has(sessionId)) return false;
 			return true;
 		},
 		async interruptSession(sessionId: string) {
@@ -215,6 +226,8 @@ const DB_SCHEMA = `
 	);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running
 		ON mission_executions(goal_id) WHERE status = 'running';
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_one_active_per_task
+		ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair');
 `;
 
 export interface RuntimeTestContext {
