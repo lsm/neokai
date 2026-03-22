@@ -818,7 +818,7 @@ export class TaskAgentManager {
 	 * Rebuild the `taskId → groupId` in-memory map from all active groups in the DB.
 	 *
 	 * Queries `space_session_groups` for every row with `status = 'active'` and a
-	 * non-null `task_id` in a single indexed query. Groups without a `task_id`
+	 * non-null `task_id`. Groups without a `task_id`
 	 * (standalone groups) are silently skipped — there is no taskId key to map.
 	 * Groups with no active members are still valid and are included.
 	 *
@@ -986,12 +986,6 @@ export class TaskAgentManager {
 				}
 				this.subSessions.get(taskId)!.set(subSessionId, subSession);
 			}
-		}
-
-		// --- Restore taskGroupIds from DB so getTaskGroupId() works after restart
-		const existingGroups = this.config.sessionGroupRepo.getGroupsByTask(spaceId, taskId);
-		if (existingGroups.length > 0) {
-			this.taskGroupIds.set(taskId, existingGroups[0].id);
 		}
 
 		log.info(

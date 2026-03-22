@@ -123,8 +123,8 @@ export class SpaceSessionGroupRepository {
 
 	/**
 	 * List all active groups that have a non-null task_id, across all spaces.
-	 * Returns lightweight objects (id + taskId only) for efficient startup rehydration.
-	 * The result is indexed on task_id — no full member fetch is performed.
+	 * Returns lightweight objects (id + taskId only) — no full member fetch is performed.
+	 * This is a startup-once cold-path query; table sizes are typically small.
 	 */
 	listActiveGroupsWithTaskId(): Array<{ id: string; taskId: string }> {
 		const stmt = this.db.prepare(
