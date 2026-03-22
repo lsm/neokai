@@ -25,7 +25,7 @@ import type { Point } from './types';
 // ============================================================================
 
 /** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({ step }: { step: StepDraft; agents: SpaceAgent[] }) {
+function ChannelTopologyBadge({ step }: { step: StepDraft }) {
 	const channels = step.channels;
 	if (!channels || channels.length === 0) return null;
 
@@ -340,7 +340,7 @@ export function WorkflowNode({
 				)}
 
 				{/* Channel topology */}
-				<ChannelTopologyBadge step={step} agents={agents} />
+				<ChannelTopologyBadge step={step} />
 			</div>
 
 			{/* Bottom port */}

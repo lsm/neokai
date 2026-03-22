@@ -288,7 +288,12 @@ function ChannelsSection({ step, agents, onUpdate }: ChannelsSectionProps) {
 		updateChannels(channels.filter((_, i) => i !== index));
 	}
 
-	function addChannel(from: string, to: string, direction: 'one-way' | 'bidirectional') {
+	function addChannel(
+		from: string,
+		to: string,
+		direction: 'one-way' | 'bidirectional',
+		label?: string
+	) {
 		if (!from || !to) return;
 		// Support comma-separated multi-select for fan-out
 		const toValue: string | string[] = to.includes(',')
@@ -297,7 +302,7 @@ function ChannelsSection({ step, agents, onUpdate }: ChannelsSectionProps) {
 					.map((s) => s.trim())
 					.filter(Boolean)
 			: to;
-		updateChannels([...channels, { from, to: toValue, direction }]);
+		updateChannels([...channels, { from, to: toValue, direction, label: label || undefined }]);
 	}
 
 	return (
@@ -348,7 +353,7 @@ function ChannelsSection({ step, agents, onUpdate }: ChannelsSectionProps) {
 
 interface AddChannelFormProps {
 	knownRoles: string[];
-	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional') => void;
+	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional', label?: string) => void;
 }
 
 function AddChannelForm({ knownRoles, onAdd }: AddChannelFormProps) {
@@ -364,7 +369,7 @@ function AddChannelForm({ knownRoles, onAdd }: AddChannelFormProps) {
 
 interface ChannelFormBodyProps {
 	knownRoles: string[];
-	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional') => void;
+	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional', label?: string) => void;
 }
 
 function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
@@ -377,7 +382,8 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 		const direction = (form.elements.namedItem('direction') as HTMLSelectElement).value as
 			| 'one-way'
 			| 'bidirectional';
-		onAdd(from, to, direction);
+		const label = (form.elements.namedItem('label') as HTMLInputElement).value.trim();
+		onAdd(from, to, direction, label || undefined);
 		form.reset();
 	}
 
@@ -410,6 +416,12 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 				name="to"
 				type="text"
 				placeholder="To role(s) — comma-separated for fan-out, * for all"
+				class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+			/>
+			<input
+				name="label"
+				type="text"
+				placeholder="Label (optional)"
 				class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
 			/>
 			<button
