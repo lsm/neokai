@@ -30,6 +30,7 @@ import {
 	createTaskAgentToolHandlers,
 	createTaskAgentMcpServer,
 	type SubSessionFactory,
+	type SubSessionMemberInfo,
 	type SubSessionState,
 	type TaskAgentToolsConfig,
 } from '../../../src/lib/space/tools/task-agent-tools.ts';
@@ -187,20 +188,26 @@ function buildTaskResultWorkflow(
 // ---------------------------------------------------------------------------
 
 function makeMockSessionFactory(overrides?: {
-	create?: (init: unknown) => Promise<string>;
+	create?: (init: unknown, memberInfo?: SubSessionMemberInfo) => Promise<string>;
 	getProcessingState?: (sessionId: string) => SubSessionState | null;
 	onComplete?: (sessionId: string, callback: () => Promise<void>) => void;
-}): SubSessionFactory & { _completionCallbacks: Map<string, () => Promise<void>> } {
+}): SubSessionFactory & {
+	_completionCallbacks: Map<string, () => Promise<void>>;
+	_capturedMemberInfos: Map<string, SubSessionMemberInfo | undefined>;
+} {
 	const completionCallbacks = new Map<string, () => Promise<void>>();
 	const sessionStates = new Map<string, SubSessionState>();
+	const capturedMemberInfos = new Map<string, SubSessionMemberInfo | undefined>();
 
 	return {
 		_completionCallbacks: completionCallbacks,
+		_capturedMemberInfos: capturedMemberInfos,
 
-		async create(init: unknown): Promise<string> {
-			if (overrides?.create) return overrides.create(init);
+		async create(init: unknown, memberInfo?: SubSessionMemberInfo): Promise<string> {
+			if (overrides?.create) return overrides.create(init, memberInfo);
 			const id = `sub-session-${Math.random().toString(36).slice(2)}`;
 			sessionStates.set(id, { isProcessing: true, isComplete: false });
+			capturedMemberInfos.set(id, memberInfo);
 			return id;
 		},
 
@@ -225,6 +232,7 @@ function makeMockSessionFactory(overrides?: {
 		},
 	} as SubSessionFactory & {
 		_completionCallbacks: Map<string, () => Promise<void>>;
+		_capturedMemberInfos: Map<string, SubSessionMemberInfo | undefined>;
 		_triggerComplete: (sessionId: string) => Promise<void>;
 	};
 }
@@ -615,6 +623,26 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		expect(secondParsed.success).toBe(true);
 		// The returned sessionId should be the same as the first (no duplicate sessions)
 		expect(secondParsed.sessionId).toBe(firstSessionId);
+	});
+
+	test('passes agentId and role as memberInfo to sessionFactory.create()', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		const result = await handlers.spawn_step_agent({ step_id: wf.startStepId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		const sessionId = parsed.sessionId;
+		const memberInfo = factory._capturedMemberInfos.get(sessionId);
+
+		// memberInfo must carry the agent's ID and role
+		expect(memberInfo).toBeDefined();
+		expect(memberInfo?.agentId).toBe(ctx.agentId);
+		// The seed agent has role 'coder' (see seedAgentRow in test context)
+		expect(memberInfo?.role).toBe('coder');
 	});
 });
 

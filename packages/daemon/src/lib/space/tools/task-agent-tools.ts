@@ -77,6 +77,17 @@ export interface SubSessionState {
 // ---------------------------------------------------------------------------
 
 /**
+ * Agent identity metadata passed to SubSessionFactory.create() so the manager
+ * can record the sub-session as a group member without re-fetching the agent.
+ */
+export interface SubSessionMemberInfo {
+	/** ID of the SpaceAgent config this sub-session uses */
+	agentId?: string;
+	/** Freeform role string from SpaceAgent.role (e.g. 'coder', 'reviewer') */
+	role?: string;
+}
+
+/**
  * Abstraction for creating and querying sub-sessions.
  * Injected into the config so tests can mock session behaviour without a real daemon.
  */
@@ -84,8 +95,10 @@ export interface SubSessionFactory {
 	/**
 	 * Creates and starts a new agent sub-session.
 	 * Returns the session ID of the created session.
+	 * The optional `memberInfo` carries agent identity metadata so the factory
+	 * can register the session as a group member.
 	 */
-	create(init: AgentSessionInit): Promise<string>;
+	create(init: AgentSessionInit, memberInfo?: SubSessionMemberInfo): Promise<string>;
 
 	/**
 	 * Returns the current processing state of a session, or null if the session
@@ -286,10 +299,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Failed to resolve agent init: ${message}` });
 			}
 
+			// Resolve agent identity for group membership tracking.
+			// resolveAgentInit() already validated the agent exists, so this lookup
+			// should always succeed — null here would be a data inconsistency.
+			const agentForMember = agentManager.getById(effectiveTask.customAgentId!);
+
 			// Create and start the sub-session
 			let actualSessionId: string;
 			try {
-				actualSessionId = await sessionFactory.create(init);
+				actualSessionId = await sessionFactory.create(init, {
+					agentId: effectiveTask.customAgentId ?? undefined,
+					role: agentForMember?.role ?? 'agent',
+				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: `Failed to create sub-session: ${message}` });
