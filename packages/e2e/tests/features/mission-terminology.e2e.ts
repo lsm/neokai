@@ -51,8 +51,9 @@ test.describe('Mission Terminology', () => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
-		// The "Missions" tab button should be visible
-		const missionsTab = page.locator('button:has-text("Missions")');
+		// The "Missions" tab button should be visible. Use exact name to avoid
+		// matching the sidebar "Missions section" button (aria-label="Missions section").
+		const missionsTab = page.getByRole('button', { name: 'Missions', exact: true });
 		await expect(missionsTab).toBeVisible({ timeout: 10000 });
 	});
 
@@ -61,7 +62,9 @@ test.describe('Mission Terminology', () => {
 		await waitForWebSocketConnected(page);
 
 		// Wait for tabs to render
-		await expect(page.locator('button:has-text("Missions")')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('button', { name: 'Missions', exact: true })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// There should be no "Goals" tab button in the DOM at all
 		const goalsTab = page.locator('button:has-text("Goals")');
@@ -75,7 +78,7 @@ test.describe('Mission Terminology', () => {
 		await waitForWebSocketConnected(page);
 
 		// Click the Missions tab
-		const missionsTab = page.locator('button:has-text("Missions")');
+		const missionsTab = page.getByRole('button', { name: 'Missions', exact: true });
 		await expect(missionsTab).toBeVisible({ timeout: 10000 });
 		await missionsTab.click();
 
@@ -88,7 +91,7 @@ test.describe('Mission Terminology', () => {
 		await waitForWebSocketConnected(page);
 
 		// Click the Missions tab
-		const missionsTab = page.locator('button:has-text("Missions")');
+		const missionsTab = page.getByRole('button', { name: 'Missions', exact: true });
 		await expect(missionsTab).toBeVisible({ timeout: 10000 });
 		await missionsTab.click();
 
@@ -102,7 +105,7 @@ test.describe('Mission Terminology', () => {
 		await waitForWebSocketConnected(page);
 
 		// Click the Missions tab
-		const missionsTab = page.locator('button:has-text("Missions")');
+		const missionsTab = page.getByRole('button', { name: 'Missions', exact: true });
 		await expect(missionsTab).toBeVisible({ timeout: 10000 });
 		await missionsTab.click();
 

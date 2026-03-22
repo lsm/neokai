@@ -278,7 +278,7 @@ test.describe('LiveQuery — goal deletion surfaces in Goals tab via removed del
 			timeout: 10000,
 		});
 
-		const goalsTab = page.locator('button:has-text("Missions")');
+		const goalsTab = page.getByRole('button', { name: 'Missions', exact: true });
 		await expect(goalsTab).toBeVisible({ timeout: 10000 });
 		await goalsTab.click();
 
@@ -304,7 +304,7 @@ test.describe('LiveQuery — goal deletion surfaces in Goals tab via removed del
 			timeout: 10000,
 		});
 
-		const goalsTab = page.locator('button:has-text("Missions")');
+		const goalsTab = page.getByRole('button', { name: 'Missions', exact: true });
 		await expect(goalsTab).toBeVisible({ timeout: 10000 });
 		await goalsTab.click();
 

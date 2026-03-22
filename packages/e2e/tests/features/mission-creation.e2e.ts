@@ -31,7 +31,9 @@ async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0])
 async function openMissionsTab(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
 ): Promise<void> {
-	const missionsTab = page.locator('button:has-text("Missions")');
+	// Use exact name to avoid matching the sidebar "Missions section" button
+	// (aria-label="Missions section") which also contains "Missions" text.
+	const missionsTab = page.getByRole('button', { name: 'Missions', exact: true });
 	await expect(missionsTab).toBeVisible({ timeout: 10000 });
 	await missionsTab.click();
 	await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });

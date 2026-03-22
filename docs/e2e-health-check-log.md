@@ -88,3 +88,58 @@ This meant LiveQuery subscriptions never fired when tasks were created/modified 
 - **Test**: `should cleanup worktree when session is deleted` (features/worktree-isolation.e2e.ts:113)
 - **Issue**: Race condition — page URL still contains deleted session ID after deletion confirmation
 - **Action needed**: Increase timeout or add explicit wait for navigation after session deletion
+
+---
+
+## 2026-03-22 — Check Run #23412078420 (post-PR#717 merge)
+
+### CI Run Overview
+- **Run ID**: 23412078420
+- **Branch**: dev (commit 0ad39bc01 — after PR #717 fix)
+- **Event**: push
+- **Status**: Completed with e2e failures
+
+### E2E Test Failures at #23412078420
+
+**17 failing tests** across 4 test suites. All failures are **test code bugs** introduced by PR #717, not genuine product bugs.
+
+#### Root Cause: Ambiguous Playwright Locator for "Missions" Button
+
+**Problem**: After renaming "Goals" → "Missions" in the UI, the locator `button:has-text("Missions")` now resolves to **2 elements** in strict mode:
+1. `<button aria-label="Missions section">` — sidebar CollapsibleSection header button
+2. `<button>Missions</button>` — room tab bar button
+
+Playwright's strict mode fails when a locator matches multiple elements. This affects all tests that use the ambiguous locator in room page contexts.
+
+**Fix**: Replace `button:has-text("Missions")` with `getByRole('button', { name: 'Missions', exact: true })` in all affected test files. The sidebar button has `aria-label="Missions section"` (accessible name = "Missions section"), so it will NOT match the exact name selector.
+
+**Affected tests** (all failing due to ambiguous locator):
+| Test Suite | Failing Tests | Root Cause |
+|---|---|---|
+| `features-mission-terminology` | 5/5 | Ambiguous `button:has-text("Missions")` locator |
+| `features-mission-creation` | 9/9 | Same — shared `openMissionsTab` helper |
+| `features-livequery-task-goal-updates` | 2/2 | Same — direct locator use |
+| `features-mission-detail` | (not failing in this run but affected) | Same — shared helper |
+| `features-task-goal-indicator` | (passing but affected) | Same — uses `h2:has-text("Missions")` (safe) |
+
+#### Root Cause 2: Space Workspace Path Issue (features-space-session-groups)
+
+**1 failing test**: `Working Agents section is hidden when no session groups exist`
+
+```
+Error: page.evaluate: TypeError: Cannot read properties of undefined (reading 'id')
+at createTestSpaceWithTask (/home/runner/work/neokai/neokai/packages/e2e/tests/features/space-session-groups.e2e.ts:55:14)
+```
+
+**Root cause**: The `space.create` RPC returns `undefined` because the workspace path (`/tmp/tmp.3fwp0Bczum`) is not a git repository. The daemon rejects space creation in non-git directories.
+
+**Context**: The test uses `getWorkspaceRoot(page)` to get the workspace path, which returns the server's workspace root. In CI, this may be a temp path that isn't properly initialized as a git repo.
+
+**Status**: Only 1 test in the suite failed (the first test, `Working Agents section is hidden when no session groups exist`). All other tests in the suite passed (implying the space creation succeeded in subsequent runs). This is a **suspected flaky** issue — likely a race condition or environment initialization timing issue in CI.
+
+**Action needed**: Investigate whether `space.create` should gracefully handle non-git workspace paths, or whether the test should use a dedicated git workspace. This may be an env issue rather than a test code bug.
+
+#### Pre-existing Flakes (still present)
+
+- **worktree-isolation session deletion**: Race condition in session deletion navigation (still failing)
+- **space-session-groups workspace path**: Likely env/race condition issue (1 failure in this run)
