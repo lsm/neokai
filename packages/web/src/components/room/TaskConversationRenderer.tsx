@@ -276,7 +276,7 @@ export function TaskConversationRenderer({
 	if (messages.length === 0) {
 		return (
 			<div class="flex-1 flex items-center justify-center">
-				<p class="text-gray-500 text-sm">Waiting for agent activity…</p>
+				<p class="text-gray-500 text-sm">No messages yet.</p>
 			</div>
 		);
 	}

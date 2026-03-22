@@ -876,6 +876,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		};
 
 		const load = async () => {
+			if (!isConnected) {
+				setLoading(false);
+				return;
+			}
 			try {
 				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
 				if (!cancelled) {

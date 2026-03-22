@@ -647,6 +647,10 @@ export class RoomRuntimeService {
 				const activeGroups = groupRepo.getActiveGroups(roomId);
 				for (const group of activeGroups) {
 					try {
+						// Re-establish message mirroring so messages written after restart
+						// are persisted to session_group_messages for LiveQuery subscribers.
+						runtime.setupMirroringIfNeeded(group);
+
 						// Restore MCP servers (planner-tools, leader-agent-tools)
 						await runtime.restoreMcpServersForGroup(group);
 

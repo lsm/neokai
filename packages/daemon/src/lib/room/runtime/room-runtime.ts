@@ -2153,6 +2153,17 @@ export class RoomRuntime {
 	 * state.groupMessages.delta — message delivery to the frontend is handled
 	 * by the LiveQuery subscription (sessionGroupMessages.byGroup).
 	 */
+	/**
+	 * Re-establish message mirroring for a recovered group.
+	 * Guards against double-setup: no-op if mirroring is already active.
+	 * Called during daemon recovery to ensure messages written after restart
+	 * are persisted to session_group_messages for LiveQuery subscribers.
+	 */
+	setupMirroringIfNeeded(group: SessionGroup): void {
+		if (this.mirroringCleanups.has(group.id)) return;
+		this.setupMirroring(group);
+	}
+
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
 
