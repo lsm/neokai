@@ -12,6 +12,7 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import type { Config } from '../../config';
 import type { Database } from '../../storage/database';
+import type { ReactiveDatabase } from '../../storage/reactive-database';
 
 import { setupSessionHandlers } from './session-handlers';
 import { setupMessageHandlers } from './message-handlers';
@@ -91,6 +92,8 @@ export interface RPCHandlerDependencies {
 	 * TODO: consumed by Milestones 2–5 handlers for registering queue handlers.
 	 */
 	jobProcessor: JobQueueProcessor;
+	/** Reactive database wrapper for change event emission */
+	reactiveDb: ReactiveDatabase;
 }
 
 const log = new Logger('rpc-handlers');
@@ -164,6 +167,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultWorkspacePath: deps.config.workspaceRoot,
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
+		reactiveDb: deps.reactiveDb,
 	});
 	roomRuntimeService.start().catch((error) => {
 		log.error('Failed to start RoomRuntimeService:', error);
