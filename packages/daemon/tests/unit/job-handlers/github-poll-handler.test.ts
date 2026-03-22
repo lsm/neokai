@@ -94,19 +94,21 @@ describe('handleGitHubPoll', () => {
 		expect(enqueueMock).not.toHaveBeenCalled();
 	});
 
-	it('enqueues next job even when a processing job exists (self-scheduling case)', async () => {
-		// The handler only checks 'pending' — not 'processing' — because it is
-		// itself in 'processing' state while running. A processing job returned
-		// by listJobs would be a concurrent duplicate, but that scenario is
-		// prevented at startup by the dedup check in GitHubService.start().
-		listJobsMock = mock(() => []); // listJobs(status: 'pending') returns nothing
-		const deps = makeDeps();
-		deps.jobQueue.listJobs = listJobsMock as never;
-		deps.jobQueue.enqueue = enqueueMock as never;
+	it('does NOT check processing status in dedup — only pending — so self-scheduling always works', async () => {
+		// The handler must NOT include 'processing' in its dedup query, because the
+		// current job is itself in 'processing' state while executing. Verifying
+		// that listJobs is called with 'pending' (not ['pending','processing']) is
+		// the only way to confirm self-scheduling is not blocked by the handler's own
+		// processing status.
+		await handleGitHubPoll(makeDeps());
 
-		await handleGitHubPoll(deps);
-
-		expect(enqueueMock).toHaveBeenCalledTimes(1);
+		const listArg = (
+			listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
+		)[0];
+		// Must be a string (single status), not an array that includes 'processing'.
+		expect(typeof listArg.status).toBe('string');
+		expect(listArg.status).toBe('pending');
+		expect(listArg.status).not.toContain('processing');
 	});
 
 	it('still schedules next poll when triggerPoll throws (error is caught internally)', async () => {

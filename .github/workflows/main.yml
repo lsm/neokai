@@ -178,7 +178,9 @@ jobs:
               tests/online/features/message-delivery-mode-queue.test.ts
             mock_sdk: true
           - module: features-2
-            test_path: tests/online/features/message-persistence.test.ts
+            test_path: >-
+              tests/online/features/github-poll-job.test.ts
+              tests/online/features/message-persistence.test.ts
             mock_sdk: true
           - module: git
             test_path: tests/online/git
