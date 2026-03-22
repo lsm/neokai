@@ -327,12 +327,12 @@ export class SpaceRuntime {
 		}
 
 		const taskManager = this.getOrCreateTaskManager(spaceId);
+		// Multi-agent start steps: create one SpaceTask per agent.
+		// resolveStepAgents() normalises agentId vs agents[] for backward compatibility.
+		// Keep inside the try block so a malformed step (neither agentId nor agents)
+		// triggers the rollback path and does not leave the executor/run orphaned.
 		const tasks: SpaceTask[] = [];
 		try {
-			// Multi-agent start steps: create one SpaceTask per agent.
-			// resolveStepAgents() normalises agentId vs agents[] and throws when
-			// neither is present — keeping it inside the try/catch ensures the
-			// executor/run state is cleaned up on configuration errors.
 			const startAgents = resolveStepAgents(startStep);
 			for (const agentEntry of startAgents) {
 				const resolved = this.resolveTaskTypeForAgent(agentEntry.agentId);
@@ -653,8 +653,7 @@ export class SpaceRuntime {
 			// terminal state before escalating the run. This prevents premature
 			// escalation when one task has failed but siblings are still running.
 			if (stepTasks.length > 1) {
-				const { allTerminal } = this.areAllStepTasksTerminal(stepTasks);
-				if (allTerminal) {
+				if (this.areAllStepTasksTerminal(stepTasks)) {
 					this.config.workflowRunRepo.updateStatus(runId, 'needs_attention');
 					await this.safeNotify({
 						kind: 'workflow_run_needs_attention',
@@ -703,14 +702,18 @@ export class SpaceRuntime {
 
 			// Step 1: Check tasks that already have a Task Agent session (in_progress).
 			// Full loop always completes so that dead-agent resets are applied to ALL
-			// tasks before deciding whether to skip. Early-returning on the first alive
-			// agent would leave dead-agent tasks unrecovered if a step has multiple tasks.
-			let anyAgentAlive = false;
+			// tasks before deciding whether to skip.
+			//
+			// NOTE: we intentionally do NOT return early when alive agents are found.
+			// For multi-agent parallel steps, some tasks may have alive agents while
+			// siblings are still pending (e.g. a spawn failure on a prior tick). An
+			// early return here would permanently skip spawning those unspawned tasks.
+			// Always proceed to Step 2 so pending tasks are always re-examined.
+			// The final `return` at the end of the TAM block still prevents advance().
 			for (const task of stepTasks) {
 				if (!task.taskAgentSessionId) continue;
 
 				if (tam.isTaskAgentAlive(task.id)) {
-					anyAgentAlive = true;
 					continue; // still check remaining tasks for dead agents
 				}
 
@@ -724,9 +727,6 @@ export class SpaceRuntime {
 					status: 'pending',
 				});
 			}
-
-			// If any Task Agent is actively running, skip this tick — it drives the workflow.
-			if (anyAgentAlive) return;
 
 			// Step 2: Spawn Task Agents for pending tasks without an agent session.
 			// Re-read from DB to pick up status resets applied in Step 1.
@@ -974,27 +974,20 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Checks whether all tasks in a step have reached a terminal state.
+	 * Returns true when every task in the step has reached a terminal state.
 	 *
 	 * Terminal statuses: completed, needs_attention, cancelled, archived.
-	 * Failed statuses (a subset of terminal): needs_attention, cancelled.
 	 *
 	 * Used to implement the partial-failure gate: for multi-agent steps, the run
 	 * must not be escalated to needs_attention until every sibling task has settled.
+	 * The caller is already inside `if (stepTasks.some(needs_attention))`, so
+	 * "any failed" is guaranteed true at the call site — no need to return it.
 	 *
 	 * @param stepTasks - Pre-fetched tasks for the current step.
 	 */
-	private areAllStepTasksTerminal(stepTasks: SpaceTask[]): {
-		allTerminal: boolean;
-		anyFailed: boolean;
-	} {
+	private areAllStepTasksTerminal(stepTasks: SpaceTask[]): boolean {
 		const TERMINAL = new Set<string>(['completed', 'needs_attention', 'cancelled', 'archived']);
-		const FAILED = new Set<string>(['needs_attention', 'cancelled']);
-
-		const allTerminal = stepTasks.every((t) => TERMINAL.has(t.status));
-		const anyFailed = stepTasks.some((t) => FAILED.has(t.status));
-
-		return { allTerminal, anyFailed };
+		return stepTasks.every((t) => TERMINAL.has(t.status));
 	}
 
 	/**

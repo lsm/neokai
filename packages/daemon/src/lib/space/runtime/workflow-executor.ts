@@ -525,6 +525,12 @@ export class WorkflowExecutor {
 	/**
 	 * Resolves the task result for the current step from the most recently completed task.
 	 * DB task `result` takes priority; `fallback` is used when the DB result is empty.
+	 *
+	 * For multi-agent steps (agents[] with multiple entries), multiple tasks share the
+	 * same stepId. This method picks the most recently completed one, so `task_result`
+	 * conditions on parallel steps are inherently non-deterministic — the "winning"
+	 * result depends on which agent finishes last. Prefer `condition` or `always`
+	 * transition types for steps that use parallel agent execution.
 	 */
 	private async resolveTaskResult(stepId: string, fallback?: string): Promise<string | undefined> {
 		const allTasks = await this.taskManager.listTasksByWorkflowRun(this.run.id);

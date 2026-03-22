@@ -1700,9 +1700,11 @@ describe('SpaceRuntime', () => {
 			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('pending');
 		});
 
-		test('liveness loop resets all dead-agent tasks before deciding to skip tick', async () => {
+		test('liveness loop resets dead-agent tasks and immediately re-spawns them in the same tick', async () => {
 			// Two tasks for the same step: task A alive, task B dead.
-			// The dead-agent reset for task B must still happen even though task A is alive.
+			// Step 1 resets task B to pending; Step 2 re-spawns it in the same tick.
+			// The `anyAgentAlive` early return was removed so that dead siblings in
+			// multi-agent steps always get re-spawned without waiting for the next tick.
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
 			]);
@@ -1745,10 +1747,11 @@ describe('SpaceRuntime', () => {
 
 			await rt2.executeTick();
 
-			// Dead task B should have been reset to pending (dead-agent recovery happened)
+			// Dead task B: reset in Step 1 then immediately re-spawned in Step 2 of the
+			// same tick (fresh DB read picks it up as pending with no session).
 			const updatedB = taskRepo.getTask(taskBId)!;
-			expect(updatedB.status).toBe('pending');
-			expect(updatedB.taskAgentSessionId).toBeFalsy(); // cleared (null stored as undefined by repo)
+			expect(updatedB.status).toBe('in_progress');
+			expect(updatedB.taskAgentSessionId).toBe(`session:${taskBId}`); // new session from re-spawn
 
 			// Alive task A should be untouched
 			const updatedA = taskRepo.getTask(aliveId)!;
