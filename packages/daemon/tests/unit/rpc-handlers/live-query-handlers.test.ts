@@ -19,14 +19,6 @@ import { NAMED_QUERY_REGISTRY } from '../../../src/lib/rpc-handlers/live-query-h
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function flushMicrotasks(): Promise<void> {
-	return new Promise((resolve) => queueMicrotask(resolve));
-}
-
-// ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
@@ -257,6 +249,69 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	// -------------------------------------------------------------------------
 
 	describe('sessionGroupMessages.byGroup', () => {
+		const groupId = 'group-contract-test';
+
+		function insertGroup(): void {
+			db.exec(
+				`INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				 VALUES ('${groupId}', 'task', 'task-ref', 0, '{}', ${Date.now()})`
+			);
+		}
+
+		function insertMessage(
+			overrides: { sessionId?: string; role?: string; content?: string } = {}
+		): void {
+			db.exec(`
+				INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
+				VALUES (
+					'${groupId}',
+					${overrides.sessionId ? `'${overrides.sessionId}'` : 'NULL'},
+					'${overrides.role ?? 'system'}',
+					'status',
+					'${overrides.content ?? 'hello'}',
+					${Date.now()}
+				)
+			`);
+		}
+
+		function executeSQL(): Record<string, unknown>[] {
+			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
+			return db.prepare(entry.sql).all(groupId) as Record<string, unknown>[];
+		}
+
+		test('SQL executes without error against the real schema (table exists)', () => {
+			insertGroup();
+			// Must not throw — if session_group_messages doesn't exist, SQLite throws
+			expect(() => executeSQL()).not.toThrow();
+		});
+
+		test('returns empty array when no messages exist for the group', () => {
+			insertGroup();
+			const rows = executeSQL();
+			expect(rows).toEqual([]);
+		});
+
+		test('returns camelCase column aliases in result rows', () => {
+			insertGroup();
+			insertMessage({ sessionId: 'sess-1', role: 'coder', content: 'test' });
+			const [row] = executeSQL();
+			expect(row).toHaveProperty('groupId', groupId);
+			expect(row).toHaveProperty('sessionId', 'sess-1');
+			expect(row).toHaveProperty('messageType', 'status');
+			expect(row).toHaveProperty('createdAt');
+			expect(row).not.toHaveProperty('group_id');
+			expect(row).not.toHaveProperty('session_id');
+			expect(row).not.toHaveProperty('message_type');
+			expect(row).not.toHaveProperty('created_at');
+		});
+
+		test('null sessionId is preserved as null', () => {
+			insertGroup();
+			insertMessage(); // sessionId defaults to NULL
+			const [row] = executeSQL();
+			expect(row.sessionId).toBeNull();
+		});
+
 		test('has no mapRow (all columns are scalar)', () => {
 			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
 			expect(entry.mapRow).toBeUndefined();
