@@ -123,6 +123,12 @@ export interface RoomRuntimeConfig {
 	/** Tick interval in ms (default: 30000) */
 	tickInterval?: number;
 	/**
+	 * When true, the internal setInterval periodic tick is disabled.
+	 * Use this when an external job-queue drives runtime.tick() to prevent
+	 * double-firing every interval period.
+	 */
+	disableInternalTick?: boolean;
+	/**
 	 * Fetch Worker assistant messages for forwarding to Leader.
 	 * Returns messages after (exclusive) the message with afterMessageId.
 	 * If afterMessageId is null, returns all messages for the session.
@@ -155,6 +161,7 @@ export class RoomRuntime {
 	private tickLocked = false;
 	private tickQueued = false;
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
+	private readonly disableInternalTick: boolean;
 
 	private readonly roomId: string;
 	private room: Room;
@@ -273,6 +280,7 @@ export class RoomRuntime {
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? DEFAULT_MAX_CONCURRENT_GROUPS;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
 		this.tickInterval = config.tickInterval ?? 30_000;
+		this.disableInternalTick = config.disableInternalTick ?? false;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
@@ -419,7 +427,9 @@ export class RoomRuntime {
 
 	start(): void {
 		this.state = 'running';
-		this.tickTimer = setInterval(() => this.tick(), this.tickInterval);
+		if (!this.disableInternalTick) {
+			this.tickTimer = setInterval(() => this.tick(), this.tickInterval);
+		}
 		this.scheduleTick();
 	}
 

@@ -48,6 +48,11 @@ export interface RoomRuntimeServiceConfig {
 	getGlobalSettings: () => GlobalSettings;
 	/** Reactive database wrapper for change event emission */
 	reactiveDb: ReactiveDatabase;
+	/**
+	 * When true, the internal setInterval tick in each RoomRuntime is disabled.
+	 * Set this when a job-queue handler drives runtime.tick() to prevent double-firing.
+	 */
+	disableInternalTick?: boolean;
 }
 
 export class RoomRuntimeService {
@@ -423,6 +428,7 @@ export class RoomRuntimeService {
 			getTask: (taskId) => taskManager.getTask(taskId),
 			getGoal: (goalId) => goalManager.getGoal(goalId),
 			getGlobalSettings: this.ctx.getGlobalSettings,
+			disableInternalTick: this.ctx.disableInternalTick,
 		});
 
 		this.runtimes.set(room.id, runtime);

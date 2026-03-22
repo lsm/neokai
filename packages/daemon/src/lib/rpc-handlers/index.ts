@@ -62,9 +62,10 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
-import { SESSION_TITLE_GENERATION, GITHUB_POLL } from '../job-queue-constants';
+import { SESSION_TITLE_GENERATION, GITHUB_POLL, ROOM_TICK } from '../job-queue-constants';
 import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler';
 import { handleGitHubPoll } from '../job-handlers/github-poll.handler';
+import { createRoomTickHandler, enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -162,7 +163,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomManager,
 		deps.daemonHub,
 		deps.config.workspaceRoot,
-		deps.sessionManager
+		deps.sessionManager,
+		deps.jobQueue
 	);
 
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
@@ -177,10 +179,43 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 		reactiveDb: deps.reactiveDb,
+		// Disable the internal setInterval tick — the job-queue handler drives runtime.tick() instead.
+		disableInternalTick: true,
 	});
-	roomRuntimeService.start().catch((error) => {
-		log.error('Failed to start RoomRuntimeService:', error);
-	});
+	// Register room.tick job handler before starting the service so no tick jobs
+	// fired during recovery are picked up without a handler.
+	deps.jobProcessor.register(
+		ROOM_TICK,
+		createRoomTickHandler(
+			(roomId) => roomRuntimeService.getRuntime(roomId) ?? undefined,
+			deps.jobQueue
+		)
+	);
+
+	// Seed an initial room.tick job for every room after startup, and for each
+	// newly created room. The handler's finally block keeps the loop going; this
+	// is the only bootstrap call needed.
+	const seedRoomTick = (roomId: string) => enqueueRoomTick(roomId, deps.jobQueue);
+
+	roomRuntimeService
+		.start()
+		.then(() => {
+			for (const room of roomManager.listRooms()) {
+				seedRoomTick(room.id);
+			}
+		})
+		.catch((error) => {
+			log.error('Failed to start RoomRuntimeService:', error);
+		});
+
+	// Seed a tick for rooms created after startup.
+	const unsubRoomCreated = deps.daemonHub.on(
+		'room.created',
+		(event) => {
+			seedRoomTick(event.room.id);
+		},
+		{ sessionId: 'global' }
+	);
 
 	// Wire question handlers now that roomRuntimeService is available.
 	// Pass its session lookup so question.respond reaches the correct live AgentSession
@@ -190,7 +225,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomRuntimeService.getAgentSession(sessionId)
 	);
 
-	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService);
+	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService, deps.jobQueue);
 	setupTaskHandlers(
 		deps.messageHub,
 		roomManager,
@@ -409,6 +444,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Return result with cleanup function and exposed services
 	return {
 		cleanup: () => {
+			unsubRoomCreated();
 			roomRuntimeService.stop();
 			spaceRuntimeService.stop();
 		},

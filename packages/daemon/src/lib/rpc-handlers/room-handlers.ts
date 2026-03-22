@@ -18,9 +18,11 @@ import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
 import { inferProviderForModel } from '../providers/registry';
 import { Logger } from '../logger';
+import { cancelPendingTickJobs, enqueueRoomTick } from '../job-handlers/room-tick.handler';
 
 const log = new Logger('room-handlers');
 
@@ -29,7 +31,8 @@ export function setupRoomHandlers(
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	workspaceRoot?: string,
-	sessionManager?: SessionManager
+	sessionManager?: SessionManager,
+	jobQueue?: JobQueueRepository
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
@@ -240,6 +243,12 @@ export function setupRoomHandlers(
 			throw new Error(`Failed to delete room: ${params.roomId}`);
 		}
 
+		// Cancel any pending tick jobs for the deleted room to avoid DB noise.
+		// (In-flight ticks will self-terminate: handler returns {skipped} when no runtime found.)
+		if (jobQueue) {
+			cancelPendingTickJobs(params.roomId, jobQueue);
+		}
+
 		return { success: true };
 	});
 
@@ -277,7 +286,8 @@ export function setupRoomHandlers(
 export function setupRoomRuntimeHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
-	roomRuntimeService: RoomRuntimeService
+	roomRuntimeService: RoomRuntimeService,
+	jobQueue?: JobQueueRepository
 ): void {
 	// room.runtime.state - Get runtime state for a room
 	messageHub.onRequest('room.runtime.state', async (data) => {
@@ -325,6 +335,11 @@ export function setupRoomRuntimeHandlers(
 				state: 'running',
 			})
 			.catch(() => {});
+		// Re-seed the tick loop — it self-terminated when the runtime was paused.
+		// enqueueRoomTick dedup ensures this is safe even if a pending tick still exists.
+		if (jobQueue) {
+			enqueueRoomTick(params.roomId, jobQueue);
+		}
 		return { success: true, state: 'running' };
 	});
 
@@ -341,6 +356,10 @@ export function setupRoomRuntimeHandlers(
 				state: 'stopped',
 			})
 			.catch(() => {});
+		// Cancel pending tick jobs to avoid unnecessary DB churn after stop.
+		if (jobQueue) {
+			cancelPendingTickJobs(params.roomId, jobQueue);
+		}
 		return { success: true, state: 'stopped' };
 	});
 
@@ -357,6 +376,10 @@ export function setupRoomRuntimeHandlers(
 				state: 'running',
 			})
 			.catch(() => {});
+		// Re-seed the tick loop — it self-terminated when the runtime was stopped.
+		if (jobQueue) {
+			enqueueRoomTick(params.roomId, jobQueue);
+		}
 		return { success: true, state: 'running' };
 	});
 }

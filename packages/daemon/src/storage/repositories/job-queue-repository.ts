@@ -188,6 +188,11 @@ export class JobQueueRepository {
 		return result.changes;
 	}
 
+	deleteJob(id: string): boolean {
+		const result = this.db.prepare(`DELETE FROM job_queue WHERE id = ?`).run(id);
+		return result.changes > 0;
+	}
+
 	reclaimStale(staleBefore: number): number {
 		const result = this.db
 			.prepare(
