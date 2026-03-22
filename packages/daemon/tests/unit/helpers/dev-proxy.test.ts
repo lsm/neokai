@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test';
+import net from 'net';
 import path from 'path';
 import fs from 'fs';
 import {
@@ -15,6 +16,27 @@ import {
 	getGlobalDevProxy,
 	type DevProxyOptions,
 } from '../../helpers/dev-proxy';
+
+/**
+ * Bind a TCP server on a random available port and return the server + port.
+ * Used to simulate an already-running proxy process in tests.
+ */
+async function bindTcpServer(): Promise<{ server: net.Server; port: number }> {
+	return new Promise((resolve, reject) => {
+		const server = net.createServer();
+		server.listen(0, '127.0.0.1', () => {
+			const addr = server.address() as net.AddressInfo;
+			resolve({ server, port: addr.port });
+		});
+		server.on('error', reject);
+	});
+}
+
+async function closeTcpServer(server: net.Server): Promise<void> {
+	return new Promise((resolve, reject) => {
+		server.close((err) => (err ? reject(err) : resolve()));
+	});
+}
 
 // Check if devproxy is available
 async function isDevProxyInstalled(): Promise<boolean> {
@@ -27,7 +49,23 @@ async function isDevProxyInstalled(): Promise<boolean> {
 	}
 }
 
+/**
+ * Returns true if a devproxy process is already running on this machine.
+ * devproxy enforces a single-instance constraint regardless of port, so when
+ * it is already running, tests that need to start a fresh instance must skip.
+ */
+async function isDevProxyAlreadyRunning(): Promise<boolean> {
+	return new Promise((resolve) => {
+		// pgrep -x matches the exact process name (macOS / Linux)
+		const proc = Bun.spawn(['pgrep', '-x', 'devproxy'], { stdout: 'ignore', stderr: 'ignore' });
+		proc.exited.then((code) => resolve(code === 0)).catch(() => resolve(false));
+	});
+}
+
 const DEV_PROXY_INSTALLED = await isDevProxyInstalled();
+// Tests that need to start a fresh devproxy instance must skip when one is already running
+// because devproxy enforces a single-instance constraint (any port).
+const DEV_PROXY_FREE_TO_START = DEV_PROXY_INSTALLED && !(await isDevProxyAlreadyRunning());
 
 describe('Dev Proxy Helper', () => {
 	describe('createDevProxyController', () => {
@@ -37,6 +75,7 @@ describe('Dev Proxy Helper', () => {
 			expect(controller.port).toBe(8000);
 			expect(controller.proxyUrl).toBe('http://127.0.0.1:8000');
 			expect(controller.isRunning()).toBe(false);
+			expect(controller.isExternal).toBe(false);
 			expect(controller.pid).toBeUndefined();
 		});
 
@@ -60,8 +99,10 @@ describe('Dev Proxy Helper', () => {
 	});
 
 	describe('start/stop lifecycle', () => {
-		// Skip these tests if devproxy is not installed
-		const itif = DEV_PROXY_INSTALLED ? it : it.skip;
+		// Skip when devproxy is not installed or when an instance is already running.
+		// devproxy enforces a single-instance constraint so a second start attempt
+		// on any port will fail when the binary is already in use.
+		const itif = DEV_PROXY_FREE_TO_START ? it : it.skip;
 
 		itif(
 			'should start and stop proxy',
@@ -161,7 +202,7 @@ describe('Dev Proxy Helper', () => {
 	});
 
 	describe('Global Dev Proxy', () => {
-		const itif = DEV_PROXY_INSTALLED ? it : it.skip;
+		const itif = DEV_PROXY_FREE_TO_START ? it : it.skip;
 
 		afterEach(async () => {
 			await stopGlobalDevProxy();
@@ -200,6 +241,138 @@ describe('Dev Proxy Helper', () => {
 		);
 	});
 
+	describe('isExternal — reuse existing proxy', () => {
+		it('isExternal is false on a fresh controller', () => {
+			const controller = createDevProxyController();
+			expect(controller.isExternal).toBe(false);
+		});
+
+		it('adopts an existing proxy on the port without starting a new process', async () => {
+			// Bind a real TCP server to simulate an already-running proxy
+			const { server, port } = await bindTcpServer();
+
+			try {
+				const controller = createDevProxyController({
+					port,
+					setEnvVars: false, // avoid mutating process.env in unit tests
+				});
+
+				await controller.start();
+
+				expect(controller.isRunning()).toBe(true);
+				expect(controller.isExternal).toBe(true);
+			} finally {
+				await closeTcpServer(server);
+			}
+		});
+
+		it('stop() does not close the external proxy port', async () => {
+			const { server, port } = await bindTcpServer();
+
+			try {
+				const controller = createDevProxyController({
+					port,
+					setEnvVars: false,
+				});
+
+				await controller.start();
+				expect(controller.isRunning()).toBe(true);
+				expect(controller.isExternal).toBe(true);
+
+				await controller.stop();
+
+				// Controller should report not running after stop
+				expect(controller.isRunning()).toBe(false);
+				// The TCP server (external proxy) must still be accepting connections
+				await expect(
+					new Promise<void>((resolve, reject) => {
+						const socket = net.createConnection({ port, host: '127.0.0.1' });
+						socket.once('connect', () => {
+							socket.destroy();
+							resolve();
+						});
+						socket.once('error', reject);
+					})
+				).resolves.toBeUndefined();
+			} finally {
+				await closeTcpServer(server);
+			}
+		});
+
+		it('isExternal resets to false after stop()', async () => {
+			const { server, port } = await bindTcpServer();
+
+			try {
+				const controller = createDevProxyController({
+					port,
+					setEnvVars: false,
+				});
+
+				await controller.start();
+				expect(controller.isExternal).toBe(true);
+
+				await controller.stop();
+				expect(controller.isExternal).toBe(false);
+			} finally {
+				await closeTcpServer(server);
+			}
+		});
+
+		it('sets env vars when setEnvVars=true and adopting external proxy', async () => {
+			const { server, port } = await bindTcpServer();
+			const originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+
+			try {
+				const controller = createDevProxyController({
+					port,
+					setEnvVars: true,
+				});
+
+				await controller.start();
+
+				try {
+					expect(controller.isExternal).toBe(true);
+					expect(process.env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${port}`);
+				} finally {
+					controller.restoreEnv();
+					await controller.stop();
+				}
+			} finally {
+				await closeTcpServer(server);
+				// Ensure env is restored regardless
+				if (originalBaseUrl === undefined) {
+					delete process.env.ANTHROPIC_BASE_URL;
+				} else {
+					process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+				}
+			}
+		});
+
+		it('can be restarted after stopping an external proxy', async () => {
+			const { server, port } = await bindTcpServer();
+
+			try {
+				const controller = createDevProxyController({
+					port,
+					setEnvVars: false,
+				});
+
+				// First adoption
+				await controller.start();
+				expect(controller.isExternal).toBe(true);
+				await controller.stop();
+
+				// Second adoption (same external server still running)
+				await controller.start();
+				expect(controller.isExternal).toBe(true);
+				expect(controller.isRunning()).toBe(true);
+				await controller.stop();
+			} finally {
+				await closeTcpServer(server);
+			}
+		});
+	});
+
 	describe('loadMockFile', () => {
 		it('should throw for non-existent mock file', () => {
 			const controller = createDevProxyController();
@@ -211,11 +384,9 @@ describe('Dev Proxy Helper', () => {
 
 	describe('when devproxy is not installed', () => {
 		it('should throw error on start if not installed', async () => {
-			// This test only runs if devproxy IS installed, to verify the error message
-			// Skip if not installed since the test would pass trivially
+			// Only meaningful when devproxy is not installed and no process is running
 			if (DEV_PROXY_INSTALLED) {
-				// We can't easily test this case when devproxy IS installed
-				// So skip it
+				// Can't test this path when devproxy IS installed
 				return;
 			}
 

@@ -285,36 +285,29 @@ async function acquireDevProxyLease(
 		};
 	}
 
-	let devProxy: DevProxyController | null = createDevProxyController({
+	const devProxy: DevProxyController = createDevProxyController({
 		// Daemon helper explicitly sets env vars for both in-process and spawned modes.
 		// Keep proxy lifecycle independent from parent-process env mutation.
 		setEnvVars: false,
 		...devProxyOptions,
 	});
-	let startedByHelper = false;
 
 	try {
+		// start() will adopt an existing proxy (isExternal=true) rather than failing
+		// when a devproxy instance is already listening on the port.
 		await devProxy.start();
-		startedByHelper = true;
 	} catch (error) {
-		devProxy = null;
 		const errorMessage = error instanceof Error ? error.message : String(error);
-		// If another worker/process just started Dev Proxy, give it extra time to bind.
-		const readyTimeout = errorMessage.includes('already running') ? 12000 : 3000;
-		const proxyAlreadyRunning = await waitForTcpPortOpen(devProxyPort, '127.0.0.1', readyTimeout);
-		if (!proxyAlreadyRunning) {
-			throw new Error(
-				`Dev Proxy is required for this test run but is unavailable on ${devProxyBaseUrl}. ` +
-					`Startup error: ${errorMessage}`
-			);
-		}
-		console.warn(
-			`Warning: Could not start Dev Proxy controller, using existing proxy at ${devProxyBaseUrl}. ` +
+		throw new Error(
+			`Dev Proxy is required for this test run but failed to start on ${devProxyBaseUrl}. ` +
 				`Error: ${errorMessage}`
 		);
 	}
 
-	if (reuse && startedByHelper && devProxy) {
+	// For reuse mode, only register as shared controller when we own the proxy
+	// process.  External instances are not registered so the exit hook won't try
+	// to stop them when the test process exits.
+	if (reuse && !devProxy.isExternal) {
 		sharedDevProxyController = devProxy;
 		sharedDevProxyPort = devProxyPort;
 		sharedDevProxyRefCount = 1;
@@ -333,10 +326,9 @@ async function acquireDevProxyLease(
 	return {
 		controller: devProxy,
 		release: async () => {
-			if (devProxy && startedByHelper) {
-				await devProxy.stop();
-				devProxy.restoreEnv();
-			}
+			// stop() is a no-op for external instances, so it's always safe to call.
+			await devProxy.stop();
+			devProxy.restoreEnv();
 		},
 	};
 }

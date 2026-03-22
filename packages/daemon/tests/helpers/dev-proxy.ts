@@ -95,13 +95,16 @@ export interface DevProxyOptions {
  */
 export interface DevProxyController {
 	/**
-	 * Start Dev Proxy process
+	 * Start Dev Proxy process.
+	 * If a proxy is already listening on the configured port, it is adopted as an
+	 * external instance (isExternal becomes true) and no new process is started.
 	 * @throws Error if proxy fails to start within timeout
 	 */
 	start(): Promise<void>;
 
 	/**
-	 * Stop Dev Proxy process gracefully
+	 * Stop Dev Proxy process gracefully.
+	 * Has no effect when the proxy was adopted as an external instance (isExternal === true).
 	 */
 	stop(): Promise<void>;
 
@@ -136,6 +139,13 @@ export interface DevProxyController {
 	 * Get the process PID (if running)
 	 */
 	readonly pid: number | undefined;
+
+	/**
+	 * Whether this controller adopted a pre-existing proxy instance rather than
+	 * starting one itself.  When true, stop() is a no-op so we don't terminate a
+	 * proxy that belongs to another process.
+	 */
+	readonly isExternal: boolean;
 
 	/**
 	 * Restore original environment variables that were modified
@@ -307,6 +317,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 
 	// State
 	let running = false;
+	let external = false; // true when we adopted a pre-existing proxy
 	let originalEnv: Record<string, string | undefined> = {};
 
 	const runDevProxyCommand = async (
@@ -410,9 +421,25 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			return undefined;
 		},
 
+		get isExternal() {
+			return external;
+		},
+
 		async start() {
 			if (running) {
 				throw new Error('Dev Proxy is already running');
+			}
+
+			// Proactively check if a proxy is already listening on the port.
+			// If so, adopt it as an external instance instead of trying to start a new
+			// one (which would fail with "already running" and cause test failures).
+			if (await checkProxyReady()) {
+				running = true;
+				external = true;
+				if (setEnvVars) {
+					setProxyEnvVars();
+				}
+				return;
 			}
 
 			// Check if devproxy is installed
@@ -446,6 +473,17 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			);
 
 			if (startResult.code !== 0) {
+				// Even when `devproxy --detach` exits non-zero (e.g. because it races
+				// with another process starting the proxy simultaneously), the proxy may
+				// already be up.  Do one final port check before giving up.
+				if (await checkProxyReady()) {
+					running = true;
+					external = true;
+					if (setEnvVars) {
+						setProxyEnvVars();
+					}
+					return;
+				}
 				throw new Error(
 					`Failed to start Dev Proxy (exit ${startResult.code ?? 'unknown'}): ` +
 						(startResult.stderr || startResult.stdout || 'no output')
@@ -456,6 +494,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			while (Date.now() - startTime < startTimeout) {
 				if (await checkProxyReady()) {
 					running = true;
+					external = false;
 					if (setEnvVars) {
 						setProxyEnvVars();
 					}
@@ -469,6 +508,13 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 
 		async stop() {
 			if (!running) {
+				return;
+			}
+
+			// Don't stop a proxy we didn't start — it belongs to another process.
+			if (external) {
+				running = false;
+				external = false;
 				return;
 			}
 
