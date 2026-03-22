@@ -11,9 +11,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { rmSync } from 'node:fs';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../src/storage/reactive-database';
@@ -25,10 +22,6 @@ import type { QueryDiff } from '../../../src/storage/live-query';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function makeTempDbPath(): string {
-	return join(tmpdir(), `goal-repo-lq-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-}
 
 const GOALS_SQL = `SELECT id, title, status FROM goals ORDER BY created_at ASC`;
 
@@ -43,7 +36,6 @@ interface GoalRow {
 // ---------------------------------------------------------------------------
 
 describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
-	let dbPath: string;
 	let bunDb: BunDatabase;
 	let reactiveDb: ReactiveDatabase;
 	let engine: LiveQueryEngine;
@@ -51,8 +43,7 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
 	let roomId: string;
 
 	beforeEach(() => {
-		dbPath = makeTempDbPath();
-		bunDb = new BunDatabase(dbPath);
+		bunDb = new BunDatabase(':memory:');
 		createTables(bunDb);
 
 		// Insert a minimal room row so FK constraints are satisfied
@@ -73,18 +64,7 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
 
 	afterEach(() => {
 		engine.dispose();
-		try {
-			bunDb.close();
-		} catch {
-			/* already closed */
-		}
-		try {
-			rmSync(dbPath, { force: true });
-			rmSync(dbPath + '-wal', { force: true });
-			rmSync(dbPath + '-shm', { force: true });
-		} catch {
-			/* ok */
-		}
+		bunDb.close();
 	});
 
 	// ---------------------------------------------------------------------------
