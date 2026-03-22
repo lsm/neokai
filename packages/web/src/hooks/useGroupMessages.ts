@@ -9,6 +9,8 @@
  *   Only `added` from delta events is processed; `updated`/`removed` are ignored.
  * - Stale-event guard: tracks the active subscriptionId and discards events from
  *   prior group subscriptions during rapid task switching.
+ * - Reconnect handling: `isConnected` is included in the effect dependency array
+ *   so the subscription is re-established after a WebSocket disconnect/reconnect.
  */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -39,7 +41,18 @@ export function generateGroupMessagesSubId(groupId: string): string {
 }
 
 /**
+ * Resets the module-level subscription counter.
+ * Call this in `beforeEach` to keep counter values deterministic across tests.
+ */
+export function resetSubscriptionCounterForTesting(): void {
+	_subscriptionCounter = 0;
+}
+
+/**
  * Hook to subscribe to session group messages via LiveQuery.
+ *
+ * Re-subscribes automatically when the WebSocket reconnects (`isConnected`
+ * is included in the effect dependency array).
  *
  * @param groupId - The session group ID to subscribe to, or null to clear/unsubscribe.
  * @returns Current message list and loading state.
@@ -55,16 +68,16 @@ export function generateGroupMessagesSubId(groupId: string): string {
  * ```
  */
 export function useGroupMessages(groupId: string | null): UseGroupMessagesResult {
-	const { request, onEvent } = useMessageHub();
+	const { request, onEvent, isConnected } = useMessageHub();
 	const [messages, setMessages] = useState<SessionGroupMessage[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 
 	// Track the active subscriptionId to guard against stale events from prior
-	// group subscriptions (e.g., rapid task switching).
+	// group subscriptions (e.g., rapid task switching or reconnect cycles).
 	const activeSubIdRef = useRef<string | null>(null);
 
 	useEffect(() => {
-		if (!groupId) {
+		if (!groupId || !isConnected) {
 			setMessages([]);
 			setIsLoading(false);
 			activeSubIdRef.current = null;
@@ -120,7 +133,7 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 				// Ignore cleanup errors.
 			});
 		};
-	}, [groupId, request, onEvent]);
+	}, [groupId, isConnected, request, onEvent]);
 
 	return { messages, isLoading };
 }

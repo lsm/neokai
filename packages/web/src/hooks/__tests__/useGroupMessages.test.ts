@@ -8,25 +8,30 @@
  * - Stale-event guard (rapid task switching)
  * - Append-only invariant (ignore updated/removed)
  * - Cleanup on unmount / groupId change
+ * - Reconnect: re-subscribes after WebSocket disconnect/reconnect
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks (must not import anything)
 // ---------------------------------------------------------------------------
 
-const { mockRequest, mockOnEvent } = vi.hoisted(() => ({
+const { mockRequest, mockOnEvent, mockIsConnected } = vi.hoisted(() => ({
 	mockRequest: vi.fn(),
 	mockOnEvent: vi.fn(),
+	mockIsConnected: { value: true },
 }));
 
-// Mock useMessageHub so we control request and onEvent directly.
+// Mock useMessageHub so we control request, onEvent, and isConnected directly.
 vi.mock('../useMessageHub', () => ({
 	useMessageHub: () => ({
 		request: mockRequest,
 		onEvent: mockOnEvent,
+		get isConnected() {
+			return mockIsConnected.value;
+		},
 	}),
 }));
 
@@ -37,6 +42,7 @@ vi.mock('../useMessageHub', () => ({
 import {
 	useGroupMessages,
 	generateGroupMessagesSubId,
+	resetSubscriptionCounterForTesting,
 	type SessionGroupMessage,
 } from '../useGroupMessages';
 
@@ -65,12 +71,20 @@ function fireEvent(method: string, payload: unknown): void {
 	(eventHandlers[method] ?? []).forEach((h) => h(payload));
 }
 
+/** Returns the subscriptionId from the most recent liveQuery.subscribe call. */
+function lastSubscribeSubId(): string {
+	const subscribeCalls = mockRequest.mock.calls.filter((call) => call[0] === 'liveQuery.subscribe');
+	return subscribeCalls[subscribeCalls.length - 1][1].subscriptionId;
+}
+
 // ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	resetSubscriptionCounterForTesting();
+	mockIsConnected.value = true;
 	eventHandlers = {};
 
 	// Default: subscribe/unsubscribe resolve immediately.
@@ -120,13 +134,24 @@ describe('useGroupMessages', () => {
 				subscriptionId: expect.stringContaining('group-abc'),
 			});
 		});
+
+		it('does not subscribe when not connected', () => {
+			mockIsConnected.value = false;
+
+			renderHook(() => useGroupMessages('group-1'));
+
+			const subscribeCalls = mockRequest.mock.calls.filter(
+				(call) => call[0] === 'liveQuery.subscribe'
+			);
+			expect(subscribeCalls).toHaveLength(0);
+		});
 	});
 
 	describe('snapshot handling', () => {
 		it('replaces messages and clears isLoading on snapshot', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 			const rows = [makeMessage(1), makeMessage(2)];
 
 			act(() => {
@@ -156,7 +181,7 @@ describe('useGroupMessages', () => {
 		it('appends added messages from delta', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			// Deliver snapshot first.
 			act(() => {
@@ -183,7 +208,7 @@ describe('useGroupMessages', () => {
 		it('appends multiple added messages from a single delta', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -207,7 +232,7 @@ describe('useGroupMessages', () => {
 		it('ignores delta with no added field (append-only invariant)', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -233,7 +258,7 @@ describe('useGroupMessages', () => {
 		it('ignores delta with empty added array', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -257,7 +282,7 @@ describe('useGroupMessages', () => {
 		it('discards delta with stale subscriptionId', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -288,7 +313,7 @@ describe('useGroupMessages', () => {
 				{ initialProps: { groupId: 'group-1' } }
 			);
 
-			const firstSubId = mockRequest.mock.calls[0][1].subscriptionId;
+			const firstSubId = lastSubscribeSubId();
 
 			// Switch to group-2 before first snapshot arrives.
 			rerender({ groupId: 'group-2' });
@@ -333,11 +358,98 @@ describe('useGroupMessages', () => {
 		});
 	});
 
+	describe('reconnect handling', () => {
+		it('re-subscribes and refreshes messages after WebSocket reconnect', () => {
+			const { result, rerender } = renderHook(
+				({ isConn }: { isConn: boolean }) => {
+					mockIsConnected.value = isConn;
+					return useGroupMessages('group-1');
+				},
+				{ initialProps: { isConn: true } }
+			);
+
+			// Initial subscription — deliver snapshot with one message.
+			const firstSubId = lastSubscribeSubId();
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: firstSubId,
+					rows: [makeMessage(1)],
+					version: 1,
+				});
+			});
+			expect(result.current.messages).toHaveLength(1);
+
+			// Simulate disconnect: isConnected becomes false.
+			act(() => {
+				rerender({ isConn: false });
+			});
+
+			// Simulate reconnect: isConnected becomes true again.
+			act(() => {
+				rerender({ isConn: true });
+			});
+
+			// A new subscription should have been issued.
+			const reconnectSubId = lastSubscribeSubId();
+			expect(reconnectSubId).not.toBe(firstSubId);
+
+			// Deliver the fresh snapshot from the new subscription.
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: reconnectSubId,
+					rows: [makeMessage(1), makeMessage(2)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+		});
+
+		it('discards events from the pre-reconnect subscription after reconnect', () => {
+			const { result, rerender } = renderHook(
+				({ isConn }: { isConn: boolean }) => {
+					mockIsConnected.value = isConn;
+					return useGroupMessages('group-1');
+				},
+				{ initialProps: { isConn: true } }
+			);
+
+			const firstSubId = lastSubscribeSubId();
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: firstSubId,
+					rows: [makeMessage(1)],
+					version: 1,
+				});
+			});
+
+			// Reconnect cycle.
+			act(() => {
+				rerender({ isConn: false });
+			});
+			act(() => {
+				rerender({ isConn: true });
+			});
+
+			// Stale delta from old subscription must be discarded.
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: firstSubId,
+					added: [makeMessage(99)],
+					version: 2,
+				});
+			});
+
+			// No messages until the new subscription delivers its snapshot.
+			expect(result.current.messages).toEqual([]);
+		});
+	});
+
 	describe('cleanup', () => {
 		it('calls liveQuery.unsubscribe on unmount', () => {
 			const { unmount } = renderHook(() => useGroupMessages('group-1'));
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			unmount();
 
@@ -377,7 +489,7 @@ describe('useGroupMessages', () => {
 				{ initialProps: { groupId: 'group-1' } }
 			);
 
-			const subId = mockRequest.mock.calls[0][1].subscriptionId;
+			const subId = lastSubscribeSubId();
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -414,7 +526,7 @@ describe('useGroupMessages', () => {
 
 		it('does not clear isLoading after error if groupId already changed', async () => {
 			let rejectSubscribe: (err: Error) => void;
-			// First call (group-1) hangs.
+			// First call (group-1 subscribe) hangs.
 			mockRequest.mockReturnValueOnce(
 				new Promise<never>((_, reject) => {
 					rejectSubscribe = reject;
@@ -453,6 +565,12 @@ describe('useGroupMessages', () => {
 			const id1 = generateGroupMessagesSubId('g');
 			const id2 = generateGroupMessagesSubId('g');
 			expect(id1).not.toBe(id2);
+		});
+
+		it('counter resets between tests via resetSubscriptionCounterForTesting', () => {
+			// Counter was reset in beforeEach; first call should produce counter=1.
+			const id = generateGroupMessagesSubId('g');
+			expect(id).toBe('group-messages-g-1');
 		});
 	});
 });
