@@ -497,6 +497,14 @@ export class SettingsManager {
 			);
 		}
 
+		// Respect per-server allow/deny settings — exclude servers the user has explicitly disallowed.
+		const mcpServerSettings = globalSettings.mcpServerSettings || {};
+		for (const name of Object.keys(result)) {
+			if (mcpServerSettings[name]?.allowed === false) {
+				delete result[name];
+			}
+		}
+
 		return result;
 	}
 

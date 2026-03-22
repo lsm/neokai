@@ -814,5 +814,54 @@ describe('SettingsManager', () => {
 			const result = settingsManager.getProjectMcpServersConfig();
 			expect(result).toEqual({});
 		});
+
+		it('should exclude servers with allowed === false in mcpServerSettings', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						allowed_tool: { command: 'allowed-cmd' },
+						denied_tool: { command: 'denied-cmd' },
+					},
+				})
+			);
+			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+				...DEFAULT_GLOBAL_SETTINGS,
+				mcpServerSettings: {
+					denied_tool: { allowed: false },
+					allowed_tool: { allowed: true },
+				},
+			});
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toHaveProperty('allowed_tool');
+			expect(result).not.toHaveProperty('denied_tool');
+		});
+
+		it('should include servers with allowed === true or no setting', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						tool_explicit_allow: { command: 'cmd1' },
+						tool_no_setting: { command: 'cmd2' },
+					},
+				})
+			);
+			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+				...DEFAULT_GLOBAL_SETTINGS,
+				mcpServerSettings: {
+					tool_explicit_allow: { allowed: true },
+				},
+			});
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toHaveProperty('tool_explicit_allow');
+			expect(result).toHaveProperty('tool_no_setting');
+		});
 	});
 });
