@@ -2,8 +2,12 @@
 
 ## Verified: 2026-03-22
 
-CI Run: https://github.com/lsm/neokai/actions/runs/23414946158
+CI Run: https://github.com/lsm/neokai/actions/runs/23415261820
 **Result: SUCCESS** (all 57 E2E tests passing)
+
+### Merge History
+- PR #729 merged (verification doc)
+- PR #731 merged (re-verify sync with dev)
 
 ## Previously Failing Tests (from run #23413060612) — Now Fixed
 
