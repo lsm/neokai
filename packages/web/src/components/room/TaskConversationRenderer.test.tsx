@@ -533,3 +533,87 @@ describe('TaskConversationRenderer — session question state props', () => {
 		});
 	});
 });
+
+describe('TaskConversationRenderer — isReconnecting state', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockRequest.mockImplementation(async (method: string, params: Record<string, unknown>) => {
+			if (method === 'liveQuery.subscribe') {
+				lastSubscriptionId = params.subscriptionId as string;
+				return { ok: true };
+			}
+			if (method === 'liveQuery.unsubscribe') return { ok: true };
+			if (method === 'session.get') return { session: null };
+			return {};
+		});
+		mockOnEvent.mockClear();
+		snapshotHandler = null;
+		deltaHandler = null;
+		lastSubscriptionId = null;
+		sessionStateHandlers.length = 0;
+		capturedSDKProps.length = 0;
+		resetSubscriptionCounterForTesting();
+		// Reset to connected by default.
+		mockIsConnected.value = true;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('renders "Reconnecting…" when WebSocket is disconnected and groupId is set', async () => {
+		// Simulate a WebSocket disconnect while the component is mounted with a group.
+		mockIsConnected.value = false;
+
+		const { container } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		// isReconnecting = !isConnected && groupId !== null → true
+		// The component should show "Reconnecting…" not "Waiting for agent activity…"
+		await waitFor(() => {
+			expect(container.textContent).toContain('Reconnecting');
+		});
+		expect(container.textContent).not.toContain('Waiting for agent activity');
+	});
+
+	it('renders "Loading conversation…" when connected but snapshot has not arrived yet', async () => {
+		mockIsConnected.value = true;
+
+		const { container } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		// isReconnecting = false (connected), isLoading = true (snapshot pending)
+		await waitFor(() => {
+			expect(container.textContent).toContain('Loading conversation');
+		});
+		expect(container.textContent).not.toContain('Reconnecting');
+	});
+
+	it('renders messages normally once snapshot arrives after reconnect', async () => {
+		// Start disconnected.
+		mockIsConnected.value = false;
+		const { container, rerender } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('Reconnecting');
+		});
+
+		// Reconnect.
+		mockIsConnected.value = true;
+		rerender(<TaskConversationRenderer groupId="group-1" />);
+
+		// Now in loading state (connected, waiting for snapshot).
+		await waitFor(() => {
+			expect(container.textContent).toContain('Loading conversation');
+		});
+
+		// Snapshot arrives.
+		await act(async () => {
+			fireSnapshot([makeRawMessage(1, 'assistant', 'uuid-reconnect-1')]);
+		});
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="msg-uuid-reconnect-1"]')).not.toBeNull();
+		});
+		expect(container.textContent).not.toContain('Reconnecting');
+		expect(container.textContent).not.toContain('Loading conversation');
+	});
+});
