@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the flat message timeline in task views with a compact turn-based summary view. Each agent turn is rendered as a single block with stats and a live preview. Clicking a block opens a slide-out panel showing the full session chat via the existing ChatContainer component. The current TaskView (V1) remains untouched; a toggle in the header switches between V1 and V2.
+Replace the flat message timeline in task views with a compact turn-based summary view. Each agent turn is rendered as a single block with stats and a live preview. Clicking a block opens a slide-out panel showing the full session chat via a standalone `ReadonlySessionChat` component. The current TaskView (V1) remains untouched; a toggle in the header switches between V1 and V2.
 
 ## High-Level Approach
 

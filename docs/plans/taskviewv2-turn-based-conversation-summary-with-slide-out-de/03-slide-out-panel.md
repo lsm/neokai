@@ -31,16 +31,22 @@ Build a `ReadonlySessionChat` component that independently fetches and renders a
 2. Create `packages/web/src/components/room/ReadonlySessionChat.tsx`:
    - **Props**: `{ sessionId: string }`
    - **Data loading** (independent of `sessionStore`):
-     - Fetch initial messages via `state.sdkMessages` RPC (or equivalent session message RPC) keyed to `sessionId`.
-     - Subscribe to `state.sdkMessages.delta` on channel `session:{sessionId}` for real-time updates.
+     - **Channel subscription (required)**:
+       1. Call `hub.joinChannel(\`session:${sessionId}\`)` on mount — this is required before any event subscriptions. The server routes `state.sdkMessages.delta` events only to clients that have joined the matching channel (see `router.ts` line 356).
+       2. Subscribe to `state.sdkMessages.delta` via `hub.onEvent(...)`.
+       3. **Filter incoming deltas by channel**: The `onEvent` handler receives events from ALL joined channels. The handler MUST check `context.channel === \`session:${sessionId}\`` (the second argument to the event handler) to avoid cross-session message bleed during panel transitions.
+       4. Call `hub.leaveChannel(\`session:${sessionId}\`)` on unmount/cleanup to stop receiving events and prevent channel membership leaks.
+     - **Initial fetch**: Use the `state.sdkMessages` RPC with `{ sessionId }` to fetch the most recent messages. Response shape: `{ sdkMessages, hasMore, timestamp }`.
+     - **Load-older pagination**: Use the `message.sdkMessages` RPC with `{ sessionId, before: oldestCursor, limit }` for loading older messages. This is a DIFFERENT RPC from the initial fetch — `state.sdkMessages` does not accept a `before` cursor parameter. This mirrors `sessionStore.loadOlderMessages` (line 602).
+     - **Deduplication**: Deduplicate incoming delta messages by UUID before appending to local state, matching the pattern in `sessionStore` (lines 273-276). Safari reconnections can replay events.
      - Maintain messages in local component state (NOT in `sessionStore`).
      - Handle loading and error states.
    - **Rendering**:
-     - Render messages using `SDKMessageRenderer` with `taskContext={false}` and `readonly={true}` styling.
+     - Render messages using `SDKMessageRenderer` with `taskContext={false}`. **Note**: `SDKMessageRenderer` has no `readonly` prop — read-only behavior is achieved by omitting question-handling props (`pendingQuestion`, `resolvedQuestions`, `onQuestionResolved`) and rewind props. With `taskContext={false}`, system init messages are suppressed (line 183 of SDKMessageRenderer) — this is intentional for the slide-out panel since the focus is on the conversation content, not session setup.
      - Omit the input area (read-only view).
      - Include auto-scroll to bottom on new messages (simple `scrollIntoView` on new message arrival).
-     - Include a "Load older" button if the session has older messages (pagination via cursor).
-   - **Note**: This component is a simplified, read-only version of the message rendering in `ChatContainer`. It does NOT need to support: message input, question resolution, file uploads, or session selection. It only needs: message fetching, streaming delta updates, and rendering via `SDKMessageRenderer`.
+     - Include a "Load older" button if the session has older messages (use `hasMore` from initial fetch response, then `hasMore` from subsequent `message.sdkMessages` responses).
+   - **Note**: This component is a simplified, read-only version of the message rendering in `ChatContainer`. It does NOT need to support: message input, question resolution, file uploads, or session selection. It only needs: channel join/leave, message fetching, streaming delta updates with deduplication, and rendering via `SDKMessageRenderer`.
    - `data-testid="readonly-session-chat"` on the root element.
 3. Create `packages/web/src/components/room/SlideOutPanel.tsx`:
    - **Props**:
