@@ -20,7 +20,6 @@
 
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
-import net from 'net';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
@@ -214,37 +213,6 @@ function installSharedDevProxyExitHook(): void {
 	});
 }
 
-async function isTcpPortOpen(port: number, host = '127.0.0.1', timeoutMs = 1000): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket = net.createConnection({ port, host });
-		const done = (result: boolean) => {
-			socket.removeAllListeners();
-			socket.destroy();
-			resolve(result);
-		};
-
-		socket.setTimeout(timeoutMs);
-		socket.once('connect', () => done(true));
-		socket.once('timeout', () => done(false));
-		socket.once('error', () => done(false));
-	});
-}
-
-async function waitForTcpPortOpen(
-	port: number,
-	host = '127.0.0.1',
-	timeoutMs = 4000
-): Promise<boolean> {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		if (await isTcpPortOpen(port, host, 500)) {
-			return true;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-	return false;
-}
-
 async function acquireDevProxyLease(
 	shouldUseDevProxy: boolean,
 	devProxyOptions?: DevProxyOptions
@@ -305,8 +273,13 @@ async function acquireDevProxyLease(
 	}
 
 	// For reuse mode, only register as shared controller when we own the proxy
-	// process.  External instances are not registered so the exit hook won't try
-	// to stop them when the test process exits.
+	// process.  External instances are intentionally not pooled in
+	// sharedDevProxyController: the exit hook (installSharedDevProxyExitHook)
+	// unconditionally runs `devproxy stop` on process exit, which would kill a
+	// proxy that belongs to another session.  With external instances each
+	// acquireDevProxyLease call creates a lightweight controller that performs a
+	// TCP probe on start and a no-op on stop — cheap enough that skipping the
+	// pool is acceptable.
 	if (reuse && !devProxy.isExternal) {
 		sharedDevProxyController = devProxy;
 		sharedDevProxyPort = devProxyPort;

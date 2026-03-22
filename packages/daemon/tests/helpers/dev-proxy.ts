@@ -45,6 +45,7 @@
  */
 
 import { spawn } from 'child_process';
+import net from 'net';
 import path from 'path';
 import fs from 'fs';
 import { setTimeout as sleep } from 'timers/promises';
@@ -364,7 +365,6 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 		// Try to connect to the proxy port using a TCP connection check
 		// This is more reliable than fetch() for HTTPS proxies
 		return new Promise((resolve) => {
-			const net = require('net');
 			const socket = new net.Socket();
 
 			socket.setTimeout(1000);
