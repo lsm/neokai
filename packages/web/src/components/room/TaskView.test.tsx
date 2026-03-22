@@ -31,6 +31,7 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 		onEvent: mockOnEvent,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
+		isConnected: true,
 	}),
 }));
 

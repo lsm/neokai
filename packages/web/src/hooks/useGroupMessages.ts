@@ -110,8 +110,12 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 
 		// Send the subscribe request with retry on failure.
 		// Up to MAX_RETRIES additional attempts after the first, with increasing delays.
+		// IMPORTANT: RETRY_DELAYS_MS must have exactly MAX_RETRIES entries — adding an extra
+		// retry without a corresponding delay entry causes setTimeout(fn, undefined) → 0ms.
 		const MAX_RETRIES = 2;
-		const RETRY_DELAYS_MS = [500, 1500];
+		const RETRY_DELAYS_MS: [number, number] = [500, 1500];
+
+		let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 		const subscribeWithRetry = (attempt: number): void => {
 			request('liveQuery.subscribe', {
@@ -121,7 +125,8 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 			}).catch(() => {
 				if (activeSubIdRef.current !== subscriptionId) return;
 				if (attempt < MAX_RETRIES) {
-					setTimeout(() => {
+					retryTimer = setTimeout(() => {
+						retryTimer = null;
 						if (activeSubIdRef.current === subscriptionId) {
 							subscribeWithRetry(attempt + 1);
 						}
@@ -137,6 +142,13 @@ export function useGroupMessages(groupId: string | null): UseGroupMessagesResult
 		subscribeWithRetry(0);
 
 		return () => {
+			// Cancel any pending retry timer before clearing the subscription ID,
+			// so the timer callback cannot observe a matching subscription ID after cleanup.
+			if (retryTimer !== null) {
+				clearTimeout(retryTimer);
+				retryTimer = null;
+			}
+
 			// Remove event listeners first.
 			unsubSnapshot();
 			unsubDelta();

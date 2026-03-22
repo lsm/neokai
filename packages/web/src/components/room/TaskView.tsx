@@ -726,7 +726,7 @@ function SetStatusModal({ task, isOpen, onClose, onConfirm }: SetStatusModalProp
 }
 
 export function TaskView({ roomId, taskId }: TaskViewProps) {
-	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
+	const { request, onEvent, joinRoom, leaveRoom, isConnected } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
 
 	// Look up the goal associated with this task (reverse lookup from roomStore)
@@ -904,7 +904,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			unsub();
 			leaveRoom(channel);
 		};
-	}, [roomId, taskId]);
+	}, [roomId, taskId, isConnected]);
 
 	if (loading) {
 		return (
