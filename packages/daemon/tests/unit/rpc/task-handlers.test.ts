@@ -427,17 +427,20 @@ describe('Task RPC Handlers', () => {
 			);
 		});
 
-		it('emits room overview and task update events', async () => {
+		it('emits room.overview but NOT room.task.update (redundant after LiveQuery)', async () => {
 			const handler = messageHubData.handlers.get('task.fail');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', taskId: 'task-123', error: 'Failed' }, {});
 
+			// room.overview must still fire so clients get updated session/task metadata
 			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'room.task.update',
-				expect.objectContaining({ roomId: 'room-123' })
+
+			// room.task.update must NOT be emitted — LiveQuery deltas replace this channel
+			const taskUpdateCalls = (daemonHubData.emit as ReturnType<typeof mock>).mock.calls.filter(
+				(args: unknown[]) => args[0] === 'room.task.update'
 			);
+			expect(taskUpdateCalls).toHaveLength(0);
 		});
 	});
 });
