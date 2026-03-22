@@ -3,6 +3,8 @@
  *
  * Covers:
  * - space.sessionGroup.list: happy path, missing spaceId, space not found
+ * - space.sessionGroup.create: happy path with/without members, event emission,
+ *   production guard, missing params, space not found
  * - space.sessionGroup.updateMember: happy path, missing params, space/group/member not found,
  *   cross-space group rejection, memberUpdated event emission, optional role update
  * - space.sessionGroup.delete: happy path, missing params, space/group not found,
@@ -108,6 +110,8 @@ function createMockRepo(
 	return {
 		getGroupsBySpace: mock(() => [mockGroup]),
 		getGroup: mock(() => mockGroup),
+		createGroup: mock(() => mockGroup),
+		addMember: mock(() => mockMember),
 		updateMember: mock(() => mockMember),
 		deleteGroup: mock(() => true),
 		...overrides,
@@ -164,6 +168,174 @@ describe('space.sessionGroup.list', () => {
 		setupSpaceSessionGroupHandlers(hub, daemonHub, spaceManager, repo);
 		const result = await h.get('space.sessionGroup.list')!({ spaceId: 'space-1' });
 		expect(result).toEqual({ groups: [] });
+	});
+});
+
+describe('space.sessionGroup.create', () => {
+	let handlers: Map<string, RequestHandler>;
+	let daemonHub: DaemonHub;
+	let spaceManager: SpaceManager;
+	let repo: SpaceSessionGroupRepository;
+	let originalNodeEnv: string | undefined;
+
+	beforeEach(() => {
+		originalNodeEnv = process.env.NODE_ENV;
+		// Ensure handler runs (not in production)
+		process.env.NODE_ENV = 'test';
+
+		const { hub, handlers: h } = createMockMessageHub();
+		handlers = h;
+		daemonHub = createMockDaemonHub();
+		spaceManager = createMockSpaceManager();
+		repo = createMockRepo();
+		setupSpaceSessionGroupHandlers(hub, daemonHub, spaceManager, repo);
+	});
+
+	// Restore NODE_ENV after each test
+	const afterEach = () => {
+		process.env.NODE_ENV = originalNodeEnv;
+	};
+
+	it('creates group and returns it with empty members list', async () => {
+		const result = (await handlers.get('space.sessionGroup.create')!({
+			spaceId: 'space-1',
+			name: 'task:task-1',
+			taskId: 'task-1',
+		})) as { group: SpaceSessionGroup };
+		expect(result.group).toEqual(mockGroup);
+		expect(repo.createGroup).toHaveBeenCalledWith({
+			spaceId: 'space-1',
+			name: 'task:task-1',
+			taskId: 'task-1',
+		});
+		afterEach();
+	});
+
+	it('emits spaceSessionGroup.created event after creating group', async () => {
+		await handlers.get('space.sessionGroup.create')!({
+			spaceId: 'space-1',
+			name: 'task:task-1',
+			taskId: 'task-1',
+		});
+		expect(daemonHub.emit).toHaveBeenCalledWith('spaceSessionGroup.created', {
+			sessionId: 'space:space-1',
+			spaceId: 'space-1',
+			taskId: 'task-1',
+			group: mockGroup,
+		});
+		afterEach();
+	});
+
+	it('emits spaceSessionGroup.created with empty taskId when taskId is omitted', async () => {
+		await handlers.get('space.sessionGroup.create')!({
+			spaceId: 'space-1',
+			name: 'standalone-group',
+		});
+		expect(daemonHub.emit).toHaveBeenCalledWith('spaceSessionGroup.created', {
+			sessionId: 'space:space-1',
+			spaceId: 'space-1',
+			taskId: '',
+			group: mockGroup,
+		});
+		afterEach();
+	});
+
+	it('adds each member and emits spaceSessionGroup.memberAdded per member', async () => {
+		await handlers.get('space.sessionGroup.create')!({
+			spaceId: 'space-1',
+			name: 'task:task-1',
+			taskId: 'task-1',
+			members: [
+				{ sessionId: 'session-a', role: 'task-agent' },
+				{ sessionId: 'session-b', role: 'coder', agentId: 'agent-1', status: 'active' },
+			],
+		});
+
+		expect(repo.addMember).toHaveBeenCalledTimes(2);
+		expect(repo.addMember).toHaveBeenNthCalledWith(1, mockGroup.id, 'session-a', {
+			role: 'task-agent',
+			agentId: undefined,
+			status: 'active',
+			orderIndex: 0,
+		});
+		expect(repo.addMember).toHaveBeenNthCalledWith(2, mockGroup.id, 'session-b', {
+			role: 'coder',
+			agentId: 'agent-1',
+			status: 'active',
+			orderIndex: 1,
+		});
+
+		// One memberAdded event per member
+		const memberAddedCalls = (daemonHub.emit as ReturnType<typeof mock>).mock.calls.filter(
+			(c) => c[0] === 'spaceSessionGroup.memberAdded'
+		);
+		expect(memberAddedCalls).toHaveLength(2);
+		expect(memberAddedCalls[0][1]).toMatchObject({
+			spaceId: 'space-1',
+			groupId: mockGroup.id,
+			member: mockMember,
+		});
+		afterEach();
+	});
+
+	it('returns full group (with members) after creation', async () => {
+		const fullGroup = { ...mockGroup, members: [mockMember] };
+		repo = createMockRepo({ getGroup: mock(() => fullGroup) });
+		const { hub, handlers: h } = createMockMessageHub();
+		setupSpaceSessionGroupHandlers(hub, daemonHub, spaceManager, repo);
+
+		const result = (await h.get('space.sessionGroup.create')!({
+			spaceId: 'space-1',
+			name: 'task:task-1',
+			members: [{ sessionId: 'session-a', role: 'task-agent' }],
+		})) as { group: SpaceSessionGroup };
+		expect(result.group.members).toEqual([mockMember]);
+		afterEach();
+	});
+
+	it('throws in production environment', async () => {
+		process.env.NODE_ENV = 'production';
+		await expect(
+			handlers.get('space.sessionGroup.create')!({
+				spaceId: 'space-1',
+				name: 'task:task-1',
+			})
+		).rejects.toThrow('not available in production');
+		afterEach();
+	});
+
+	it('throws if spaceId is missing', async () => {
+		await expect(
+			handlers.get('space.sessionGroup.create')!({ name: 'task:task-1' })
+		).rejects.toThrow('spaceId is required');
+		afterEach();
+	});
+
+	it('throws if name is missing', async () => {
+		await expect(
+			handlers.get('space.sessionGroup.create')!({ spaceId: 'space-1' })
+		).rejects.toThrow('name is required');
+		afterEach();
+	});
+
+	it('throws if space not found', async () => {
+		spaceManager = createMockSpaceManager(null);
+		const { hub, handlers: h } = createMockMessageHub();
+		setupSpaceSessionGroupHandlers(hub, daemonHub, spaceManager, repo);
+		await expect(
+			h.get('space.sessionGroup.create')!({ spaceId: 'bad-space', name: 'task:task-1' })
+		).rejects.toThrow('Space not found: bad-space');
+		afterEach();
+	});
+
+	it('creates group with no members when members array is empty', async () => {
+		await handlers.get('space.sessionGroup.create')!({
+			spaceId: 'space-1',
+			name: 'task:task-1',
+			members: [],
+		});
+		expect(repo.addMember).not.toHaveBeenCalled();
+		afterEach();
 	});
 });
 

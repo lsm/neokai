@@ -42,7 +42,12 @@ export function setupSpaceSessionGroupHandlers(
 	// ─── space.sessionGroup.create ───────────────────────────────────────────────
 	// Admin / test-infrastructure operation: create a session group with optional members.
 	// Used by E2E tests to inject session group state without running real agents.
+	// Not available in production to prevent creation of orphaned groups with phantom sessions.
 	messageHub.onRequest('space.sessionGroup.create', async (data) => {
+		if (process.env.NODE_ENV === 'production') {
+			throw new Error('space.sessionGroup.create is not available in production');
+		}
+
 		const params = data as {
 			spaceId: string;
 			name: string;

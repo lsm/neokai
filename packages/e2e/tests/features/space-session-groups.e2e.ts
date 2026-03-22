@@ -2,19 +2,24 @@
  * Space Session Groups E2E Tests
  *
  * Verifies that the SpaceTaskPane correctly displays "Working Agents" with
- * real-time status badges when session groups are associated with a task.
+ * status badges when session groups are associated with a task.
  *
  * Tests:
  * - Working Agents section appears when a session group is linked to the task
  * - Active member shows animated blue dot badge
  * - Completed member shows green checkmark badge
  * - Failed member shows red X badge
- * - Real-time status update: active badge changes to completed without page refresh
- * - Real-time status update: active badge changes to failed without page refresh
  * - Multiple members in a group are all displayed
  * - Task Agent member uses "Task Agent" label (no agentId)
  * - Named agent member uses agent name from SpaceAgent record
  * - Working Agents section is hidden when there are no groups
+ * - Task click in sidebar opens SpaceTaskPane with Working Agents section
+ *
+ * Note on "real-time update" testing: per CLAUDE.md, if a test scenario cannot
+ * be triggered through the UI it belongs in daemon integration tests, not E2E.
+ * Agent lifecycle transitions (completion/failure) cannot be triggered via UI
+ * without running real agents, so those are covered by daemon online tests.
+ * These E2E tests verify the display rendering for each distinct badge state.
  *
  * Setup: creates Space + agents + task + session group via RPC in beforeEach (infrastructure).
  * Cleanup: deletes Space via RPC in afterEach (infrastructure).
@@ -22,11 +27,7 @@
  * E2E Rules:
  * - All test actions go through the UI (clicks, navigation, page.goto)
  * - All assertions check visible DOM state
- * - RPC is used in beforeEach/afterEach for test infrastructure
- * - `space.sessionGroup.updateMember` is used in a small number of tests to
- *   simulate agent lifecycle events (completion/failure) — there is no UI path
- *   to trigger these state changes; the test verifies the UI's real-time reaction
- *   to server-sent WebSocket events, which IS the intended user-visible behavior.
+ * - RPC is used only in beforeEach/afterEach for test infrastructure
  */
 
 import type { Page } from '@playwright/test';
@@ -114,25 +115,26 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 
 /**
  * Creates a session group linked to the given task via RPC (infrastructure).
- * Returns the group ID and member session IDs.
  *
- * Note: sessionId values are synthetic UUIDs — real agents are not running.
- * The session group DB record and the associated frontend events are sufficient
+ * Uses `space.sessionGroup.create` (admin RPC) to inject group state without
+ * running real agents. The handler emits the same WebSocket events that
+ * TaskAgentManager emits, so the SpaceStore signal updates reactively.
+ *
+ * Note: sessionId values are synthetic — real agent sessions are not needed
  * to render the Working Agents section in SpaceTaskPane.
  */
 async function createSessionGroup(
 	page: Page,
 	spaceId: string,
 	taskId: string,
-	agentId: string,
 	members: Array<{ role: string; agentId?: string; status?: 'active' | 'completed' | 'failed' }>
 ): Promise<{ groupId: string; memberSessionIds: string[] }> {
 	return page.evaluate(
-		async ({ sid, tid, aid, memberDefs }) => {
+		async ({ sid, tid, memberDefs }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Generate stable synthetic session IDs for members
+			// Generate synthetic session IDs — no real agent sessions needed
 			const syntheticSessionIds = memberDefs.map(
 				(_, i) => `e2e-session-${tid.slice(0, 8)}-${i}-${Date.now()}`
 			);
@@ -151,7 +153,7 @@ async function createSessionGroup(
 
 			return { groupId: res.group.id, memberSessionIds: syntheticSessionIds };
 		},
-		{ sid: spaceId, tid: taskId, aid: agentId, memberDefs: members }
+		{ sid: spaceId, tid: taskId, memberDefs: members }
 	);
 }
 
@@ -193,10 +195,8 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 	// ─── Active badge ─────────────────────────────────────────────────────────
 
 	test('shows animated active badge for an active member', async ({ page }) => {
-		// Infrastructure: create group with one active member
-		await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'coder', agentId, status: 'active' },
-		]);
+		// Infrastructure: create group with one active member before navigation
+		await createSessionGroup(page, spaceId, taskId, [{ role: 'coder', agentId, status: 'active' }]);
 
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await waitForWebSocketConnected(page);
@@ -206,19 +206,20 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 		// Working Agents section should appear
 		await expect(page.locator('text=Working Agents')).toBeVisible({ timeout: 5000 });
 
-		// Active badge should be visible and contain "active" text
-		const activeBadge = page.locator('text=active').first();
+		// Active badge via data-testid
+		const activeBadge = page.getByTestId('member-status-badge-active');
 		await expect(activeBadge).toBeVisible({ timeout: 5000 });
+		await expect(activeBadge).toContainText('active');
 
-		// Animated ping indicator should be present (unique to active state)
+		// Animated ping indicator is unique to active state
 		await expect(page.locator('.animate-ping')).toBeVisible({ timeout: 3000 });
 	});
 
 	// ─── Completed badge ──────────────────────────────────────────────────────
 
 	test('shows green checkmark badge for a completed member', async ({ page }) => {
-		// Infrastructure: create group with one completed member
-		await createSessionGroup(page, spaceId, taskId, agentId, [
+		// Infrastructure: create group with one completed member before navigation
+		await createSessionGroup(page, spaceId, taskId, [
 			{ role: 'coder', agentId, status: 'completed' },
 		]);
 
@@ -228,25 +229,23 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 		await expect(page.locator('text=Working Agents')).toBeVisible({ timeout: 5000 });
 
-		// Completed badge text
-		const completedBadge = page.locator('text=completed').first();
+		// Completed badge via data-testid
+		const completedBadge = page.getByTestId('member-status-badge-completed');
 		await expect(completedBadge).toBeVisible({ timeout: 5000 });
+		await expect(completedBadge).toContainText('completed');
 
-		// Checkmark SVG path is unique to completed state
-		// The path starts with "M16.707" (fillRule="evenodd" checkmark)
-		await expect(page.locator('path[d^="M16.707"]')).toBeVisible({ timeout: 3000 });
+		// Checkmark icon via data-testid
+		await expect(page.getByTestId('member-status-icon-completed')).toBeVisible({ timeout: 3000 });
 
-		// Active ping should NOT be visible for a completed member
+		// Active ping should NOT be visible
 		await expect(page.locator('.animate-ping')).not.toBeVisible({ timeout: 2000 });
 	});
 
 	// ─── Failed badge ─────────────────────────────────────────────────────────
 
 	test('shows red X badge for a failed member', async ({ page }) => {
-		// Infrastructure: create group with one failed member
-		await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'coder', agentId, status: 'failed' },
-		]);
+		// Infrastructure: create group with one failed member before navigation
+		await createSessionGroup(page, spaceId, taskId, [{ role: 'coder', agentId, status: 'failed' }]);
 
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await waitForWebSocketConnected(page);
@@ -254,103 +253,20 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 		await expect(page.locator('text=Working Agents')).toBeVisible({ timeout: 5000 });
 
-		// Failed badge text
-		const failedBadge = page.locator('text=failed').first();
+		// Failed badge via data-testid
+		const failedBadge = page.getByTestId('member-status-badge-failed');
 		await expect(failedBadge).toBeVisible({ timeout: 5000 });
+		await expect(failedBadge).toContainText('failed');
 
-		// Red X SVG path is unique to failed state
-		// The path starts with "M4.293" (fillRule="evenodd" X mark)
-		await expect(page.locator('path[d^="M4.293"]')).toBeVisible({ timeout: 3000 });
-	});
-
-	// ─── Real-time update: active → completed ─────────────────────────────────
-
-	test('badge updates in real-time from active to completed without page refresh', async ({
-		page,
-	}) => {
-		// Infrastructure: create group with one active member
-		const { groupId, memberSessionIds } = await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'coder', agentId, status: 'active' },
-		]);
-		const memberSessionId = memberSessionIds[0];
-
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await waitForWebSocketConnected(page);
-
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
-		await expect(page.locator('text=Working Agents')).toBeVisible({ timeout: 5000 });
-
-		// Verify active state is shown
-		await expect(page.locator('text=active').first()).toBeVisible({ timeout: 5000 });
-		await expect(page.locator('.animate-ping')).toBeVisible({ timeout: 3000 });
-
-		// Simulate agent completion via admin RPC (server-sent WebSocket event).
-		// There is no UI path to trigger agent completion — this simulates what
-		// TaskAgentManager emits when a real sub-session finishes successfully.
-		await page.evaluate(
-			async ({ sid, gid, sessId }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('Hub not available');
-				await hub.request('space.sessionGroup.updateMember', {
-					spaceId: sid,
-					groupId: gid,
-					sessionId: sessId,
-					status: 'completed',
-				});
-			},
-			{ sid: spaceId, gid: groupId, sessId: memberSessionId }
-		);
-
-		// Badge should update to completed WITHOUT a page refresh
-		await expect(page.locator('text=completed').first()).toBeVisible({ timeout: 5000 });
-		await expect(page.locator('path[d^="M16.707"]')).toBeVisible({ timeout: 3000 });
-		await expect(page.locator('.animate-ping')).not.toBeVisible({ timeout: 2000 });
-		await expect(page.locator('text=active')).not.toBeVisible({ timeout: 2000 });
-	});
-
-	// ─── Real-time update: active → failed ───────────────────────────────────
-
-	test('badge updates in real-time from active to failed without page refresh', async ({
-		page,
-	}) => {
-		// Infrastructure: create group with one active member
-		const { groupId, memberSessionIds } = await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'coder', agentId, status: 'active' },
-		]);
-		const memberSessionId = memberSessionIds[0];
-
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await waitForWebSocketConnected(page);
-
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
-		await expect(page.locator('text=active').first()).toBeVisible({ timeout: 5000 });
-
-		// Simulate agent failure via admin RPC
-		await page.evaluate(
-			async ({ sid, gid, sessId }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('Hub not available');
-				await hub.request('space.sessionGroup.updateMember', {
-					spaceId: sid,
-					groupId: gid,
-					sessionId: sessId,
-					status: 'failed',
-				});
-			},
-			{ sid: spaceId, gid: groupId, sessId: memberSessionId }
-		);
-
-		// Badge should update to failed WITHOUT a page refresh
-		await expect(page.locator('text=failed').first()).toBeVisible({ timeout: 5000 });
-		await expect(page.locator('path[d^="M4.293"]')).toBeVisible({ timeout: 3000 });
-		await expect(page.locator('.animate-ping')).not.toBeVisible({ timeout: 2000 });
+		// Red X icon via data-testid
+		await expect(page.getByTestId('member-status-icon-failed')).toBeVisible({ timeout: 3000 });
 	});
 
 	// ─── Multiple members ─────────────────────────────────────────────────────
 
 	test('shows all members when group has multiple members', async ({ page }) => {
 		// Infrastructure: create group with three members in different states
-		await createSessionGroup(page, spaceId, taskId, agentId, [
+		await createSessionGroup(page, spaceId, taskId, [
 			{ role: 'task-agent', status: 'active' },
 			{ role: 'coder', agentId, status: 'active' },
 			{ role: 'reviewer', status: 'completed' },
@@ -362,19 +278,20 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
 		await expect(page.locator('text=Working Agents')).toBeVisible({ timeout: 5000 });
 
-		// All three members should have badges visible
-		// Two active and one completed
-		await expect(page.locator('text=active')).toHaveCount(2, { timeout: 5000 });
-		await expect(page.locator('text=completed')).toHaveCount(1, { timeout: 5000 });
+		// Two active badges and one completed badge
+		await expect(page.getByTestId('member-status-badge-active')).toHaveCount(2, {
+			timeout: 5000,
+		});
+		await expect(page.getByTestId('member-status-badge-completed')).toHaveCount(1, {
+			timeout: 5000,
+		});
 	});
 
 	// ─── Task Agent label ──────────────────────────────────────────────────────
 
 	test('shows "Task Agent" label for task-agent role member without agentId', async ({ page }) => {
 		// Infrastructure: create group with a task-agent member (no agentId)
-		await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'task-agent', status: 'active' },
-		]);
+		await createSessionGroup(page, spaceId, taskId, [{ role: 'task-agent', status: 'active' }]);
 
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await waitForWebSocketConnected(page);
@@ -390,9 +307,7 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 
 	test('shows agent name for members with a valid agentId', async ({ page }) => {
 		// Infrastructure: create group with a member linked to the "Coder Agent" SpaceAgent
-		await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'coder', agentId, status: 'active' },
-		]);
+		await createSessionGroup(page, spaceId, taskId, [{ role: 'coder', agentId, status: 'active' }]);
 
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await waitForWebSocketConnected(page);
@@ -409,15 +324,13 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 
 	// ─── Task click navigation ─────────────────────────────────────────────────
 
-	test('opens SpaceTaskPane with Working Agents when clicking a task in the sidebar', async ({
+	test('opens SpaceTaskPane with Working Agents when clicking task in sidebar', async ({
 		page,
 	}) => {
-		// Infrastructure: create group with one active member
-		await createSessionGroup(page, spaceId, taskId, agentId, [
-			{ role: 'coder', agentId, status: 'active' },
-		]);
+		// Infrastructure: create group with one active member before navigation
+		await createSessionGroup(page, spaceId, taskId, [{ role: 'coder', agentId, status: 'active' }]);
 
-		// Navigate to the space (not directly to task URL)
+		// Navigate to the space (not directly to task URL) — uses UI to open task pane
 		await page.goto(`/space/${spaceId}`);
 		await waitForWebSocketConnected(page);
 		await expect(page.locator('text=Dashboard').first()).toBeVisible({ timeout: 10000 });
@@ -427,9 +340,9 @@ test.describe('SpaceTaskPane — Working Agents Display', () => {
 		await expect(taskButton).toBeVisible({ timeout: 5000 });
 		await taskButton.click();
 
-		// SpaceTaskPane should open with the task title and Working Agents section
+		// SpaceTaskPane should open with task title and Working Agents section
 		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=Working Agents')).toBeVisible({ timeout: 5000 });
-		await expect(page.locator('text=active').first()).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('member-status-badge-active')).toBeVisible({ timeout: 5000 });
 	});
 });
