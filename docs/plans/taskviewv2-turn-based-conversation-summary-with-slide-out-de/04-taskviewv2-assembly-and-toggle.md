@@ -72,7 +72,17 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
      - `TaskReviewBar` for the approve/reject review bar (shown when `group?.submittedForReview` is true)
      - `RejectModal` (imported from `../ui/RejectModal`) — wired to `rejectReviewedTask` and `rejectModal` state from `useTaskViewData`
    - Include the same header structure as V1 (task name, status, model info)
-   - **Auto-scroll**: An existing `useAutoScroll` hook exists at `packages/web/src/hooks/useAutoScroll.ts` (used by both `ChatContainer` and `TaskView`). It handles `isInitialLoad`, `autoScrollEnabled`, and `messageCount`-driven scroll. **Reuse `useAutoScroll` for V2** — pass the `TurnBlockItem[]` array length as the message count trigger, a scroll container ref, and an end-anchor ref. Reset scroll via `conversationKey` change (which remounts the list). If `useAutoScroll` proves insufficient for the turn-block-based view (e.g., it needs a different trigger than message count), extend it or create a thin wrapper — but start by reusing the existing hook.
+   - **Auto-scroll**: Reuse the existing `useAutoScroll` hook from `packages/web/src/hooks/useAutoScroll.ts`. Its interface requires `UseAutoScrollOptions`:
+     ```
+     { containerRef, endRef, enabled: boolean, messageCount: number,
+       isInitialLoad?: boolean, loadingOlder?: boolean, nearBottomThreshold?: number }
+     ```
+     V2 must maintain the following state to wire this hook:
+     - `autoScrollEnabled: boolean` state (default `true`) — wired to the `enabled` parameter. Include a toggle button (matching V1's autoscroll toggle at ~lines 1105-1127) so users can lock/unlock autoscroll.
+     - `isFirstLoad: boolean` state — set to `true` initially and whenever `conversationKey` changes (matching V1's pattern at lines 588, 610-621). Set to `false` once the first non-zero `TurnBlockItem[]` arrives. Pass as `isInitialLoad` to the hook.
+     - Pass `TurnBlockItem[]` array length as `messageCount`.
+     - Pass `loadingOlder` from `useGroupMessages` (if older messages are being fetched, prevent auto-scroll from jumping).
+     This ensures initial-load scroll-to-bottom fires correctly and subsequent updates only auto-scroll when the user hasn't scrolled up.
 3. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
 **Acceptance Criteria:**
