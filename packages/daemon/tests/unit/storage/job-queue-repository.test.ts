@@ -539,6 +539,24 @@ describe('JobQueueRepository', () => {
 			expect(repository.getJob(job.id)).toBeNull();
 		});
 
+		it('deletes failed jobs older than threshold', () => {
+			// Insert a 'failed' job directly — the processor never writes this status
+			// (it uses 'dead' for exhausted retries) but the type contract allows it,
+			// so cleanup must handle it to prevent indefinite accumulation.
+			const now = Date.now();
+			const db = (repository as any).db;
+			db.exec(`
+				INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
+				VALUES ('failed-job', 'test', 'failed', '{}', 0, 3, 1, ${now}, ${now}, ${now})
+			`);
+
+			const threshold = now + 1000;
+			const deleted = repository.cleanup(threshold);
+
+			expect(deleted).toBe(1);
+			expect(repository.getJob('failed-job')).toBeNull();
+		});
+
 		it('does NOT delete pending or processing jobs', () => {
 			const pending = repository.enqueue({ queue: 'test', payload: {} });
 			const enqueued2 = repository.enqueue({ queue: 'test', payload: {} });

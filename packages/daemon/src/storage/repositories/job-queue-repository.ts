@@ -177,8 +177,13 @@ export class JobQueueRepository {
 	}
 
 	cleanup(beforeMs: number): number {
+		// 'failed' is included defensively: the processor never writes it (retries go back to
+		// 'pending' and exhausted retries become 'dead'), but the type contract allows it and
+		// future code could produce it. Including it prevents indefinite accumulation.
 		const result = this.db
-			.prepare(`DELETE FROM job_queue WHERE status IN ('completed', 'dead') AND completed_at < ?`)
+			.prepare(
+				`DELETE FROM job_queue WHERE status IN ('completed', 'dead', 'failed') AND completed_at < ?`
+			)
 			.run(beforeMs);
 		return result.changes;
 	}
