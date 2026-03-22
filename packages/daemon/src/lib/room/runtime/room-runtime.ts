@@ -2146,11 +2146,12 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Set up live message forwarding for a group's worker/leader sessions.
+	 * Set up live message monitoring for a group's worker/leader sessions.
 	 *
 	 * Subscribes to DaemonHub sdk.message events, persists each enriched message
-	 * to session_group_messages (for LiveQuery), and broadcasts deltas via
-	 * state.groupMessages.delta for any legacy subscribers still present.
+	 * to session_group_messages (for LiveQuery). Does NOT broadcast
+	 * state.groupMessages.delta — message delivery to the frontend is handled
+	 * by the LiveQuery subscription (sessionGroupMessages.byGroup).
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -2158,8 +2159,6 @@ export class RoomRuntime {
 		const mirroredUuids = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
-			const shortSessionId = sessionId.slice(0, 8);
-
 			return this.daemonHub!.on(
 				'sdk.message',
 				(event) => {
@@ -2193,7 +2192,7 @@ export class RoomRuntime {
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
 					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-					// Persist to session_group_messages and broadcast enriched delta to frontends.
+					// Persist to session_group_messages so LiveQuery subscribers receive the event.
 					const enrichedMessage = {
 						...event.message,
 						_taskMeta: {
@@ -2216,13 +2215,6 @@ export class RoomRuntime {
 						content: JSON.stringify(enrichedMessage),
 						createdAt: sdkNow,
 					});
-					if (this.messageHub) {
-						this.messageHub.event(
-							'state.groupMessages.delta',
-							{ added: [{ ...enrichedMessage, timestamp: sdkNow }], timestamp: sdkNow },
-							{ channel: `group:${group.id}` }
-						);
-					}
 				},
 				{ sessionId }
 			);
@@ -2287,24 +2279,6 @@ export class RoomRuntime {
 			log.warn(
 				`appendGroupEvent: failed to persist group message for group ${groupId} (type=${messageType}, secondary write — ignored):`,
 				err
-			);
-		}
-
-		if (this.messageHub) {
-			this.messageHub.event(
-				'state.groupMessages.delta',
-				{
-					added: [
-						{
-							type: messageType,
-							text: payload?.text ?? kind,
-							timestamp: now,
-							...(payload ?? {}),
-						},
-					],
-					timestamp: now,
-				},
-				{ channel: `group:${groupId}` }
 			);
 		}
 	}
