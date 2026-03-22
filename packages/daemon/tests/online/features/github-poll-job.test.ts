@@ -1,0 +1,205 @@
+/**
+ * Online test: GitHub polling via job queue
+ *
+ * Verifies end-to-end GitHub polling job queue mechanics without making real
+ * GitHub API calls:
+ * - Initial github.poll job is enqueued on startup
+ * - Job transitions through pending -> processing -> completed
+ * - Self-scheduling: next poll job is automatically enqueued after completion
+ * - Dedup: no duplicate pending poll jobs exist simultaneously
+ *
+ * GitHubPollingService.triggerPoll() is stubbed immediately after daemon
+ * startup to prevent any real GitHub API calls. Even without the stub the
+ * handler is safe (errors are caught internally), but the stub makes intent
+ * explicit and avoids spurious network noise.
+ *
+ * NOTE: dev proxy intercepts Anthropic API calls only. This test does not
+ * send any Claude messages, so no Anthropic calls are made either.
+ *
+ * Run:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/features/github-poll-job.test.ts
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import type { DaemonAppContext } from '../../../src/app';
+import { GITHUB_POLL } from '../../../src/lib/job-queue-constants';
+import type { Job, JobStatus } from '../../../src/storage/repositories/job-queue-repository';
+
+// ---------------------------------------------------------------------------
+// Test configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Environment variables injected into the in-process daemon to enable GitHub
+ * polling without touching real credentials.
+ *
+ * GITHUB_POLLING_INTERVAL=300 (5 min) keeps self-scheduled jobs far in the
+ * future so the test can assert a single pending job without racing against a
+ * second real execution.
+ *
+ * GITHUB_TOKEN is a fake value that satisfies the token-presence guard inside
+ * GitHubService. No repositories are added to the polling service, so
+ * triggerPoll() is a no-op even before the stub is applied.
+ */
+const GITHUB_TEST_ENV: Record<string, string> = {
+	GITHUB_POLLING_INTERVAL: '300',
+	GITHUB_TOKEN: 'ghp_fake_token_for_job_queue_test',
+};
+
+/** Maximum time (ms) to wait for a job to reach a desired status. */
+const JOB_WAIT_TIMEOUT_MS = 8000;
+
+/** Polling cadence for job-status checks. */
+const POLL_INTERVAL_MS = 100;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+type InProcessDaemon = DaemonServerContext & { daemonContext?: DaemonAppContext };
+
+/** Extract the DaemonAppContext from an in-process daemon. */
+function getDaemonCtx(daemon: DaemonServerContext): DaemonAppContext {
+	const ctx = daemon as InProcessDaemon;
+	if (!ctx.daemonContext) {
+		throw new Error(
+			'daemonContext not available — did you run in spawned mode (DAEMON_TEST_SPAWN=true)?'
+		);
+	}
+	return ctx.daemonContext;
+}
+
+/**
+ * Poll the job queue until at least one github.poll job exists with one of
+ * the given statuses, or until the timeout expires.
+ *
+ * Returns the first matching job, or undefined on timeout.
+ */
+async function waitForGitHubPollJob(
+	daemonCtx: DaemonAppContext,
+	statuses: JobStatus[],
+	timeoutMs: number = JOB_WAIT_TIMEOUT_MS
+): Promise<Job | undefined> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const jobs = daemonCtx.jobQueue.listJobs({ queue: GITHUB_POLL, status: statuses });
+		if (jobs.length > 0) {
+			return jobs[0];
+		}
+		await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+	}
+	return undefined;
+}
+
+/**
+ * Stub triggerPoll() on the polling service so no real GitHub HTTP requests
+ * are made during the test. Returns true if the stub was applied.
+ */
+function stubTriggerPoll(daemonCtx: DaemonAppContext): boolean {
+	const pollingService = daemonCtx.gitHubService?.getPollingService();
+	if (!pollingService) {
+		return false;
+	}
+	pollingService.triggerPoll = async () => {};
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+
+describe('GitHub polling via job queue (online)', () => {
+	let daemon: DaemonServerContext;
+
+	beforeEach(async () => {
+		daemon = await createDaemonServer({ env: GITHUB_TEST_ENV });
+
+		// Stub triggerPoll as early as possible.  The job processor polls every
+		// 1 s, so this window is reliable.  Even if the first job fires before
+		// the stub is applied it still completes safely because:
+		//   a) no repositories are registered → pollAllRepositories() is a no-op
+		//   b) any error from triggerPoll() is caught inside handleGitHubPoll()
+		const daemonCtx = getDaemonCtx(daemon);
+		stubTriggerPoll(daemonCtx);
+	}, 30_000);
+
+	afterEach(async () => {
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, 15_000);
+
+	// -------------------------------------------------------------------------
+
+	test('github.poll job is enqueued on daemon startup', () => {
+		const daemonCtx = getDaemonCtx(daemon);
+
+		// gitHubService.start() enqueues the initial job synchronously before
+		// the daemon returns from createDaemonServer(), so it is visible
+		// immediately — no polling loop needed.
+		expect(daemonCtx.gitHubService).not.toBeNull();
+
+		const jobs = daemonCtx.jobQueue.listJobs({
+			queue: GITHUB_POLL,
+			status: ['pending', 'processing', 'completed'],
+		});
+		expect(jobs.length).toBeGreaterThanOrEqual(1);
+		expect(jobs[0].queue).toBe(GITHUB_POLL);
+	});
+
+	test('job transitions through processing and reaches completed', async () => {
+		const daemonCtx = getDaemonCtx(daemon);
+
+		const completed = await waitForGitHubPollJob(daemonCtx, ['completed']);
+
+		expect(completed).toBeDefined();
+		expect(completed!.queue).toBe(GITHUB_POLL);
+		expect(completed!.status).toBe('completed');
+		expect(completed!.completedAt).not.toBeNull();
+	}, 15_000);
+
+	test('self-scheduling: next poll job is enqueued after the initial job completes', async () => {
+		const daemonCtx = getDaemonCtx(daemon);
+
+		// Wait for the initial job to complete.
+		const firstCompleted = await waitForGitHubPollJob(daemonCtx, ['completed']);
+		expect(firstCompleted).toBeDefined();
+
+		// The handler must have enqueued a new pending job for the next cycle.
+		const next = await waitForGitHubPollJob(daemonCtx, ['pending']);
+		expect(next).toBeDefined();
+		expect(next!.queue).toBe(GITHUB_POLL);
+
+		// The next job should be scheduled ~300 s from now (GITHUB_POLLING_INTERVAL).
+		// We verify it is at least 200 s in the future to allow for minor clock skew.
+		const minExpectedRunAt = Date.now() + 200_000;
+		expect(next!.runAt).toBeGreaterThan(minExpectedRunAt);
+	}, 15_000);
+
+	test('dedup: at most one pending github.poll job exists at any time', async () => {
+		const daemonCtx = getDaemonCtx(daemon);
+
+		// Let the initial job run and the next job be enqueued.
+		await waitForGitHubPollJob(daemonCtx, ['completed']);
+		await waitForGitHubPollJob(daemonCtx, ['pending']);
+
+		// Check that the handler did not create multiple pending jobs.
+		const pendingJobs = daemonCtx.jobQueue.listJobs({
+			queue: GITHUB_POLL,
+			status: ['pending'],
+		});
+		expect(pendingJobs.length).toBeLessThanOrEqual(1);
+	}, 15_000);
+
+	test('github service polling is active (isPolling returns true)', () => {
+		const daemonCtx = getDaemonCtx(daemon);
+
+		// gitHubService should be initialized because GITHUB_POLLING_INTERVAL > 0
+		// and a GITHUB_TOKEN was provided.
+		expect(daemonCtx.gitHubService).not.toBeNull();
+		expect(daemonCtx.gitHubService!.isPolling()).toBe(true);
+	});
+});

@@ -94,15 +94,19 @@ describe('handleGitHubPoll', () => {
 		expect(enqueueMock).not.toHaveBeenCalled();
 	});
 
-	it('skips enqueueing when a processing job already exists (dedup)', async () => {
-		listJobsMock = mock(() => [makeJob({ status: 'processing' })]);
+	it('enqueues next job even when a processing job exists (self-scheduling case)', async () => {
+		// The handler only checks 'pending' — not 'processing' — because it is
+		// itself in 'processing' state while running. A processing job returned
+		// by listJobs would be a concurrent duplicate, but that scenario is
+		// prevented at startup by the dedup check in GitHubService.start().
+		listJobsMock = mock(() => []); // listJobs(status: 'pending') returns nothing
 		const deps = makeDeps();
 		deps.jobQueue.listJobs = listJobsMock as never;
 		deps.jobQueue.enqueue = enqueueMock as never;
 
 		await handleGitHubPoll(deps);
 
-		expect(enqueueMock).not.toHaveBeenCalled();
+		expect(enqueueMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('still schedules next poll when triggerPoll throws (error is caught internally)', async () => {
@@ -122,15 +126,18 @@ describe('handleGitHubPoll', () => {
 		expect(enqueueMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('queries listJobs with pending+processing statuses and GITHUB_POLL queue', async () => {
+	it('queries listJobs with pending status only and GITHUB_POLL queue', async () => {
 		await handleGitHubPoll(makeDeps());
 
 		expect(listJobsMock).toHaveBeenCalledTimes(1);
 		const listArg = (
-			listJobsMock.mock.calls[0] as [{ queue: string; status: string[]; limit: number }]
+			listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
 		)[0];
 		expect(listArg.queue).toBe(GITHUB_POLL);
-		expect(listArg.status).toEqual(['pending', 'processing']);
+		// Only 'pending' — not 'processing' — because the current job is itself
+		// in 'processing' state while the handler runs; checking 'processing'
+		// would always find itself and prevent self-scheduling.
+		expect(listArg.status).toBe('pending');
 		expect(listArg.limit).toBe(1);
 	});
 
