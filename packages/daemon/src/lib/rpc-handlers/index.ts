@@ -151,7 +151,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	registerMcpHandlers(deps.messageHub, deps.sessionManager);
 	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
-	setupTestHandlers(deps.messageHub, deps.db);
+	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
+	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 
 	// Room handlers
@@ -321,7 +322,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
 	const taskAgentManager = new TaskAgentManager({
-		db: deps.db,
+		// Use reactiveDb.db so Task Agent session writes invalidate LiveQuery tables.
+		db: deps.reactiveDb.db,
 		sessionManager: deps.sessionManager,
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
