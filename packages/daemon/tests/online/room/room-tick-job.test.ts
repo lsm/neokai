@@ -49,7 +49,12 @@ const JOB_WAIT_TIMEOUT_MS = 10_000;
 /** Polling interval for job-status checks. */
 const POLL_INTERVAL_MS = 50;
 
-/** How long to wait after a control operation before asserting no tick exists. */
+/**
+ * How long to wait after a control operation before asserting no tick exists.
+ * 300 ms is sufficient: the job processor's poll cycle is 1 s, so any pending
+ * enqueue triggered synchronously by pause/stop/resume will complete well
+ * within this window without waiting for a full processor cycle.
+ */
 const SETTLE_MS = 300;
 
 // ---------------------------------------------------------------------------
@@ -111,10 +116,17 @@ async function waitForTickJob(
 function acceleratePendingTick(daemonCtx: DaemonAppContext, roomId: string): void {
 	const pending = listTickJobs(daemonCtx, roomId, ['pending']);
 	for (const job of pending) {
+		// Direct DB delete bypasses any higher-level state machine, but
+		// JobQueueRepository.deleteJob() is a raw DELETE with no side effects —
+		// there is no state machine to bypass. The tradeoff is acceptable here
+		// because this is test-only code whose sole purpose is to accelerate the
+		// runAt timestamp, and deleteJob() is part of the public repository API.
 		daemonCtx.jobQueue.deleteJob(job.id);
 	}
 	// enqueueRoomTick with delay=0 schedules an immediate tick via the same
-	// production code path used by RoomRuntime.start() / resume().
+	// production code path used by RoomRuntime.start() / resume(). If
+	// RoomRuntime.scheduleTick() fires between the delete and re-enqueue,
+	// enqueueRoomTick's dedup guard absorbs the duplicate.
 	enqueueRoomTick(roomId, daemonCtx.jobQueue, 0);
 }
 
@@ -383,13 +395,15 @@ describe('room.tick via job queue (online)', () => {
 		// Start daemon2 using createDaemonApp() directly with the preserved DB.
 		// This exercises initializeExistingRooms() which reads rooms from the DB
 		// and re-enqueues tick jobs for each one.
-		const originalWorkspacePath = process.env.NEOKAI_WORKSPACE_PATH;
-		process.env.NEOKAI_WORKSPACE_PATH = workspacePath;
-
 		let daemonCtx2: DaemonAppContext | null = null;
 		let hub2: MessageHub | null = null;
 		let transport2: WebSocketClientTransport | null = null;
+		// originalWorkspacePath is captured inside the try block so the finally
+		// restoration is always paired with the mutation, even on sync failures.
+		let originalWorkspacePath: string | undefined;
 		try {
+			originalWorkspacePath = process.env.NEOKAI_WORKSPACE_PATH;
+			process.env.NEOKAI_WORKSPACE_PATH = workspacePath;
 			const config = getConfig();
 			config.port = 0;
 			config.dbPath = dbPath;
@@ -420,7 +434,7 @@ describe('room.tick via job queue (online)', () => {
 			// Verify the runtime is actively running in daemon2.
 			const stateResult = (await hub2.request('room.runtime.state', {
 				roomId,
-			})) as { state: string | null };
+			})) as { state: string };
 			expect(stateResult.state).toBe('running');
 		} finally {
 			// Restore environment.
