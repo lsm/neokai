@@ -21,7 +21,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { Space } from '@neokai/shared';
+import type { Space, McpServerConfig } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { AgentSessionInit } from '../../agent/agent-session';
@@ -182,6 +182,13 @@ export interface TaskAgentToolsConfig {
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
 	daemonHub?: DaemonHub;
+	/**
+	 * Factory to build a step agent MCP server for a spawned sub-session.
+	 * Called in `spawn_step_agent` after resolving the session ID and agent role.
+	 * Returns a McpServerConfig to attach to the sub-session's init.mcpServers.
+	 * Optional — if omitted, no step agent MCP server is attached (e.g. in unit tests).
+	 */
+	buildStepAgentMcpServer?: (sessionId: string, role: string) => McpServerConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +217,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		sessionGroupRepo,
 		getGroupId,
 		daemonHub,
+		buildStepAgentMcpServer,
 	} = config;
 
 	return {
@@ -324,6 +332,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// resolveAgentInit() already validated the agent exists, so this lookup
 			// should always succeed — null here would be a data inconsistency.
 			const agentForMember = agentManager.getById(effectiveTask.customAgentId!);
+
+			// Attach step agent peer communication MCP server if a factory is provided.
+			// The server is built with the resolved session ID and agent role so it can
+			// validate channels and inject messages into the correct peer sessions.
+			const agentRole = agentForMember?.role ?? 'agent';
+			if (buildStepAgentMcpServer) {
+				const stepMcpServer = buildStepAgentMcpServer(subSessionId, agentRole);
+				init = {
+					...init,
+					mcpServers: { ...init.mcpServers, 'step-agent': stepMcpServer },
+				};
+			}
 
 			// Create and start the sub-session
 			let actualSessionId: string;

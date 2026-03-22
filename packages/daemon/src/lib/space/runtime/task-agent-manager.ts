@@ -66,6 +66,7 @@ import type {
 	SubSessionState,
 } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
+import { createStepAgentMcpServer } from '../tools/step-agent-tools';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -270,10 +271,12 @@ export class TaskAgentManager {
 			const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
 			const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
 
+			const workflowRunId = workflowRun?.id ?? '';
+
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
 				space,
-				workflowRunId: workflowRun?.id ?? '',
+				workflowRunId,
 				workspacePath: space.workspacePath,
 				runtime,
 				workflowManager: this.config.spaceWorkflowManager,
@@ -289,6 +292,14 @@ export class TaskAgentManager {
 				sessionGroupRepo: this.config.sessionGroupRepo,
 				getGroupId: () => this.taskGroupIds.get(taskId),
 				daemonHub: this.config.daemonHub,
+				buildStepAgentMcpServer: (subSessionId, role) =>
+					this.buildStepAgentMcpServerForSession(
+						taskId,
+						subSessionId,
+						role,
+						spaceId,
+						workflowRunId
+					) as unknown as McpServerConfig,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -1078,10 +1089,12 @@ export class TaskAgentManager {
 		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
 		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
 
+		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
+
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
 			space,
-			workflowRunId: workflowRun?.id ?? '',
+			workflowRunId: rehydrateWorkflowRunId,
 			workspacePath: space.workspacePath,
 			runtime,
 			workflowManager: this.config.spaceWorkflowManager,
@@ -1097,6 +1110,14 @@ export class TaskAgentManager {
 			daemonHub: this.config.daemonHub,
 			sessionGroupRepo: this.config.sessionGroupRepo,
 			getGroupId: () => this.taskGroupIds.get(taskId),
+			buildStepAgentMcpServer: (subSessionId, role) =>
+				this.buildStepAgentMcpServerForSession(
+					taskId,
+					subSessionId,
+					role,
+					spaceId,
+					rehydrateWorkflowRunId
+				) as unknown as McpServerConfig,
 		});
 
 		agentSession.setRuntimeMcpServers({
@@ -1282,5 +1303,36 @@ export class TaskAgentManager {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Build a step agent MCP server for a newly spawned sub-session.
+	 * Called from the `buildStepAgentMcpServer` callback passed to createTaskAgentMcpServer().
+	 *
+	 * The server gives the step agent peer communication tools (list_peers, send_feedback,
+	 * request_peer_input) that are scoped to its group and channel topology.
+	 *
+	 * The `injectToTaskAgent` callback routes `request_peer_input` requests through the
+	 * Task Agent, which has unrestricted relay access to all group members.
+	 */
+	private buildStepAgentMcpServerForSession(
+		taskId: string,
+		subSessionId: string,
+		role: string,
+		spaceId: string,
+		workflowRunId: string
+	) {
+		return createStepAgentMcpServer({
+			mySessionId: subSessionId,
+			myRole: role,
+			taskId,
+			workflowRunId,
+			sessionGroupRepo: this.config.sessionGroupRepo,
+			getGroupId: () => this.taskGroupIds.get(taskId),
+			workflowRunRepo: this.config.workflowRunRepo,
+			messageInjector: (targetSessionId, message) =>
+				this.injectSubSessionMessage(targetSessionId, message),
+			injectToTaskAgent: (message) => this.injectTaskAgentMessage(taskId, message),
+		});
 	}
 }
