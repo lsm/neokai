@@ -470,6 +470,31 @@ describe('setupLiveQueryHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Listener count invariant: onClientDisconnect registered exactly once
+	// -----------------------------------------------------------------------
+
+	test('onClientDisconnect is registered exactly once at setup, not per subscribe call', async () => {
+		// The disconnect handler should have been registered exactly once
+		// when setupLiveQueryHandlers() was called (in beforeEach).
+		expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
+
+		// Multiple subscribe/unsubscribe cycles must not register additional disconnect handlers.
+		for (let i = 0; i < 5; i++) {
+			await setup.callHandler('liveQuery.subscribe', {
+				queryName: 'tasks.byRoom',
+				params: [roomId],
+				subscriptionId: `sub-cycle-${i}`,
+			});
+			await setup.callHandler('liveQuery.unsubscribe', {
+				subscriptionId: `sub-cycle-${i}`,
+			});
+		}
+
+		// Still exactly one disconnect listener — no leaks.
+		expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
+	});
+
+	// -----------------------------------------------------------------------
 	// sessionGroupMessages authorization: valid path allowed
 	// -----------------------------------------------------------------------
 

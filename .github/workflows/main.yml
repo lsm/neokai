@@ -245,6 +245,7 @@ jobs:
             mock_sdk: true
           - module: rpc-3
             test_path: >-
+              tests/online/rpc/rpc-live-query.test.ts
               tests/online/rpc/rpc-session-handlers-extended.test.ts
               tests/online/rpc/rpc-session-workflow.test.ts
               tests/online/rpc/rpc-settings-handlers.test.ts
