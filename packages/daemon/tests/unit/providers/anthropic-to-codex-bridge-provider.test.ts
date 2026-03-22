@@ -12,7 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import {
+	AnthropicToCodexBridgeProvider,
+	buildAuthFromEnvOAuthToken,
+} from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -198,7 +201,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			await fs.rm(tmpDir, { recursive: true, force: true });
 		});
 
-		it('Priority 0: CODEX_OAUTH_TOKEN env var takes highest priority (over OPENAI_API_KEY)', async () => {
+		it('Priority 0: CODEX_OAUTH_TOKEN env var takes highest priority (over OPENAI_API_KEY and file-based auth)', async () => {
 			const fakeToken = makeFakeJwt({
 				'https://api.openai.com/auth': { chatgpt_account_id: 'user_test123' },
 			});
@@ -220,6 +223,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const notAJwt = 'sk-plain-bearer-token';
 			provider = makeProvider({ CODEX_OAUTH_TOKEN: notAJwt });
 			expect(await provider.getApiKey()).toBe(notAJwt);
+		});
+
+		it('CODEX_OAUTH_TOKEN with sub-only JWT (non-OpenAI) is treated as API key, not chatgpt auth', async () => {
+			// A generic JWT with only a `sub` claim (e.g. GitHub token) must NOT be classified
+			// as chatgpt auth — it lacks the OpenAI-specific chatgpt_account_id claim.
+			const subOnlyToken = makeFakeJwt({ sub: 'some-user-id' });
+			provider = makeProvider({ CODEX_OAUTH_TOKEN: subOnlyToken });
+			expect(await provider.getApiKey()).toBe(subOnlyToken);
 		});
 
 		it('Priority 1: returns OPENAI_API_KEY env var immediately', async () => {
@@ -340,6 +351,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const fakeToken = makeFakeJwt({
 				'https://api.openai.com/auth': { chatgpt_account_id: 'user_oauth_ci' },
 			});
+			// Verify the auth produced for this token is chatgpt-type (not api_key).
+			// buildAuthFromEnvOAuthToken is the shared helper used by both getBridgeAuth()
+			// and buildSdkConfig(), so asserting its output confirms the bridge server
+			// receives the correct auth type.
+			const auth = buildAuthFromEnvOAuthToken(fakeToken);
+			expect(auth.type).toBe('chatgpt');
+			expect((auth as { chatgptAccountId?: string }).chatgptAccountId).toBe('user_oauth_ci');
+
 			const p = makeProvider({ CODEX_OAUTH_TOKEN: fakeToken });
 			const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-oauth-token' });
 			expect(cfg.isAnthropicCompatible).toBe(true);
@@ -428,6 +447,56 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).not.toMatch(/^claude-/);
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toMatch(/^claude-/);
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).not.toMatch(/^claude-/);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// buildAuthFromEnvOAuthToken() — auth type selection
+	// -------------------------------------------------------------------------
+
+	describe('buildAuthFromEnvOAuthToken()', () => {
+		it('produces chatgpt auth when chatgpt_account_id is present', () => {
+			const token = makeFakeJwt({
+				'https://api.openai.com/auth': {
+					chatgpt_account_id: 'user_abc',
+					chatgpt_plan_type: 'plus',
+				},
+			});
+			const auth = buildAuthFromEnvOAuthToken(token);
+			expect(auth.type).toBe('chatgpt');
+			const a = auth as { chatgptAccountId: string; chatgptPlanType?: string };
+			expect(a.chatgptAccountId).toBe('user_abc');
+			expect(a.chatgptPlanType).toBe('plus');
+		});
+
+		it('produces api_key auth for sub-only JWT (non-OpenAI)', () => {
+			// Generic JWT with sub but no OpenAI-specific claim must NOT be chatgpt auth.
+			const token = makeFakeJwt({ sub: 'some-user-id' });
+			const auth = buildAuthFromEnvOAuthToken(token);
+			expect(auth.type).toBe('api_key');
+			expect((auth as { apiKey: string }).apiKey).toBe(token);
+		});
+
+		it('produces api_key auth for a plain non-JWT string', () => {
+			const auth = buildAuthFromEnvOAuthToken('sk-plain-api-key');
+			expect(auth.type).toBe('api_key');
+			expect((auth as { apiKey: string }).apiKey).toBe('sk-plain-api-key');
+		});
+
+		it('emits a warning when falling back to api_key', () => {
+			const warnings: string[] = [];
+			buildAuthFromEnvOAuthToken('not-a-jwt', (msg) => warnings.push(msg));
+			expect(warnings.length).toBe(1);
+			expect(warnings[0]).toContain('does not contain a ChatGPT account ID');
+		});
+
+		it('does not emit a warning when chatgpt_account_id is present', () => {
+			const token = makeFakeJwt({
+				'https://api.openai.com/auth': { chatgpt_account_id: 'user_xyz' },
+			});
+			const warnings: string[] = [];
+			buildAuthFromEnvOAuthToken(token, (msg) => warnings.push(msg));
+			expect(warnings.length).toBe(0);
 		});
 	});
 

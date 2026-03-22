@@ -120,6 +120,61 @@ export interface OpenAIOAuthToken {
 	id_token?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Module-level helpers for env-var OAuth token auth
+// ---------------------------------------------------------------------------
+
+/** Parse a JWT payload section, returning the decoded object or undefined on failure. */
+function parseJwtPayload(token: string): Record<string, unknown> | undefined {
+	try {
+		const parts = token.split('.');
+		if (parts.length !== 3) return undefined;
+		return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<
+			string,
+			unknown
+		>;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Build an AppServerAuth from a raw CODEX_OAUTH_TOKEN env var value.
+ *
+ * Produces `chatgpt`-type auth only when the OpenAI-specific `chatgpt_account_id`
+ * claim is present in the token payload. Does NOT fall back to the generic `sub`
+ * claim to avoid mis-classifying non-ChatGPT JWTs (e.g. GitHub tokens) as chatgpt
+ * auth and sending them to the Codex app-server as OpenAI OAuth tokens.
+ *
+ * Emits a logger warning when the token is not a recognisable ChatGPT JWT and falls
+ * back to `api_key` auth so that CI operators can spot the mis-configuration.
+ *
+ * Exported for unit testing.
+ */
+export function buildAuthFromEnvOAuthToken(
+	token: string,
+	warnFn: (msg: string) => void = () => {}
+): AppServerAuth {
+	const payload = parseJwtPayload(token);
+	const openaiAuth = payload?.['https://api.openai.com/auth'] as Record<string, string> | undefined;
+	const chatgptAccountId = openaiAuth?.chatgpt_account_id;
+
+	if (chatgptAccountId) {
+		return {
+			type: 'chatgpt',
+			accessToken: token,
+			chatgptAccountId,
+			chatgptPlanType: openaiAuth?.chatgpt_plan_type,
+		};
+	}
+
+	warnFn(
+		'CODEX_OAUTH_TOKEN does not contain a ChatGPT account ID; treating as API key. ' +
+			'Verify the token is an OpenAI OAuth access token if ChatGPT auth is expected.'
+	);
+	return { type: 'api_key', apiKey: token };
+}
+
 /**
  * Exchange a Codex/OpenAI OAuth refresh token for a new access token.
  * Returns the full token response, or null if the exchange fails for any reason.
@@ -269,18 +324,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 */
 	private async getBridgeAuth(): Promise<AppServerAuth | undefined> {
 		if (this.env.CODEX_OAUTH_TOKEN) {
-			const token = this.env.CODEX_OAUTH_TOKEN;
-			const chatgptAccountId = this.extractAccountId(token);
-			if (chatgptAccountId) {
-				return {
-					type: 'chatgpt',
-					accessToken: token,
-					chatgptAccountId,
-					chatgptPlanType: this.extractPlanType(token),
-				};
-			}
-			// Fallback: treat as API key if JWT parsing fails
-			return { type: 'api_key', apiKey: token };
+			const auth = buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) =>
+				logger.warn(msg)
+			);
+			// Cache so repeated calls (isAvailable, getAuthStatus, buildSdkConfig) don't re-parse.
+			this.cachedBridgeAuth = auth;
+			this.cachedApiKey =
+				auth.type === 'api_key' ? auth.apiKey : (auth as { accessToken: string }).accessToken;
+			return auth;
 		}
 		if (this.env.OPENAI_API_KEY) {
 			return { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
@@ -472,16 +523,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
 			let envAuth: AppServerAuth | undefined;
 			if (this.env.CODEX_OAUTH_TOKEN) {
-				const token = this.env.CODEX_OAUTH_TOKEN;
-				const chatgptAccountId = this.extractAccountId(token);
-				envAuth = chatgptAccountId
-					? {
-							type: 'chatgpt',
-							accessToken: token,
-							chatgptAccountId,
-							chatgptPlanType: this.extractPlanType(token),
-						}
-					: { type: 'api_key', apiKey: token };
+				envAuth = buildAuthFromEnvOAuthToken(this.env.CODEX_OAUTH_TOKEN, (msg) => logger.warn(msg));
 			} else if (this.env.OPENAI_API_KEY) {
 				envAuth = { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
 			} else if (this.env.CODEX_API_KEY) {
