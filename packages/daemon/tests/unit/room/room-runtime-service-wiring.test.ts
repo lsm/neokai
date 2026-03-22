@@ -67,6 +67,7 @@ function makeConfig(overrides: Partial<RoomRuntimeServiceConfig> = {}): RoomRunt
 		defaultWorkspacePath: '/tmp',
 		defaultModel: 'test-model',
 		getGlobalSettings: () => ({}) as never,
+		settingsManager: { getProjectMcpServersConfig: () => ({}) } as never,
 		reactiveDb: {} as never,
 		...overrides,
 	};

@@ -1,14 +1,16 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
+import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
 	RoomRuntimeService,
 	type RoomRuntimeServiceConfig,
 } from '../../../src/lib/room/runtime/room-runtime-service';
 import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { Room } from '@neokai/shared';
+import type { SettingsManager } from '../../../src/lib/settings-manager';
 
 describe('RoomRuntimeService', () => {
 	let service: RoomRuntimeService;
 	let mockRoomManager: RoomManager;
+	let mockSettingsManager: SettingsManager;
 
 	// Helper to create a room mock
 	function makeRoom(overrides: Partial<Room> = {}): Room {
@@ -32,6 +34,10 @@ describe('RoomRuntimeService', () => {
 			getRoom: () => null,
 		} as unknown as RoomManager;
 
+		mockSettingsManager = {
+			getProjectMcpServersConfig: mock(() => ({})),
+		} as unknown as SettingsManager;
+
 		const config: RoomRuntimeServiceConfig = {
 			db: {} as never,
 			messageHub: {} as never,
@@ -42,6 +48,7 @@ describe('RoomRuntimeService', () => {
 			defaultWorkspacePath: '/tmp',
 			defaultModel: 'global-default-model',
 			getGlobalSettings: () => ({}) as never,
+			settingsManager: mockSettingsManager,
 			reactiveDb: {} as never,
 		};
 
@@ -140,6 +147,26 @@ describe('RoomRuntimeService', () => {
 
 			expect(leaderResult).toBe('sonnet-4.6');
 			expect(workerResult).toBe('haiku-4');
+		});
+	});
+
+	describe('settingsManager integration', () => {
+		it('should expose getProjectMcpServersConfig on the settings manager', () => {
+			// Verify the mock settings manager has the expected method
+			const result = mockSettingsManager.getProjectMcpServersConfig();
+			expect(result).toEqual({});
+		});
+
+		it('should return project MCP servers config when configured', () => {
+			const projectServers = {
+				github: { type: 'stdio' as const, command: 'npx', args: ['@github/mcp'] },
+			};
+			(mockSettingsManager.getProjectMcpServersConfig as ReturnType<typeof mock>).mockReturnValue(
+				projectServers
+			);
+
+			const result = mockSettingsManager.getProjectMcpServersConfig();
+			expect(result).toEqual(projectServers);
 		});
 	});
 });

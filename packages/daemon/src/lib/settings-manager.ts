@@ -10,6 +10,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { GlobalSettings, SessionSettings, SettingSource } from '@neokai/shared';
+import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
 
 /**
  * MCP server info from a setting source
@@ -442,6 +443,61 @@ export class SettingsManager {
 		};
 
 		this.updateGlobalSettings({ mcpServerSettings });
+	}
+
+	/**
+	 * Get full MCP server configs from project and user settings files.
+	 *
+	 * Reads raw MCP server config objects (command, args, env, type, url, etc.) from:
+	 * - User: ~/.claude/settings.json and ~/.mcp.json
+	 * - Project: .claude/settings.json and .mcp.json in workspace
+	 * - Local: .claude/settings.local.json in workspace
+	 *
+	 * Only includes servers from enabled sources. Returns a merged map where
+	 * later sources (local > project > user) override earlier ones with the same name.
+	 */
+	getProjectMcpServersConfig(): Record<string, McpServerConfig> {
+		const globalSettings = this.getGlobalSettings();
+		const enabledSources = globalSettings.settingSources || ['user', 'project', 'local'];
+
+		const readRawMcpServers = (filePath: string): Record<string, McpServerConfig> => {
+			try {
+				if (!existsSync(filePath)) return {};
+				const content = readFileSync(filePath, 'utf-8');
+				const settings = JSON.parse(content) as Record<string, unknown>;
+				const mcpServers = settings.mcpServers;
+				if (!mcpServers || typeof mcpServers !== 'object') return {};
+				return mcpServers as Record<string, McpServerConfig>;
+			} catch {
+				return {};
+			}
+		};
+
+		const result: Record<string, McpServerConfig> = {};
+
+		if (enabledSources.includes('user')) {
+			const userBaseDir = process.env.TEST_USER_SETTINGS_DIR || join(homedir(), '.claude');
+			Object.assign(result, readRawMcpServers(join(userBaseDir, 'settings.json')));
+			const userMcpDir = process.env.TEST_USER_SETTINGS_DIR || homedir();
+			Object.assign(result, readRawMcpServers(join(userMcpDir, '.mcp.json')));
+		}
+
+		if (enabledSources.includes('project')) {
+			Object.assign(
+				result,
+				readRawMcpServers(join(this.workspacePath, '.claude', 'settings.json'))
+			);
+			Object.assign(result, readRawMcpServers(join(this.workspacePath, '.mcp.json')));
+		}
+
+		if (enabledSources.includes('local')) {
+			Object.assign(
+				result,
+				readRawMcpServers(join(this.workspacePath, '.claude', 'settings.local.json'))
+			);
+		}
+
+		return result;
 	}
 
 	/**

@@ -9,6 +9,7 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type { SettingsManager } from '../../settings-manager';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -50,6 +51,8 @@ export interface RoomRuntimeServiceConfig {
 	defaultModel: string;
 	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
 	getGlobalSettings: () => GlobalSettings;
+	/** Settings manager for reading project-configured MCP servers */
+	settingsManager: SettingsManager;
 	/** Reactive database wrapper for change event emission */
 	reactiveDb: ReactiveDatabase;
 	/**
@@ -509,7 +512,12 @@ export class RoomRuntimeService {
 					}
 				}
 
+				// Merge project-configured MCP servers with the room-agent-tools server so the
+				// room agent can use GitHub MCP, etc. for coordination tasks.
+				// room-agent-tools is placed last to ensure it always takes precedence.
+				const projectMcpServers = this.ctx.settingsManager.getProjectMcpServersConfig();
 				roomChatSession.setRuntimeMcpServers({
+					...projectMcpServers,
 					'room-agent-tools': roomAgentMcpServer,
 				});
 				// Inject the room chat system prompt so the agent knows the proper

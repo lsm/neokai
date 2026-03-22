@@ -721,4 +721,98 @@ describe('SettingsManager', () => {
 			expect(existsSync(settingsDir)).toBe(true);
 		});
 	});
+
+	describe('getProjectMcpServersConfig', () => {
+		it('should return empty object when no settings files exist', () => {
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toEqual({});
+		});
+
+		it('should read MCP servers from project .claude/settings.json', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						github: { command: 'npx', args: ['@github/mcp'] },
+					},
+				})
+			);
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toHaveProperty('github');
+			expect((result['github'] as { command: string }).command).toBe('npx');
+		});
+
+		it('should read MCP servers from project .mcp.json', () => {
+			writeFileSync(
+				join(workspacePath, '.mcp.json'),
+				JSON.stringify({
+					mcpServers: {
+						'my-tool': { command: 'my-cmd', args: ['--flag'] },
+					},
+				})
+			);
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toHaveProperty('my-tool');
+		});
+
+		it('should merge project settings.json and .mcp.json', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({ mcpServers: { tool1: { command: 'cmd1' } } })
+			);
+			writeFileSync(
+				join(workspacePath, '.mcp.json'),
+				JSON.stringify({ mcpServers: { tool2: { command: 'cmd2' } } })
+			);
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toHaveProperty('tool1');
+			expect(result).toHaveProperty('tool2');
+		});
+
+		it('should skip sources excluded from global settingSources', () => {
+			// Disable project source
+			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+				...DEFAULT_GLOBAL_SETTINGS,
+				settingSources: ['user', 'local'],
+			});
+
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({ mcpServers: { project_tool: { command: 'project-cmd' } } })
+			);
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).not.toHaveProperty('project_tool');
+		});
+
+		it('should return empty object when file has no mcpServers field', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({ someOtherConfig: 'value' })
+			);
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toEqual({});
+		});
+
+		it('should handle malformed JSON gracefully', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(join(settingsDir, 'settings.json'), 'not valid json {{{');
+
+			const result = settingsManager.getProjectMcpServersConfig();
+			expect(result).toEqual({});
+		});
+	});
 });

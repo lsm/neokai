@@ -185,13 +185,15 @@ export class QueryOptionsBuilder {
 		};
 
 		// ============ Room Session Restrictions ============
-		// Room chat sessions are orchestrators only — they must not
-		// have access to built-in file/shell tools or user-configured MCP servers.
+		// Room chat sessions are orchestrators — they have read tools, Bash for diagnostics,
+		// and explicitly configured MCP servers (room-agent-tools + project MCP servers).
+		// File editing tools (Write/Edit/NotebookEdit) are excluded.
 		if (this.ctx.session.type === 'room_chat') {
 			const roomAllowedBuiltinTools = [
 				'Read',
 				'Glob',
 				'Grep',
+				'Bash',
 				'WebFetch',
 				'WebSearch',
 				'ToolSearch',
@@ -202,7 +204,6 @@ export class QueryOptionsBuilder {
 				'Task',
 				'TaskOutput',
 				'TaskStop',
-				'Bash',
 				'Edit',
 				'Write',
 				'NotebookEdit',
@@ -218,20 +219,25 @@ export class QueryOptionsBuilder {
 				queryOptions.systemPrompt = undefined;
 			}
 
-			// Restrict room chat to a safe, read-oriented built-in tool set.
+			// Restrict room chat to coordinator-appropriate built-in tool set.
 			queryOptions.tools = roomAllowedBuiltinTools;
+
+			// Auto-allow all explicitly configured MCP server tools (room-agent-tools + project MCP servers).
+			const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
+				(name) => `${name}__*`
+			);
 			queryOptions.allowedTools = [
 				...new Set([
 					...(queryOptions.allowedTools ?? []),
 					...roomAllowedBuiltinTools,
-					'room-agent-tools__*',
+					...mcpServerWildcards,
 				]),
 			];
 
 			queryOptions.disallowedTools = [
 				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
 			];
-			// Prevent user-configured MCP servers from being merged in.
+			// Prevent user-configured MCP servers from being merged in (only runtime-injected servers allowed).
 			queryOptions.strictMcpConfig = true;
 			// Skip settings file loading so user's settings.json doesn't inject extra tools.
 			queryOptions.settingSources = [];
