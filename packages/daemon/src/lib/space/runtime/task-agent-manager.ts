@@ -18,6 +18,7 @@
  * - `taskAgentSessions`  — taskId → Task Agent AgentSession
  * - `subSessions`        — taskId → (stepId → AgentSession)
  * - `spawningTasks`      — set of taskIds currently being spawned (concurrency guard)
+ * - `taskGroupIds`       — taskId → SpaceSessionGroup.id (fast lookup for sub-session wiring)
  *
  * The maps are fast-lookup caches; session data is the source of truth in the DB.
  * On daemon restart, maps must be rebuilt via rehydration (Task 5.3).
@@ -58,6 +59,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import type { SubSessionFactory, SubSessionState } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
@@ -95,6 +97,8 @@ export interface TaskAgentManagerConfig {
 	getApiKey: () => Promise<string | null>;
 	/** Default model ID for sessions that don't specify one */
 	defaultModel: string;
+	/** Session group repository — used to persist SpaceSessionGroup records per task */
+	sessionGroupRepo: SpaceSessionGroupRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +131,12 @@ export class TaskAgentManager {
 	 * spawnTaskAgent() calls from creating duplicate Task Agent sessions.
 	 */
 	private spawningTasks = new Set<string>();
+
+	/**
+	 * Maps taskId → groupId for SpaceSessionGroups created when spawning Task Agents.
+	 * Allows fast lookup when adding sub-session members to an existing group.
+	 */
+	private taskGroupIds = new Map<string, string>();
 
 	/**
 	 * Completion callbacks registered via onComplete().
@@ -284,6 +294,37 @@ export class TaskAgentManager {
 			// --- Store in map before streaming start to allow getTaskAgent() calls
 			this.taskAgentSessions.set(taskId, agentSession);
 
+			// --- Create a SpaceSessionGroup for this task and add the Task Agent as member.
+			// Group creation is non-fatal: if either step fails, the task agent still runs.
+			// When createGroup succeeds but addMember throws, delete the orphaned group row
+			// before falling through to the warn log, preventing stale memberless records.
+			try {
+				const group = this.config.sessionGroupRepo.createGroup({
+					spaceId,
+					name: `task:${taskId}`,
+					taskId,
+				});
+				try {
+					this.config.sessionGroupRepo.addMember(group.id, sessionId, {
+						role: 'task-agent',
+						status: 'active',
+					});
+					this.taskGroupIds.set(taskId, group.id);
+					log.info(`TaskAgentManager: created session group ${group.id} for task ${taskId}`);
+				} catch (addErr) {
+					// addMember failed — remove the orphaned group row before propagating
+					try {
+						this.config.sessionGroupRepo.deleteGroup(group.id);
+					} catch {
+						// best-effort cleanup; ignore secondary failure
+					}
+					throw addErr;
+				}
+			} catch (err) {
+				// Group creation failure is non-fatal — task agent still runs; log and continue
+				log.warn(`TaskAgentManager: failed to create session group for task ${taskId}:`, err);
+			}
+
 			// --- Register in SessionManager cache so getSessionAsync() returns the live
 			// instance with MCP tools attached rather than creating a duplicate from DB.
 			// Without this, RPC handlers (message.send, message.sdkMessages, etc.) would
@@ -423,6 +464,11 @@ export class TaskAgentManager {
 		return this.taskAgentSessions.get(taskId);
 	}
 
+	/** Returns the session group ID for a task, or undefined if no group was created. */
+	getTaskGroupId(taskId: string): string | undefined {
+		return this.taskGroupIds.get(taskId);
+	}
+
 	/** Returns a sub-session by its session ID, or undefined if not found. */
 	getSubSession(subSessionId: string): AgentSession | undefined {
 		for (const [, stepMap] of this.subSessions) {
@@ -550,6 +596,17 @@ export class TaskAgentManager {
 				this.sessionListeners.delete(sessionId);
 			}
 		}
+
+		// 5. Mark the session group as completed in the DB, then remove from in-memory map
+		const groupId = this.taskGroupIds.get(taskId);
+		if (groupId) {
+			try {
+				this.config.sessionGroupRepo.updateGroup(groupId, { status: 'completed' });
+			} catch (err) {
+				log.warn(`TaskAgentManager: failed to mark session group ${groupId} as completed:`, err);
+			}
+		}
+		this.taskGroupIds.delete(taskId);
 
 		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId}`);
 	}
@@ -892,6 +949,12 @@ export class TaskAgentManager {
 				}
 				this.subSessions.get(taskId)!.set(subSessionId, subSession);
 			}
+		}
+
+		// --- Restore taskGroupIds from DB so getTaskGroupId() works after restart
+		const existingGroups = this.config.sessionGroupRepo.getGroupsByTask(spaceId, taskId);
+		if (existingGroups.length > 0) {
+			this.taskGroupIds.set(taskId, existingGroups[0].id);
 		}
 
 		log.info(
