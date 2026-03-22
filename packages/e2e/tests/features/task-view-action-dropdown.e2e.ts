@@ -87,7 +87,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Action dropdown trigger should be visible
 		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
@@ -98,7 +100,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Cancel is a standalone button, NOT in dropdown
 		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
@@ -111,7 +115,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Click the action dropdown trigger
 		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
@@ -127,7 +133,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Open dropdown and click Complete
 		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
@@ -147,7 +155,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'pending'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Cancel is a standalone button, not in dropdown
 		const cancelBtn = page.locator('[data-testid="task-cancel-button"]');
@@ -164,7 +174,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Stop button should be visible outside dropdown
 		const stopBtn = page.locator('[data-testid="task-stop-button"]');
@@ -175,7 +187,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Open dropdown
 		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
@@ -194,7 +208,9 @@ test.describe('Task Action Dropdown', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'review'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Open dropdown
 		const dropdownTrigger = page.locator('[data-testid="task-action-dropdown-trigger"]');
@@ -231,7 +247,9 @@ test.describe('Circular Progress Indicator', () => {
 		({ roomId, taskId } = await createRoomAndTask(page, 'in_progress'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.locator('text=E2E Test Task')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: 'E2E Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Newly created task has no progress set (progress is null/0), so indicator should not be visible
 		// The component only renders when task.progress != null && task.progress > 0
