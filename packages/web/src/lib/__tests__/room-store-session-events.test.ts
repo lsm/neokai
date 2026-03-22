@@ -59,6 +59,7 @@ type EventHandler<T = unknown> = (data: T) => void;
 interface MockHub {
 	_handlers: Map<string, EventHandler[]>;
 	onEvent: <T>(method: string, handler: EventHandler<T>) => () => void;
+	onConnection: ReturnType<typeof vi.fn>;
 	request: ReturnType<typeof vi.fn>;
 	joinChannel: ReturnType<typeof vi.fn>;
 	leaveChannel: ReturnType<typeof vi.fn>;
@@ -80,6 +81,7 @@ function createMockHub(): MockHub {
 				}
 			};
 		},
+		onConnection: vi.fn(() => () => {}),
 		request: vi.fn(),
 		joinChannel: vi.fn(),
 		leaveChannel: vi.fn(),

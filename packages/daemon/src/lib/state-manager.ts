@@ -249,12 +249,6 @@ export class StateManager {
 			});
 		});
 
-		this.eventBus.on('goal.updated', (data) => {
-			this.messageHub.event('goal.updated', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
 		this.eventBus.on('goal.completed', (data) => {
 			this.messageHub.event('goal.completed', data, {
 				channel: data.sessionId, // 'room:${roomId}'

@@ -30,6 +30,7 @@ function makeMockHub() {
 				if (idx >= 0) mockEventHandlers.splice(idx, 1);
 			};
 		}),
+		onConnection: vi.fn(() => () => {}),
 		request: vi.fn(async (method: string) => {
 			if (method === 'room.get') {
 				return { room: { id: 'room-1' }, sessions: [], allTasks: [] };

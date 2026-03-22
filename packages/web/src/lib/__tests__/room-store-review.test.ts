@@ -23,6 +23,7 @@ function makeMockHub() {
 			mockEventHandlers.set(eventName, handler);
 			return () => mockEventHandlers.delete(eventName);
 		}),
+		onConnection: vi.fn(() => () => {}),
 		request: vi.fn(async (method: string) => {
 			if (method === 'room.get') {
 				return { room: { id: 'room-1' }, sessions: [], allTasks: [] };

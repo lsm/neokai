@@ -32,6 +32,8 @@ import type {
 	MissionMetric,
 	CronSchedule,
 	MissionExecution,
+	LiveQuerySnapshotEvent,
+	LiveQueryDeltaEvent,
 } from '@neokai/shared';
 
 /**
@@ -48,14 +50,6 @@ interface CreateGoalParams {
 	structuredMetrics?: MissionMetric[];
 	schedule?: CronSchedule;
 	schedulePaused?: boolean;
-}
-
-/**
- * Event payload for goal events
- */
-interface GoalEventPayload {
-	roomId: string;
-	goal: RoomGoal;
 }
 
 import { Logger } from '@neokai/shared';
@@ -349,52 +343,72 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
 
-			// 3. Goal events (daemon emits goal.created, goal.updated, goal.completed)
-			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('goal.created', (event) => {
-				if (event.roomId === roomId) {
-					this.goals.value = [...this.goals.value, event.goal];
-				}
-			});
-			this.cleanupFunctions.push(unsubGoalCreated);
+			// 3. Goals via LiveQuery — replaces goal.created/updated/completed event listeners.
+			// Register snapshot/delta handlers BEFORE subscribing so we never miss the
+			// initial snapshot that the server pushes synchronously before replying.
+			const goalsSubId = `goals-byRoom-${roomId}`;
 
-			const unsubGoalUpdated = hub.onEvent<GoalEventPayload & { goalId?: string }>(
-				'goal.updated',
+			const unsubGoalSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
 				(event) => {
-					if (event.roomId === roomId) {
-						if (event.goal) {
-							// Partial update
-							const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
-							if (idx >= 0) {
-								this.goals.value = [
-									...this.goals.value.slice(0, idx),
-									{ ...this.goals.value[idx], ...event.goal },
-									...this.goals.value.slice(idx + 1),
-								];
-							}
-						} else if (event.goalId) {
-							// goal.updated with no goal object signals deletion
-							this.goals.value = this.goals.value.filter((g) => g.id !== event.goalId);
-						} else {
-							logger.warn('goal.updated received with neither goal nor goalId', event);
-						}
+					if (event.subscriptionId === goalsSubId) {
+						this.goals.value = event.rows as RoomGoal[];
 					}
 				}
 			);
-			this.cleanupFunctions.push(unsubGoalUpdated);
+			this.cleanupFunctions.push(unsubGoalSnapshot);
 
-			const unsubGoalCompleted = hub.onEvent<GoalEventPayload>('goal.completed', (event) => {
-				if (event.roomId === roomId) {
-					const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
-					if (idx >= 0) {
-						this.goals.value = [
-							...this.goals.value.slice(0, idx),
-							event.goal,
-							...this.goals.value.slice(idx + 1),
-						];
-					}
+			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== goalsSubId) return;
+				let current = this.goals.value;
+				if (event.removed?.length) {
+					const removedIds = new Set((event.removed as RoomGoal[]).map((r) => r.id));
+					current = current.filter((g) => !removedIds.has(g.id));
+				}
+				if (event.updated?.length) {
+					const updatedMap = new Map((event.updated as RoomGoal[]).map((u) => [u.id, u]));
+					current = current.map((g) => updatedMap.get(g.id) ?? g);
+				}
+				if (event.added?.length) {
+					current = [...current, ...(event.added as RoomGoal[])];
+				}
+				this.goals.value = current;
+			});
+			this.cleanupFunctions.push(unsubGoalDelta);
+
+			// Subscribe to the goals.byRoom named query.
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'goals.byRoom',
+				params: [roomId],
+				subscriptionId: goalsSubId,
+			});
+
+			// Re-subscribe on reconnect: the server-side subscription is per-connection
+			// and is gone after a disconnect. Requesting liveQuery.subscribe again with
+			// the same subscriptionId delivers a fresh snapshot to the already-registered
+			// snapshot handler above.
+			const unsubReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'goals.byRoom',
+						params: [roomId],
+						subscriptionId: goalsSubId,
+					})
+					.catch((err) => {
+						logger.warn('Goals LiveQuery re-subscribe failed, falling back to refetch:', err);
+						this.fetchGoals().catch(() => {});
+					});
+			});
+			this.cleanupFunctions.push(unsubReconnect);
+
+			// Cleanup: tell the server to dispose the subscription when leaving the room.
+			this.cleanupFunctions.push(() => {
+				const h = connectionManager.getHubIfConnected();
+				if (h) {
+					h.request('liveQuery.unsubscribe', { subscriptionId: goalsSubId }).catch(() => {});
 				}
 			});
-			this.cleanupFunctions.push(unsubGoalCompleted);
 
 			// 3b. Auto-completed task notifications (semi-autonomous mode)
 			const unsubAutoCompleted = hub.onEvent<{
@@ -498,7 +512,8 @@ class RoomStore {
 				this.error.value = 'Room not found';
 			}
 
-			await this.fetchGoals();
+			// Goals are delivered via the goals.byRoom LiveQuery snapshot pushed
+			// synchronously during liveQuery.subscribe in startSubscriptions.
 
 			// Fetch runtime state
 			try {
