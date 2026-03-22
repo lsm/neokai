@@ -13,15 +13,17 @@
  * ## Eager reclamation design note
  *
  * JobQueueProcessor.start() calls reclaimStale() synchronously and then calls
- * tick() synchronously. tick() immediately dequeues pending jobs (SQLite
- * transaction), so by the time createDaemonApp() returns, the stale job has
- * already been cycled:  stale-processing → pending → (fresh-)processing.
+ * tick() synchronously. tick() dequeues pending jobs via a synchronous SQLite
+ * transaction, moving the job back to 'processing' before start() returns —
+ * but the actual job execution (processJob) is async and runs in the background.
+ * So by the time createDaemonApp() returns:
+ *   - The job has been cycled: stale-processing → pending → (fresh-)processing
+ *   - Job execution has begun but may not yet be complete
  *
- * Because the transition through 'pending' happens in the same synchronous call
- * as startup, the test verifies eager reclamation through timing rather than
- * catching the transient 'pending' state: if the job completes within a few
- * seconds of daemon2 starting, it MUST have been reclaimed immediately on
- * startup (not after the 60-second periodic stale check).
+ * The test verifies eager reclamation through timing: if the job reaches a
+ * final state within JOB_WAIT_TIMEOUT_MS seconds of daemon2 starting, it MUST
+ * have been reclaimed immediately on startup (not after the 60-second periodic
+ * stale check). The waitForJobById polling loop handles the async execution.
  *
  * Test scenarios:
  *   1. session.title_generation — stale job reclaimed; handler fails once (fake
@@ -145,9 +147,9 @@ function insertStaleCrashedJob(
  * Verify that a job was eagerly reclaimed by daemon2.
  *
  * reclaimStale() sets status='pending' and started_at=NULL for stale jobs.
- * tick() then immediately re-dequeues them (status='processing', fresh startedAt).
- * Both transitions happen synchronously inside start(), before createDaemonApp()
- * returns. We verify reclamation by checking that the stale state is gone:
+ * tick() then synchronously re-dequeues them (status='processing', fresh startedAt).
+ * Job execution is async and may not be complete yet. We verify reclamation by
+ * checking that the stale state is gone:
  *
  *   - 'pending'    → startedAt is NULL  (reclaimed, not yet re-dequeued)
  *   - 'processing' → startedAt is recent (re-dequeued after reclaim)
@@ -200,9 +202,6 @@ async function createDaemonWithSharedDb(
 	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
 		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
 	}
-	if (!process.env.TEST_WORKTREE_BASE_DIR) {
-		process.env.TEST_WORKTREE_BASE_DIR = `/tmp/daemon-worktrees-${Date.now()}`;
-	}
 
 	const config = getConfig();
 	config.port = 0; // OS-assigned port to avoid collisions
@@ -225,12 +224,11 @@ describe('Job queue crash/restart recovery (online)', () => {
 	// Tracked here so afterEach can delete them alongside tmpDir.
 	let createdWorkspaceDirs: string[];
 
-	// Env vars mutated by createDaemonWithSharedDb — saved before each test
-	// and restored in afterEach to prevent cross-test pollution.
+	// Env vars mutated by this suite — saved before each test and restored
+	// in afterEach to prevent cross-test pollution.
 	let savedWorkspacePath: string | undefined;
 	let savedTestWorktreeBaseDir: string | undefined;
-
-	// GitHub env vars saved for restoration
+	let savedSdkStartupTimeout: string | undefined;
 	let savedGithubPollingInterval: string | undefined;
 	let savedGithubToken: string | undefined;
 
@@ -243,11 +241,21 @@ describe('Job queue crash/restart recovery (online)', () => {
 		daemon2 = null;
 		createdWorkspaceDirs = [];
 
-		// Save env vars that createDaemonWithSharedDb will mutate
+		// Save env vars that this suite will mutate
 		savedWorkspacePath = process.env.NEOKAI_WORKSPACE_PATH;
-		savedTestWorktreeBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
+		savedSdkStartupTimeout = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
 		savedGithubPollingInterval = process.env.GITHUB_POLLING_INTERVAL;
 		savedGithubToken = process.env.GITHUB_TOKEN;
+
+		// Initialize TEST_WORKTREE_BASE_DIR here (not inside createDaemonWithSharedDb)
+		// so the path is tracked for cleanup. Reuse any value already set by the parent
+		// test runner; only set a per-test value when none is present.
+		savedTestWorktreeBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
+		if (!savedTestWorktreeBaseDir) {
+			const worktreeDir = `/tmp/daemon-worktrees-${id}`;
+			process.env.TEST_WORKTREE_BASE_DIR = worktreeDir;
+			createdWorkspaceDirs.push(worktreeDir);
+		}
 	}, 30_000);
 
 	afterEach(async () => {
@@ -269,7 +277,7 @@ describe('Job queue crash/restart recovery (online)', () => {
 			daemon2 = null;
 		}
 
-		// Restore env vars mutated by createDaemonWithSharedDb
+		// Restore all env vars mutated by this suite
 		if (savedWorkspacePath === undefined) {
 			delete process.env.NEOKAI_WORKSPACE_PATH;
 		} else {
@@ -279,6 +287,11 @@ describe('Job queue crash/restart recovery (online)', () => {
 			delete process.env.TEST_WORKTREE_BASE_DIR;
 		} else {
 			process.env.TEST_WORKTREE_BASE_DIR = savedTestWorktreeBaseDir;
+		}
+		if (savedSdkStartupTimeout === undefined) {
+			delete process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+		} else {
+			process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = savedSdkStartupTimeout;
 		}
 
 		// Restore GitHub env vars
