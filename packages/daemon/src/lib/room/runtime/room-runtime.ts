@@ -2548,10 +2548,9 @@ export class RoomRuntime {
 		}
 
 		// Check capacity — groups awaiting human review don't consume slots
-		const activeGroups = this.groupRepo
-			.getActiveGroups(this.roomId)
-			.filter((g) => !g.submittedForReview);
-		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
+		const workingGroups = allActiveGroups.filter((g) => !g.submittedForReview);
+		const availableSlots = this.maxConcurrentGroups - workingGroups.length;
 
 		if (availableSlots <= 0) return;
 
@@ -2577,9 +2576,24 @@ export class RoomRuntime {
 		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 		if (executableTasks.length === 0) return;
 
+		// Collect task IDs that already have an active (non-terminal) group.
+		// Uses allActiveGroups (including submitted-for-review) to prevent spawning
+		// a duplicate group while another is awaiting human review.
+		// This prevents duplicate group spawning when concurrent ticks race
+		// (the job queue processor runs up to maxConcurrent jobs in parallel,
+		// so two ticks can both see a task as 'pending' before either transitions
+		// it to 'in_progress').
+		const activeGroupTaskIds = new Set(allActiveGroups.map((g) => g.taskId));
+
 		// Filter to tasks whose dependencies are all completed
 		const readyTasks: NeoTask[] = [];
 		for (const task of executableTasks) {
+			if (activeGroupTaskIds.has(task.id)) {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — active group already exists`
+				);
+				continue;
+			}
 			if (await this.taskManager.areDependenciesMet(task)) {
 				readyTasks.push(task);
 			} else {
@@ -3131,6 +3145,16 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
+		// Defense-in-depth: verify no active group exists for this task right before spawning.
+		// Catches races that slip past the executeTick() filter (e.g., concurrent ticks).
+		const existingGroup = this.groupRepo.getGroupByTaskId(task.id);
+		if (existingGroup && existingGroup.completedAt === null) {
+			log.warn(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has active group ${existingGroup.id} — skipping duplicate spawn`
+			);
+			return;
+		}
+
 		// Find the goal linked to this task. Goal is optional — tasks without a goal still run.
 		const goals = await this.goalManager.getGoalsForTask(task.id);
 		const goal = goals[0] ?? null;
