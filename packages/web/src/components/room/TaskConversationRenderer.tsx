@@ -57,7 +57,7 @@ const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: s
 	lead: { border: 'border-l-purple-500', label: 'Lead', labelColor: 'text-purple-400' },
 };
 
-function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
+export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 	// messageType is used for DB records; type is used for WebSocket real-time events.
 	// Normalize to whichever field is set.
 	const msgAny = msg as unknown as Record<string, unknown>;
