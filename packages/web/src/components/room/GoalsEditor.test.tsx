@@ -26,8 +26,8 @@ describe('GoalsEditor', () => {
 		priority: 'normal',
 		progress: 50,
 		linkedTaskIds: [],
-		createdAt: Date.now() - 86400000,
-		updatedAt: Date.now(),
+		createdAt: Math.floor(Date.now() / 1000) - 86400,
+		updatedAt: Math.floor(Date.now() / 1000),
 		...overrides,
 	});
 
