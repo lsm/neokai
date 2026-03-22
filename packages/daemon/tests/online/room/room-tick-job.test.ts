@@ -10,6 +10,10 @@
  * - Stopping a room cancels pending ticks and prevents further scheduling
  * - Restarting a room enqueues a new tick job
  * - Job processes and re-schedules (self-scheduling chain)
+ * - Tick handler skips re-scheduling when runtime is stopped
+ * - Each room gets its own independent tick job
+ * - Daemon restart: existing rooms get tick jobs re-enqueued via
+ *   initializeExistingRooms → recoverRoomRuntime → runtime.start()
  *
  * These tests exercise the persistent job queue mechanics (enqueueRoomTick,
  * cancelPendingTickJobs, createRoomTickHandler) introduced in Task 4.1–4.3.
@@ -23,9 +27,13 @@
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/room/room-tick-job.test.ts
  */
 
+import path from 'path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { WebSocketClientTransport, MessageHub } from '@neokai/shared';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
+import { createDaemonApp } from '../../../src/app';
+import { getConfig } from '../../../src/config';
 import type { DaemonAppContext } from '../../../src/app';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
 import { enqueueRoomTick } from '../../../src/lib/job-handlers/room-tick.handler';
@@ -287,8 +295,12 @@ describe('room.tick via job queue (online)', () => {
 	// -------------------------------------------------------------------------
 
 	test('tick handler skips re-scheduling when runtime is stopped', async () => {
-		// Stop the runtime first — this removes the runtime from the runtimes map
-		// (via runtimes.delete in stopRuntime) and cancels pending ticks.
+		// Wait for the runtime to be ready before stopping — room.created fires
+		// via queueMicrotask so the runtime may not be in the map yet when
+		// room.create resolves.
+		await waitForTickJob(daemonCtx, roomId, ['pending', 'processing', 'completed']);
+
+		// Stop the runtime — removes it from the runtimes map and cancels pending ticks.
 		await daemon.messageHub.request('room.runtime.stop', { roomId });
 		await new Promise<void>((resolve) => setTimeout(resolve, SETTLE_MS));
 		expect(listTickJobs(daemonCtx, roomId, ['pending']).length).toBe(0);
@@ -342,4 +354,103 @@ describe('room.tick via job queue (online)', () => {
 		expect(pendingRoom1.length).toBe(0);
 		expect(pendingRoom2.length).toBeGreaterThanOrEqual(1);
 	}, 20_000);
+
+	// -------------------------------------------------------------------------
+	// Daemon restart: existing rooms get tick jobs re-enqueued
+	// -------------------------------------------------------------------------
+
+	test('daemon restart: existing rooms get tick jobs re-enqueued via initializeExistingRooms', async () => {
+		// Confirm the initial tick appears so we know the room is fully set up.
+		const firstTick = await waitForTickJob(daemonCtx, roomId, [
+			'pending',
+			'processing',
+			'completed',
+		]);
+		expect(firstTick).toBeDefined();
+
+		// Preserve the DB path before shutdown.
+		const dbPath = daemonCtx.db.getDatabasePath();
+		const workspacePath = path.dirname(dbPath);
+
+		// Shut down daemon1 cleanly but WITHOUT deleting the workspace so the DB
+		// is preserved for daemon2. We call daemonCtx.cleanup() directly instead
+		// of daemon.waitForExit() (which would rm -rf the workspace).
+		daemon.kill('SIGTERM'); // no-op for in-process
+		await daemonCtx.cleanup();
+		// Prevent afterEach from double-calling cleanup.
+		daemon = null as unknown as DaemonServerContext;
+
+		// Start daemon2 using createDaemonApp() directly with the preserved DB.
+		// This exercises initializeExistingRooms() which reads rooms from the DB
+		// and re-enqueues tick jobs for each one.
+		const originalWorkspacePath = process.env.NEOKAI_WORKSPACE_PATH;
+		process.env.NEOKAI_WORKSPACE_PATH = workspacePath;
+
+		let daemonCtx2: DaemonAppContext | null = null;
+		let hub2: MessageHub | null = null;
+		let transport2: WebSocketClientTransport | null = null;
+		try {
+			const config = getConfig();
+			config.port = 0;
+			config.dbPath = dbPath;
+
+			daemonCtx2 = await createDaemonApp({ config, verbose: false, standalone: false });
+
+			// Connect a client so the daemon is ready.
+			const actualPort = daemonCtx2.server.port;
+			transport2 = new WebSocketClientTransport({
+				url: `ws://127.0.0.1:${actualPort}/ws`,
+				autoReconnect: false,
+			});
+			hub2 = new MessageHub({ defaultSessionId: 'global' });
+			hub2.registerTransport(transport2);
+			await transport2.initialize();
+
+			// initializeExistingRooms calls runtime.start() for every room in the DB,
+			// which calls scheduleTick() → enqueueRoomTick(roomId, jobQueue, 0).
+			const tickJob = await waitForTickJob(daemonCtx2, roomId, [
+				'pending',
+				'processing',
+				'completed',
+			]);
+			expect(tickJob).toBeDefined();
+			expect(tickJob!.queue).toBe(ROOM_TICK);
+			expect((tickJob!.payload as { roomId: string }).roomId).toBe(roomId);
+
+			// Verify the runtime is actively running in daemon2.
+			const stateResult = (await hub2.request('room.runtime.state', {
+				roomId,
+			})) as { state: string | null };
+			expect(stateResult.state).toBe('running');
+		} finally {
+			// Restore environment.
+			if (originalWorkspacePath === undefined) {
+				delete process.env.NEOKAI_WORKSPACE_PATH;
+			} else {
+				process.env.NEOKAI_WORKSPACE_PATH = originalWorkspacePath;
+			}
+
+			// Tear down daemon2: cleanup hub first (rejects pending calls), then transport.
+			if (hub2) {
+				try {
+					hub2.cleanup();
+				} catch {
+					// Already cleaned up
+				}
+			}
+			if (transport2) {
+				try {
+					await transport2.close();
+				} catch {
+					// Already closed
+				}
+			}
+			if (daemonCtx2) {
+				await daemonCtx2.cleanup();
+			}
+
+			// Remove the shared workspace now that both daemons are done.
+			await Bun.$`rm -rf ${workspacePath}`.quiet();
+		}
+	}, 30_000);
 });
