@@ -11,6 +11,8 @@
  * - goal.linkTask - Link a task to a goal
  * - goal.delete - Delete a goal
  * - goal.listExecutions - List execution history for a recurring mission
+ * - goal.recordMetric - Record a metric value for a measurable mission
+ * - goal.getMetrics - Get current metric state for a goal
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
@@ -50,6 +52,8 @@ export type GoalManagerLike = Pick<
 	| 'getActiveExecution'
 	| 'updateNextRunAt'
 	| 'listExecutions'
+	| 'recordMetric'
+	| 'checkMetricTargets'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
@@ -415,6 +419,74 @@ export function setupGoalHandlers(
 
 		const executions = goalManager.listExecutions(params.goalId, params.limit ?? 20);
 		return { executions };
+	});
+
+	// goal.recordMetric - Record a metric value for a measurable mission
+	messageHub.onRequest('goal.recordMetric', async (data) => {
+		const params = data as { roomId: string; goalId: string; metricName: string; value: number };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+		if (!params.metricName) throw new Error('Metric name is required');
+		if (typeof params.value !== 'number') throw new Error('Value must be a number');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.getGoal(params.goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+		if (goal.missionType !== 'measurable') {
+			throw new Error(
+				`Goal ${params.goalId} is not a measurable mission (missionType: ${goal.missionType ?? 'one_shot'})`
+			);
+		}
+
+		const updated = await goalManager.recordMetric(params.goalId, params.metricName, params.value);
+		return {
+			goal: updated,
+			metric: {
+				name: params.metricName,
+				value: params.value,
+				goalProgress: updated.progress,
+			},
+		};
+	});
+
+	// goal.getMetrics - Get current metric state and targets for a goal
+	messageHub.onRequest('goal.getMetrics', async (data) => {
+		const params = data as { roomId: string; goalId: string };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.getGoal(params.goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+
+		if (!goal.structuredMetrics || goal.structuredMetrics.length === 0) {
+			return {
+				missionType: goal.missionType ?? 'one_shot',
+				structuredMetrics: [],
+				legacyMetrics: goal.metrics ?? {},
+				note: 'No structured metrics configured. For measurable missions, add structuredMetrics to the goal.',
+			};
+		}
+
+		const checkResult = await goalManager.checkMetricTargets(params.goalId);
+		return {
+			missionType: goal.missionType ?? 'one_shot',
+			allTargetsMet: checkResult.allMet,
+			metrics: checkResult.results.map((r) => {
+				const metric = goal.structuredMetrics!.find((m) => m.name === r.name);
+				return {
+					name: r.name,
+					current: r.current,
+					target: r.target,
+					met: r.met,
+					direction: metric?.direction ?? 'increase',
+					...(metric?.baseline !== undefined ? { baseline: metric.baseline } : {}),
+					...(metric?.unit ? { unit: metric.unit } : {}),
+				};
+			}),
+		};
 	});
 
 	// task.approve - Human approves the PR; resume leader to complete task flow

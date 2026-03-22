@@ -124,6 +124,21 @@ describe('Room Agent Tools', () => {
 			);
 			CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup
 				ON mission_metric_history(goal_id, metric_name, recorded_at);
+			CREATE TABLE mission_executions (
+				id TEXT PRIMARY KEY,
+				goal_id TEXT NOT NULL,
+				execution_number INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				status TEXT NOT NULL DEFAULT 'running',
+				result_summary TEXT,
+				task_ids TEXT NOT NULL DEFAULT '[]',
+				planning_attempts INTEGER NOT NULL DEFAULT 0,
+				FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+				UNIQUE(goal_id, execution_number)
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_active
+				ON mission_executions(goal_id) WHERE status = 'running';
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
@@ -210,6 +225,14 @@ describe('Room Agent Tools', () => {
 				await handlers.update_goal({ goal_id: 'no-such-goal', status: 'completed' })
 			);
 			expect(result.success).toBe(false);
+		});
+
+		it('should return error when no update fields provided', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(await handlers.update_goal({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/No update fields provided/);
 		});
 	});
 
@@ -2122,10 +2145,10 @@ describe('Room Agent Tools', () => {
 			expect(fullServer.name).toBe('room-agent');
 		});
 
-		it('full server exposes all 19 tools', () => {
+		it('full server exposes all 20 tools', () => {
 			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			const names = getRegisteredToolNames(fullServer as never);
-			expect(names).toHaveLength(19);
+			expect(names).toHaveLength(20);
 			expect(names).toContain('approve_task');
 			expect(names).toContain('reject_task');
 			expect(names).toContain('set_schedule');
@@ -2133,6 +2156,255 @@ describe('Room Agent Tools', () => {
 			expect(names).toContain('resume_schedule');
 			expect(names).toContain('record_metric');
 			expect(names).toContain('get_metrics');
+			expect(names).toContain('list_executions');
+		});
+	});
+
+	describe('create_goal Mission V2 fields', () => {
+		it('should create a measurable mission with structuredMetrics', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Improve coverage',
+					mission_type: 'measurable',
+					structured_metrics: [{ name: 'test_coverage', target: 90, current: 70, unit: '%' }],
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('measurable');
+			const metrics = goal.structuredMetrics as Array<Record<string, unknown>>;
+			expect(metrics).toHaveLength(1);
+			expect(metrics[0].name).toBe('test_coverage');
+			expect(metrics[0].target).toBe(90);
+			expect(metrics[0].current).toBe(70);
+			expect(metrics[0].unit).toBe('%');
+		});
+
+		it('should create a recurring mission', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Daily sync',
+					mission_type: 'recurring',
+					autonomy_level: 'semi_autonomous',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('recurring');
+			expect(goal.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('should default current to 0 when not provided in structured_metrics', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Perf goal',
+					mission_type: 'measurable',
+					structured_metrics: [
+						{ name: 'latency_p99', target: 100, direction: 'decrease', baseline: 500, unit: 'ms' },
+					],
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			const metrics = goal.structuredMetrics as Array<Record<string, unknown>>;
+			expect(metrics[0].current).toBe(0);
+			expect(metrics[0].direction).toBe('decrease');
+			expect(metrics[0].baseline).toBe(500);
+		});
+	});
+
+	describe('update_goal V2 fields', () => {
+		it('should update goal title and description via patchGoal', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Old title' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'New title',
+					description: 'Updated description',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.title).toBe('New title');
+			expect(goal.description).toBe('Updated description');
+		});
+
+		it('should update missionType and autonomyLevel via patchGoal', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					mission_type: 'measurable',
+					autonomy_level: 'semi_autonomous',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('measurable');
+			expect(goal.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('should update structuredMetrics via patchGoal', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Goal', mission_type: 'measurable' })
+			);
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					structured_metrics: [{ name: 'coverage', target: 80 }],
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			const metrics = goal.structuredMetrics as Array<Record<string, unknown>>;
+			expect(metrics).toHaveLength(1);
+			expect(metrics[0].name).toBe('coverage');
+			expect(metrics[0].current).toBe(0);
+		});
+
+		it('should update both patch fields and status together', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'Renamed',
+					status: 'completed',
+				})
+			);
+			expect(result.success).toBe(true);
+			// Status update overwrites the last returned goal (status is applied after patch)
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.status).toBe('completed');
+		});
+
+		it('should update priority via patchGoal when provided with other patch fields', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'Updated',
+					priority: 'urgent',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.priority).toBe('urgent');
+		});
+	});
+
+	describe('list_executions', () => {
+		it('should return empty list for goal with no executions', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Recurring', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+			const result = parseResult(await handlers.list_executions({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			expect(result.goalId).toBe(goalId);
+			expect(result.missionType).toBe('recurring');
+			expect(result.executions).toEqual([]);
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.list_executions({ goal_id: 'no-such' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not found');
+		});
+
+		it('should list executions after startExecution', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Recurring', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+			// Start an execution via goalManager
+			await goalManager.startExecution(goalId);
+			const result = parseResult(await handlers.list_executions({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const executions = result.executions as Array<Record<string, unknown>>;
+			expect(executions).toHaveLength(1);
+			expect(executions[0].status).toBe('running');
+			expect(executions[0].executionNumber).toBe(1);
+		});
+	});
+
+	describe('set_task_status — archived', () => {
+		it('should archive a completed task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(true);
+			const updated = await taskManager.getTask(task.id);
+			expect(updated?.status).toBe('archived');
+			expect(updated?.archivedAt).toBeDefined();
+		});
+
+		it('should archive a cancelled task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.cancelTask(task.id);
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(true);
+			const updated = await taskManager.getTask(task.id);
+			expect(updated?.status).toBe('archived');
+		});
+
+		it('should archive a needs_attention task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'failed');
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(true);
+			const updated = await taskManager.getTask(task.id);
+			expect(updated?.status).toBe('archived');
+		});
+
+		it('should reject archiving a pending task (invalid transition)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toBeDefined();
+		});
+	});
+
+	describe('get_room_status — draft count', () => {
+		it('should include draft task count', async () => {
+			// Create a regular (pending) task
+			await taskManager.createTask({ title: 'Pending', description: 'D' });
+			// Create a draft task (status param supported by CreateTaskParams)
+			await taskManager.createTask({ title: 'Draft', description: 'D', status: 'draft' });
+			const result = parseResult(await handlers.get_room_status());
+			expect(result.success).toBe(true);
+			const status = result.status as Record<string, unknown>;
+			const tasks = status.tasks as Record<string, number>;
+			expect(tasks.draft).toBe(1);
+			expect(tasks.pending).toBe(1);
+		});
+	});
+
+	describe('list_tasks — archived filter', () => {
+		it('should filter by archived status', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			await taskManager.archiveTask(task.id);
+
+			const result = parseResult(await handlers.list_tasks({ status: 'archived' }));
+			expect(result.success).toBe(true);
+			const tasks = result.tasks as Array<Record<string, unknown>>;
+			expect(tasks.some((t) => t.id === task.id)).toBe(true);
 		});
 	});
 });
