@@ -156,6 +156,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// This table was dropped in migration 19 (legacy mirror table). It is recreated here
 	// as an append-only store for the LiveQuery protocol (Milestone 4).
 	runMigration41(db);
+
+	// Migration 42: Clean up stale/zombie session groups and add partial unique index
+	// on session_groups(ref_id) WHERE completed_at IS NULL to prevent future duplicates.
+	runMigration42(db);
 }
 
 /**
@@ -2455,5 +2459,69 @@ function runMigration41(db: BunDatabase): void {
 	`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_sgm_group ON session_group_messages(group_id, created_at, id)`
+	);
+}
+
+/**
+ * Migration 42: Clean up stale/zombie session groups and enforce uniqueness.
+ *
+ * Step 1: Mark active groups as completed when their task is in a terminal state
+ *         (completed, cancelled, archived, needs_attention). These are zombie groups
+ *         that were never cleaned up when the task finished.
+ *
+ * Step 2: For tasks that still have multiple active groups after step 1, keep the
+ *         one with the highest rowid (the true insert order tiebreaker), and mark all
+ *         others as completed. Uses rowid instead of created_at to avoid failures when
+ *         two groups share an identical millisecond timestamp.
+ *
+ * Step 3: Add a partial unique index on session_groups(ref_id) WHERE completed_at IS NULL,
+ *         scoped to task/task_pair group types, to enforce DB-level uniqueness.
+ */
+function runMigration42(db: BunDatabase): void {
+	if (!tableExists(db, 'session_groups') || !tableExists(db, 'tasks')) {
+		return;
+	}
+
+	const now = Date.now();
+
+	// Step 1: Complete groups whose tasks are already in a terminal state.
+	// Includes 'needs_attention' (the renamed 'failed' status from migration 24).
+	db.prepare(
+		`UPDATE session_groups
+		 SET completed_at = ?, version = version + 1
+		 WHERE completed_at IS NULL
+		   AND group_type IN ('task', 'task_pair')
+		   AND ref_id IN (
+		     SELECT id FROM tasks
+		     WHERE status IN ('completed', 'cancelled', 'archived', 'needs_attention')
+		   )`
+	).run(now);
+
+	// Step 2: For tasks with multiple active groups, keep the one with the highest rowid
+	// (true insert order, no timestamp tie risk) and complete all others.
+	const duplicateTasks = db
+		.prepare(
+			`SELECT ref_id, MAX(rowid) AS max_rowid
+			 FROM session_groups
+			 WHERE completed_at IS NULL AND group_type IN ('task', 'task_pair')
+			 GROUP BY ref_id
+			 HAVING COUNT(*) > 1`
+		)
+		.all() as { ref_id: string; max_rowid: number }[];
+
+	for (const { ref_id, max_rowid } of duplicateTasks) {
+		db.prepare(
+			`UPDATE session_groups
+			 SET completed_at = ?, version = version + 1
+			 WHERE ref_id = ? AND completed_at IS NULL AND rowid < ?`
+		).run(now, ref_id, max_rowid);
+	}
+
+	// Step 3: Add partial unique index — only one active task/task_pair group per ref_id.
+	// Scoped to task/task_pair so future group types with different semantics can share
+	// ref_id values without violating this constraint.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
 	);
 }

@@ -291,6 +291,30 @@ export class SessionGroupRepository {
 		return this.rowToGroup(row);
 	}
 
+	/**
+	 * Returns ALL active (completedAt IS NULL) groups for a specific task.
+	 * Used for defense-in-depth deduplication in spawnGroupForTask — checks every
+	 * active group, not just the most recent, to catch stale zombie groups that
+	 * would otherwise allow a duplicate spawn.
+	 */
+	getActiveGroupsForTask(taskId: string): SessionGroup[] {
+		const rows = this.db
+			.prepare(
+				`SELECT
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
+					sg.created_at, sg.completed_at,
+					worker.session_id AS worker_session_id,
+					leader.session_id AS leader_session_id
+				FROM session_groups sg
+				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
+				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
+				WHERE sg.ref_id = ? AND sg.group_type IN ('task', 'task_pair') AND sg.completed_at IS NULL
+				ORDER BY sg.created_at DESC`
+			)
+			.all(taskId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToGroup(r));
+	}
+
 	getActiveGroups(roomId: string): SessionGroup[] {
 		const rows = this.db
 			.prepare(
@@ -336,6 +360,62 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * DB-level zombie cleanup for a room: marks active session groups as completed
+	 * when their task is in a terminal state
+	 * (completed, cancelled, archived, needs_attention).
+	 *
+	 * 'needs_attention' is the renamed 'failed' status (migration 24) and IS terminal —
+	 * TaskGroupManager.fail() sets it via failTask(). Zombies arise when the group's
+	 * completed_at was never set due to a crash after failTask() ran.
+	 *
+	 * Synchronous and safe to call from stop() without async/await.
+	 * Returns the number of groups cleaned up.
+	 */
+	cleanupZombieGroupsForRoom(roomId: string): number {
+		const now = Date.now();
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = ?, version = version + 1
+				 WHERE completed_at IS NULL
+				   AND group_type IN ('task', 'task_pair')
+				   AND ref_id IN (
+				     SELECT t.id FROM tasks t
+				     WHERE t.room_id = ?
+				       AND t.status IN ('completed', 'cancelled', 'archived', 'needs_attention')
+				   )`
+			)
+			.run(now, roomId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
+		return result.changes;
+	}
+
+	/**
+	 * Force-complete all active groups for a task except the specified one.
+	 * Used as a safety net in complete()/fail() to clean up any duplicate/stale
+	 * groups that slipped past the deduplication check.
+	 *
+	 * Returns the number of groups cleaned up.
+	 */
+	cleanupStaleGroupsForTask(taskId: string, keepGroupId: string): number {
+		const now = Date.now();
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = ?, version = version + 1
+				 WHERE ref_id = ? AND group_type IN ('task', 'task_pair')
+				   AND completed_at IS NULL AND id != ?`
+			)
+			.run(now, taskId, keepGroupId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
+		return result.changes;
+	}
+
+	/**
 	 * Delete a group and its members.
 	 * The database schema uses ON DELETE CASCADE, so members and events are
 	 * automatically deleted when the group is deleted.
@@ -358,18 +438,27 @@ export class SessionGroupRepository {
 	 * lightweight revive intended for the "send message to failed task" flow.
 	 */
 	reviveGroup(groupId: string): SessionGroup | null {
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups
-				 SET completed_at = NULL,
-				     version = version + 1
-				 WHERE id = ?`
-			)
-			.run(groupId);
+		try {
+			const result = this.db
+				.prepare(
+					`UPDATE session_groups
+					 SET completed_at = NULL,
+					     version = version + 1
+					 WHERE id = ?`
+				)
+				.run(groupId);
 
-		if (result.changes === 0) return null;
-		this.reactiveDb.notifyChange('session_groups');
-		return this.getGroup(groupId);
+			if (result.changes === 0) return null;
+			this.reactiveDb.notifyChange('session_groups');
+			return this.getGroup(groupId);
+		} catch (err) {
+			// Only swallow unique constraint violations (another active group exists for ref_id).
+			// All other DB errors (disk full, closed DB, etc.) are re-thrown.
+			if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+				return null;
+			}
+			throw err;
+		}
 	}
 
 	/**
@@ -389,19 +478,28 @@ export class SessionGroupRepository {
 			deferredLeader: current.deferredLeader,
 		};
 
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups
-				 SET completed_at = NULL,
-				     metadata = ?,
-				     version = version + 1
-				 WHERE id = ?`
-			)
-			.run(JSON.stringify(resetMetadata), groupId);
+		try {
+			const result = this.db
+				.prepare(
+					`UPDATE session_groups
+					 SET completed_at = NULL,
+					     metadata = ?,
+					     version = version + 1
+					 WHERE id = ?`
+				)
+				.run(JSON.stringify(resetMetadata), groupId);
 
-		if (result.changes === 0) return null;
-		this.reactiveDb.notifyChange('session_groups');
-		return this.getGroup(groupId);
+			if (result.changes === 0) return null;
+			this.reactiveDb.notifyChange('session_groups');
+			return this.getGroup(groupId);
+		} catch (err) {
+			// Only swallow unique constraint violations (another active group exists for ref_id).
+			// All other DB errors (disk full, closed DB, etc.) are re-thrown.
+			if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+				return null;
+			}
+			throw err;
+		}
 	}
 
 	// ===== Metadata update helpers (partial merge pattern) =====
