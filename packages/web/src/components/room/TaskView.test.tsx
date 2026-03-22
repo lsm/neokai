@@ -2693,7 +2693,8 @@ describe('TaskView — task.getGroup retry on failure', () => {
 //
 // Sending a message used to call onMessageSentWithReload() which bumped conversationKey,
 // remounting TaskConversationRenderer and causing a full re-fetch / loading flash.
-// After the fix, onMessageSent() is a no-op — the LiveQuery delta appends the message.
+// After the fix, the conversationKey is never bumped on message send —
+// the LiveQuery delta event appends the new message instead.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('TaskView — no reload on message send (bug regression)', () => {
 	beforeEach(() => {

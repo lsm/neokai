@@ -69,8 +69,6 @@ interface HumanInputAreaProps {
 	taskStatus: string;
 	roomId: string;
 	taskId: string;
-	/** Called after a message is successfully sent (no reload — LiveQuery appends it). */
-	onMessageSent: () => void;
 }
 
 const TARGET_LABELS: Record<HumanMessageTarget, string> = {
@@ -78,13 +76,7 @@ const TARGET_LABELS: Record<HumanMessageTarget, string> = {
 	leader: 'Leader',
 };
 
-function HumanInputArea({
-	hasGroup,
-	taskStatus,
-	roomId,
-	taskId,
-	onMessageSent,
-}: HumanInputAreaProps) {
+function HumanInputArea({ hasGroup, taskStatus, roomId, taskId }: HumanInputAreaProps) {
 	const { request } = useMessageHub();
 	const {
 		content: messageText,
@@ -133,7 +125,6 @@ function HumanInputArea({
 				target,
 			});
 			clearDraft();
-			onMessageSent();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
 		} finally {
@@ -1406,7 +1397,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				taskStatus={task.status}
 				roomId={roomId}
 				taskId={taskId}
-				onMessageSent={() => {}}
 			/>
 
 			{/* Task action dialogs */}
