@@ -2147,7 +2147,7 @@ export class RoomRuntime {
 	 *
 	 * Subscribes to DaemonHub sdk.message events, persists each enriched message
 	 * to session_group_messages (for LiveQuery), and broadcasts deltas via
-	 * state.groupMessages.delta for any legacy subscribers still present.
+	 * state.groupMessages.delta (retained for backward compatibility / debugging).
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -2205,14 +2205,21 @@ export class RoomRuntime {
 						'type' in event.message && typeof event.message.type === 'string'
 							? event.message.type
 							: 'assistant';
-					this.groupRepo.appendGroupMessage({
-						groupId: group.id,
-						sessionId,
-						role,
-						messageType: sdkMsgType,
-						content: JSON.stringify(enrichedMessage),
-						createdAt: sdkNow,
-					});
+					try {
+						this.groupRepo.appendGroupMessage({
+							groupId: group.id,
+							sessionId,
+							role,
+							messageType: sdkMsgType,
+							content: JSON.stringify(enrichedMessage),
+							createdAt: sdkNow,
+						});
+					} catch (err) {
+						log.warn(
+							`[setupMirroring] Failed to persist SDK message to session_group_messages ` +
+								`(group=${group.id}, session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+						);
+					}
 					if (this.messageHub) {
 						this.messageHub.event(
 							'state.groupMessages.delta',

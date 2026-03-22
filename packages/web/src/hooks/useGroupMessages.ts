@@ -70,7 +70,10 @@ export function resetSubscriptionCounterForTesting(): void {
 export function useGroupMessages(groupId: string | null): UseGroupMessagesResult {
 	const { request, onEvent, isConnected } = useMessageHub();
 	const [messages, setMessages] = useState<SessionGroupMessage[]>([]);
-	const [isLoading, setIsLoading] = useState(false);
+	// Initialise to true when a groupId is present so the component shows
+	// "Loading conversation…" immediately rather than flashing "Waiting for
+	// agent activity…" for one render cycle before the effect fires.
+	const [isLoading, setIsLoading] = useState(groupId !== null);
 
 	// Track the active subscriptionId to guard against stale events from prior
 	// group subscriptions (e.g., rapid task switching or reconnect cycles).
