@@ -21,23 +21,45 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
    - `useTaskViewData(roomId, taskId)` — returns:
      ```
      {
-       task, group, sessions, workerSession, leaderSession, isLoading, error,
+       // Data
+       task, group, workerSession, leaderSession, isLoading, error,
+       associatedGoal,           // from roomStore.goalByTaskId — for the mission badge in the header
        conversationKey,          // integer bumped to force conversation remount after approve/reject
+
+       // Action handlers
        approveReviewedTask,      // async handler: calls task.approve RPC, bumps conversationKey
        rejectReviewedTask,       // async handler(feedback): calls task.reject RPC, bumps conversationKey
-       approving, rejecting,     // loading states for approve/reject
-       reviewError,              // error string from approve/reject
-       rejectModal,              // { isOpen, open, close } state for the RejectModal
-       interruptTask,            // handler: calls task.interrupt RPC
+       interruptSession,         // handler: calls task.interruptSession RPC (named to match source)
        reactivateTask,           // handler: calls task.reactivate RPC
-       canCancel, canInterrupt, canReactivate, // derived permission flags
+       completeTask,             // handler: calls task.complete RPC
+       cancelTask,               // handler: calls task.cancel RPC
+       archiveTask,              // handler: calls task.archive RPC
+
+       // Loading states
+       approving, rejecting, interrupting,
+
+       // Error states
+       reviewError,              // error string from approve/reject
+
+       // Modal state
+       rejectModal,              // { isOpen, open, close } — for RejectModal
+       completeModal,            // { isOpen, open, close } — for CompleteTaskDialog
+       cancelModal,              // { isOpen, open, close } — for CancelTaskDialog
+       archiveModal,             // { isOpen, open, close } — for ArchiveTaskDialog
+
+       // Derived permission flags (from task.status)
+       canCancel, canInterrupt, canReactivate, canComplete, canArchive,
      }
      ```
-   - This covers: `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, session model fetch, loading/error states, `conversationKey` state (used to force `TaskConversationRenderer` remount after approve/reject), and all task action handlers (approve, reject, interrupt, reactivate) with their loading/error states.
+   - This covers: `task.get` RPC, `task.getGroup` RPC, `session.get` calls for worker+leader, `room.task.update` event listener, session model fetch, loading/error states, `conversationKey` state (used to force `TaskConversationRenderer` remount after approve/reject), `associatedGoal` (from `roomStore.goalByTaskId`), all task action handlers (approve, reject, interrupt, reactivate, complete, cancel, archive) with their loading/error states, all modal states, and derived permission flags (`canCancel`, `canInterrupt`, `canReactivate`, `canComplete`, `canArchive` — derived from `task.status` at ~lines 734-742).
+   - **Note**: The source uses `interruptSession` as the handler name (line 791, calling `task.interruptSession` RPC). Keep this name in the hook for consistency.
    - Update `TaskView.tsx` to call `useTaskViewData()` instead of inline logic. Verify V1 behavior is unchanged.
 4. Extract the group message fetching and parsing logic from `TaskConversationRenderer.tsx` into `packages/web/src/hooks/useGroupMessages.ts`:
    - Define the `ParsedGroupMessage` type alias: this is `SDKMessage` with `_taskMeta` (containing `authorRole`, `authorSessionId`, etc.) attached during parsing. Formally: `type ParsedGroupMessage = SDKMessage & { _taskMeta?: { authorRole: string; authorSessionId: string; [key: string]: unknown } }`. Export this type from the hook file so downstream consumers (e.g., `useTurnBlocks`) can import it.
-   - `useGroupMessages(groupId)` — returns `{ messages: ParsedGroupMessage[], isLoading, loadOlder, hasOlder, isAtTail: boolean }`.
+   - `useGroupMessages(groupId)` — returns `{ messages: ParsedGroupMessage[], isLoading, loadOlder, hasOlder, isAtTail: boolean, error: string | null, loadingOlder: boolean, retryInitialFetch: () => void }`.
+     - `error`: error string from initial fetch or delta subscription failures (displayed in empty-state error screen)
+     - `loadingOlder`: loading state for the "Load older" button indicator
+     - `retryInitialFetch`: callback for the Retry button in the error state
      - `isAtTail`: `true` when the loaded messages include the newest messages in the conversation (i.e., initial load fetches the tail, and no newer page exists). This is always `true` after initial load since the current implementation fetches newest-first. It would be `false` only if a future bidirectional pagination loads a middle page. For now, default to `true` after the initial fetch completes.
    - This covers: `task.getGroupMessages` RPC, `state.groupMessages.delta` subscription, `parseGroupMessage()` parsing, pagination buffer, deduplication, and the `fetchingRef`/`pendingDeltasRef` race-condition handling.
    - Update `TaskConversationRenderer.tsx` to call `useGroupMessages()` instead of inline logic. Verify V1 behavior is unchanged.
@@ -45,7 +67,7 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
    - `HumanInputArea.tsx` — the human message input component (inner function `HumanInputArea` at ~line 81)
    - `TaskActionDialogs.tsx` — `CompleteTaskDialog` (~line 267), `CancelTaskDialog` (~line 378), `ArchiveTaskDialog` (~line 468). Note: `RejectModal` is already a shared component imported from `../ui/RejectModal` — it does not need extraction, but V2 must import and wire it (see Task 4.2).
    - `TaskHeaderActions.tsx` — extract the inline header action button row (~lines 946-1015) into a new component. This is NOT an existing inner function — it is inline JSX containing the Cancel, Stop/Interrupt, Reactivate buttons and `TaskActionDropdown`. Extract this JSX into a `TaskHeaderActions` component that accepts the relevant handlers and permission flags as props.
-   - `TaskReviewBar.tsx` — extract the review `ActionBar` rendering (~lines 1019-1043) into a component that accepts `approveReviewedTask`, `rejectModal.open`, `approving`, `rejecting`, `reviewError`, and `reviewPrMeta` as props. This is the `<ActionBar type="review" ...>` block shown when `group?.submittedForReview` is true.
+   - `TaskReviewBar.tsx` — extract the **entire fragment** at ~lines 1019-1043: this includes BOTH the `<ActionBar type="review" ...>` element AND the sibling `<div>` showing `reviewError` in red (they are wrapped in a single `<>` fragment). The component accepts `approveReviewedTask`, `rejectModal.open`, `approving`, `rejecting`, `reviewError`, and `reviewPrMeta` as props. Shown when `group?.submittedForReview` is true.
    - These are inner components or inline JSX regions of `TaskView.tsx`. Extract them as named exports. Update `TaskView.tsx` to import them.
 6. Run `bun run typecheck` and `bun run lint` to verify no regressions.
 7. Run existing unit tests for TaskView/TaskConversationRenderer to verify behavior is unchanged.
@@ -53,7 +75,7 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
 
 **Acceptance Criteria:**
 - `ROLE_COLORS` is exported from `packages/web/src/lib/task-constants.ts` and imported by both V1 and (later) V2.
-- `useTaskViewData` hook encapsulates all task/group/session data fetching AND task action handlers (approve, reject, interrupt, reactivate) with `conversationKey` reload mechanism.
+- `useTaskViewData` hook encapsulates all task/group/session data fetching, all task action handlers (approve, reject, interrupt, reactivate, complete, cancel, archive), all modal states, all derived permission flags (`canCancel`, `canInterrupt`, `canReactivate`, `canComplete`, `canArchive`), `conversationKey` reload mechanism, `interrupting` loading state, and `associatedGoal`.
 - `useGroupMessages` hook encapsulates group message fetching, parsing, deduplication, delta subscription, and pagination.
 - `HumanInputArea`, `TaskActionDialogs`, `TaskHeaderActions`, `TaskReviewBar` are extracted into shared files.
 - `TaskView.tsx` and `TaskConversationRenderer.tsx` import from the new shared locations.
@@ -61,7 +83,7 @@ Extract reusable logic from `TaskView.tsx` and `TaskConversationRenderer.tsx` in
 - **Note on test updates**: Existing test files (`TaskView.test.tsx`, `TaskConversationRenderer.test.tsx`) may need mock target adjustments (e.g., mocking the new shared hook modules instead of inline logic). These import/mock swaps are expected and acceptable — they are part of the refactor, not a behavioral change.
 - **Implementation note**: This task touches multiple complex files. Commit after each subtask (steps 2-5) for safe rollback if any extraction step causes issues.
 - `ParsedGroupMessage` type is defined and exported from `useGroupMessages.ts`.
-- `useGroupMessages` return type includes `isAtTail: boolean`.
+- `useGroupMessages` return type includes `isAtTail: boolean`, `error: string | null`, `loadingOlder: boolean`, and `retryInitialFetch: () => void`.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** None
@@ -82,7 +104,7 @@ Create the `useTurnBlocks` hook that consumes the parsed group messages (from `u
    - `TurnBlock` interface:
      ```
      {
-       id: string;              // unique turn identifier — use the first message's UUID for stability across pagination
+       id: string;              // unique turn identifier — use the first message's UUID if available, otherwise fall back to `_taskMeta.turnId` (e.g., `status-${msg.id}`). Note: runtime messages (status, rate_limited, etc.) become RuntimeMessage items, not TurnBlocks, so most turn-starting messages will have UUIDs. For human-role messages that may lack UUIDs, use the turnId fallback.
        sessionId: string;       // authorSessionId from _taskMeta
        agentRole: string;       // authorRole from _taskMeta
        agentLabel: string;      // plain role label derived from ROLE_COLORS (e.g., "Leader", "Coder", "Worker") — does NOT include model name (model info is displayed separately in the UI if needed)

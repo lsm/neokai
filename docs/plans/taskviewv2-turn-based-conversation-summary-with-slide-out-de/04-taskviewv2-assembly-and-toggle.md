@@ -72,7 +72,7 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
      - `TaskReviewBar` for the approve/reject review bar (shown when `group?.submittedForReview` is true)
      - `RejectModal` (imported from `../ui/RejectModal`) — wired to `rejectReviewedTask` and `rejectModal` state from `useTaskViewData`
    - Include the same header structure as V1 (task name, status, model info)
-   - Auto-scroll behavior: scroll to bottom when new turn blocks arrive (reuse `useAutoScroll` if available)
+   - **Auto-scroll**: V1's auto-scroll setup is non-trivial (scroll container ref, end ref, `messageCount` state, `isFirstLoad` state that resets on `conversationKey` bump, autoscroll toggle button). For V2, implement a simpler version: use a scroll container ref and an end-anchor ref, auto-scroll to bottom when the `TurnBlockItem[]` array length increases (new turn or message), with a manual "scroll to bottom" button that appears when the user scrolls up. Reset scroll position when `conversationKey` changes. This is a V2-specific implementation — do NOT try to reuse V1's exact autoscroll state.
 3. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
 **Acceptance Criteria:**
@@ -84,6 +84,7 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
 - Approve/reject actions bump `conversationKey` and force message re-fetch (same behavior as V1).
 - Review bar appears when `group?.submittedForReview` is true.
 - Auto-scroll works correctly for new turn blocks.
+- `data-testid="task-view-v2"` is set on the root container element.
 - The existing TaskView.tsx and TaskConversationRenderer.tsx are NOT modified (beyond the import refactors done in Task 1.1).
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
@@ -103,6 +104,7 @@ Build the V1/V2 toggle wrapper and integrate it into the Room layout. The toggle
 1. Run `bun install` at the worktree root.
 2. Create `packages/web/src/components/room/TaskViewToggle.tsx`:
    - A wrapper component that reads the V1/V2 preference from localStorage key `neokai:taskViewVersion`
+   - **IMPORTANT**: Initialize the preference state synchronously from localStorage using a lazy initializer (e.g., `useState(() => localStorage.getItem('neokai:taskViewVersion') || 'v1')`) — NOT inside a `useEffect`. This prevents a visible flicker where V1 renders first, then V2 replaces it on the next frame.
    - Renders a small toggle header bar above the active view with:
      - A toggle button/switch to switch between 'v1' and 'v2'
      - The toggle is positioned in the top-right of the task view area, above the actual TaskView/TaskViewV2 content
@@ -110,7 +112,7 @@ Build the V1/V2 toggle wrapper and integrate it into the Room layout. The toggle
    - The toggle button switches between 'v1' and 'v2' and persists to localStorage
    - Default to 'v1' for backward compatibility
    - `data-testid="task-view-toggle"` on the toggle button
-   - `data-testid="task-view-v2"` on the TaskViewV2 root container
+   - `data-testid="task-view-v2"` is set by `TaskViewV2` itself on its root container (Task 4.2 owns this attribute), NOT by the wrapper
 3. Update `packages/web/src/islands/Room.tsx`:
    - Replace the `<TaskView>` usage with the new `<TaskViewToggle>` wrapper
    - This is the only modification to an existing file outside of the Task 1.1 refactors

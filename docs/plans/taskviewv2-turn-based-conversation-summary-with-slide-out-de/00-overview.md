@@ -37,4 +37,4 @@ Milestones 2 and 3 can be developed in parallel after Milestone 1 completes.
 
 ## Total Estimated Task Count
 
-4 milestones, 12 tasks
+4 milestones, 11 tasks (M1: 3, M2: 2, M3: 2, M4: 4)
