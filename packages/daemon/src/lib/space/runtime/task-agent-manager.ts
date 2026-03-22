@@ -286,6 +286,8 @@ export class TaskAgentManager {
 					this.injectSubSessionMessage(subSessionId, message),
 				onSubSessionComplete: (stepId, subSessionId) =>
 					this.handleSubSessionComplete(taskId, stepId, subSessionId),
+				sessionGroupRepo: this.config.sessionGroupRepo,
+				getGroupId: () => this.taskGroupIds.get(taskId),
 				daemonHub: this.config.daemonHub,
 			});
 
@@ -926,13 +928,19 @@ export class TaskAgentManager {
 		}
 
 		// Notify the Task Agent that a sub-session has completed.
+		// Include the agent's result summary so the Task Agent has immediate context.
 		// This sends a next_turn message so the Task Agent can call advance_workflow.
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
 			try {
+				// Fetch the completed step task's result summary from the DB for context.
+				const completedStepTask = stepTasks.length > 0 ? stepTasks[stepTasks.length - 1] : null;
+				const resultSummary = completedStepTask?.result
+					? `\nAgent result summary: ${completedStepTask.result}`
+					: '';
 				await this.injectMessageIntoSession(
 					taskAgentSession,
-					`[STEP_COMPLETE] Step "${stepId}" has completed. Call check_step_status to verify, then call advance_workflow to proceed.`,
+					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_step_status to verify, then call advance_workflow to proceed.`,
 					'next_turn'
 				);
 			} catch (err) {
@@ -1087,6 +1095,8 @@ export class TaskAgentManager {
 			onSubSessionComplete: (stepId, subSessionId) =>
 				this.handleSubSessionComplete(taskId, stepId, subSessionId),
 			daemonHub: this.config.daemonHub,
+			sessionGroupRepo: this.config.sessionGroupRepo,
+			getGroupId: () => this.taskGroupIds.get(taskId),
 		});
 
 		agentSession.setRuntimeMcpServers({
