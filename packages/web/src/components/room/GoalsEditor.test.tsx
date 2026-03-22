@@ -39,9 +39,9 @@ describe('GoalsEditor', () => {
 	};
 
 	describe('Rendering', () => {
-		it('should render the Missions header', () => {
+		it('should render the Goals header', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('Missions');
+			expect(container.textContent).toContain('Goals');
 		});
 
 		it('should display goal count badge', () => {
@@ -51,10 +51,10 @@ describe('GoalsEditor', () => {
 			expect(badge?.textContent).toBe('2');
 		});
 
-		it('should render "Create Mission" button', () => {
+		it('should render "Create Goal" button', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Mission');
+			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Goal');
 			expect(hasCreateGoal).toBe(true);
 		});
 	});
@@ -62,14 +62,15 @@ describe('GoalsEditor', () => {
 	describe('Empty State', () => {
 		it('should show empty state when no goals', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('No missions yet');
-			expect(container.textContent).toContain('Create your first mission to get started');
+			expect(container.textContent).toContain('No goals yet');
 		});
 
-		it('should have "Create Mission" button in empty state', () => {
+		it('should have create goal button in empty state', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Mission');
+			const hasCreateGoal = Array.from(buttons).some((btn) =>
+				btn.textContent?.includes('first goal')
+			);
 			expect(hasCreateGoal).toBe(true);
 		});
 	});
@@ -119,36 +120,58 @@ describe('GoalsEditor', () => {
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 			expect(container.textContent).toContain('1 task');
 		});
+
+		it('should show description in card header', () => {
+			const goals = [createMockGoal('goal-1', { description: 'Visible description text' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('Visible description text');
+		});
 	});
 
-	describe('Status Icons', () => {
-		it('should show spinner for active status', () => {
+	describe('Status Indicators', () => {
+		it('should show "Active" label for active status', () => {
 			const goals = [createMockGoal('goal-1', { status: 'active' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			// Spinner component has animate-spin class
-			const spinner = container.querySelector('[class*="animate-spin"]');
-			expect(spinner).toBeTruthy();
+			expect(container.textContent).toContain('Active');
 		});
 
-		it('should show green checkmark for completed status', () => {
+		it('should show green dot for active status', () => {
+			const goals = [createMockGoal('goal-1', { status: 'active' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const activeDot = container.querySelector('.bg-green-400');
+			expect(activeDot).toBeTruthy();
+		});
+
+		it('should show "Completed" label for completed status', () => {
 			const goals = [createMockGoal('goal-1', { status: 'completed' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			const completedIcon = container.querySelector('.bg-green-500');
-			expect(completedIcon).toBeTruthy();
+			expect(container.textContent).toContain('Completed');
 		});
 
-		it('should show yellow icon for needs_human status', () => {
+		it('should show "Needs Review" label for needs_human status', () => {
 			const goals = [createMockGoal('goal-1', { status: 'needs_human' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			const needsHumanIcon = container.querySelector('.bg-yellow-500');
-			expect(needsHumanIcon).toBeTruthy();
+			expect(container.textContent).toContain('Needs Review');
 		});
 
-		it('should show gray icon for archived status', () => {
+		it('should show yellow dot for needs_human status', () => {
+			const goals = [createMockGoal('goal-1', { status: 'needs_human' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const dot = container.querySelector('.bg-yellow-400');
+			expect(dot).toBeTruthy();
+		});
+
+		it('should show "Archived" label for archived status', () => {
 			const goals = [createMockGoal('goal-1', { status: 'archived' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			const archivedIcon = container.querySelector('.bg-gray-600');
-			expect(archivedIcon).toBeTruthy();
+			expect(container.textContent).toContain('Archived');
+		});
+
+		it('should show gray dot for archived status', () => {
+			const goals = [createMockGoal('goal-1', { status: 'archived' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const archivedDot = container.querySelector('.bg-gray-600');
+			expect(archivedDot).toBeTruthy();
 		});
 	});
 
@@ -178,6 +201,36 @@ describe('GoalsEditor', () => {
 		});
 	});
 
+	describe('Priority Border Colors', () => {
+		it('should show red left border for urgent priority', () => {
+			const goals = [createMockGoal('goal-1', { priority: 'urgent' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const card = container.querySelector('.border-l-red-500');
+			expect(card).toBeTruthy();
+		});
+
+		it('should show orange left border for high priority', () => {
+			const goals = [createMockGoal('goal-1', { priority: 'high' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const card = container.querySelector('.border-l-orange-400');
+			expect(card).toBeTruthy();
+		});
+
+		it('should show blue left border for normal priority', () => {
+			const goals = [createMockGoal('goal-1', { priority: 'normal' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const card = container.querySelector('.border-l-blue-500');
+			expect(card).toBeTruthy();
+		});
+
+		it('should show gray left border for low priority', () => {
+			const goals = [createMockGoal('goal-1', { priority: 'low' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const card = container.querySelector('.border-l-gray-500');
+			expect(card).toBeTruthy();
+		});
+	});
+
 	describe('Progress Bar Colors', () => {
 		it('should show red progress bar for progress below 30%', () => {
 			const goals = [createMockGoal('goal-1', { progress: 20 })];
@@ -202,10 +255,11 @@ describe('GoalsEditor', () => {
 	});
 
 	describe('Goal Expansion', () => {
-		it('should not show description when collapsed', () => {
+		it('should show description in card header (collapsed)', () => {
 			const goals = [createMockGoal('goal-1', { description: 'Detailed description here' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			expect(container.textContent).not.toContain('Detailed description here');
+			// Description is now visible in the card header (truncated)
+			expect(container.textContent).toContain('Detailed description here');
 		});
 
 		it('should have clickable header for expansion', () => {
@@ -214,6 +268,29 @@ describe('GoalsEditor', () => {
 
 			const goalHeader = container.querySelector('.cursor-pointer');
 			expect(goalHeader).toBeTruthy();
+		});
+
+		it('should show "Show details" label when collapsed', () => {
+			const goals = [createMockGoal('goal-1')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('Show details');
+		});
+
+		it('should show "Hide details" label when expanded', () => {
+			const goals = [createMockGoal('goal-1')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('Hide details');
+		});
+
+		it('should show relative creation time', () => {
+			const goals = [createMockGoal('goal-1')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			// createdAt is 24h ago, should show "1 day ago"
+			expect(container.textContent).toContain('day ago');
 		});
 	});
 
@@ -383,46 +460,96 @@ describe('GoalsEditor', () => {
 		});
 	});
 
-	describe('Mission Creation Form', () => {
-		it('should show mission type selector buttons in the create form', () => {
-			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-
-			// Open the create modal
+	describe('Two-Step Goal Creation Wizard', () => {
+		/** Helper: open the create modal and navigate to step 1 */
+		const openCreateModal = (container: Element) => {
 			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
+				(btn) => btn.textContent === 'Create Goal'
 			);
 			fireEvent.click(createButton!);
+		};
 
-			// The modal body should have rendered — look for testid buttons
+		/** Helper: fill step 1 and advance to step 2 */
+		const advanceToStep2 = (titleValue = 'Test Goal') => {
+			const titleInput = document.body.querySelector(
+				'#wizard-goal-title'
+			) as HTMLInputElement;
+			fireEvent.input(titleInput, { target: { value: titleValue } });
+			const nextBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Next →'
+			);
+			fireEvent.click(nextBtn!);
+		};
+
+		it('should show goal name input in step 1', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			expect(document.body.querySelector('#wizard-goal-title')).toBeTruthy();
+		});
+
+		it('should show priority segmented control in step 1', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			// Priority buttons with emoji labels
+			expect(document.body.textContent).toContain('Urgent');
+			expect(document.body.textContent).toContain('Normal');
+		});
+
+		it('should disable Next button when title is empty', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			const nextBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Next →'
+			) as HTMLButtonElement;
+			expect(nextBtn?.disabled).toBe(true);
+		});
+
+		it('should enable Next button when title is filled', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			const titleInput = document.body.querySelector('#wizard-goal-title') as HTMLInputElement;
+			fireEvent.input(titleInput, { target: { value: 'My Goal' } });
+			const nextBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Next →'
+			) as HTMLButtonElement;
+			expect(nextBtn?.disabled).toBe(false);
+		});
+
+		it('should show mission type selector buttons in step 2', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
+
 			expect(document.body.querySelector('[data-testid="mission-type-one_shot"]')).toBeTruthy();
 			expect(document.body.querySelector('[data-testid="mission-type-measurable"]')).toBeTruthy();
 			expect(document.body.querySelector('[data-testid="mission-type-recurring"]')).toBeTruthy();
 		});
 
-		it('should show metrics section when measurable type is selected', () => {
+		it('should show autonomy level selector buttons in step 2', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
 
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
-			);
-			fireEvent.click(createButton!);
+			expect(document.body.querySelector('[data-testid="autonomy-supervised"]')).toBeTruthy();
+			expect(document.body.querySelector('[data-testid="autonomy-semi_autonomous"]')).toBeTruthy();
+		});
 
-			// Click measurable type
+		it('should show metrics section when measurable type is selected in step 2', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
+
 			const measurableBtn = document.body.querySelector('[data-testid="mission-type-measurable"]');
 			fireEvent.click(measurableBtn!);
 
 			expect(document.body.querySelector('[data-testid="metrics-section"]')).toBeTruthy();
 		});
 
-		it('should show schedule section when recurring type is selected', () => {
+		it('should show schedule section when recurring type is selected in step 2', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
 
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
-			);
-			fireEvent.click(createButton!);
-
-			// Click recurring type
 			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
 			fireEvent.click(recurringBtn!);
 
@@ -431,83 +558,87 @@ describe('GoalsEditor', () => {
 			expect(document.body.querySelector('[data-testid="timezone-select"]')).toBeTruthy();
 		});
 
-		it('should show autonomy level selector buttons', () => {
+		it('should add a metric row when "Add Metric" is clicked in step 2', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
 
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
-			);
-			fireEvent.click(createButton!);
-
-			expect(document.body.querySelector('[data-testid="autonomy-supervised"]')).toBeTruthy();
-			expect(document.body.querySelector('[data-testid="autonomy-semi_autonomous"]')).toBeTruthy();
-		});
-
-		it('should add a metric row when "Add Metric" is clicked', () => {
-			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
-			);
-			fireEvent.click(createButton!);
-
-			// Select measurable type
 			const measurableBtn = document.body.querySelector('[data-testid="mission-type-measurable"]');
 			fireEvent.click(measurableBtn!);
 
-			// Click add metric button
 			const addMetricBtn = document.body.querySelector('[data-testid="add-metric-btn"]');
 			fireEvent.click(addMetricBtn!);
 
-			// Should now have a metric name input
 			const nameInput = document.body.querySelector('[aria-label="Metric 1 name"]');
 			expect(nameInput).toBeTruthy();
 		});
 
-		it('should show custom cron field when "Custom" preset is selected', () => {
+		it('should show custom cron field when "Custom" preset is selected in step 2', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
 
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
-			);
-			fireEvent.click(createButton!);
-
-			// Select recurring type
 			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
 			fireEvent.click(recurringBtn!);
 
-			// Select custom preset
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
 			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
 
 			expect(document.body.querySelector('[data-testid="custom-cron"]')).toBeTruthy();
 		});
 
-		it('should disable submit when recurring + custom preset + empty cron expression', () => {
+		it('should disable Create button when recurring + custom preset + empty cron expression', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
 
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
-			);
-			fireEvent.click(createButton!);
-
-			// Fill in title
-			const titleInput = document.body.querySelector('#goal-title') as HTMLInputElement;
-			fireEvent.input(titleInput, { target: { value: 'My recurring mission' } });
-
-			// Select recurring type
 			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
 			fireEvent.click(recurringBtn!);
 
-			// Select custom preset (cron field empty)
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
 			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
 
-			// Submit button should be disabled
-			const submitBtn = Array.from(document.body.querySelectorAll('button[type="submit"]')).at(
-				-1
+			// The "Create" button (not "Skip & Create") should be disabled
+			const createBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create'
 			) as HTMLButtonElement;
-			expect(submitBtn.disabled).toBe(true);
+			expect(createBtn?.disabled).toBe(true);
+		});
+
+		it('should allow "Skip & Create" even with empty cron', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
+
+			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
+			fireEvent.click(recurringBtn!);
+
+			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
+			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+
+			// "Skip & Create" should NOT be disabled (it uses defaults, not current step 2 values)
+			const skipBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Skip & Create'
+			) as HTMLButtonElement;
+			expect(skipBtn?.disabled).toBe(false);
+		});
+
+		it('should navigate back to step 1 when Back button is clicked', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			openCreateModal(container);
+			advanceToStep2();
+
+			// Verify we're on step 2
+			expect(document.body.querySelector('[data-testid="mission-type-one_shot"]')).toBeTruthy();
+
+			// Click Back
+			const backBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === '← Back'
+			);
+			fireEvent.click(backBtn!);
+
+			// Should be back to step 1
+			expect(document.body.querySelector('#wizard-goal-title')).toBeTruthy();
 		});
 
 		it('should keep modal open when submission fails', async () => {
@@ -516,23 +647,48 @@ describe('GoalsEditor', () => {
 				<GoalsEditor goals={[]} {...defaultHandlers} onCreateGoal={failingCreate} />
 			);
 
-			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Mission'
+			openCreateModal(container);
+			advanceToStep2('Test Goal');
+
+			// Click Create
+			const createBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create'
 			);
-			fireEvent.click(createButton!);
-
-			// Fill in title and submit
-			const titleInput = document.body.querySelector('#goal-title') as HTMLInputElement;
-			fireEvent.input(titleInput, { target: { value: 'Test Mission' } });
-
-			const submitBtn = Array.from(document.body.querySelectorAll('button[type="submit"]')).at(-1)!;
-			fireEvent.click(submitBtn);
+			fireEvent.click(createBtn!);
 
 			// Wait for async rejection to settle
 			await new Promise((resolve) => setTimeout(resolve, 20));
 
-			// Modal should still be open (title input still present)
-			expect(document.body.querySelector('#goal-title')).toBeTruthy();
+			// Modal should still be open (← Back button still present)
+			const backBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === '← Back'
+			);
+			expect(backBtn).toBeTruthy();
+		});
+
+		it('should call onCreateGoal with defaults when Skip & Create is clicked', async () => {
+			const onCreate = vi.fn().mockResolvedValue(undefined);
+			const { container } = render(
+				<GoalsEditor goals={[]} {...defaultHandlers} onCreateGoal={onCreate} />
+			);
+
+			openCreateModal(container);
+			advanceToStep2('My Skipped Goal');
+
+			const skipBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Skip & Create'
+			);
+			fireEvent.click(skipBtn!);
+
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			expect(onCreate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'My Skipped Goal',
+					missionType: 'one_shot',
+					autonomyLevel: 'supervised',
+				})
+			);
 		});
 	});
 

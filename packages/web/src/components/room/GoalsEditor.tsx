@@ -1,17 +1,17 @@
 /**
  * GoalsEditor Component
  *
- * Provides CRUD operations for room missions with progress tracking.
+ * Provides CRUD operations for room goals with progress tracking.
  * Features:
- * - Create, edit, and delete missions
+ * - Two-step progressive create wizard (Step 1: basics, Step 2: advanced config)
+ * - Create, edit, and delete goals
  * - Mission type selector (one-shot, measurable, recurring)
  * - Conditional fields for measurable (metrics) and recurring (schedule)
  * - Autonomy level selector with descriptions
- * - Type-specific detail views
- * - Status and priority badges with visual indicators
+ * - Redesigned goal cards with priority color bar and status indicator
  * - Progress bar with color-coded completion
- * - Link/unlink tasks to missions
- * - Expandable mission details view
+ * - Link/unlink tasks to goals
+ * - Expandable goal details view
  * - Notification feed for auto-completed tasks
  */
 
@@ -30,7 +30,6 @@ import type {
 } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
-import { Spinner } from '../ui/Spinner';
 import { Modal } from '../ui/Modal';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Skeleton } from '../ui/Skeleton';
@@ -107,65 +106,46 @@ const COMMON_TIMEZONES = [
 	'Australia/Sydney',
 ];
 
-// ─── Status Icon ──────────────────────────────────────────────────────────────
+// ─── Helper Utilities ─────────────────────────────────────────────────────────
 
-function StatusIcon({ status }: { status: GoalStatus }) {
-	switch (status) {
-		case 'active':
-			return (
-				<div class="w-5 h-5 flex-shrink-0" title="Active">
-					<Spinner size="xs" color="border-blue-400" />
-				</div>
-			);
-		case 'needs_human':
-			return (
-				<div
-					class="w-5 h-5 rounded-full bg-yellow-500 flex items-center justify-center flex-shrink-0"
-					title="Needs Human"
-				>
-					<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={3}
-							d="M12 9v2m0 4h.01"
-						/>
-					</svg>
-				</div>
-			);
-		case 'completed':
-			return (
-				<div
-					class="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0"
-					title="Completed"
-				>
-					<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={3}
-							d="M5 13l4 4L19 7"
-						/>
-					</svg>
-				</div>
-			);
-		case 'archived':
-			return (
-				<div
-					class="w-5 h-5 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0"
-					title="Archived"
-				>
-					<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8"
-						/>
-					</svg>
-				</div>
-			);
-	}
+function relativeTime(ts: number): string {
+	const diff = Date.now() - ts * 1000;
+	const mins = Math.floor(diff / 60000);
+	if (mins < 1) return 'just now';
+	if (mins < 60) return `${mins}m ago`;
+	const hours = Math.floor(mins / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	if (days === 1) return '1 day ago';
+	return `${days} days ago`;
+}
+
+function goalPriorityBorderClass(priority: GoalPriority): string {
+	const map: Record<GoalPriority, string> = {
+		urgent: 'border-l-4 border-l-red-500',
+		high: 'border-l-4 border-l-orange-400',
+		normal: 'border-l-4 border-l-blue-500',
+		low: 'border-l-4 border-l-gray-500',
+	};
+	return map[priority];
+}
+
+// ─── Status Indicator ─────────────────────────────────────────────────────────
+
+function StatusIndicator({ status }: { status: GoalStatus }) {
+	const config: Record<GoalStatus, { dot: string; label: string }> = {
+		active: { dot: 'bg-green-400', label: 'Active' },
+		completed: { dot: 'bg-gray-400', label: 'Completed' },
+		needs_human: { dot: 'bg-yellow-400', label: 'Needs Review' },
+		archived: { dot: 'bg-gray-600', label: 'Archived' },
+	};
+	const { dot, label } = config[status] ?? config.active;
+	return (
+		<div class="flex items-center gap-1.5">
+			<div class={cn('w-2 h-2 rounded-full flex-shrink-0', dot)} />
+			<span class="text-xs text-gray-400">{label}</span>
+		</div>
+	);
 }
 
 // ─── Priority Badge ───────────────────────────────────────────────────────────
@@ -344,7 +324,7 @@ function MetricRow({ metric, index, onChange, onRemove }: MetricRowProps) {
 	);
 }
 
-// ─── Create/Edit Mission Form ─────────────────────────────────────────────────
+// ─── Edit Goal Form (used inline for editing existing goals) ──────────────────
 
 /** Derives the schedule preset string from a stored CronSchedule. */
 function scheduleToPreset(schedule?: CronSchedule): string {
@@ -388,7 +368,7 @@ function GoalForm({
 	onSubmit,
 	onCancel,
 	isLoading,
-	submitLabel = 'Create',
+	submitLabel = 'Save',
 }: GoalFormProps) {
 	const [title, setTitle] = useState(initialTitle);
 	const [description, setDescription] = useState(initialDescription);
@@ -467,7 +447,7 @@ function GoalForm({
 					value={title}
 					onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-					placeholder="Enter mission title..."
+					placeholder="Enter goal title..."
 					required
 				/>
 			</div>
@@ -482,14 +462,14 @@ function GoalForm({
 					value={description}
 					onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-					placeholder="Describe the mission..."
+					placeholder="Describe the goal..."
 					rows={2}
 				/>
 			</div>
 
 			{/* Mission Type */}
 			<div>
-				<label class="block text-sm font-medium text-gray-300 mb-2">Mission Type</label>
+				<label class="block text-sm font-medium text-gray-300 mb-2">Goal Type</label>
 				<div class="grid grid-cols-3 gap-2">
 					{(
 						[
@@ -674,6 +654,393 @@ function GoalForm({
 				</Button>
 			</div>
 		</form>
+	);
+}
+
+// ─── Two-Step Create Goal Wizard ──────────────────────────────────────────────
+
+interface CreateGoalWizardProps {
+	onSubmit: (data: CreateGoalFormData) => Promise<void>;
+	onCancel: () => void;
+	isLoading?: boolean;
+}
+
+const PRIORITY_CONFIG: Record<GoalPriority, { label: string; emoji: string; activeClass: string }> =
+	{
+		urgent: { label: 'Urgent', emoji: '🔴', activeClass: 'bg-red-900/40 text-red-300 border-red-600' },
+		high: { label: 'High', emoji: '🟠', activeClass: 'bg-orange-900/40 text-orange-300 border-orange-600' },
+		normal: { label: 'Normal', emoji: '🔵', activeClass: 'bg-blue-900/40 text-blue-300 border-blue-600' },
+		low: { label: 'Low', emoji: '⚪', activeClass: 'bg-gray-800 text-gray-300 border-gray-600' },
+	};
+
+function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardProps) {
+	const [step, setStep] = useState<1 | 2>(1);
+
+	// Step 1 state
+	const [title, setTitle] = useState('');
+	const [priority, setPriority] = useState<GoalPriority>('normal');
+	const [description, setDescription] = useState('');
+
+	// Step 2 state
+	const [missionType, setMissionType] = useState<MissionType>('one_shot');
+	const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>('supervised');
+	const [metricEntries, setMetricEntries] = useState<MetricEntry[]>([]);
+	const [schedulePreset, setSchedulePreset] = useState('@daily');
+	const [customCron, setCustomCron] = useState('');
+	const [timezone, setTimezone] = useState('UTC');
+	const [isSubmitting, setIsSubmitting] = useState(false);
+
+	const handleMetricChange = (index: number, metric: MissionMetric) => {
+		setMetricEntries((prev) => prev.map((e, i) => (i === index ? { ...e, metric } : e)));
+	};
+	const handleMetricRemove = (index: number) => {
+		setMetricEntries((prev) => prev.filter((_, i) => i !== index));
+	};
+	const handleAddMetric = () => {
+		setMetricEntries((prev) => [...prev, newMetricEntry({ name: '', target: 100, current: 0 })]);
+	};
+
+	const buildSchedule = (): CronSchedule | undefined => {
+		if (missionType !== 'recurring') return undefined;
+		const expression = schedulePreset === 'custom' ? customCron.trim() : schedulePreset;
+		if (!expression) return undefined;
+		return { expression, timezone };
+	};
+
+	const isCustomCronEmpty =
+		missionType === 'recurring' && schedulePreset === 'custom' && !customCron.trim();
+
+	const doSubmit = async (useDefaults = false) => {
+		setIsSubmitting(true);
+		try {
+			await onSubmit({
+				title: title.trim(),
+				description: description.trim() || undefined,
+				priority,
+				missionType: useDefaults ? 'one_shot' : missionType,
+				autonomyLevel: useDefaults ? 'supervised' : autonomyLevel,
+				structuredMetrics:
+					!useDefaults && missionType === 'measurable'
+						? metricEntries.map((e) => e.metric)
+						: undefined,
+				schedule: !useDefaults ? buildSchedule() : undefined,
+			});
+			onCancel();
+		} catch {
+			// Leave wizard open so user can retry
+		} finally {
+			setIsSubmitting(false);
+		}
+	};
+
+	// ── Step 1: Basic Info ──────────────────────────────────────────────────────
+	if (step === 1) {
+		return (
+			<div class="space-y-5">
+				{/* Goal title */}
+				<div>
+					<label for="wizard-goal-title" class="block text-sm font-medium text-gray-300 mb-1.5">
+						Goal Name <span class="text-red-400">*</span>
+					</label>
+					<input
+						id="wizard-goal-title"
+						type="text"
+						value={title}
+						onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+						class="w-full px-3 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-600"
+						placeholder="e.g. Improve login flow UX..."
+						autoFocus
+					/>
+				</div>
+
+				{/* Priority — segmented control */}
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">Priority</label>
+					<div class="flex gap-1 p-1 bg-dark-800 rounded-lg border border-dark-600">
+						{(['urgent', 'high', 'normal', 'low'] as GoalPriority[]).map((p) => {
+							const { label, emoji, activeClass } = PRIORITY_CONFIG[p];
+							return (
+								<button
+									key={p}
+									type="button"
+									onClick={() => setPriority(p)}
+									class={cn(
+										'flex-1 py-1.5 px-1 rounded text-xs font-medium transition-all border',
+										priority === p
+											? activeClass
+											: 'text-gray-500 border-transparent hover:text-gray-300'
+									)}
+								>
+									{emoji} {label}
+								</button>
+							);
+						})}
+					</div>
+				</div>
+
+				{/* Description (optional) */}
+				<div>
+					<label
+						for="wizard-goal-description"
+						class="block text-sm font-medium text-gray-300 mb-1.5"
+					>
+						Description{' '}
+						<span class="text-xs text-gray-500 font-normal">(optional)</span>
+					</label>
+					<textarea
+						id="wizard-goal-description"
+						value={description}
+						onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+						class="w-full px-3 py-2.5 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none placeholder-gray-600"
+						placeholder="What does success look like?"
+						rows={3}
+					/>
+				</div>
+
+				{/* Footer */}
+				<div class="flex items-center justify-between pt-1">
+					<Button variant="ghost" onClick={onCancel} disabled={isSubmitting}>
+						Cancel
+					</Button>
+					<Button
+						onClick={() => setStep(2)}
+						disabled={!title.trim()}
+					>
+						Next →
+					</Button>
+				</div>
+			</div>
+		);
+	}
+
+	// ── Step 2: Advanced Configuration (Optional) ───────────────────────────────
+	return (
+		<div class="space-y-5">
+			{/* Section header */}
+			<p class="text-xs text-gray-500 -mb-1">
+				Advanced configuration — you can skip this and create with defaults.
+			</p>
+
+			{/* Goal Type */}
+			<div>
+				<label class="block text-sm font-medium text-gray-300 mb-2">Goal Type</label>
+				<div class="space-y-2">
+					{(
+						[
+							{ value: 'one_shot', label: 'One-time', desc: 'A single discrete objective' },
+							{ value: 'measurable', label: 'Measurable', desc: 'Track progress with KPIs' },
+							{ value: 'recurring', label: 'Recurring', desc: 'Runs on a schedule' },
+						] as const
+					).map(({ value, label, desc }) => (
+						<button
+							key={value}
+							type="button"
+							onClick={() => setMissionType(value)}
+							class={cn(
+								'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors cursor-pointer',
+								missionType === value
+									? 'border-blue-500 bg-blue-900/20'
+									: 'border-dark-600 bg-dark-800 hover:border-dark-500'
+							)}
+							data-testid={`mission-type-${value}`}
+						>
+							<div
+								class={cn(
+									'w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center',
+									missionType === value ? 'border-blue-400' : 'border-dark-500'
+								)}
+							>
+								{missionType === value && (
+									<div class="w-2 h-2 rounded-full bg-blue-400" />
+								)}
+							</div>
+							<div>
+								<div
+									class={cn(
+										'text-sm font-medium',
+										missionType === value ? 'text-blue-300' : 'text-gray-300'
+									)}
+								>
+									{label}
+								</div>
+								<div class="text-xs text-gray-500">{desc}</div>
+							</div>
+						</button>
+					))}
+				</div>
+			</div>
+
+			{/* Measurable: Metrics */}
+			{missionType === 'measurable' && (
+				<div data-testid="metrics-section">
+					<div class="flex items-center justify-between mb-2">
+						<label class="text-sm font-medium text-gray-300">Metrics</label>
+						<button
+							type="button"
+							onClick={handleAddMetric}
+							class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+							data-testid="add-metric-btn"
+						>
+							+ Add Metric
+						</button>
+					</div>
+					{metricEntries.length === 0 ? (
+						<p class="text-xs text-gray-500 italic">
+							No metrics yet — click "Add Metric" to track KPIs.
+						</p>
+					) : (
+						<div class="space-y-2">
+							<div class="grid grid-cols-[1fr_5rem_4rem_1.5rem] gap-2 px-3">
+								<span class="text-[10px] text-gray-500 uppercase">Name</span>
+								<span class="text-[10px] text-gray-500 uppercase">Target</span>
+								<span class="text-[10px] text-gray-500 uppercase">Unit</span>
+								<span />
+							</div>
+							{metricEntries.map(({ id, metric }, i) => (
+								<MetricRow
+									key={id}
+									metric={metric}
+									index={i}
+									onChange={handleMetricChange}
+									onRemove={handleMetricRemove}
+								/>
+							))}
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* Recurring: Schedule */}
+			{missionType === 'recurring' && (
+				<div data-testid="schedule-section">
+					<label class="block text-sm font-medium text-gray-300 mb-2">Schedule</label>
+					<div class="space-y-3">
+						<div class="flex gap-2">
+							<select
+								value={schedulePreset}
+								onChange={(e) => setSchedulePreset((e.target as HTMLSelectElement).value)}
+								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+								data-testid="schedule-preset"
+							>
+								{SCHEDULE_PRESETS.map(({ label, value }) => (
+									<option key={value} value={value}>
+										{label}
+									</option>
+								))}
+							</select>
+							<select
+								value={timezone}
+								onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
+								class="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+								data-testid="timezone-select"
+							>
+								{COMMON_TIMEZONES.map((tz) => (
+									<option key={tz} value={tz}>
+										{tz}
+									</option>
+								))}
+							</select>
+						</div>
+						{schedulePreset === 'custom' && (
+							<input
+								type="text"
+								value={customCron}
+								onInput={(e) => setCustomCron((e.target as HTMLInputElement).value)}
+								placeholder="e.g. 0 9 * * 1 (Mon 9am)"
+								class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+								data-testid="custom-cron"
+							/>
+						)}
+						{schedulePreset !== 'custom' && (
+							<p class="text-xs text-gray-500">
+								Cron: <code class="text-gray-400">{schedulePreset}</code> · Timezone:{' '}
+								<span class="text-gray-400">{timezone}</span>
+							</p>
+						)}
+					</div>
+				</div>
+			)}
+
+			{/* Autonomy Level */}
+			<div>
+				<label class="block text-sm font-medium text-gray-300 mb-2">Autonomy Level</label>
+				<div class="space-y-2">
+					{(
+						[
+							{
+								value: 'supervised' as const,
+								label: 'Supervised',
+								desc: 'Human reviews each step before proceeding',
+							},
+							{
+								value: 'semi_autonomous' as const,
+								label: 'Semi-Autonomous',
+								desc: 'Tasks auto-approve; planners still need review',
+							},
+						] as const
+					).map(({ value, label, desc }) => (
+						<button
+							key={value}
+							type="button"
+							onClick={() => setAutonomyLevel(value)}
+							class={cn(
+								'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors cursor-pointer',
+								autonomyLevel === value
+									? 'border-blue-500 bg-blue-900/20'
+									: 'border-dark-600 bg-dark-800 hover:border-dark-500'
+							)}
+							data-testid={`autonomy-${value}`}
+						>
+							<div
+								class={cn(
+									'w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center',
+									autonomyLevel === value ? 'border-blue-400' : 'border-dark-500'
+								)}
+							>
+								{autonomyLevel === value && (
+									<div class="w-2 h-2 rounded-full bg-blue-400" />
+								)}
+							</div>
+							<div>
+								<div
+									class={cn(
+										'text-sm font-medium',
+										autonomyLevel === value ? 'text-blue-300' : 'text-gray-300'
+									)}
+								>
+									{label}
+								</div>
+								<div class="text-xs text-gray-500">{desc}</div>
+							</div>
+						</button>
+					))}
+				</div>
+			</div>
+
+			{/* Footer */}
+			<div class="flex items-center justify-between pt-1">
+				<Button variant="ghost" onClick={() => setStep(1)} disabled={isSubmitting}>
+					← Back
+				</Button>
+				<div class="flex items-center gap-2">
+					<Button
+						variant="secondary"
+						onClick={() => doSubmit(true)}
+						disabled={isSubmitting || isLoading}
+						loading={isSubmitting}
+					>
+						Skip & Create
+					</Button>
+					<Button
+						onClick={() => doSubmit(false)}
+						disabled={isSubmitting || isLoading || isCustomCronEmpty}
+						loading={isSubmitting}
+					>
+						Create
+					</Button>
+				</div>
+			</div>
+		</div>
 	);
 }
 
@@ -873,55 +1240,32 @@ function GoalItem({
 
 	return (
 		<>
-			<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-				{/* Header - always visible */}
+			<div
+				class={cn(
+					'bg-dark-850 border border-dark-700 rounded-lg overflow-hidden',
+					goalPriorityBorderClass(goal.priority)
+				)}
+			>
+				{/* Card header — always visible */}
 				<div
 					data-testid="goal-item-header"
-					class="px-4 py-3 cursor-pointer hover:bg-dark-800 transition-colors"
+					class="px-4 py-3 cursor-pointer hover:bg-dark-800/50 transition-colors active:bg-dark-800"
 					onClick={onToggleExpand}
 				>
-					<div class="flex items-center gap-3">
-						<StatusIcon status={goal.status} />
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center gap-2 mb-1 flex-wrap">
-								<h4 class="text-sm font-medium text-gray-100 truncate">{goal.title}</h4>
-								<PriorityBadge priority={goal.priority} />
-								{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
-								{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
-									<AutonomyBadge level={goal.autonomyLevel} />
-								)}
-							</div>
-							{/* Type-specific summary in header */}
-							{missionType === 'measurable' &&
-							goal.structuredMetrics &&
-							goal.structuredMetrics.length > 0 ? (
-								<MetricProgress metrics={goal.structuredMetrics} />
-							) : missionType === 'recurring' && goal.schedule ? (
-								<div class="flex items-center gap-2 text-xs text-gray-500">
-									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-										/>
-									</svg>
-									<span class="font-mono">{goal.schedule.expression}</span>
-									{goal.schedulePaused && <span class="text-yellow-500">· Paused</span>}
-									{goal.nextRunAt && !goal.schedulePaused && (
-										<span>· Next: {new Date(goal.nextRunAt * 1000).toLocaleDateString()}</span>
-									)}
-								</div>
-							) : (
-								<ProgressBar progress={goal.progress} />
+					{/* Row 1: Status indicator + priority badge + mission type badge + actions */}
+					<div class="flex items-center justify-between mb-2">
+						<div class="flex items-center gap-2 flex-wrap">
+							<StatusIndicator status={goal.status} />
+							<PriorityBadge priority={goal.priority} />
+							{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
+							{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
+								<AutonomyBadge level={goal.autonomyLevel} />
 							)}
 						</div>
-						{goal.linkedTaskIds.length > 0 && (
-							<span class="px-2 py-0.5 text-xs bg-dark-700 text-gray-300 rounded flex-shrink-0">
-								{goal.linkedTaskIds.length} task{goal.linkedTaskIds.length !== 1 ? 's' : ''}
-							</span>
-						)}
-						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+						<div
+							class="flex items-center gap-1 flex-shrink-0"
+							onClick={(e) => e.stopPropagation()}
+						>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
 								Edit
 							</Button>
@@ -929,6 +1273,120 @@ function GoalItem({
 								Delete
 							</Button>
 						</div>
+					</div>
+
+					{/* Row 2: Title */}
+					<h4 class="text-base font-semibold text-gray-100 leading-snug mb-1">{goal.title}</h4>
+
+					{/* Row 3: Description (truncated, optional) */}
+					{goal.description && (
+						<p class="text-xs text-gray-400 mb-2 line-clamp-2">{goal.description}</p>
+					)}
+
+					{/* Row 4: Type-specific progress summary */}
+					{missionType === 'measurable' &&
+					goal.structuredMetrics &&
+					goal.structuredMetrics.length > 0 ? (
+						<div class="mb-2">
+							<MetricProgress metrics={goal.structuredMetrics} />
+						</div>
+					) : missionType === 'recurring' && goal.schedule ? (
+						<div class="flex items-center gap-2 text-xs text-gray-500 mb-2">
+							<svg class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+								/>
+							</svg>
+							<span class="font-mono">{goal.schedule.expression}</span>
+							{goal.schedulePaused && <span class="text-yellow-500">· Paused</span>}
+							{goal.nextRunAt && !goal.schedulePaused && (
+								<span>· Next: {new Date(goal.nextRunAt * 1000).toLocaleDateString()}</span>
+							)}
+						</div>
+					) : (
+						<div class="mb-2">
+							<ProgressBar progress={goal.progress} />
+						</div>
+					)}
+
+					{/* Row 5: Footer — task count + creation time + expand toggle */}
+					<div class="flex items-center justify-between pt-2 border-t border-dark-700/60">
+						<div class="flex items-center gap-3 text-xs text-gray-500">
+							<span class="flex items-center gap-1">
+								<svg
+									class="w-3.5 h-3.5 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+									/>
+								</svg>
+								{goal.linkedTaskIds.length > 0
+									? `${goal.linkedTaskIds.length} task${goal.linkedTaskIds.length !== 1 ? 's' : ''}`
+									: 'No tasks'}
+							</span>
+							<span class="flex items-center gap-1">
+								<svg
+									class="w-3.5 h-3.5 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+									/>
+								</svg>
+								{relativeTime(goal.createdAt)}
+							</span>
+						</div>
+						<span class="text-xs text-gray-500 flex items-center gap-1">
+							{isExpanded ? (
+								<>
+									Hide details{' '}
+									<svg
+										class="w-3 h-3"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M5 15l7-7 7 7"
+										/>
+									</svg>
+								</>
+							) : (
+								<>
+									Show details{' '}
+									<svg
+										class="w-3 h-3"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M19 9l-7 7-7-7"
+										/>
+									</svg>
+								</>
+							)}
+						</span>
 					</div>
 				</div>
 
@@ -1128,7 +1586,7 @@ function GoalItem({
 				isOpen={showDeleteConfirm}
 				onClose={() => setShowDeleteConfirm(false)}
 				onConfirm={handleDelete}
-				title="Delete Mission"
+				title="Delete Goal"
 				message={`Are you sure you want to delete "${goal.title}"? This action cannot be undone.`}
 				confirmText="Delete"
 				isLoading={isUpdating}
@@ -1144,13 +1602,14 @@ function GoalsSkeleton() {
 		<div class="space-y-3">
 			{[1, 2, 3].map((i) => (
 				<div key={i} class="bg-dark-850 border border-dark-700 rounded-lg p-4">
-					<div class="flex items-center gap-3">
-						<Skeleton variant="circle" width={20} height={20} />
-						<div class="flex-1 space-y-2">
-							<Skeleton width="40%" height={16} />
-							<Skeleton width="100%" height={8} />
-						</div>
+					<div class="flex items-center gap-3 mb-3">
+						<Skeleton variant="circle" width={8} height={8} />
+						<Skeleton width="60px" height={14} />
+						<Skeleton width="50px" height={14} />
 					</div>
+					<Skeleton width="55%" height={18} class="mb-2" />
+					<Skeleton width="80%" height={12} class="mb-3" />
+					<Skeleton width="100%" height={8} />
 				</div>
 			))}
 		</div>
@@ -1161,20 +1620,15 @@ function GoalsSkeleton() {
 
 function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 	return (
-		<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
-			<div class="w-12 h-12 rounded-full bg-dark-700 flex items-center justify-center mx-auto mb-4">
-				<svg class="w-6 h-6 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-					/>
-				</svg>
+		<div class="flex flex-col items-center justify-center py-16 text-center">
+			<div class="text-5xl mb-4" aria-hidden="true">
+				🎯
 			</div>
-			<h3 class="text-lg font-medium text-gray-200 mb-2">No missions yet</h3>
-			<p class="text-sm text-gray-400 mb-4">Create your first mission to get started.</p>
-			<Button onClick={onCreateClick}>Create Mission</Button>
+			<h3 class="text-lg font-semibold text-gray-200 mb-2">No goals yet</h3>
+			<p class="text-sm text-gray-400 max-w-xs mb-6 leading-relaxed">
+				Set clear goals to give your agent team direction and purpose.
+			</p>
+			<Button onClick={onCreateClick}>+ Create your first goal</Button>
 		</div>
 	);
 }
@@ -1354,15 +1808,15 @@ export function GoalsEditor({
 			{/* Header */}
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-2">
-					<h2 class="text-lg font-semibold text-gray-100">Missions</h2>
+					<h2 class="text-lg font-semibold text-gray-100">Goals</h2>
 					<span class="px-2 py-0.5 text-xs font-medium bg-dark-700 text-gray-300 rounded">
 						{goals.length}
 					</span>
 				</div>
-				<Button onClick={() => setShowCreateModal(true)}>Create Mission</Button>
+				<Button onClick={() => setShowCreateModal(true)}>Create Goal</Button>
 			</div>
 
-			{/* Type filter (only when there are missions) */}
+			{/* Type filter (only when there are goals) */}
 			{goals.length > 0 && (
 				<MissionTypeFilter value={typeFilter} onChange={setTypeFilter} counts={counts} />
 			)}
@@ -1378,7 +1832,7 @@ export function GoalsEditor({
 				<GoalsSkeleton />
 			) : sortedGoals.length === 0 && goals.length > 0 ? (
 				<div class="text-sm text-gray-500 text-center py-6">
-					No missions match the selected filter.
+					No goals match the selected filter.
 				</div>
 			) : goals.length === 0 ? (
 				<EmptyState onCreateClick={() => setShowCreateModal(true)} />
@@ -1401,16 +1855,15 @@ export function GoalsEditor({
 				</div>
 			)}
 
-			{/* Create Mission Modal */}
+			{/* Create Goal Modal — Two-step wizard */}
 			<Modal
 				isOpen={showCreateModal}
 				onClose={() => setShowCreateModal(false)}
-				title="Create Mission"
+				title="Create Goal"
 			>
-				<GoalForm
+				<CreateGoalWizard
 					onSubmit={onCreateGoal}
 					onCancel={() => setShowCreateModal(false)}
-					submitLabel="Create"
 				/>
 			</Modal>
 		</div>
