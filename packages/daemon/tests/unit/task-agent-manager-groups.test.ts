@@ -126,10 +126,10 @@ class MockSessionGroupRepository {
 			id,
 			spaceId: params.spaceId,
 			name: params.name,
-			description: params.description ?? null,
-			workflowRunId: params.workflowRunId ?? null,
-			currentStepId: params.currentStepId ?? null,
-			taskId: params.taskId ?? null,
+			description: params.description,
+			workflowRunId: params.workflowRunId,
+			currentStepId: params.currentStepId,
+			taskId: params.taskId,
 			status: params.status ?? 'active',
 			members: [],
 			createdAt: Date.now(),
@@ -149,6 +149,11 @@ class MockSessionGroupRepository {
 		return Array.from(this.groups.values()).filter((g) => g.taskId === taskId);
 	}
 
+	getGroupsBySpace(spaceId: string): SpaceSessionGroup[] {
+		this._recordCall('getGroupsBySpace', [spaceId]);
+		return Array.from(this.groups.values()).filter((g) => g.spaceId === spaceId);
+	}
+
 	addMember(groupId: string, sessionId: string, params: AddMemberParams): SpaceSessionGroupMember {
 		this._recordCall('addMember', [groupId, sessionId, params]);
 		const memberId = `mock-member-${++this.memberCounter}`;
@@ -157,7 +162,7 @@ class MockSessionGroupRepository {
 			groupId,
 			sessionId,
 			role: params.role,
-			agentId: params.agentId ?? null,
+			agentId: params.agentId,
 			status: params.status ?? 'active',
 			orderIndex: params.orderIndex ?? 0,
 			createdAt: Date.now(),
@@ -198,9 +203,9 @@ class MockSessionGroupRepository {
 		return group;
 	}
 
-	deleteGroup(id: string): void {
+	deleteGroup(id: string): boolean {
 		this._recordCall('deleteGroup', [id]);
-		this.groups.delete(id);
+		return this.groups.delete(id);
 	}
 
 	listActiveGroupsWithTaskId(): Array<{ id: string; taskId: string }> {
@@ -515,7 +520,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 				string,
 				AddMemberParams,
 			];
-			expect(typeof groupId).toBe('string');
+			expect(groupId).toBe(ctx.manager.getTaskGroupId(task.id));
 			expect(memberSessionId).toBe(sessionId);
 			expect(params.role).toBe('task-agent');
 			expect(params.status).toBe('active');
@@ -527,7 +532,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 
 			const groupId = ctx.manager.getTaskGroupId(task.id);
 			expect(groupId).toBeDefined();
-			expect(typeof groupId).toBe('string');
+			expect(groupId).toMatch(/^mock-group-/);
 		});
 
 		test('emits spaceSessionGroup.created with correct payload', async () => {
@@ -586,7 +591,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 
 		test('orphaned group is deleted when addMember throws after createGroup', async () => {
 			// Patch addMember to throw after recording the call
-			const origAddMember = ctx.groupRepo.addMember.bind(ctx.groupRepo);
+			const _origAddMember = ctx.groupRepo.addMember.bind(ctx.groupRepo);
 			let addMemberCallCount = 0;
 			ctx.groupRepo.addMember = (...args: unknown[]) => {
 				addMemberCallCount++;
@@ -605,8 +610,6 @@ describe('TaskAgentManager — group persistence and events', () => {
 			expect(ctx.daemonHub.eventsOf('spaceSessionGroup.created').length).toBe(0);
 			// No group in memory map
 			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
-
-			void origAddMember; // prevent unused-var warning
 		});
 
 		test('no spaceSessionGroup.created event when createGroup throws', async () => {
@@ -697,7 +700,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 			expect(params.role).toBe('coder');
 			expect(params.agentId).toBe('agent-001');
 			expect(params.status).toBe('active');
-			expect(typeof groupId).toBe('string');
+			expect(groupId).toBe(ctx.manager.getTaskGroupId(task.id));
 		});
 
 		test('uses getMemberCount for orderIndex to prevent race conditions', async () => {
@@ -833,6 +836,13 @@ describe('TaskAgentManager — group persistence and events', () => {
 				{ agentId: 'agent-coder', role: 'coder' }
 			);
 
+			// Get the member ID before resetting calls
+			const groupId = ctx.manager.getTaskGroupId(task.id)!;
+			const subMember = ctx.groupRepo
+				.getGroup(groupId)!
+				.members.find((m) => m.sessionId === subSessionId)!;
+			const expectedMemberId = subMember.id;
+
 			ctx.groupRepo.resetCalls();
 			await callHandleComplete(ctx.manager, task.id, 'step-1', subSessionId);
 
@@ -840,7 +850,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 			expect(updateCalls.length).toBe(1);
 
 			const [memberId, status] = updateCalls[0].args as [string, string];
-			expect(typeof memberId).toBe('string');
+			expect(memberId).toBe(expectedMemberId);
 			expect(status).toBe('completed');
 		});
 
@@ -854,6 +864,12 @@ describe('TaskAgentManager — group persistence and events', () => {
 				{ sessionId: subSessionId, workspacePath: '/tmp/ws' } as AgentSessionInit,
 				{ role: 'coder' }
 			);
+
+			// Get expected member ID before completing
+			const groupId = ctx.manager.getTaskGroupId(task.id)!;
+			const subMember = ctx.groupRepo
+				.getGroup(groupId)!
+				.members.find((m) => m.sessionId === subSessionId)!;
 
 			await callHandleComplete(ctx.manager, task.id, 'step-1', subSessionId);
 
@@ -870,7 +886,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
 			expect(payload.spaceId).toBe(ctx.spaceId);
 			expect(payload.member.status).toBe('completed');
-			expect(typeof payload.memberId).toBe('string');
+			expect(payload.memberId).toBe(subMember.id);
 		});
 
 		test('member status in mock repo is updated to completed', async () => {
@@ -898,6 +914,62 @@ describe('TaskAgentManager — group persistence and events', () => {
 				.getGroup(groupId)
 				?.members.find((m) => m.sessionId === subSessionId);
 			expect(after?.status).toBe('completed');
+		});
+
+		test('session.updated → idle fires onComplete callback when sdkMessageCount > 0', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id, ctx.spaceId);
+			const subSessionId = `sub-idle-complete-${task.id}`;
+			await factory.create(
+				{ sessionId: subSessionId, workspacePath: '/tmp/ws' } as AgentSessionInit,
+				{ role: 'coder' }
+			);
+
+			// Simulate that the sub-session has processed messages
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			subSession._sdkMessageCount = 2;
+
+			let completionFired = false;
+			factory.onComplete(subSessionId, async () => {
+				completionFired = true;
+			});
+
+			// Emit session.updated with idle status — should trigger the callback
+			ctx.daemonHub.emit('session.updated', {
+				sessionId: subSessionId,
+				processingState: { status: 'idle' },
+			});
+			await Promise.resolve();
+
+			expect(completionFired).toBe(true);
+		});
+
+		test('session.updated → idle does not fire callback when sdkMessageCount === 0', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id, ctx.spaceId);
+			const subSessionId = `sub-idle-nofire-${task.id}`;
+			await factory.create(
+				{ sessionId: subSessionId, workspacePath: '/tmp/ws' } as AgentSessionInit,
+				{ role: 'coder' }
+			);
+
+			// sdkMessageCount stays 0 (session hasn't started processing)
+			let completionFired = false;
+			factory.onComplete(subSessionId, async () => {
+				completionFired = true;
+			});
+
+			ctx.daemonHub.emit('session.updated', {
+				sessionId: subSessionId,
+				processingState: { status: 'idle' },
+			});
+			await Promise.resolve();
+
+			expect(completionFired).toBe(false);
 		});
 
 		test('handleSubSessionComplete with unknown sub-session does not throw', async () => {
@@ -934,7 +1006,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 
 			ctx.groupRepo.resetCalls();
 			ctx.daemonHub.emit('session.error', { sessionId: subSessionId, error: 'fatal' });
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			const updateCalls = ctx.groupRepo.callsTo('updateMemberStatus');
 			expect(updateCalls.length).toBe(1);
@@ -956,7 +1028,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 			factory.onComplete(subSessionId, async () => {});
 
 			ctx.daemonHub.emit('session.error', { sessionId: subSessionId, error: 'fatal' });
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			const member = ctx.groupRepo
 				.getGroup(groupId)
@@ -977,7 +1049,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 
 			factory.onComplete(subSessionId, async () => {});
 			ctx.daemonHub.emit('session.error', { sessionId: subSessionId, error: 'fatal' });
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			const events = ctx.daemonHub.eventsOf('spaceSessionGroup.memberUpdated');
 			expect(events.length).toBe(1);
@@ -1007,7 +1079,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 			// Emit error twice
 			ctx.daemonHub.emit('session.error', { sessionId: subSessionId, error: 'fatal' });
 			ctx.daemonHub.emit('session.error', { sessionId: subSessionId, error: 'fatal again' });
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			// updateMemberStatus should only be called once (fired guard)
 			expect(ctx.groupRepo.callsTo('updateMemberStatus').length).toBe(1);
@@ -1035,7 +1107,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 
 			// Error first → sets fired=true
 			ctx.daemonHub.emit('session.error', { sessionId: subSessionId, error: 'fatal' });
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			ctx.groupRepo.resetCalls();
 
@@ -1044,7 +1116,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 				sessionId: subSessionId,
 				processingState: { status: 'idle' },
 			});
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			expect(completionFired).toBe(false);
 			expect(ctx.groupRepo.callsTo('updateMemberStatus').length).toBe(0);
@@ -1221,7 +1293,7 @@ describe('TaskAgentManager — group persistence and events', () => {
 			factory.onComplete(subId, async () => {});
 
 			ctx.daemonHub.emit('session.error', { sessionId: subId, error: 'fatal error' });
-			await new Promise((r) => setTimeout(r, 10));
+			await Promise.resolve();
 
 			const member = ctx.groupRepo.getGroup(groupId)?.members.find((m) => m.sessionId === subId);
 			expect(member?.status).toBe('failed');
@@ -1229,6 +1301,68 @@ describe('TaskAgentManager — group persistence and events', () => {
 			// Cleanup still marks group as completed
 			await ctx.manager.cleanup(task.id);
 			expect(ctx.groupRepo.getGroup(groupId)?.status).toBe('completed');
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Rehydration — rehydrateGroupMaps restores taskId → groupId map
+	// -----------------------------------------------------------------------
+
+	describe('rehydrate — rehydrateGroupMaps', () => {
+		test('rehydrate() populates taskGroupIds from active groups in repo', async () => {
+			const task = await makeTask(ctx.taskManager);
+
+			// Seed the mock repo directly (simulating groups persisted in a previous daemon run)
+			const group = ctx.groupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+			});
+
+			// Map is empty before rehydrate (no spawnTaskAgent called)
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+
+			// rehydrate() calls rehydrateGroupMaps() internally;
+			// taskRepo has no active tasks with taskAgentSessionId so the per-task loop is a no-op
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+
+		test('rehydrate() does not overwrite an existing in-memory mapping', async () => {
+			const task = await makeTask(ctx.taskManager);
+
+			// Spawn first to populate the in-memory map
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			const originalGroupId = ctx.manager.getTaskGroupId(task.id)!;
+
+			// Seed a second (different) group with the same taskId in the repo
+			ctx.groupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}-duplicate`,
+				taskId: task.id,
+			});
+
+			// Rehydrate — the pre-existing map entry must NOT be overwritten
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(originalGroupId);
+		});
+
+		test('rehydrate() skips groups without a taskId', async () => {
+			// A standalone group (no taskId) should not pollute the map
+			ctx.groupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: 'standalone-group',
+				// taskId omitted → undefined
+			});
+
+			await ctx.manager.rehydrate();
+
+			// No taskId to map to, so the map stays empty
+			const mapSize = (ctx.manager as unknown as { taskGroupIds: Map<string, string> }).taskGroupIds
+				.size;
+			expect(mapSize).toBe(0);
 		});
 	});
 });
