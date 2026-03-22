@@ -25,7 +25,7 @@ async function main() {
 			temperature: 1.0,
 			anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
 			claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-			dbPath: ':memory:',
+			dbPath: process.env.DB_PATH || ':memory:',
 			maxSessions: 10,
 			nodeEnv: 'test',
 			workspaceRoot: `${process.env.TMPDIR || '/tmp'}/neokai-daemon-test-${Date.now()}`,
