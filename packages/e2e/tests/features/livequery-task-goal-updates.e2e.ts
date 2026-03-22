@@ -38,6 +38,7 @@ async function createTask(
 	roomId: string,
 	title: string
 ): Promise<string> {
+	await waitForWebSocketConnected(page);
 	return page.evaluate(
 		async ({ rId, t }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
@@ -58,6 +59,7 @@ async function createGoal(
 	roomId: string,
 	title: string
 ): Promise<string> {
+	await waitForWebSocketConnected(page);
 	return page.evaluate(
 		async ({ rId, t }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
@@ -173,31 +175,35 @@ test.describe("LiveQuery — switching rooms shows only the new room's tasks", (
 		await deleteRoom(page, roomBId);
 	});
 
-	test('clicking room B in the sidebar shows only room B tasks — no room A bleed', async ({
+	test('switching from room A to room B via rooms list shows only room B tasks', async ({
 		page,
 	}) => {
 		// Set up room A with a task
-		roomAId = await createRoom(page, 'LQ Sidebar Room A');
+		roomAId = await createRoom(page, 'LQ Switch Room A');
 		await createTask(page, roomAId, 'Room A Exclusive Task');
 
 		// Set up room B with a different task
-		roomBId = await createRoom(page, 'LQ Sidebar Room B');
+		roomBId = await createRoom(page, 'LQ Switch Room B');
 		await createTask(page, roomBId, 'Room B Exclusive Task');
 
-		// Navigate to Room A first and confirm its task is visible
+		// Navigate to Room A and confirm its task is visible
 		await page.goto(`/room/${roomAId}`);
 		await waitForWebSocketConnected(page);
-		await expect(page.locator('text=LQ Sidebar Room A').first()).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('text=LQ Switch Room A').first()).toBeVisible({ timeout: 10000 });
 		await expect(page.locator('text=Room A Exclusive Task').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Switch to Room B using the sidebar (in-page navigation, not full reload)
-		// Rooms appear as buttons in the sidebar by their name
-		await page.locator('button').filter({ hasText: 'LQ Sidebar Room B' }).first().click();
+		// Navigate back to the Rooms list via the NavRail (in-page, no full reload).
+		// While viewing a room detail page, the sidebar shows RoomContextPanel — not RoomList.
+		// Clicking the "Rooms" NavRail button resets isRoomDetail and shows the rooms list.
+		await page.getByRole('button', { name: 'Rooms' }).click();
 
-		// Wait for Room B's header to appear — confirms the room switch has rendered
-		await expect(page.locator('text=LQ Sidebar Room B').first()).toBeVisible({ timeout: 10000 });
+		// RoomList is now visible — click Room B to switch to it (client-side navigation)
+		await page.locator('button').filter({ hasText: 'LQ Switch Room B' }).first().click();
+
+		// Wait for Room B's heading to appear — confirms the room switch has rendered
+		await expect(page.locator('text=LQ Switch Room B').first()).toBeVisible({ timeout: 10000 });
 
 		// Room B's task must appear
 		await expect(page.locator('text=Room B Exclusive Task').first()).toBeVisible({
@@ -223,21 +229,10 @@ test.describe("LiveQuery — switching rooms shows only the new room's tasks", (
 		// Create a task in Room A while the user is viewing Room B
 		await createTask(page, roomAId, 'Cross-Room Bleed Task');
 
-		// Wait until the LiveQuery delta for Room A would have had time to arrive
-		// (positive condition: poll until the hub confirms no liveQuery delta pending)
-		await page.waitForFunction(
-			() => {
-				// If Room B still shows "No tasks yet", we're clean
-				const noTasksEl = document.querySelector('p');
-				return (
-					!!noTasksEl &&
-					Array.from(document.querySelectorAll('p')).some(
-						(el) => el.textContent?.trim() === 'No tasks yet'
-					)
-				);
-			},
-			{ timeout: 5000 }
-		);
+		// For negative assertions (proving something does NOT appear), a brief explicit
+		// wait is the correct pattern: it gives any potential cross-room delta time to
+		// propagate over WebSocket before we assert it is absent.
+		await page.waitForTimeout(1500);
 
 		// Room B should still show "No tasks yet" — the stale-event guard stopped bleed
 		await expect(page.locator('text=No tasks yet')).toBeVisible();
