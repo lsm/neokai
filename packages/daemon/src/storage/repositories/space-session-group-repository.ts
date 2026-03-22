@@ -122,6 +122,19 @@ export class SpaceSessionGroupRepository {
 	}
 
 	/**
+	 * List all active groups that have a non-null task_id, across all spaces.
+	 * Returns lightweight objects (id + taskId only) for efficient startup rehydration.
+	 * The result is indexed on task_id — no full member fetch is performed.
+	 */
+	listActiveGroupsWithTaskId(): Array<{ id: string; taskId: string }> {
+		const stmt = this.db.prepare(
+			`SELECT id, task_id FROM space_session_groups WHERE status = 'active' AND task_id IS NOT NULL ORDER BY created_at ASC`
+		);
+		const rows = stmt.all() as Array<{ id: string; task_id: string }>;
+		return rows.map((row) => ({ id: row.id, taskId: row.task_id }));
+	}
+
+	/**
 	 * Update a session group
 	 */
 	updateGroup(id: string, params: UpdateSessionGroupParams): SpaceSessionGroup | null {

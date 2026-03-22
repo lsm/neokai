@@ -1759,4 +1759,180 @@ describe('TaskAgentManager', () => {
 			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
 		});
 	});
+
+	// -----------------------------------------------------------------------
+	// rehydrateGroupMaps — dedicated group map rebuild
+	// -----------------------------------------------------------------------
+
+	describe('rehydrateGroupMaps (via rehydrate)', () => {
+		// Uses the scoped restore spy from the outer rehydrate describe so that
+		// rehydrateTaskAgent() does not fail when restoring sessions. We reset
+		// it here independently to keep tests self-contained.
+		let restoreSpyScoped: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
+
+		beforeEach(() => {
+			restoreSpyScoped = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				if (!ctx.mockDb.getSession(sessionId)) return null;
+				const existing = ctx.createdSessions.get(sessionId);
+				if (existing) return existing as unknown as AgentSession;
+				const mockSession = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, mockSession);
+				return mockSession as unknown as AgentSession;
+			});
+		});
+
+		afterEach(() => {
+			restoreSpyScoped.mockRestore();
+		});
+
+		test('rebuilds taskGroupIds map for multiple active groups on restart', async () => {
+			// Simulate two tasks that each had a group created during a previous daemon run.
+			// The in-memory map is empty (fresh manager, simulating daemon restart).
+			const task1 = await ctx.taskManager.createTask({
+				title: 'Task 1',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const task2 = await ctx.taskManager.createTask({
+				title: 'Task 2',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+
+			const group1 = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task1.id}`,
+				taskId: task1.id,
+			});
+			const group2 = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task2.id}`,
+				taskId: task2.id,
+			});
+
+			// Before rehydrate: map is empty
+			expect(ctx.manager.getTaskGroupId(task1.id)).toBeUndefined();
+			expect(ctx.manager.getTaskGroupId(task2.id)).toBeUndefined();
+
+			// rehydrate() calls rehydrateGroupMaps() internally
+			await ctx.manager.rehydrate();
+
+			// After rehydrate: both groups should be in the map
+			expect(ctx.manager.getTaskGroupId(task1.id)).toBe(group1.id);
+			expect(ctx.manager.getTaskGroupId(task2.id)).toBe(group2.id);
+		});
+
+		test('standalone groups (no taskId) are skipped without error', async () => {
+			// A group with no task_id is a standalone group — nothing to map
+			ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: 'standalone-group',
+				// No taskId
+			});
+
+			// Should not throw
+			await expect(ctx.manager.rehydrate()).resolves.toBeUndefined();
+		});
+
+		test('groups with no active members are still rehydrated', async () => {
+			// A group that exists but has no members is still a valid group with a taskId
+			const task = await ctx.taskManager.createTask({
+				title: 'Empty group task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+			});
+			// group has zero members (no addMember call)
+
+			await ctx.manager.rehydrate();
+
+			// Map should still be populated
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+
+		test('completed groups are not included in the map', async () => {
+			// A group marked 'completed' should NOT be rehydrated into the active map
+			const task = await ctx.taskManager.createTask({
+				title: 'Completed group task',
+				description: '',
+				taskType: 'coding',
+				status: 'completed',
+			});
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+				status: 'completed',
+			});
+			void group;
+
+			await ctx.manager.rehydrate();
+
+			// Completed group should NOT appear in the map
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+		});
+
+		test('existing map entries are not overwritten by rehydrateGroupMaps', async () => {
+			// If spawnTaskAgent() already populated taskGroupIds before rehydrate() runs,
+			// the in-memory value takes precedence over the DB row.
+			const task = await ctx.taskManager.createTask({
+				title: 'Pre-spawned task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+
+			// Spawn first — this creates the group and sets taskGroupIds
+			const agentSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: agentSessionId });
+			ctx.mockDb.createSession({ id: agentSessionId, type: 'space_task_agent' });
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupIdAfterSpawn = ctx.manager.getTaskGroupId(task.id);
+			expect(groupIdAfterSpawn).toBeDefined();
+
+			// Create a second group for the same task (simulates stale DB row from old run)
+			const staleGroup = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}:old`,
+				taskId: task.id,
+			});
+			void staleGroup;
+
+			// rehydrate() should not overwrite the already-set entry
+			await ctx.manager.rehydrate();
+
+			// Value should remain the one set by spawnTaskAgent, not the stale group
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(groupIdAfterSpawn);
+		});
+
+		test('rehydrateGroupMaps is called even when no tasks need session rehydration', async () => {
+			// All tasks are completed — no Task Agent sessions to restore.
+			// But if there are active groups, the map should still be populated.
+			const task = await ctx.taskManager.createTask({
+				title: 'Active group, no session rehydration',
+				description: '',
+				taskType: 'coding',
+				status: 'completed', // completed = not rehydrated as session
+			});
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+				status: 'active', // group is still active (cleanup may have missed it)
+			});
+
+			await ctx.manager.rehydrate();
+
+			// Group map should be populated even though the task session was not rehydrated
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+	});
 });
