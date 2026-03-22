@@ -1,12 +1,13 @@
 import { describe, it, expect, mock } from 'bun:test';
 import { handleSessionTitleGeneration } from '../../../src/lib/job-handlers/session-title.handler';
+import { SESSION_TITLE_GENERATION } from '../../../src/lib/job-queue-constants';
 import type { Job } from '../../../src/storage/repositories/job-queue-repository';
 import type { SessionLifecycle } from '../../../src/lib/session/session-lifecycle';
 
 function makeJob(payload: Record<string, unknown>): Job {
 	return {
 		id: 'test-job-id',
-		queue: 'session.title_generation',
+		queue: SESSION_TITLE_GENERATION,
 		status: 'processing',
 		payload,
 		result: null,
@@ -63,6 +64,33 @@ describe('handleSessionTitleGeneration', () => {
 
 		await expect(handleSessionTitleGeneration(job, lifecycle)).rejects.toThrow(
 			'Session session-missing not found'
+		);
+	});
+
+	it('throws when sessionId is missing from payload', async () => {
+		const lifecycle = makeSessionLifecycle();
+		const job = makeJob({ userMessageText: 'hello' });
+
+		await expect(handleSessionTitleGeneration(job, lifecycle)).rejects.toThrow(
+			'Job payload missing required field: sessionId'
+		);
+	});
+
+	it('throws when sessionId is not a string', async () => {
+		const lifecycle = makeSessionLifecycle();
+		const job = makeJob({ sessionId: 42, userMessageText: 'hello' });
+
+		await expect(handleSessionTitleGeneration(job, lifecycle)).rejects.toThrow(
+			'Job payload missing required field: sessionId'
+		);
+	});
+
+	it('throws when userMessageText is missing from payload', async () => {
+		const lifecycle = makeSessionLifecycle();
+		const job = makeJob({ sessionId: 'session-123' });
+
+		await expect(handleSessionTitleGeneration(job, lifecycle)).rejects.toThrow(
+			'Job payload missing required field: userMessageText'
 		);
 	});
 });

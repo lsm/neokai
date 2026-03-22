@@ -62,6 +62,8 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
+import { SESSION_TITLE_GENERATION } from '../job-queue-constants';
+import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -147,6 +149,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	setupTestHandlers(deps.messageHub, deps.db);
 	setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+
+	// Job queue handler registrations
+	deps.jobProcessor.register(SESSION_TITLE_GENERATION, (job) =>
+		handleSessionTitleGeneration(job, deps.sessionManager.getSessionLifecycle())
+	);
 
 	// Room handlers
 	setupRoomHandlers(
