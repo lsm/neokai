@@ -22,6 +22,8 @@
  * - Working Agents section hidden when no groups exist
  * - Member status badges rendered correctly
  * - Agent name looked up from agents signal
+ * - Status badge updates reactively when member status changes via signal
+ * - Working Agents section removed reactively when all groups cleared via signal
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -380,7 +382,7 @@ describe('SpaceTaskPane', () => {
 		mockTasks.value = [makeTask()];
 		mockSessionGroups.value = [makeGroup({ members: [member] })];
 
-		const { getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getAllByText, queryAllByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getAllByText('active').length).toBeGreaterThan(0);
 
 		// Simulate status update via signal (mirrors spaceSessionGroup.memberUpdated event)
@@ -390,7 +392,10 @@ describe('SpaceTaskPane', () => {
 			];
 		});
 
-		await waitFor(() => expect(getAllByText('completed').length).toBeGreaterThan(0));
+		await waitFor(() => {
+			expect(queryAllByText('completed').length).toBeGreaterThan(0);
+			expect(queryAllByText('active').length).toBe(0);
+		});
 	});
 
 	it('hides Working Agents section when last group is removed via signal', async () => {
