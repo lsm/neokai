@@ -1117,64 +1117,59 @@ describe('Multi-Transport Support', () => {
 // onClientDisconnect forwarding
 // ========================================
 
+/**
+ * Creates a mock transport with onClientDisconnect support.
+ * Returns both the transport and a simulate function to trigger disconnects.
+ */
+function createMockTransportWithDisconnect(): {
+	transport: IMessageTransport;
+	simulateDisconnect: (clientId: string) => void;
+} {
+	const handlers: Set<(clientId: string) => void> = new Set();
+	const transport: IMessageTransport = {
+		name: 'mock-with-disconnect',
+		initialize: async () => {},
+		close: async () => {},
+		send: async () => {},
+		isReady: () => true,
+		getState: () => 'connected' as ConnectionState,
+		onMessage: () => () => {},
+		onConnectionChange: () => () => {},
+		onClientDisconnect(handler) {
+			handlers.add(handler);
+			return () => {
+				handlers.delete(handler);
+			};
+		},
+	};
+	return {
+		transport,
+		simulateDisconnect: (clientId) => {
+			for (const h of handlers) h(clientId);
+		},
+	};
+}
+
 describe('MessageHub.onClientDisconnect', () => {
 	test('forwards handler to primary transport and fires on disconnect', () => {
 		const hub = new MessageHub();
-
-		// Mock transport that supports onClientDisconnect
-		const disconnectHandlers: Set<(clientId: string) => void> = new Set();
-		const mockTransport: IMessageTransport = {
-			name: 'mock-with-disconnect',
-			initialize: async () => {},
-			close: async () => {},
-			send: async () => {},
-			isReady: () => true,
-			getState: () => 'connected' as ConnectionState,
-			onMessage: () => () => {},
-			onConnectionChange: () => () => {},
-			onClientDisconnect(handler) {
-				disconnectHandlers.add(handler);
-				return () => {
-					disconnectHandlers.delete(handler);
-				};
-			},
-		};
-
-		hub.registerTransport(mockTransport);
+		const { transport, simulateDisconnect } = createMockTransportWithDisconnect();
+		hub.registerTransport(transport);
 
 		const received: string[] = [];
 		hub.onClientDisconnect((clientId) => {
 			received.push(clientId);
 		});
 
-		// Simulate a client disconnect from the transport side
-		for (const h of disconnectHandlers) h('client-abc');
+		simulateDisconnect('client-abc');
 
 		expect(received).toEqual(['client-abc']);
 	});
 
 	test('unsubscribe prevents further callbacks', () => {
 		const hub = new MessageHub();
-
-		const disconnectHandlers: Set<(clientId: string) => void> = new Set();
-		const mockTransport: IMessageTransport = {
-			name: 'mock-with-disconnect',
-			initialize: async () => {},
-			close: async () => {},
-			send: async () => {},
-			isReady: () => true,
-			getState: () => 'connected' as ConnectionState,
-			onMessage: () => () => {},
-			onConnectionChange: () => () => {},
-			onClientDisconnect(handler) {
-				disconnectHandlers.add(handler);
-				return () => {
-					disconnectHandlers.delete(handler);
-				};
-			},
-		};
-
-		hub.registerTransport(mockTransport);
+		const { transport, simulateDisconnect } = createMockTransportWithDisconnect();
+		hub.registerTransport(transport);
 
 		const received: string[] = [];
 		const unsubscribe = hub.onClientDisconnect((clientId) => {
@@ -1182,12 +1177,12 @@ describe('MessageHub.onClientDisconnect', () => {
 		});
 
 		// First disconnect fires
-		for (const h of disconnectHandlers) h('client-1');
+		simulateDisconnect('client-1');
 		expect(received).toEqual(['client-1']);
 
 		// Unsubscribe and fire again — handler should not be called
 		unsubscribe();
-		for (const h of disconnectHandlers) h('client-2');
+		simulateDisconnect('client-2');
 		expect(received).toEqual(['client-1']);
 	});
 
