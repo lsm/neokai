@@ -54,6 +54,7 @@ ROOM_FILES=(
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
+  room-tick-job.test.ts
 )
 
 FEATURES_FILES=(
