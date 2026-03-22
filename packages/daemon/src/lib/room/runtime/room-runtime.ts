@@ -2159,6 +2159,8 @@ export class RoomRuntime {
 		const mirroredUuids = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
+			const shortSessionId = sessionId.slice(0, 8);
+
 			return this.daemonHub!.on(
 				'sdk.message',
 				(event) => {
