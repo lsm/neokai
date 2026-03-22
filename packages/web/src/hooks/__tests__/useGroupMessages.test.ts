@@ -6,7 +6,7 @@
  * - Snapshot delivery (initial message load)
  * - Delta append (new messages via real-time push)
  * - Stale-event guard (rapid task switching)
- * - Append-only invariant (ignore updated/removed)
+ * - Full CRUD delta handling (added/updated/removed)
  * - Cleanup on unmount / groupId change
  * - Reconnect: re-subscribes after WebSocket disconnect/reconnect
  */
@@ -229,7 +229,33 @@ describe('useGroupMessages', () => {
 			expect(result.current.messages).toHaveLength(3);
 		});
 
-		it('ignores delta with no added field (append-only invariant)', () => {
+		it('applies removed entries from delta', () => {
+			const { result } = renderHook(() => useGroupMessages('group-1'));
+
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2)],
+					version: 1,
+				});
+			});
+
+			// Delta with only removed — message 1 should be gone.
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					removed: [makeMessage(1)],
+					version: 2,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.messages[0].id).toBe(2);
+		});
+
+		it('applies updated entries from delta', () => {
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
 			const subId = lastSubscribeSubId();
@@ -242,17 +268,18 @@ describe('useGroupMessages', () => {
 				});
 			});
 
-			// Delta with only updated/removed — should be ignored.
+			// Delta with only updated — message 1 should have new content.
+			const updatedMsg = { ...makeMessage(1), content: 'updated content' };
 			act(() => {
 				fireEvent('liveQuery.delta', {
 					subscriptionId: subId,
-					removed: [makeMessage(1)],
-					updated: [makeMessage(1)],
+					updated: [updatedMsg],
 					version: 2,
 				});
 			});
 
 			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.messages[0].content).toBe('updated content');
 		});
 
 		it('ignores delta with empty added array', () => {
