@@ -246,12 +246,12 @@ describe('Job queue crash/restart recovery (online)', () => {
 		// generateTitleAndRenameBranch — which we mock on daemon2.
 		// No real session row is needed in the DB.
 		const sessionId = crypto.randomUUID();
+		let staleJobId: string;
 
-		let daemon1Err: unknown;
 		try {
 			// Insert a stale processing job — simulates a job that was mid-flight when
 			// the daemon crashed (job left stuck in 'processing' with an old started_at)
-			const staleJobId = insertStaleProcessingJob(daemon1, SESSION_TITLE_GENERATION, {
+			staleJobId = insertStaleProcessingJob(daemon1, SESSION_TITLE_GENERATION, {
 				sessionId,
 				userMessageText: 'Crash recovery test message',
 			});
@@ -262,40 +262,36 @@ describe('Job queue crash/restart recovery (online)', () => {
 				status: ['processing'],
 			});
 			expect(beforeStop.some((j) => j.id === staleJobId)).toBe(true);
-
-			// ------------------------------------------------------------------
-			// Phase 2 — daemon2: same DB, eager reclaim, handler completion
-			// ------------------------------------------------------------------
+		} finally {
 			await stopDaemon(daemon1);
-
-			daemon2 = await startDaemon(dbPath, workspaceRoot);
-
-			// Stop the processor so we can safely install the mock before any retry fires.
-			// The eager first tick may have already dispatched processJob; stop() waits
-			// until that in-flight attempt completes (it fails fast — session not in cache)
-			// before returning, ensuring the mock is in place before the retry window.
-			await daemon2.jobProcessor.stop();
-
-			// Replace the SESSION_TITLE_GENERATION handler with a no-op mock so no real
-			// AI call is made when the reclaimed job is retried.
-			daemon2.jobProcessor.register(SESSION_TITLE_GENERATION, async (_job) => ({
-				generated: true,
-			}));
-
-			// Restart the processor: reclaimStale() runs again (no-op — job is already
-			// pending from the first startup's reclaim), then the processor begins polling.
-			daemon2.jobProcessor.start();
-
-			// Wait for the job processor to pick it up and complete it
-			const completed = await waitForJobById(daemon2, staleJobId, ['completed']);
-			expect(completed).toBeDefined();
-			expect(completed!.status).toBe('completed');
-			expect(completed!.result).toMatchObject({ generated: true });
-		} catch (e) {
-			daemon1Err = e;
 		}
 
-		if (daemon1Err) throw daemon1Err;
+		// ------------------------------------------------------------------
+		// Phase 2 — daemon2: same DB, eager reclaim, handler completion
+		// ------------------------------------------------------------------
+		daemon2 = await startDaemon(dbPath, workspaceRoot);
+
+		// Stop the processor so we can safely install the mock before any retry fires.
+		// The eager first tick may have already dispatched processJob; stop() waits
+		// until that in-flight attempt completes (it fails fast — session not in cache)
+		// before returning, ensuring the mock is in place before the retry window.
+		await daemon2.jobProcessor.stop();
+
+		// Replace the SESSION_TITLE_GENERATION handler with a no-op mock so no real
+		// AI call is made when the reclaimed job is retried.
+		daemon2.jobProcessor.register(SESSION_TITLE_GENERATION, async (_job) => ({
+			generated: true,
+		}));
+
+		// Restart the processor: reclaimStale() runs again (no-op — job is already
+		// pending from the first startup's reclaim), then the processor begins polling.
+		daemon2.jobProcessor.start();
+
+		// Wait for the job processor to pick it up and complete it
+		const completed = await waitForJobById(daemon2, staleJobId!, ['completed']);
+		expect(completed).toBeDefined();
+		expect(completed!.status).toBe('completed');
+		expect(completed!.result).toMatchObject({ generated: true });
 	}, 30_000);
 
 	// =========================================================================
