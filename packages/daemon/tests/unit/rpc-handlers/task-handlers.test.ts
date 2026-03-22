@@ -1159,6 +1159,76 @@ describe('task.setStatus RPC Handler', () => {
 			).rejects.toThrow('Invalid status transition');
 		});
 	});
+
+	describe('manual mode', () => {
+		it('allows invalid transitions when mode is manual', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+
+			// pending → completed is invalid in runtime mode but allowed in manual mode
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'manual' },
+				{}
+			);
+			expect(result).toEqual({ task: { ...pendingTask, status: 'completed' } });
+		});
+
+		it('allows archived → pending transition in manual mode', async () => {
+			const archivedTask = { ...mockTask, status: 'archived' as const };
+			setup({ task: archivedTask, runtimeService: makeNullRuntimeService() });
+
+			// archived → pending is normally terminal (no transitions), but manual mode allows it
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'pending', mode: 'manual' },
+				{}
+			);
+			expect(result).toEqual({ task: { ...archivedTask, status: 'pending' } });
+		});
+
+		it('still enforces transitions in runtime mode (explicitly)', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+
+			await expect(
+				getHandler()(
+					{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'runtime' },
+					{}
+				)
+			).rejects.toThrow('Invalid status transition');
+		});
+
+		it('still enforces transitions when mode is not provided (default runtime behavior)', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
+			).rejects.toThrow('Invalid status transition');
+		});
+
+		it('passes mode to setTaskStatus', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			const factory = makeSetStatusTaskManagerFactory(pendingTask);
+			setup({
+				task: pendingTask,
+				runtimeService: makeNullRuntimeService(),
+				taskManagerFactory: factory,
+			});
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'manual' },
+				{}
+			);
+
+			// Verify that setTaskStatus was called with mode: 'manual'
+			const taskManagerInstance = (factory as ReturnType<typeof mock>).mock.results[0].value;
+			expect(taskManagerInstance.setTaskStatus).toHaveBeenCalledWith(
+				'task-1',
+				'completed',
+				expect.objectContaining({ mode: 'manual' })
+			);
+		});
+	});
 });
 
 // ─── task.interruptSession Tests ───

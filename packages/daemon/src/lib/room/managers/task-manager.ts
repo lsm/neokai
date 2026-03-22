@@ -188,15 +188,15 @@ export class TaskManager {
 	async setTaskStatus(
 		taskId: string,
 		newStatus: TaskStatus,
-		options?: { result?: string; error?: string }
+		options?: { result?: string; error?: string; mode?: 'runtime' | 'manual' }
 	): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		// Validate transition
-		if (!isValidStatusTransition(task.status, newStatus)) {
+		// Validate transition (skipped in manual mode — UI allows any transition)
+		if (options?.mode !== 'manual' && !isValidStatusTransition(task.status, newStatus)) {
 			throw new Error(
 				`Invalid status transition from '${task.status}' to '${newStatus}'. ` +
 					`Allowed transitions: ${VALID_STATUS_TRANSITIONS[task.status].join(', ') || 'none'}`
@@ -220,16 +220,31 @@ export class TaskManager {
 		}
 
 		// Clear error/result/progress when restarting from a terminal/failed state.
-		// Covers needs_attention, cancelled, and completed → reactivation transitions.
+		// Covers needs_attention, cancelled, completed → reactivation transitions.
+		// In manual mode, also covers archived → active and completed → pending transitions.
 		if (
 			((task.status === 'needs_attention' || task.status === 'cancelled') &&
 				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
-			(task.status === 'completed' && newStatus === 'in_progress')
+			(task.status === 'completed' && newStatus === 'in_progress') ||
+			(options?.mode === 'manual' &&
+				(task.status === 'archived' ||
+					task.status === 'completed' ||
+					task.status === 'cancelled' ||
+					task.status === 'needs_attention') &&
+				(newStatus === 'pending' ||
+					newStatus === 'in_progress' ||
+					newStatus === 'review' ||
+					newStatus === 'completed'))
 		) {
 			// Use null to explicitly clear these fields in the database
 			updates.error = null;
 			updates.result = null;
 			updates.progress = null;
+		}
+
+		// When transitioning FROM archived (unarchiving), clear the archived_at timestamp
+		if (task.status === 'archived') {
+			updates.archivedAt = null;
 		}
 
 		return this.updateTaskStatus(taskId, newStatus, updates);

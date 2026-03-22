@@ -549,6 +549,182 @@ function ArchiveTaskDialog({ task, isOpen, onClose, onConfirm }: ArchiveTaskDial
 	);
 }
 
+interface SetStatusModalProps {
+	task: NeoTask;
+	isOpen: boolean;
+	onClose: () => void;
+	onConfirm: (newStatus: import('@neokai/shared').TaskStatus) => Promise<void>;
+}
+
+const ALL_TASK_STATUSES: import('@neokai/shared').TaskStatus[] = [
+	'pending',
+	'in_progress',
+	'review',
+	'completed',
+	'needs_attention',
+	'cancelled',
+	'archived',
+	'draft',
+];
+
+const STATUS_LABELS: Record<import('@neokai/shared').TaskStatus, string> = {
+	pending: 'Pending',
+	in_progress: 'In Progress',
+	review: 'In Review',
+	completed: 'Completed',
+	needs_attention: 'Needs Attention',
+	cancelled: 'Cancelled',
+	archived: 'Archived',
+	draft: 'Draft',
+};
+
+/**
+ * Returns true if the transition from `from` to `to` is considered destructive
+ * and warrants an extra warning in the confirmation modal.
+ */
+function isDestructiveTransition(
+	from: import('@neokai/shared').TaskStatus,
+	to: import('@neokai/shared').TaskStatus
+): boolean {
+	if (from === 'archived') return true; // restoring an archived task
+	if (from === 'completed' && to === 'pending') return true; // reopening completed task
+	if (from === 'cancelled' && to === 'completed') return true; // force-completing cancelled task
+	return false;
+}
+
+function destructiveTransitionWarning(
+	from: import('@neokai/shared').TaskStatus,
+	to: import('@neokai/shared').TaskStatus
+): string | null {
+	if (from === 'archived') {
+		return "You're restoring an archived task. The archived timestamp will be cleared.";
+	}
+	if (from === 'completed' && to === 'pending') {
+		return 'This will restart the task as pending. Previous results will be cleared.';
+	}
+	if (from === 'cancelled' && to === 'completed') {
+		return 'This will force-complete this cancelled task. Use with caution.';
+	}
+	return null;
+}
+
+function SetStatusModal({ task, isOpen, onClose, onConfirm }: SetStatusModalProps) {
+	const [selectedStatus, setSelectedStatus] = useState<import('@neokai/shared').TaskStatus | null>(
+		null
+	);
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const availableStatuses = ALL_TASK_STATUSES.filter((s) => s !== task.status);
+
+	const handleClose = () => {
+		setSelectedStatus(null);
+		setError(null);
+		onClose();
+	};
+
+	const handleConfirm = async () => {
+		if (!selectedStatus) return;
+		setLoading(true);
+		setError(null);
+		try {
+			await onConfirm(selectedStatus);
+			setSelectedStatus(null);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to update task status');
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const warning = selectedStatus ? destructiveTransitionWarning(task.status, selectedStatus) : null;
+	const isDestructive = selectedStatus
+		? isDestructiveTransition(task.status, selectedStatus)
+		: false;
+
+	return (
+		<Modal isOpen={isOpen} onClose={handleClose} title="Set Task Status">
+			<div class="flex flex-col gap-4">
+				<p class="text-sm text-gray-400">
+					Current status:{' '}
+					<span class="font-medium text-gray-200">{STATUS_LABELS[task.status]}</span>
+				</p>
+
+				<div class="flex flex-col gap-1.5">
+					<label class="text-xs text-gray-500 font-medium uppercase tracking-wide">
+						New Status
+					</label>
+					<select
+						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-600"
+						value={selectedStatus ?? ''}
+						onChange={(e) => {
+							const val = (e.target as HTMLSelectElement).value;
+							setSelectedStatus((val as import('@neokai/shared').TaskStatus) || null);
+							setError(null);
+						}}
+					>
+						<option value="">Select a status…</option>
+						{availableStatuses.map((s) => (
+							<option key={s} value={s}>
+								{STATUS_LABELS[s]}
+							</option>
+						))}
+					</select>
+				</div>
+
+				{warning && (
+					<div class="flex items-start gap-2 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2.5">
+						<svg
+							class="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+							/>
+						</svg>
+						<p class="text-sm text-amber-300">{warning}</p>
+					</div>
+				)}
+
+				{error && (
+					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
+						{error}
+					</p>
+				)}
+
+				<div class="flex items-center justify-end gap-3 pt-2">
+					<button
+						type="button"
+						onClick={handleClose}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={() => void handleConfirm()}
+						disabled={loading || !selectedStatus}
+						data-testid="set-status-confirm"
+						class={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed flex items-center gap-1.5 ${
+							isDestructive
+								? 'bg-amber-600 hover:bg-amber-700 text-white disabled:bg-amber-600/50'
+								: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50'
+						}`}
+					>
+						{loading ? 'Updating…' : isDestructive ? 'Force Set Status' : 'Set Status'}
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
@@ -587,6 +763,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const cancelModal = useModal();
 	const rejectModal = useModal();
 	const archiveModal = useModal();
+	const setStatusModal = useModal();
 
 	// Review state — approve/reject for tasks awaiting human review
 	const [approving, setApproving] = useState(false);
@@ -761,6 +938,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			taskId,
 			status: 'completed',
 			result: summary || 'Marked complete by user',
+			mode: 'manual',
 		});
 		completeModal.close();
 		toast.success('Task completed');
@@ -780,7 +958,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		if (reactivating) return;
 		setReactivating(true);
 		try {
-			await request('task.setStatus', { roomId, taskId, status: 'in_progress' });
+			await request('task.setStatus', { roomId, taskId, status: 'in_progress', mode: 'manual' });
 			toast.success('Task reactivated');
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to reactivate task');
@@ -791,10 +969,25 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 	// Archive task handler — transitions to archived (permanent)
 	const archiveTask = async () => {
-		await request('task.setStatus', { roomId, taskId, status: 'archived' });
+		await request('task.setStatus', { roomId, taskId, status: 'archived', mode: 'manual' });
 		archiveModal.close();
 		toast.info('Task archived');
 		navigateToRoom(roomId);
+	};
+
+	// Set task status manually — allows any transition (manual mode, no server-side validation)
+	const setTaskStatusManually = async (newStatus: import('@neokai/shared').TaskStatus) => {
+		await request('task.setStatus', {
+			roomId,
+			taskId,
+			status: newStatus,
+			mode: 'manual',
+		});
+		setStatusModal.close();
+		toast.success(`Task status set to ${newStatus.replace('_', ' ')}`);
+		if (newStatus === 'archived') {
+			navigateToRoom(roomId);
+		}
 	};
 
 	// Interrupt button shown only when task has active agent sessions
@@ -1050,16 +1243,25 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 								archiveModal.open();
 							}
 						: undefined,
+					onSetStatus:
+						task.status !== 'archived'
+							? () => {
+									setIsInfoPanelOpen(false);
+									setStatusModal.open();
+								}
+							: undefined,
 				}}
 				visibleActions={{
 					complete: canComplete && task.status !== 'review',
 					cancel: canCancel,
 					archive: canArchive,
+					setStatus: task.status !== 'archived',
 				}}
 				disabledActions={{
 					complete: interrupting,
 					cancel: interrupting,
 					archive: false,
+					setStatus: false,
 				}}
 			/>
 
@@ -1202,6 +1404,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				isOpen={archiveModal.isOpen}
 				onClose={archiveModal.close}
 				onConfirm={archiveTask}
+			/>
+			<SetStatusModal
+				task={task}
+				isOpen={setStatusModal.isOpen}
+				onClose={setStatusModal.close}
+				onConfirm={setTaskStatusManually}
 			/>
 			{/* Reject dialog — for tasks awaiting human review */}
 			<RejectModal

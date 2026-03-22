@@ -1599,7 +1599,7 @@ describe('Room Agent Tools', () => {
 			expect(result.error).toContain('Invalid status transition');
 		});
 
-		it('should return error when group cancellation fails due to version conflict', async () => {
+		it('should return error when terminateTaskGroup fails for completed transition', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1609,11 +1609,9 @@ describe('Room Agent Tools', () => {
 			// Create an active group
 			insertGroup(taskId, 'awaiting_human');
 
-			// Create handler with mock runtime that returns null from cancel (simulating version conflict)
+			// Create handler with mock runtime where terminateTaskGroup returns false (version conflict)
 			const mockRuntime = {
-				taskGroupManager: {
-					cancel: async () => null, // Returns null to simulate version conflict
-				},
+				terminateTaskGroup: async () => false, // Returns false to simulate version conflict
 			};
 			const h = createRoomAgentToolHandlers({
 				roomId,
@@ -1623,14 +1621,14 @@ describe('Room Agent Tools', () => {
 				runtimeService: { getRuntime: () => mockRuntime as never },
 			});
 
-			// Try to complete the task - should fail because group cancellation failed
+			// Try to complete the task - should fail because group termination failed
 			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to cancel active group');
+			expect(result.error).toContain('Failed to terminate active group');
 			expect(result.error).toContain('group may have been modified concurrently');
 		});
 
-		it('should succeed when group cancellation succeeds', async () => {
+		it('should succeed when terminateTaskGroup succeeds for completed transition', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1638,15 +1636,13 @@ describe('Room Agent Tools', () => {
 			await taskManager.startTask(taskId);
 
 			// Create an active group
-			const groupId = insertGroup(taskId, 'awaiting_human');
+			insertGroup(taskId, 'awaiting_human');
 
-			// Create handler with mock runtime that successfully cancels
+			// Create handler with mock runtime that successfully terminates
 			const mockRuntime = {
-				taskGroupManager: {
-					cancel: async (gId: string) => {
-						expect(gId).toBe(groupId);
-						return { id: gId, state: 'cancelled' };
-					},
+				terminateTaskGroup: async (_taskId: string) => {
+					expect(_taskId).toBe(taskId);
+					return true;
 				},
 			};
 			const h = createRoomAgentToolHandlers({
@@ -1657,7 +1653,8 @@ describe('Room Agent Tools', () => {
 				runtimeService: { getRuntime: () => mockRuntime as never },
 			});
 
-			// Complete the task - should succeed because group cancellation succeeded
+			// Complete the task — should succeed because group termination succeeded
+			// NOTE: completing a task does NOT cascade-cancel dependent tasks (bug fix)
 			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('completed');

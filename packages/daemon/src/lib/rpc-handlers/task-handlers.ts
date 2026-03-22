@@ -366,6 +366,7 @@ export function setupTaskHandlers(
 			status: TaskStatus;
 			result?: string;
 			error?: string;
+			mode?: 'manual' | 'runtime';
 		};
 
 		if (!params.roomId) {
@@ -384,17 +385,20 @@ export function setupTaskHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
-		// Validate status transition
-		const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-		if (!allowedTransitions.includes(params.status)) {
-			throw new Error(
-				`Invalid status transition from '${task.status}' to '${params.status}'. ` +
-					`Allowed: ${allowedTransitions.join(', ') || 'none'}`
-			);
+		// Validate status transition (skip in manual mode — user can do any transition)
+		if (params.mode !== 'manual') {
+			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
+			if (!allowedTransitions.includes(params.status)) {
+				throw new Error(
+					`Invalid status transition from '${task.status}' to '${params.status}'. ` +
+						`Allowed: ${allowedTransitions.join(', ') || 'none'}`
+				);
+			}
 		}
 
 		// Archiving: delegate entirely to archiveTaskGroup (terminates sessions + cleans worktree)
 		// or archiveTask (no runtime — sets archivedAt directly). Early return skips generic path.
+		// Only applies to transitioning TO 'archived' (unarchiving is handled by the generic path below).
 		if (params.status === 'archived') {
 			const runtime = runtimeService?.getRuntime(params.roomId);
 			if (runtime) {
@@ -448,7 +452,11 @@ export function setupTaskHandlers(
 
 		// Handle restart: reset cancelled/needs_attention group so runtime picks it up fresh.
 		// completed → in_progress uses lightweight revival (group preserved, no full wipe).
-		if (task.status === 'needs_attention' || task.status === 'cancelled') {
+		if (
+			task.status === 'needs_attention' ||
+			task.status === 'cancelled' ||
+			(params.mode === 'manual' && task.status === 'archived')
+		) {
 			if (params.status === 'pending' || params.status === 'in_progress') {
 				const groupRepo = makeGroupRepo();
 				const group = groupRepo.getGroupByTaskId(params.taskId);
@@ -467,6 +475,7 @@ export function setupTaskHandlers(
 		const updatedTask = await taskManager.setTaskStatus(params.taskId, params.status, {
 			result: params.result,
 			error: params.error,
+			mode: params.mode,
 		});
 
 		emitTaskUpdate(params.roomId, updatedTask);

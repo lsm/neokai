@@ -373,6 +373,8 @@ export interface UpdateTaskParams {
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
 	inputDraft?: string | null;
+	/** Timestamp when the task was archived. Set to null to clear when unarchiving. */
+	archivedAt?: number | null;
 }
 
 // ============================================================================

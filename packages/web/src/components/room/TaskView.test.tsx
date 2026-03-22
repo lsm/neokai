@@ -1340,6 +1340,7 @@ describe('TaskView — Task options dropdown menu', () => {
 				taskId: 'task-1',
 				status: 'completed',
 				result: 'Marked complete by user',
+				mode: 'manual',
 			});
 			expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
 		});
@@ -2060,6 +2061,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				status: 'in_progress',
+				mode: 'manual',
 			});
 		});
 	});
@@ -2130,6 +2132,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				status: 'archived',
+				mode: 'manual',
 			});
 		});
 	});

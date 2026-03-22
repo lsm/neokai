@@ -1187,6 +1187,135 @@ describe('TaskManager', () => {
 	});
 });
 
+describe('setTaskStatus — manual mode', () => {
+	let db: Database;
+	let taskManager: TaskManager;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createTables(db);
+		const roomManager = new RoomManager(db);
+		const room = roomManager.createRoom({
+			name: 'Test Room',
+			allowedPaths: [{ path: '/workspace/test' }],
+			defaultPath: '/workspace/test',
+		});
+		taskManager = new TaskManager(db, room.id, { notifyChange: () => {} } as never);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('should allow any status transition when mode is manual', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// completed is not normally reachable from pending in one step, but manual mode allows it
+		const updated = await taskManager.setTaskStatus(task.id, 'completed', { mode: 'manual' });
+		expect(updated.status).toBe('completed');
+	});
+
+	it('should allow archived → pending transition in manual mode (not allowed in runtime mode)', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// Archive the task first using updateTaskStatus (bypasses state machine)
+		await taskManager.updateTaskStatus(task.id, 'archived');
+		expect((await taskManager.getTask(task.id))!.status).toBe('archived');
+
+		// Manual mode should allow unarchiving
+		const unarchived = await taskManager.setTaskStatus(task.id, 'pending', { mode: 'manual' });
+		expect(unarchived.status).toBe('pending');
+		// archivedAt should be cleared
+		expect(unarchived.archivedAt).toBeUndefined();
+	});
+
+	it('should reject invalid transitions in runtime mode (default)', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// pending → completed is not valid in runtime mode
+		await expect(taskManager.setTaskStatus(task.id, 'completed')).rejects.toThrow(
+			"Invalid status transition from 'pending' to 'completed'"
+		);
+	});
+
+	it('should reject invalid transitions in explicit runtime mode', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		await expect(
+			taskManager.setTaskStatus(task.id, 'completed', { mode: 'runtime' })
+		).rejects.toThrow("Invalid status transition from 'pending' to 'completed'");
+	});
+
+	it('should clear error/result/progress when manually unarchiving', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// Put the task in completed state with result
+		await taskManager.updateTaskStatus(task.id, 'completed', { result: 'done', progress: 100 });
+		// Archive it
+		await taskManager.updateTaskStatus(task.id, 'archived');
+
+		// Unarchive via manual mode
+		const unarchived = await taskManager.setTaskStatus(task.id, 'pending', { mode: 'manual' });
+		expect(unarchived.status).toBe('pending');
+		expect(unarchived.result).toBeUndefined();
+		expect(unarchived.progress).toBeUndefined();
+	});
+
+	it('should clear error when manually restarting from needs_attention to review', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		await taskManager.updateTaskStatus(task.id, 'in_progress');
+		await taskManager.failTask(task.id, 'Some error');
+		expect((await taskManager.getTask(task.id))!.error).toBe('Some error');
+
+		const revived = await taskManager.setTaskStatus(task.id, 'review', { mode: 'manual' });
+		expect(revived.status).toBe('review');
+		expect(revived.error).toBeUndefined();
+	});
+
+	it('completing a task does not affect its dependent tasks in runtime mode', async () => {
+		// Create parent and dependent tasks
+		const parent = await taskManager.createTask({ title: 'Parent', description: '' });
+		const dep1 = await taskManager.createTask({
+			title: 'Dependent 1',
+			description: '',
+			dependsOn: [parent.id],
+		});
+		const dep2 = await taskManager.createTask({
+			title: 'Dependent 2',
+			description: '',
+			dependsOn: [parent.id],
+		});
+
+		// Start and complete the parent task
+		await taskManager.updateTaskStatus(parent.id, 'in_progress');
+		await taskManager.completeTask(parent.id, 'done');
+
+		// Dependent tasks should remain in pending state (not cancelled)
+		const dep1After = await taskManager.getTask(dep1.id);
+		const dep2After = await taskManager.getTask(dep2.id);
+		expect(dep1After!.status).toBe('pending');
+		expect(dep2After!.status).toBe('pending');
+	});
+
+	it('cancelling a task cascades to pending dependents', async () => {
+		// Create parent and dependent tasks
+		const parent = await taskManager.createTask({ title: 'Parent', description: '' });
+		const dep1 = await taskManager.createTask({
+			title: 'Dependent 1',
+			description: '',
+			dependsOn: [parent.id],
+		});
+		const dep2 = await taskManager.createTask({
+			title: 'Dependent 2',
+			description: '',
+			dependsOn: [parent.id],
+		});
+
+		// Cancel the parent task — should cascade to dependents
+		await taskManager.cancelTask(parent.id);
+
+		const dep1After = await taskManager.getTask(dep1.id);
+		const dep2After = await taskManager.getTask(dep2.id);
+		expect(dep1After!.status).toBe('cancelled');
+		expect(dep2After!.status).toBe('cancelled');
+	});
+});
+
 describe('extractPrNumber', () => {
 	it('should extract PR number from GitHub URL', () => {
 		expect(extractPrNumber('https://github.com/org/repo/pull/123')).toBe(123);
