@@ -721,4 +721,209 @@ describe('SettingsManager', () => {
 			expect(existsSync(settingsDir)).toBe(true);
 		});
 	});
+
+	describe('getEnabledMcpServersConfig', () => {
+		it('should return empty object when no settings files exist', () => {
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toEqual({});
+		});
+
+		it('should read MCP servers from project .claude/settings.json', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						github: { command: 'npx', args: ['@github/mcp'] },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('github');
+			expect((result['github'] as { command: string }).command).toBe('npx');
+		});
+
+		it('should read MCP servers from project .mcp.json', () => {
+			writeFileSync(
+				join(workspacePath, '.mcp.json'),
+				JSON.stringify({
+					mcpServers: {
+						'my-tool': { command: 'my-cmd', args: ['--flag'] },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('my-tool');
+		});
+
+		it('should merge project settings.json and .mcp.json', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({ mcpServers: { tool1: { command: 'cmd1' } } })
+			);
+			writeFileSync(
+				join(workspacePath, '.mcp.json'),
+				JSON.stringify({ mcpServers: { tool2: { command: 'cmd2' } } })
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('tool1');
+			expect(result).toHaveProperty('tool2');
+		});
+
+		it('should skip sources excluded from global settingSources', () => {
+			// Disable project source
+			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+				...DEFAULT_GLOBAL_SETTINGS,
+				settingSources: ['user', 'local'],
+			});
+
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({ mcpServers: { project_tool: { command: 'project-cmd' } } })
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).not.toHaveProperty('project_tool');
+		});
+
+		it('should return empty object when file has no mcpServers field', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({ someOtherConfig: 'value' })
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toEqual({});
+		});
+
+		it('should handle malformed JSON gracefully', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(join(settingsDir, 'settings.json'), 'not valid json {{{');
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toEqual({});
+		});
+
+		it('should exclude servers with allowed === false in mcpServerSettings', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						allowed_tool: { command: 'allowed-cmd' },
+						denied_tool: { command: 'denied-cmd' },
+					},
+				})
+			);
+			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+				...DEFAULT_GLOBAL_SETTINGS,
+				mcpServerSettings: {
+					denied_tool: { allowed: false },
+					allowed_tool: { allowed: true },
+				},
+			});
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('allowed_tool');
+			expect(result).not.toHaveProperty('denied_tool');
+		});
+
+		it('should include servers with allowed === true or no setting', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						tool_explicit_allow: { command: 'cmd1' },
+						tool_no_setting: { command: 'cmd2' },
+					},
+				})
+			);
+			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+				...DEFAULT_GLOBAL_SETTINGS,
+				mcpServerSettings: {
+					tool_explicit_allow: { allowed: true },
+				},
+			});
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('tool_explicit_allow');
+			expect(result).toHaveProperty('tool_no_setting');
+		});
+
+		it('should read MCP servers from user settings.json', () => {
+			// TEST_USER_SETTINGS_DIR points to the isolated user settings dir
+			const userSettingsPath = join(process.env.TEST_USER_SETTINGS_DIR!, 'settings.json');
+			writeFileSync(
+				userSettingsPath,
+				JSON.stringify({
+					mcpServers: {
+						user_tool: { command: 'user-cmd', args: ['--user'] },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('user_tool');
+			expect((result['user_tool'] as { command: string }).command).toBe('user-cmd');
+		});
+
+		it('should not include servers from settings.local.json (local source excluded)', () => {
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.local.json'),
+				JSON.stringify({
+					mcpServers: {
+						local_only_tool: { command: 'local-cmd' },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).not.toHaveProperty('local_only_tool');
+		});
+
+		it('project source overrides user source for same server name', () => {
+			// User has a server named 'shared-tool'
+			const userSettingsPath = join(process.env.TEST_USER_SETTINGS_DIR!, 'settings.json');
+			writeFileSync(
+				userSettingsPath,
+				JSON.stringify({
+					mcpServers: {
+						'shared-tool': { command: 'user-version' },
+					},
+				})
+			);
+
+			// Project overrides 'shared-tool' with a different command
+			const settingsDir = join(workspacePath, '.claude');
+			mkdirSync(settingsDir, { recursive: true });
+			writeFileSync(
+				join(settingsDir, 'settings.json'),
+				JSON.stringify({
+					mcpServers: {
+						'shared-tool': { command: 'project-version' },
+					},
+				})
+			);
+
+			const result = settingsManager.getEnabledMcpServersConfig();
+			expect(result).toHaveProperty('shared-tool');
+			expect((result['shared-tool'] as { command: string }).command).toBe('project-version');
+		});
+	});
 });
