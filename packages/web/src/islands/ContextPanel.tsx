@@ -44,6 +44,7 @@ const SETTINGS_SECTIONS: Array<{
 	{ id: 'general', label: 'General', icon: 'settings' },
 	{ id: 'providers', label: 'Providers', icon: 'cloud' },
 	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
+	{ id: 'fallback-models', label: 'Fallback Models', icon: 'swap' },
 	{ id: 'usage', label: 'Usage', icon: 'chart' },
 	{ id: 'about', label: 'About', icon: 'info' },
 ];
@@ -112,6 +113,17 @@ function SectionIcon({ type }: { type: string }) {
 					/>
 				</svg>
 			);
+		case 'swap':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+					/>
+				</svg>
+			);
 		default:
 			return null;
 	}
@@ -134,6 +146,9 @@ export function ContextPanel() {
 	}, [navSection]);
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentRoomId = currentRoomIdSignal.value;
+
+	// Inbox takes full content width — no sidebar needed
+	if (navSection === 'inbox') return null;
 
 	// When a specific room is selected in the rooms section, show room-specific panel
 	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
@@ -279,7 +294,6 @@ export function ContextPanel() {
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
-		navSection === 'inbox' ||
 		navSection === 'projects' ||
 		navSection === 'settings';
 
@@ -403,81 +417,85 @@ export function ContextPanel() {
 					)}
 				</div>
 
-				{/* Content - switches based on section */}
-				{navSection === 'home' && (
-					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
-				)}
-				{navSection === 'chats' && (
-					<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
-				)}
-				{navSection === 'rooms' && isRoomDetail && (
-					<RoomContextPanel
-						roomId={currentRoomId!}
-						onNavigate={() => (contextPanelOpenSignal.value = false)}
-					/>
-				)}
-				{navSection === 'rooms' && !isRoomDetail && (
-					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
-				)}
-				{navSection === 'spaces' && (
-					<SpaceContextPanel
-						onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
-						onCreateSpace={() => setCreateSpaceOpen(true)}
-					/>
-				)}
-				{navSection === 'inbox' && <div class="p-4 text-gray-400 text-sm">Inbox</div>}
-				{navSection === 'projects' && (
-					<div class="flex-1 flex items-center justify-center p-6">
-						<div class="text-center">
-							<div class="text-4xl mb-3">📁</div>
-							<p class="text-sm text-gray-400">Projects coming soon</p>
-							<p class="text-xs text-gray-500 mt-1">Organize rooms into projects</p>
+				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
+				<div
+					key={navSection + (isRoomDetail ? '-detail' : '')}
+					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
+				>
+					{navSection === 'home' && (
+						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
+					)}
+					{navSection === 'chats' && (
+						<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
+					)}
+					{navSection === 'rooms' && isRoomDetail && (
+						<RoomContextPanel
+							roomId={currentRoomId!}
+							onNavigate={() => (contextPanelOpenSignal.value = false)}
+						/>
+					)}
+					{navSection === 'rooms' && !isRoomDetail && (
+						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
+					)}
+					{navSection === 'spaces' && (
+						<SpaceContextPanel
+							onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
+							onCreateSpace={() => setCreateSpaceOpen(true)}
+						/>
+					)}
+					{navSection === 'projects' && (
+						<div class="flex-1 flex items-center justify-center p-6">
+							<div class="text-center">
+								<div class="text-4xl mb-3">📁</div>
+								<p class="text-sm text-gray-400">Projects coming soon</p>
+								<p class="text-xs text-gray-500 mt-1">Organize rooms into projects</p>
+							</div>
 						</div>
-					</div>
-				)}
-				{navSection === 'settings' && (
-					<div class="flex-1 flex flex-col overflow-hidden">
-						{/* Settings navigation list */}
-						<div class="flex-1 overflow-y-auto">
-							<nav class="py-2">
-								{SETTINGS_SECTIONS.map((section) => {
-									const isActive = activeSettingsSection === section.id;
-									return (
-										<button
-											key={section.id}
-											onClick={() => (settingsSectionSignal.value = section.id)}
-											class={cn(
-												'w-full px-4 py-3 flex items-center gap-3 text-left',
-												'transition-colors duration-150',
-												isActive
-													? 'bg-dark-800 text-gray-100'
-													: 'text-gray-400 hover:text-gray-200 hover:bg-dark-800/50'
-											)}
-										>
-											<SectionIcon type={section.icon} />
-											<span class="truncate">{section.label}</span>
-											{isActive && (
-												<svg
-													class="w-4 h-4 ml-auto text-blue-400"
-													fill="none"
-													viewBox="0 0 24 24"
-													stroke="currentColor"
-												>
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														stroke-width={2}
-														d="M9 5l7 7-7 7"
-													/>
-												</svg>
-											)}
-										</button>
-									);
-								})}
-							</nav>
+					)}
+					{navSection === 'settings' && (
+						<div class="flex-1 flex flex-col overflow-hidden">
+							{/* Settings navigation list */}
+							<div class="flex-1 overflow-y-auto">
+								<nav class="py-2">
+									{SETTINGS_SECTIONS.map((section) => {
+										const isActive = activeSettingsSection === section.id;
+										return (
+											<button
+												key={section.id}
+												onClick={() => (settingsSectionSignal.value = section.id)}
+												class={cn(
+													'w-full px-4 py-3 flex items-center gap-3 text-left',
+													'transition-colors duration-150',
+													isActive
+														? 'bg-dark-800 text-gray-100'
+														: 'text-gray-400 hover:text-gray-200 hover:bg-dark-800/50'
+												)}
+											>
+												<SectionIcon type={section.icon} />
+												<span class="truncate">{section.label}</span>
+												{isActive && (
+													<svg
+														class="w-4 h-4 ml-auto text-blue-400"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke="currentColor"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															stroke-width={2}
+															d="M9 5l7 7-7 7"
+														/>
+													</svg>
+												)}
+											</button>
+										);
+									})}
+								</nav>
+							</div>
 						</div>
-					</div>
-				)}
+					)}
+				</div>
 			</div>
 		</>
 	);

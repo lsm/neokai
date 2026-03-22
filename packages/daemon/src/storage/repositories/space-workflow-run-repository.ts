@@ -15,6 +15,8 @@ export interface UpdateWorkflowRunParams {
 	status?: WorkflowRunStatus;
 	currentStepId?: string;
 	config?: Record<string, unknown>;
+	iterationCount?: number;
+	maxIterations?: number;
 }
 
 export class SpaceWorkflowRunRepository {
@@ -28,8 +30,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -42,6 +44,9 @@ export class SpaceWorkflowRunRepository {
 			params.currentStepId ?? null,
 			'pending',
 			null,
+			0,
+			params.maxIterations ?? 5,
+			params.goalId ?? null,
 			now,
 			now
 		);
@@ -138,6 +143,14 @@ export class SpaceWorkflowRunRepository {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
 		}
+		if (params.iterationCount !== undefined) {
+			fields.push('iteration_count = ?');
+			values.push(params.iterationCount);
+		}
+		if (params.maxIterations !== undefined) {
+			fields.push('max_iterations = ?');
+			values.push(params.maxIterations);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -191,6 +204,9 @@ export class SpaceWorkflowRunRepository {
 			currentStepId: (row.current_step_id as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
 			config,
+			iterationCount: (row.iteration_count as number | undefined) ?? 0,
+			maxIterations: (row.max_iterations as number | undefined) ?? 5,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 			completedAt: (row.completed_at as number | null) ?? undefined,

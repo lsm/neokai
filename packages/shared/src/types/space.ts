@@ -123,7 +123,8 @@ export type SpaceTaskStatus =
 	| 'review'
 	| 'completed'
 	| 'needs_attention'
-	| 'cancelled';
+	| 'cancelled'
+	| 'archived';
 
 /**
  * Space task priority
@@ -165,6 +166,8 @@ export interface SpaceTask {
 	workflowStepId?: string;
 	/** ID of the planning task that created this task */
 	createdByTaskId?: string;
+	/** ID of the goal/mission this task is associated with */
+	goalId?: string;
 	/** Progress percentage (0-100) */
 	progress?: number | null;
 	/** Description of current step */
@@ -188,7 +191,7 @@ export interface SpaceTask {
 	prNumber?: number | null;
 	/** When PR was created/submitted (milliseconds since epoch) */
 	prCreatedAt?: number | null;
-	/** Archive timestamp (milliseconds since epoch) — orthogonal to status */
+	/** Archive timestamp (milliseconds since epoch) — derived from status='archived' */
 	archivedAt?: number | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
@@ -227,6 +230,8 @@ export interface CreateSpaceTaskParams {
 	status?: SpaceTaskStatus;
 	/** ID of planning task that created this task */
 	createdByTaskId?: string;
+	/** Goal/mission this task is associated with */
+	goalId?: string;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when the task transitions from 'pending' to 'in_progress'.
@@ -257,6 +262,8 @@ export interface UpdateSpaceTaskParams {
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
 	inputDraft?: string | null;
+	/** Goal/mission this task is associated with; null to clear */
+	goalId?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when spawning a Task Agent; null to clear the reference.
@@ -300,6 +307,12 @@ export interface SpaceWorkflowRun {
 	status: WorkflowRunStatus;
 	/** Optional runtime configuration for this run */
 	config?: Record<string, unknown>;
+	/** Number of times the run has looped back to a previously visited step */
+	iterationCount: number;
+	/** Maximum iterations before escalating to needs_attention */
+	maxIterations: number;
+	/** Optional goal/mission ID this run is associated with */
+	goalId?: string;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -322,6 +335,10 @@ export interface CreateWorkflowRunParams {
 	 * updateCurrentStep() before calling advance().
 	 */
 	currentStepId?: string;
+	/** Maximum iterations before escalating to needs_attention (overrides workflow default) */
+	maxIterations?: number;
+	/** Optional goal/mission ID to associate with this run */
+	goalId?: string;
 }
 
 // ============================================================================
@@ -338,8 +355,15 @@ export interface SpaceSessionGroupMember {
 	groupId: string;
 	/** ID of the session */
 	sessionId: string;
-	/** Role of this session within the group */
-	role: 'worker' | 'leader';
+	/**
+	 * Role of this session within the group — freeform string matching SpaceAgent.role
+	 * (e.g. 'coder', 'reviewer', 'security-auditor', or any user-defined role).
+	 */
+	role: string;
+	/** ID of the SpaceAgent config this session uses (nullable for system agents) */
+	agentId?: string;
+	/** Current state of this member's session */
+	status: 'active' | 'completed' | 'failed';
 	/** Display order within the group */
 	orderIndex: number;
 	/** Creation timestamp (milliseconds since epoch) */
@@ -349,7 +373,7 @@ export interface SpaceSessionGroupMember {
 /**
  * A named group of sessions within a Space.
  * Session groups allow organizing related sessions (e.g., a workflow run's
- * leader + workers) under a single logical unit for display and management.
+ * agents) under a single logical unit for display and management.
  */
 export interface SpaceSessionGroup {
 	/** Unique identifier */
@@ -364,6 +388,10 @@ export interface SpaceSessionGroup {
 	workflowRunId?: string;
 	/** ID of the current workflow step being executed by this group */
 	currentStepId?: string;
+	/** ID of the SpaceTask this group serves */
+	taskId?: string;
+	/** Lifecycle status of this group */
+	status: 'active' | 'completed' | 'failed';
 	/** Members of this group */
 	members: SpaceSessionGroupMember[];
 	/** Creation timestamp (milliseconds since epoch) */
@@ -469,8 +497,11 @@ export interface UpdateSpaceAgentParams {
  * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
  * - `condition`: A user-supplied shell expression; the transition fires when it exits with code 0.
  *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
+ * - `task_result`: Matches against the `result` field of the most recently completed task on the
+ *   current step. The transition fires when the task result starts with or equals the condition's
+ *   `expression` value (e.g., `'passed'`, `'failed'`).
  */
-export type WorkflowConditionType = 'always' | 'human' | 'condition';
+export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 /**
  * A condition that guards a workflow transition.
@@ -480,9 +511,13 @@ export interface WorkflowCondition {
 	/** Condition type. */
 	type: WorkflowConditionType;
 	/**
-	 * Shell expression to evaluate for the `condition` type.
-	 * The transition fires when the expression exits with code 0.
-	 * No allowlist is applied — users are responsible for the expression content.
+	 * Expression to evaluate for the `condition` and `task_result` types.
+	 *
+	 * - For `condition`: a shell expression; the transition fires when it exits with code 0.
+	 *   No allowlist is applied — users are responsible for the expression content.
+	 * - For `task_result`: the match value to compare against the completed task's `result`
+	 *   field (e.g., `'passed'`, `'failed'`). The transition fires when the task result
+	 *   starts with or equals this value.
 	 */
 	expression?: string;
 	/** Human-readable description of what this condition checks */
@@ -517,6 +552,12 @@ export interface WorkflowTransition {
 	condition?: WorkflowCondition;
 	/** Sort order among transitions with the same `from` step. Lower = evaluated first. */
 	order?: number;
+	/**
+	 * When `true`, following this transition increments `iterationCount` on the run.
+	 * Used for cycle detection in iterative workflows — avoids heuristic-based detection
+	 * that would misfire on DAG merge paths.
+	 */
+	isCyclic?: boolean;
 }
 
 /**
@@ -526,22 +567,86 @@ export interface WorkflowTransition {
 export type WorkflowTransitionInput = Omit<WorkflowTransition, 'id'>;
 
 /**
+ * A single agent entry within a multi-agent workflow step.
+ * References a SpaceAgent by ID and optionally overrides instructions for that agent.
+ */
+export interface WorkflowStepAgent {
+	/** ID of the SpaceAgent assigned to execute this step slot */
+	agentId: string;
+	/** Per-agent instructions override — appended to the agent's system prompt */
+	instructions?: string;
+}
+
+/**
+ * A directed messaging channel between agents in a workflow step.
+ * Channels define which agents may send messages to which other agents.
+ * `from` and `to` reference agent roles (matching `SpaceAgent.role`) or the
+ * wildcard `'*'` which matches all agents in the step.
+ *
+ * No channels = no messaging constraints (agents are fully isolated).
+ */
+export interface WorkflowChannel {
+	/**
+	 * Source role string (matches SpaceAgent.role) or `'*'` for all agents in the step.
+	 */
+	from: string;
+	/**
+	 * Target role string, array of role strings, or `'*'` for all agents in the step.
+	 * An array with multiple entries enables fan-out (A→[B,C,D]) and
+	 * hub-spoke bidirectional (A↔[B,C,D]) topologies.
+	 */
+	to: string | string[];
+	/**
+	 * Messaging direction.
+	 * - `one-way`: messages flow only from `from` to `to`.
+	 * - `bidirectional` with single `to`: point-to-point, expanded to A→B + B→A.
+	 * - `bidirectional` with array `to`: hub-spoke — hub sends to all spokes, each
+	 *   spoke may reply to hub only (no spoke-to-spoke messaging).
+	 */
+	direction: 'one-way' | 'bidirectional';
+	/** Optional human-readable label for display in the visual editor */
+	label?: string;
+}
+
+/**
  * A single node in the workflow graph.
- * Each step runs one agent. Steps are connected by WorkflowTransitions.
+ * Steps run one or more agents (in parallel when multiple are specified).
+ * Steps are connected by WorkflowTransitions.
  *
  * All agents are referenced by ID — there is no separate builtin/custom distinction.
  * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
  * are regular SpaceAgent records that happen to have a well-known role label.
+ *
+ * At least one of `agentId` or `agents` must be provided.
  */
 export interface WorkflowStep {
 	/** Unique identifier for this step (stable across renames) */
 	id: string;
 	/** Human-readable name for display */
 	name: string;
-	/** ID of the SpaceAgent assigned to execute this step */
-	agentId: string;
-	/** Step-specific instructions appended to the agent's system prompt */
+	/**
+	 * ID of the SpaceAgent assigned to execute this step.
+	 * Shorthand for single-agent steps. When `agents` is also provided, `agents` takes
+	 * precedence and this field is ignored.
+	 * At least one of `agentId` or `agents` must be provided.
+	 */
+	agentId?: string;
+	/**
+	 * Multiple agents for parallel execution within this step.
+	 * When provided (non-empty), takes precedence over `agentId`.
+	 * Each agent runs concurrently; the step completes when all agents complete.
+	 * At least one of `agentId` or `agents` must be provided.
+	 */
+	agents?: WorkflowStepAgent[];
+	/** Step-specific instructions shared by all agents in this step */
 	instructions?: string;
+	/**
+	 * Directed messaging topology between agents in this step.
+	 * No channels = no messaging constraints (agents are fully isolated).
+	 * Roles referenced in `from`/`to` must match `SpaceAgent.role` values for agents
+	 * in this step, or the wildcard `'*'`.
+	 */
+	channels?: WorkflowChannel[];
 }
 
 /**
@@ -569,13 +674,32 @@ export interface WorkflowRule {
  * `id` is optional — if provided the backend uses it, otherwise a UUID is generated.
  * Providing an explicit `id` allows transitions in the same CreateSpaceWorkflowParams
  * call to reference the step before it has been persisted.
+ *
+ * At least one of `agentId` or `agents` must be provided.
  */
 export interface WorkflowStepInput {
 	/** Optional pre-assigned step ID. Generated by backend when omitted. */
 	id?: string;
 	name: string;
-	agentId: string;
+	/**
+	 * ID of the SpaceAgent assigned to execute this step.
+	 * Shorthand for single-agent steps. When `agents` is also provided, `agents` takes
+	 * precedence. At least one of `agentId` or `agents` must be provided.
+	 */
+	agentId?: string;
+	/**
+	 * Multiple agents for parallel execution within this step.
+	 * When provided (non-empty), takes precedence over `agentId`.
+	 * At least one of `agentId` or `agents` must be provided.
+	 */
+	agents?: WorkflowStepAgent[];
 	instructions?: string;
+	/**
+	 * Directed messaging topology between agents in this step.
+	 * Roles referenced in `from`/`to` must match `SpaceAgent.role` values for agents
+	 * in this step, or the wildcard `'*'`.
+	 */
+	channels?: WorkflowChannel[];
 }
 
 /**
@@ -616,6 +740,8 @@ export interface SpaceWorkflow {
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
+	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
+	maxIterations?: number;
 	/** Visual editor node positions: maps step ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 	/** Creation timestamp (milliseconds since epoch) */
@@ -657,6 +783,8 @@ export interface CreateSpaceWorkflowParams {
 	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
 	tags?: string[];
 	config?: Record<string, unknown>;
+	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
+	maxIterations?: number;
 	/** Visual editor node positions: maps step ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 }
@@ -699,6 +827,8 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	tags?: string[] | null;
 	config?: Record<string, unknown> | null;
+	/** Maximum iterations for cyclic workflows. Pass `null` to clear. */
+	maxIterations?: number | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
 }
@@ -708,21 +838,56 @@ export interface UpdateSpaceWorkflowParams {
 // ============================================================================
 
 /**
+ * A single agent entry within a multi-agent exported workflow step.
+ * Mirrors `WorkflowStepAgent` but uses a portable `agentRef` name instead of a UUID.
+ */
+export interface ExportedWorkflowStepAgent {
+	/** Name of the SpaceAgent (portable, not a UUID) */
+	agentRef: string;
+	/** Per-agent instructions override */
+	instructions?: string;
+}
+
+/**
  * A single workflow step (graph node) in the exported format.
  *
  * Differences from `WorkflowStep`:
  * - `id` is stripped (space-specific, regenerated on import)
  * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
  *   reference portable across Space instances that may have different UUIDs.
+ * - `agents[]` entries have their `agentId` UUIDs replaced by `agentRef` names.
+ * - `channels[]` are exported as-is — they already use role strings, not UUIDs.
  *
  * Step names are used as cross-references throughout the exported format
  * (in `ExportedWorkflowTransition.fromStep`/`toStep`,
  * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
  * Step names must therefore be unique within an exported workflow.
+ *
+ * At least one of `agentRef` or `agents` (non-empty) must be present:
+ * - Single-agent steps use `agentRef` (shorthand, backward-compatible).
+ * - Multi-agent steps use `agents` (array of `ExportedWorkflowStepAgent` entries).
+ * - The export function never sets both simultaneously, but the type and Zod schema
+ *   do not enforce mutual exclusivity — if both are present, `agents` takes precedence
+ *   on import (consistent with `WorkflowStep` resolution semantics).
  */
 export interface ExportedWorkflowStep {
-	/** Name of the SpaceAgent assigned to this step (portable, not a UUID) */
-	agentRef: string;
+	/**
+	 * Name of the SpaceAgent assigned to this step (portable, not a UUID).
+	 * Used for single-agent steps. Mutually exclusive with `agents`.
+	 */
+	agentRef?: string;
+	/**
+	 * Multiple agents for parallel execution.
+	 * Used for multi-agent steps. Mutually exclusive with `agentRef`.
+	 * When present (non-empty), `agentRef` must be absent.
+	 */
+	agents?: ExportedWorkflowStepAgent[];
+	/**
+	 * Directed messaging topology between agents in this step.
+	 * Uses role strings (portable — not UUIDs). Exported and imported as-is.
+	 * Absent or empty means agents are fully isolated (no messaging).
+	 */
+	channels?: WorkflowChannel[];
 	/** Human-readable step name — used as the stable cross-reference key in the export */
 	name: string;
 	/** Step-specific instructions appended to the agent's system prompt */
@@ -745,6 +910,11 @@ export interface ExportedWorkflowTransition {
 	condition?: WorkflowCondition;
 	/** Sort order among transitions with the same source step. Lower = evaluated first. */
 	order?: number;
+	/**
+	 * When `true`, following this transition increments `iterationCount` on the run.
+	 * Used for cycle detection in iterative workflows.
+	 */
+	isCyclic?: boolean;
 }
 
 /**

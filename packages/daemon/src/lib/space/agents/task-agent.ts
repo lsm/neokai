@@ -46,6 +46,7 @@ import type {
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
+import { resolveStepAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { inferProviderForModel } from '../../providers/registry';
 
@@ -82,8 +83,18 @@ export interface TaskAgentContext {
 // ---------------------------------------------------------------------------
 
 function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
-	const agent = agents.find((a) => a.id === step.agentId);
-	const agentLabel = agent ? `${agent.name} (role: ${agent.role})` : `agent id: ${step.agentId}`;
+	const stepAgents = resolveStepAgents(step);
+	let agentLabel: string;
+	if (stepAgents.length === 1) {
+		const a = agents.find((ag) => ag.id === stepAgents[0].agentId);
+		agentLabel = a ? `${a.name} (role: ${a.role})` : `agent id: ${stepAgents[0].agentId}`;
+	} else {
+		const labels = stepAgents.map((sa) => {
+			const a = agents.find((ag) => ag.id === sa.agentId);
+			return a ? `${a.name} (role: ${a.role})` : `agent id: ${sa.agentId}`;
+		});
+		agentLabel = labels.join(', ');
+	}
 	const instructions = step.instructions ? `\n    Instructions: ${step.instructions}` : '';
 	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
 }
@@ -95,6 +106,8 @@ function formatTransition(t: WorkflowTransition): string {
 			conditionLabel = ' [HUMAN GATE]';
 		} else if (t.condition.type === 'condition') {
 			conditionLabel = ` [condition: ${t.condition.expression ?? '?'}]`;
+		} else if (t.condition.type === 'task_result') {
+			conditionLabel = ` [result matches "${t.condition.expression ?? '?'}"]`;
 		}
 		// 'always' transitions produce no label — they are unconditional, semantically
 		// identical to a transition with no condition object. Any future WorkflowConditionType
@@ -172,13 +185,15 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`- **advance_workflow** — Evaluate transitions from the current workflow step and move ` +
-			`to the next step. Pass the \`result\` of the completed step. ` +
+			`to the next step. Pass the \`step_result\` of the completed step. ` +
 			`Returns the next step ID (or indicates terminal state / human gate). ` +
-			`Call this after a step agent completes successfully.`
+			`Call this after a step agent completes successfully. ` +
+			`When a verify, review, or test step completes, set \`step_result\` to 'passed' ` +
+			`if the work is acceptable, or 'failed: <reason>' if issues were found.`
 	);
 	sections.push(
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
-			`Pass \`status\` (\`completed\` or \`failed\`) and a \`summary\` string. ` +
+			`Pass \`status\` (\`completed\`, \`needs_attention\`, or \`cancelled\`) and a \`summary\` string. ` +
 			`Call this when the workflow reaches a terminal step or an unrecoverable error occurs.`
 	);
 	sections.push(
@@ -186,6 +201,19 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`Pass a \`prompt\` describing what decision or approval is needed. ` +
 			`Returns the human's response. ` +
 			`Call this when \`advance_workflow\` returns a \`human\` gate condition.`
+	);
+
+	// ---- step_result vs report_result status ---------------------------------
+	sections.push(`\n## Result Fields: \`step_result\` vs \`report_result.status\`\n`);
+	sections.push(`These are two different fields with different purposes:\n`);
+	sections.push(
+		`- **\`step_result\`** (in \`advance_workflow\`): A free-form string ` +
+			`(e.g. 'passed', 'failed: tests failed') used to evaluate ` +
+			`\`task_result\` transition conditions. It controls which path the workflow takes next.\n`
+	);
+	sections.push(
+		`- **\`report_result.status\`**: A named task status (completed/needs_attention/cancelled) ` +
+			`that marks the overall task outcome. Set via \`report_result\` when the workflow ends.\n`
 	);
 
 	// ---- Workflow execution instructions ------------------------------------
@@ -202,7 +230,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`   - If it returns **terminal** (no outgoing transitions), call \`report_result\` to ` +
 			`complete the task.\n` +
 			`4. **Handle errors** — If a step agent errors, call \`report_result\` with ` +
-			`\`status: "failed"\` and the error details.`
+			`\`status: "cancelled"\` and the error details.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
@@ -397,7 +425,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 		parts.push(
 			`**Warning:** The assigned workflow "${context.workflow.name}" has no steps defined. ` +
 				`There is nothing to execute. Call \`report_result\` immediately with ` +
-				`\`status: "failed"\` and a summary explaining that the workflow has no steps.`
+				`\`status: "cancelled"\` and a summary explaining that the workflow has no steps.`
 		);
 	} else {
 		// No workflow assigned — spawn the most appropriate agent directly.

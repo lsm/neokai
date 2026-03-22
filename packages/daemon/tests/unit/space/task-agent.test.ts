@@ -237,6 +237,32 @@ describe('buildTaskAgentSystemPrompt — human gate handling', () => {
 	});
 });
 
+describe('buildTaskAgentSystemPrompt — step_result vs report_result.status', () => {
+	test('includes section distinguishing step_result from report_result.status', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('step_result');
+		expect(prompt).toContain('report_result.status');
+	});
+
+	test('describes step_result as free-form string for transition evaluation', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('task_result');
+	});
+
+	test('advance_workflow description mentions passing step_result on verify/review/test steps', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('step_result');
+		expect(prompt).toContain('passed');
+	});
+
+	test('uses cancelled instead of failed for error handling in Workflow Execution Instructions', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('cancelled');
+		// Should not contain the stale "failed" status
+		expect(prompt).not.toMatch(/status: "failed"/);
+	});
+});
+
 describe('buildTaskAgentSystemPrompt — behavioral rules', () => {
 	test('includes no direct code execution rule', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
@@ -619,5 +645,38 @@ describe('buildTaskAgentInitialMessage — start instruction', () => {
 		const ctx = makeContext({ workflow: undefined, workflowRun: undefined });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('spawn_step_agent');
+	});
+});
+
+describe('buildTaskAgentInitialMessage — formatTransition task_result', () => {
+	test('formatTransition labels task_result transitions with result matches expression', () => {
+		// Create a workflow with a task_result transition
+		const wf: SpaceWorkflow = {
+			id: 'wf-task-result',
+			spaceId: 'space-1',
+			name: 'Task Result WF',
+			description: 'Test workflow',
+			steps: [
+				{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
+				{ id: 'step-code', name: 'Code', agentId: 'agent-1' },
+			],
+			transitions: [
+				{
+					id: 't1',
+					from: 'step-plan',
+					to: 'step-code',
+					condition: { type: 'task_result', expression: 'passed' },
+				},
+			],
+			startStepId: 'step-plan',
+			rules: [],
+			isDefault: false,
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const ctx = makeContext({ workflow: wf });
+		const msg = buildTaskAgentInitialMessage(ctx);
+		expect(msg).toContain('[result matches "passed"]');
 	});
 });

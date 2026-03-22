@@ -134,6 +134,7 @@ export class RoomManager {
 			status: task.status,
 			priority: task.priority,
 			progress: task.progress,
+			currentStep: task.currentStep,
 			dependsOn: task.dependsOn,
 			error: task.error,
 			activeSession: task.activeSession,

@@ -46,10 +46,16 @@ const CONDITION_LABELS: Record<WorkflowConditionType, string> = {
 	always: 'Always',
 	human: 'Human approval',
 	condition: 'Expression',
+	task_result: 'Task Result',
 };
 
 /** Explicit ordering for the condition type <select> options. */
-const CONDITION_TYPE_ORDER: WorkflowConditionType[] = ['always', 'human', 'condition'];
+const CONDITION_TYPE_ORDER: WorkflowConditionType[] = [
+	'always',
+	'human',
+	'condition',
+	'task_result',
+];
 
 export function EdgeConfigPanel({
 	transition,
@@ -66,7 +72,8 @@ export function EdgeConfigPanel({
 			// don't persist a stale expression string under a non-expression condition.
 			// Note: the parent is responsible for preserving the expression across
 			// two-way type switches if that behaviour is desired.
-			onUpdateCondition(id, type, type === 'condition' ? condition.expression : undefined);
+			const preserveExpression = type === 'condition' || type === 'task_result';
+			onUpdateCondition(id, type, preserveExpression ? condition.expression : undefined);
 		},
 		[id, condition.expression, onUpdateCondition]
 	);
@@ -74,9 +81,9 @@ export function EdgeConfigPanel({
 	const handleExpressionChange = useCallback(
 		(e: Event) => {
 			const expression = (e.target as HTMLInputElement).value;
-			onUpdateCondition(id, 'condition', expression);
+			onUpdateCondition(id, condition.type, expression);
 		},
-		[id, onUpdateCondition]
+		[id, condition.type, onUpdateCondition]
 	);
 
 	const handleDelete = useCallback(() => {
@@ -143,18 +150,20 @@ export function EdgeConfigPanel({
 				</select>
 			</div>
 
-			{/* Expression input — only shown for 'condition' type */}
-			{condition.type === 'condition' && (
+			{/* Expression input — shown for 'condition' and 'task_result' types */}
+			{(condition.type === 'condition' || condition.type === 'task_result') && (
 				<div class="flex flex-col gap-1">
 					<label class="text-xs text-gray-400 font-medium" for="condition-expression">
-						Expression
+						{condition.type === 'task_result' ? 'Match value' : 'Expression'}
 					</label>
 					<input
 						id="condition-expression"
 						data-testid="condition-expression"
 						type="text"
 						class="bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
-						placeholder="e.g. test -f output.txt"
+						placeholder={
+							condition.type === 'task_result' ? 'e.g. passed, failed' : 'e.g. test -f output.txt'
+						}
 						value={condition.expression ?? ''}
 						onInput={handleExpressionChange}
 					/>

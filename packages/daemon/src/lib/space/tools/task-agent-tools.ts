@@ -42,6 +42,7 @@ import {
 	ReportResultSchema,
 	RequestHumanInputSchema,
 } from './task-agent-tool-schemas';
+import { resolveStepAgents } from '@neokai/shared';
 import type {
 	SpawnStepAgentInput,
 	CheckStepStatusInput,
@@ -247,12 +248,14 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Ensure customAgentId is set — fall back to step.agentId for preset agents.
+			// Ensure customAgentId is set — fall back to the primary step agent ID for preset agents.
 			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
-			// but those agents are still SpaceAgent records indexed by step.agentId.
+			// but those agents are still SpaceAgent records. Use resolveStepAgents to get the
+			// correct primary agentId regardless of whether the step uses agentId or agents[].
+			const primaryAgentId = resolveStepAgents(step)[0]?.agentId;
 			const effectiveTask = {
 				...stepTask,
-				customAgentId: stepTask.customAgentId ?? step.agentId,
+				customAgentId: stepTask.customAgentId ?? primaryAgentId,
 			};
 
 			// Apply optional instruction override
@@ -503,13 +506,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * 5. Handle WorkflowGateError → return gate-blocked status (caller calls request_human_input)
 		 * 6. Return next step info (or terminal state)
 		 *
-		 * Note: AdvanceWorkflowInput includes a `step_result` field which is currently a
-		 * placeholder. WorkflowExecutor.advance() does not yet accept a result parameter;
-		 * transition conditions are evaluated against run.config (e.g. humanApproved).
-		 * The field is retained in the schema for forward compatibility but is not forwarded
-		 * to the executor in this implementation.
+		 * Note: WorkflowExecutor.advance() accepts `{ stepResult?: string }` for
+		 * task_result condition evaluation. The `step_result` field from the tool input
+		 * is forwarded to the executor, which uses it as a fallback when the DB result
+		 * is absent (DB result takes precedence — the most recently completed task on
+		 * the step is queried first).
 		 */
-		async advance_workflow(_args: AdvanceWorkflowInput): Promise<ToolResult> {
+		async advance_workflow(args: AdvanceWorkflowInput): Promise<ToolResult> {
 			const executor = runtime.getExecutor(workflowRunId);
 			if (!executor) {
 				return jsonResult({
@@ -568,7 +571,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			try {
-				const { step: nextStep, tasks: newTasks } = await executor.advance();
+				const { step: nextStep, tasks: newTasks } = await executor.advance({
+					stepResult: args.step_result,
+				});
 
 				if (newTasks.length === 0) {
 					// Terminal step reached — executor marked run as completed.

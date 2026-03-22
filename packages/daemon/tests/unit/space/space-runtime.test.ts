@@ -217,6 +217,69 @@ describe('SpaceRuntime', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// resolveTaskTypesForStep (multi-agent variant)
+	// -------------------------------------------------------------------------
+
+	describe('resolveTaskTypesForStep()', () => {
+		test('single agentId shorthand → one-element array with correct resolution', () => {
+			const step = { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER };
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(1);
+			expect(results[0].taskType).toBe('planning');
+			expect(results[0].customAgentId).toBeUndefined();
+		});
+
+		test('multi-agent step → one ResolvedTaskType per agent entry', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }, { agentId: AGENT_CUSTOM }],
+			};
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(3);
+			expect(results[0]).toEqual({ taskType: 'planning', customAgentId: undefined });
+			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[2]).toEqual({ taskType: 'coding', customAgentId: AGENT_CUSTOM });
+		});
+
+		test('multi-agent step with general role → coding, no customAgentId', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_GENERAL }, { agentId: AGENT_CODER }],
+			};
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(2);
+			expect(results[0]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: undefined });
+		});
+
+		test('multi-agent step with unknown agentId → coding + customAgentId preserved', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_CODER }, { agentId: 'unknown-agent-id' }],
+			};
+			const results = runtime.resolveTaskTypesForStep(step);
+			expect(results).toHaveLength(2);
+			expect(results[0]).toEqual({ taskType: 'coding', customAgentId: undefined });
+			expect(results[1]).toEqual({ taskType: 'coding', customAgentId: 'unknown-agent-id' });
+		});
+
+		test('resolveTaskTypeForStep delegates to first entry of resolveTaskTypesForStep', () => {
+			const step = {
+				id: STEP_A,
+				name: 'Multi',
+				agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+			};
+			const single = runtime.resolveTaskTypeForStep(step);
+			const multi = runtime.resolveTaskTypesForStep(step);
+			expect(single).toEqual(multi[0]);
+			expect(single.taskType).toBe('planning');
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// getRulesForStep
 	// -------------------------------------------------------------------------
 
@@ -342,6 +405,34 @@ describe('SpaceRuntime', () => {
 			expect(runtime.getExecutor(run.id)).toBeDefined();
 		});
 
+		test('propagates workflow maxIterations to the created run', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `MaxIter Test ${Date.now()}`,
+				description: 'Test',
+				steps: [{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER }],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+				maxIterations: 3,
+			});
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			expect(run.maxIterations).toBe(3);
+		});
+
+		test('uses default maxIterations when workflow has none', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			expect(run.maxIterations).toBe(5);
+		});
+
 		test('throws for unknown workflow', async () => {
 			await expect(runtime.startWorkflowRun(SPACE_ID, 'nonexistent-wf-id', 'Run')).rejects.toThrow(
 				'Workflow not found'
@@ -412,6 +503,220 @@ describe('SpaceRuntime', () => {
 			);
 
 			expect(run.description).toBe('Some description');
+		});
+
+		test('stores goalId on run record and propagates to initial task', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Goal Run',
+				undefined,
+				'goal-abc'
+			);
+
+			expect(run.goalId).toBe('goal-abc');
+			expect(tasks[0].goalId).toBe('goal-abc');
+		});
+
+		test('goalId defaults to undefined when not provided', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'No Goal');
+
+			expect(run.goalId).toBeUndefined();
+			expect(tasks[0].goalId).toBeUndefined();
+		});
+
+		test('multi-agent start step: uses first agent taskType for the initial task', async () => {
+			// Workflow with agents[] format: planner first, then coder
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-Agent Start ${Date.now()}`,
+				description: '',
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Multi Step',
+						agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Run');
+
+			// The primary task uses the first agent's resolution (planner → planning)
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].taskType).toBe('planning');
+			expect(tasks[0].customAgentId).toBeUndefined();
+		});
+
+		test('multi-agent start step with custom-role first agent: sets customAgentId', async () => {
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-Agent Custom ${Date.now()}`,
+				description: '',
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Custom Multi Step',
+						agents: [{ agentId: AGENT_CUSTOM }, { agentId: AGENT_CODER }],
+					},
+				],
+				transitions: [],
+				startStepId: STEP_A,
+				rules: [],
+				tags: [],
+			});
+
+			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Custom Multi Run');
+
+			expect(tasks[0].taskType).toBe('coding');
+			expect(tasks[0].customAgentId).toBe(AGENT_CUSTOM);
+		});
+
+		test('cancels run and clears executor when start step has no agent configuration', async () => {
+			// Bypass FK + manager validation to insert a step with no agentId/agents
+			db.exec('PRAGMA foreign_keys = OFF');
+			let workflow: SpaceWorkflow;
+			try {
+				const repo = new SpaceWorkflowRepository(db);
+				// Insert step JSON directly with no agentId and no agents[]
+				workflow = repo.createWorkflow({
+					spaceId: SPACE_ID,
+					name: `No Agent Step ${Date.now()}`,
+					description: '',
+					steps: [{ id: STEP_A, name: 'Broken Step' } as never],
+					transitions: [],
+					startStepId: STEP_A,
+					rules: [],
+					tags: [],
+				});
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+
+			const runsBefore = workflowRunRepo.listBySpace(SPACE_ID);
+
+			await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Broken Run')).rejects.toThrow();
+
+			// Run should be cancelled, executor map should be clean
+			const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
+			const newRun = runsAfter.find((r) => !runsBefore.some((b) => b.id === r.id));
+			expect(newRun).toBeDefined();
+			expect(newRun!.status).toBe('cancelled');
+			expect(runtime.executorCount).toBe(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// goalId propagation through workflow advancement
+	// -------------------------------------------------------------------------
+
+	describe('goalId propagation through workflow advancement', () => {
+		test('goalId propagates to tasks created by followTransition on advance', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Goal Propagation Run',
+				undefined,
+				'goal-propagate'
+			);
+
+			// Initial task should have goalId
+			expect(tasks[0].goalId).toBe('goal-propagate');
+
+			// Complete step A → tick → step B task created with goalId
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			await runtime.executeTick();
+
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			expect(allTasks).toHaveLength(2);
+
+			const stepBTask = allTasks.find((t) => t.workflowStepId === STEP_B);
+			expect(stepBTask).toBeDefined();
+			expect(stepBTask!.goalId).toBe('goal-propagate');
+		});
+
+		test('goalId propagates through all steps of a three-step workflow', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+					{ id: STEP_C, name: 'Review', agentId: AGENT_GENERAL },
+				],
+				[{ type: 'always' }, { type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				workflow.id,
+				'Full Goal Run',
+				undefined,
+				'goal-full'
+			);
+
+			// Complete step A → tick
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			await runtime.executeTick();
+
+			// Complete step B → tick
+			const stepBTask = taskRepo
+				.listByWorkflowRun(run.id)
+				.find((t) => t.workflowStepId === STEP_B)!;
+			taskRepo.updateTask(stepBTask.id, { status: 'completed' });
+			await runtime.executeTick();
+
+			// All three tasks should have the goalId
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			expect(allTasks).toHaveLength(3);
+			for (const task of allTasks) {
+				expect(task.goalId).toBe('goal-full');
+			}
+		});
+
+		test('tasks have no goalId when run has no goalId', async () => {
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'No Goal Run');
+
+			// Complete step A → tick
+			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			await runtime.executeTick();
+
+			const allTasks = taskRepo.listByWorkflowRun(run.id);
+			for (const task of allTasks) {
+				expect(task.goalId).toBeUndefined();
+			}
 		});
 	});
 

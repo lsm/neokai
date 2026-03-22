@@ -80,21 +80,68 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-	test('has two steps', () => {
-		expect(CODING_WORKFLOW.steps).toHaveLength(2);
+	test('has four steps: Plan, Code, Verify & Test, Done', () => {
+		expect(CODING_WORKFLOW.steps).toHaveLength(4);
+		expect(CODING_WORKFLOW.steps.map((s) => s.name)).toEqual([
+			'Plan',
+			'Code',
+			'Verify & Test',
+			'Done',
+		]);
 	});
 
-	test('first step agentId placeholder is planner', () => {
+	test('step agentId placeholders are correct', () => {
 		expect(CODING_WORKFLOW.steps[0].agentId).toBe('planner');
-	});
-
-	test('second step agentId placeholder is coder', () => {
 		expect(CODING_WORKFLOW.steps[1].agentId).toBe('coder');
+		expect(CODING_WORKFLOW.steps[2].agentId).toBe('general');
+		expect(CODING_WORKFLOW.steps[3].agentId).toBe('general');
 	});
 
-	test('has one transition (planner → coder) with human condition', () => {
-		expect(CODING_WORKFLOW.transitions).toHaveLength(1);
-		expect(CODING_WORKFLOW.transitions[0].condition?.type).toBe('human');
+	test('Verify & Test step has instructions', () => {
+		const verifyStep = CODING_WORKFLOW.steps.find((s) => s.name === 'Verify & Test');
+		expect(verifyStep?.instructions).toContain('Run tests');
+		expect(verifyStep?.instructions).toContain('passed');
+		expect(verifyStep?.instructions).toContain('failed');
+	});
+
+	test('has four transitions forming Plan→Code→Verify→Plan/Done graph', () => {
+		expect(CODING_WORKFLOW.transitions).toHaveLength(4);
+
+		const planToCode = CODING_WORKFLOW.transitions.find((t) => t.id === 'tpl-coding-plan-to-code');
+		expect(planToCode?.condition?.type).toBe('human');
+
+		const codeToVerify = CODING_WORKFLOW.transitions.find(
+			(t) => t.id === 'tpl-coding-code-to-verify'
+		);
+		expect(codeToVerify?.condition?.type).toBe('always');
+
+		const verifyToPlan = CODING_WORKFLOW.transitions.find(
+			(t) => t.id === 'tpl-coding-verify-to-plan'
+		);
+		expect(verifyToPlan?.condition?.type).toBe('task_result');
+		expect(verifyToPlan?.condition?.expression).toBe('failed');
+		expect(verifyToPlan?.isCyclic).toBe(true);
+
+		const verifyToDone = CODING_WORKFLOW.transitions.find(
+			(t) => t.id === 'tpl-coding-verify-to-done'
+		);
+		expect(verifyToDone?.condition?.type).toBe('task_result');
+		expect(verifyToDone?.condition?.expression).toBe('passed');
+		expect(verifyToDone?.isCyclic).toBeUndefined();
+	});
+
+	test('Verify→Plan transition has lower order than Verify→Done', () => {
+		const verifyToPlan = CODING_WORKFLOW.transitions.find(
+			(t) => t.id === 'tpl-coding-verify-to-plan'
+		);
+		const verifyToDone = CODING_WORKFLOW.transitions.find(
+			(t) => t.id === 'tpl-coding-verify-to-done'
+		);
+		expect(verifyToPlan!.order).toBeLessThan(verifyToDone!.order);
+	});
+
+	test('maxIterations is set to 3', () => {
+		expect(CODING_WORKFLOW.maxIterations).toBe(3);
 	});
 
 	test('startStepId points to the planner step', () => {
@@ -205,7 +252,9 @@ describe('getBuiltInWorkflows()', () => {
 	test('all agentId placeholders are valid builtin role names', () => {
 		for (const wf of getBuiltInWorkflows()) {
 			for (const step of wf.steps) {
-				expect(VALID_BUILTIN_ROLES.has(step.agentId)).toBe(true);
+				// Built-in workflows use single-agent steps; agentId must be defined and a valid role name.
+				expect(step.agentId).toBeDefined();
+				expect(VALID_BUILTIN_ROLES.has(step.agentId!)).toBe(true);
 			}
 		}
 	});
@@ -275,20 +324,67 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
 
-	test('CODING_WORKFLOW seeded correctly — planner + coder steps with real agent IDs', async () => {
+	test('CODING_WORKFLOW seeded correctly — four steps with real agent IDs', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.steps).toHaveLength(2);
+		expect(wf!.steps).toHaveLength(4);
 		expect(wf!.steps[0].agentId).toBe(PLANNER_ID);
 		expect(wf!.steps[1].agentId).toBe(CODER_ID);
+		expect(wf!.steps[2].agentId).toBe(GENERAL_ID);
+		expect(wf!.steps[3].agentId).toBe(GENERAL_ID);
 	});
 
-	test('CODING_WORKFLOW seeded with human condition on planner→coder transition', async () => {
+	test('CODING_WORKFLOW seeded with four transitions and correct conditions', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		expect(wf!.transitions).toHaveLength(1);
-		expect(wf!.transitions[0].condition?.type).toBe('human');
+		expect(wf!.transitions).toHaveLength(4);
+
+		// Find transitions by condition type and expression
+		const humanTransition = wf!.transitions.find((t) => t.condition?.type === 'human');
+		expect(humanTransition).toBeDefined();
+
+		const alwaysTransition = wf!.transitions.find((t) => t.condition?.type === 'always');
+		expect(alwaysTransition).toBeDefined();
+
+		const failedTransition = wf!.transitions.find(
+			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'failed'
+		);
+		expect(failedTransition).toBeDefined();
+
+		const passedTransition = wf!.transitions.find(
+			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'passed'
+		);
+		expect(passedTransition).toBeDefined();
+	});
+
+	test('CODING_WORKFLOW seeded with isCyclic on Verify→Plan transition', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
+		const failedTransition = wf!.transitions.find(
+			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'failed'
+		);
+		expect(failedTransition!.isCyclic).toBe(true);
+
+		// Verify→Done should NOT be cyclic
+		const passedTransition = wf!.transitions.find(
+			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'passed'
+		);
+		expect(passedTransition!.isCyclic).toBeUndefined();
+	});
+
+	test('CODING_WORKFLOW seeded with maxIterations', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
+		expect(wf!.maxIterations).toBe(3);
+	});
+
+	test('CODING_WORKFLOW seeded Verify step has instructions', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
+		const verifyStep = wf!.steps.find((s) => s.name === 'Verify & Test');
+		expect(verifyStep).toBeDefined();
+		expect(verifyStep!.instructions).toContain('Run tests');
 	});
 
 	test('RESEARCH_WORKFLOW seeded correctly — planner + general with always transition', async () => {
@@ -371,9 +467,9 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
 	});
 
-	test('does not persist any workflow when resolveAgentId fails on a later-template role', async () => {
-		// 'general' is only needed by RESEARCH_WORKFLOW (2nd template).
-		// Without pre-validation, CODING_WORKFLOW would already be committed when this throws.
+	test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
+		// 'general' is used by both CODING_WORKFLOW and RESEARCH_WORKFLOW.
+		// Pre-validation catches missing roles before any workflow is persisted.
 		const brokenResolver = (role: string): string | undefined =>
 			role === 'general' ? undefined : roleMap[role];
 

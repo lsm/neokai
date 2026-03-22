@@ -34,13 +34,15 @@ async function createTestSpace(page: Page): Promise<string> {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Clean up any leftover space at this workspace path
+			// Clean up any leftover space at this workspace path.
+			// Normalize paths to handle macOS symlink resolution (/var/ vs /private/var/).
+			const norm = (p: string) => p.replace(/^\/private/, '');
 			try {
 				const list = (await hub.request('space.list', {})) as Array<{
 					id: string;
 					workspacePath: string;
 				}>;
-				const existing = list.find((s) => s.workspacePath === wsPath);
+				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
 				if (existing) {
 					await hub.request('space.delete', { id: existing.id });
 				}
@@ -71,6 +73,8 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+	// Wait for SpaceIsland to finish loading — the tab bar appears after space.overview resolves
+	await expect(page.locator('text=Dashboard').first()).toBeVisible({ timeout: 15000 });
 }
 
 /**
@@ -123,6 +127,8 @@ async function getDefaultAgentId(page: Page, spaceId: string): Promise<string> {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Visual Workflow Editor', () => {
+	// All tests share the same workspace path (one space at a time) — must run serially
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
@@ -281,8 +287,8 @@ test.describe('Visual Workflow Editor', () => {
 			if (actions) actions.style.opacity = '1';
 		});
 
-		// Click the Edit button
-		const editBtn = page.getByRole('button', { name: 'Edit' }).first();
+		// Click the Edit button scoped to the target workflow card
+		const editBtn = workflowCard.getByRole('button', { name: 'Edit' });
 		await expect(editBtn).toBeVisible({ timeout: 3000 });
 		await editBtn.click();
 

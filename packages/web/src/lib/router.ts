@@ -4,6 +4,7 @@
  * Handles URL-based routing for sessions and rooms with patterns:
  * - Sessions: /session/:sessionId
  * - Rooms: /room/:roomId
+ * - Room Agent: /room/:roomId/agent
  *
  * Features:
  * - URL sync: Updates URL when session/room changes
@@ -26,6 +27,7 @@ import {
 /** Route patterns */
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
 const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
+const ROOM_AGENT_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/agent$/;
 const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
 const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
@@ -67,6 +69,10 @@ export function getRoomIdFromPath(path: string): string | null {
 	const match = path.match(ROOM_ROUTE_PATTERN);
 	if (match) return match[1];
 
+	// Also check room agent pattern
+	const roomAgentMatch = path.match(ROOM_AGENT_ROUTE_PATTERN);
+	if (roomAgentMatch) return roomAgentMatch[1];
+
 	// Also check room session pattern
 	const roomSessionMatch = path.match(ROOM_SESSION_ROUTE_PATTERN);
 	if (roomSessionMatch) return roomSessionMatch[1];
@@ -100,6 +106,15 @@ export function getRoomTaskIdFromPath(path: string): { roomId: string; taskId: s
 	const match = path.match(ROOM_TASK_ROUTE_PATTERN);
 	if (!match) return null;
 	return { roomId: match[1], taskId: match[2] };
+}
+
+/**
+ * Extract room ID from agent route path
+ * Returns null if not on a room agent route
+ */
+export function getRoomAgentFromPath(path: string): string | null {
+	const match = path.match(ROOM_AGENT_ROUTE_PATTERN);
+	return match ? match[1] : null;
 }
 
 /**
@@ -158,6 +173,13 @@ export function createSessionPath(sessionId: string): string {
  */
 export function createRoomPath(roomId: string): string {
 	return `/room/${roomId}`;
+}
+
+/**
+ * Create room agent URL path
+ */
+export function createRoomAgentPath(roomId: string): string {
+	return `/room/${roomId}/agent`;
 }
 
 /**
@@ -335,6 +357,53 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		navSectionSignal.value = 'rooms';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
+ * Navigate to the Room Agent view
+ * Updates URL to /room/:roomId/agent and sets signals for ChatContainer rendering
+ *
+ * @param roomId - The room ID
+ * @param replace - Whether to replace current history entry (default: false)
+ */
+export function navigateToRoomAgent(roomId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createRoomAgentPath(roomId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = `room:chat:${roomId}`;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ roomId, path: targetPath }, '', targetPath);
+
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = `room:chat:${roomId}`;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
+	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
 		}, 0);
@@ -639,6 +708,8 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -654,6 +725,8 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -679,6 +752,8 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -694,6 +769,8 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -719,6 +796,8 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentSpaceSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -734,6 +813,8 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentSpaceSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -753,6 +834,7 @@ function handlePopState(_event: PopStateEvent): void {
 	const path = getCurrentPath();
 	const sessionId = getSessionIdFromPath(path);
 	const roomId = getRoomIdFromPath(path);
+	const roomAgent = getRoomAgentFromPath(path);
 	const roomSession = getRoomSessionIdFromPath(path);
 	const roomTask = getRoomTaskIdFromPath(path);
 	const spaceTask = getSpaceTaskIdFromPath(path);
@@ -761,6 +843,9 @@ function handlePopState(_event: PopStateEvent): void {
 
 	// Update the signals to match the URL
 	// Space routes take priority over room routes
+	// IMPORTANT: Order is load-bearing — roomAgent must be checked before roomTask/roomSession/roomId
+	// because getRoomIdFromPath also matches agent paths. If reordered, agent routes silently
+	// fall through to the plain room handler, losing the synthetic session ID.
 	if (spaceTask) {
 		currentSpaceIdSignal.value = spaceTask.spaceId;
 		currentSpaceTaskIdSignal.value = spaceTask.taskId;
@@ -788,6 +873,15 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
+	} else if (roomAgent) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = roomAgent;
+		currentRoomSessionIdSignal.value = `room:chat:${roomAgent}`;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 	} else if (roomTask) {
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -878,6 +972,7 @@ export function initializeRouter(): string | null {
 	const initialPath = getCurrentPath();
 	const initialSessionId = getSessionIdFromPath(initialPath);
 	const initialRoomId = getRoomIdFromPath(initialPath);
+	const initialRoomAgent = getRoomAgentFromPath(initialPath);
 	const initialRoomSession = getRoomSessionIdFromPath(initialPath);
 	const initialRoomTask = getRoomTaskIdFromPath(initialPath);
 	const initialSpaceTask = getSpaceTaskIdFromPath(initialPath);
@@ -885,6 +980,7 @@ export function initializeRouter(): string | null {
 	const initialSpaceId = getSpaceIdFromPath(initialPath);
 
 	// Set initial signals — space routes take priority, then room routes
+	// IMPORTANT: Order is load-bearing — see comment in handlePopState
 	if (initialSpaceTask) {
 		currentSpaceIdSignal.value = initialSpaceTask.spaceId;
 		currentSpaceTaskIdSignal.value = initialSpaceTask.taskId;
@@ -912,6 +1008,15 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
+	} else if (initialRoomAgent) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = initialRoomAgent;
+		currentRoomSessionIdSignal.value = `room:chat:${initialRoomAgent}`;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 	} else if (initialRoomTask) {
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;

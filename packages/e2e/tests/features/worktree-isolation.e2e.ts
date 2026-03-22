@@ -109,12 +109,8 @@ test.describe('Worktree Isolation', () => {
 		const confirmButton = page.locator('[data-testid="confirm-delete-session"]');
 		await confirmButton.click();
 
-		// Wait for deletion to complete
-		await page.waitForTimeout(2000);
-
-		// Session should be gone - verify by checking URL
-		const url = page.url();
-		expect(url).not.toContain(deletedSessionId);
+		// Session should be gone - URL should no longer contain the deleted session ID
+		await expect(page).not.toHaveURL(new RegExp(deletedSessionId!), { timeout: 10000 });
 
 		// Don't try to cleanup in afterEach since it's already deleted
 		sessionId = null;

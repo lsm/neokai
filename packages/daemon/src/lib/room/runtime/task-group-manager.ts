@@ -573,8 +573,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 
 		return updated;
 	}
@@ -728,8 +727,7 @@ export class TaskGroupManager {
 		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
-			// Already terminal - cleanup worktree if not done
-			await this.cleanupWorktree(group);
+			// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 			return group;
 		}
 
@@ -739,8 +737,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 
 		return updated;
 	}

@@ -16,7 +16,11 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { TaskManager, extractPrNumber } from '../../../src/lib/room/managers/task-manager';
+import {
+	TaskManager,
+	extractPrNumber,
+	VALID_STATUS_TRANSITIONS,
+} from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 describe('TaskManager', () => {
@@ -851,7 +855,7 @@ describe('TaskManager', () => {
 			expect(revived.error).toBeUndefined();
 		});
 
-		it('should reject cancelled → review transition (worktree is cleaned up on cancel)', async () => {
+		it('should reject cancelled → review transition (not a valid reactivation path)', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
 			await taskManager.cancelTask(task.id);
@@ -869,6 +873,245 @@ describe('TaskManager', () => {
 			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
 				'Invalid status transition'
 			);
+		});
+	});
+
+	describe('archived status transitions', () => {
+		it('should allow completed → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow cancelled → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow cancelled → completed transition (e.g. PR merged after cancellation)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const completed = await taskManager.setTaskStatus(task.id, 'completed');
+			expect(completed.status).toBe('completed');
+		});
+
+		it('should allow needs_attention → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow completed → in_progress reactivation', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+		});
+
+		it('should clear result and progress when reactivating a completed task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'previous result');
+
+			const completed = await taskManager.getTask(task.id);
+			expect(completed!.result).toBe('previous result');
+			expect(completed!.progress).toBe(100);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+			expect(reactivated.result).toBeUndefined();
+			expect(reactivated.progress).toBeUndefined();
+		});
+
+		it('should reject archived → any transition (true terminal)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			await taskManager.setTaskStatus(task.id, 'archived');
+
+			const allStatuses = [
+				'draft',
+				'pending',
+				'in_progress',
+				'review',
+				'completed',
+				'needs_attention',
+				'cancelled',
+				'archived',
+			] as const;
+			for (const status of allStatuses) {
+				await expect(taskManager.setTaskStatus(task.id, status)).rejects.toThrow(
+					'Invalid status transition'
+				);
+			}
+		});
+
+		it('should allow cancelled → pending transition (restart)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const restarted = await taskManager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+		});
+
+		it('should allow cancelled → in_progress transition (reactivation)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+		});
+
+		it('should allow needs_attention → pending transition (restart)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const restarted = await taskManager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+		});
+
+		it('should reject review → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
+
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject draft → archived transition', async () => {
+			const task = await taskManager.createTask({
+				title: 'T',
+				description: '',
+				status: 'draft',
+			});
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject pending → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject in_progress → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+	});
+
+	describe('archiveTask method', () => {
+		it('should archive a completed task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should archive a cancelled task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should archive a needs_attention task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should reject archiving a pending task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await expect(taskManager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'pending'"
+			);
+		});
+
+		it('should reject archiving an in_progress task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await expect(taskManager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'in_progress'"
+			);
+		});
+
+		it('should clear active_session when archiving', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.activeSession).toBeNull();
+		});
+
+		it('should throw for non-existent task', async () => {
+			await expect(taskManager.archiveTask('non-existent')).rejects.toThrow(
+				'Task not found: non-existent'
+			);
+		});
+	});
+
+	describe('VALID_STATUS_TRANSITIONS map', () => {
+		it('archived is a true terminal state with no transitions', () => {
+			expect(VALID_STATUS_TRANSITIONS.archived).toEqual([]);
+		});
+
+		it('completed allows reactivation and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.completed).toEqual(['in_progress', 'archived']);
+		});
+
+		it('cancelled allows restart, completion, and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.cancelled).toEqual([
+				'pending',
+				'in_progress',
+				'completed',
+				'archived',
+			]);
+		});
+
+		it('needs_attention allows restart, review, and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.needs_attention).toEqual([
+				'pending',
+				'in_progress',
+				'review',
+				'archived',
+			]);
 		});
 	});
 

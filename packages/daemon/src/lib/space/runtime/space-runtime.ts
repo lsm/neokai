@@ -27,6 +27,7 @@ import type {
 	WorkflowRule,
 	WorkflowStep,
 } from '@neokai/shared';
+import { resolveStepAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -284,7 +285,8 @@ export class SpaceRuntime {
 		spaceId: string,
 		workflowId: string,
 		title: string,
-		description?: string
+		description?: string,
+		goalId?: string
 	): Promise<{ run: SpaceWorkflowRun; tasks: SpaceTask[] }> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
 		if (!workflow) {
@@ -303,6 +305,8 @@ export class SpaceRuntime {
 			title,
 			description,
 			currentStepId: workflow.startStepId,
+			goalId,
+			maxIterations: workflow.maxIterations,
 		});
 
 		const run = this.config.workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;
@@ -322,10 +326,13 @@ export class SpaceRuntime {
 			throw new Error(`Start step "${workflow.startStepId}" not found in workflow "${workflowId}"`);
 		}
 
-		const resolved = this.resolveTaskTypeForStep(startStep);
 		const taskManager = this.getOrCreateTaskManager(spaceId);
 		let task: SpaceTask;
 		try {
+			// resolveTaskTypeForStep is inside the try/catch so that an exception from
+			// resolveStepAgents (e.g. a step with neither agentId nor agents) triggers
+			// the same executor/meta cleanup path as a task-creation failure.
+			const resolved = this.resolveTaskTypeForStep(startStep);
 			task = await taskManager.createTask({
 				title: startStep.name,
 				description: startStep.instructions ?? '',
@@ -334,6 +341,7 @@ export class SpaceRuntime {
 				taskType: resolved.taskType,
 				customAgentId: resolved.customAgentId,
 				status: 'pending',
+				goalId: run.goalId,
 			});
 		} catch (err) {
 			// Clean up the executor/meta entries so the run is not orphaned in the map.
@@ -350,21 +358,19 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Resolve the appropriate SpaceTaskType (and optional customAgentId) for
-	 * a workflow step, based on the assigned agent's role.
+	 * Resolve the SpaceTaskType (and optional customAgentId) for a single agentId.
 	 *
 	 * Mapping rules:
 	 *   agent.role === 'planner'          → taskType: 'planning',  customAgentId: undefined
 	 *   agent.role === 'coder'|'general'  → taskType: 'coding',    customAgentId: undefined
-	 *   any other role (custom)           → taskType: 'coding',    customAgentId: step.agentId
-	 *   agent not found                   → taskType: 'coding',    customAgentId: step.agentId
+	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
+	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
-	resolveTaskTypeForStep(step: WorkflowStep): ResolvedTaskType {
-		const agent = this.config.spaceAgentManager.getById(step.agentId);
+	private resolveTaskTypeForAgent(agentId: string | undefined): ResolvedTaskType {
+		const agent = agentId ? this.config.spaceAgentManager.getById(agentId) : undefined;
 
 		if (!agent) {
-			// Unknown agent → treat as custom coding agent
-			return { taskType: 'coding', customAgentId: step.agentId };
+			return { taskType: 'coding', customAgentId: agentId };
 		}
 
 		if (agent.role === 'planner') {
@@ -376,7 +382,38 @@ export class SpaceRuntime {
 		}
 
 		// Custom role
-		return { taskType: 'coding', customAgentId: step.agentId };
+		return { taskType: 'coding', customAgentId: agentId };
+	}
+
+	/**
+	 * Resolve per-agent task types for a workflow step.
+	 *
+	 * Returns one `ResolvedTaskType` per agent entry in the step (in order).
+	 * For single-agent steps (agentId shorthand), returns a one-element array.
+	 *
+	 * Mapping rules per agent:
+	 *   agent.role === 'planner'          → taskType: 'planning',  customAgentId: undefined
+	 *   agent.role === 'coder'|'general'  → taskType: 'coding',    customAgentId: undefined
+	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
+	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
+	 */
+	resolveTaskTypesForStep(step: WorkflowStep): ResolvedTaskType[] {
+		const stepAgents = resolveStepAgents(step);
+		return stepAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
+	}
+
+	/**
+	 * Resolve the appropriate SpaceTaskType (and optional customAgentId) for
+	 * a workflow step, based on the primary agent's role.
+	 *
+	 * For backward compatibility: delegates to `resolveTaskTypesForStep()` and
+	 * returns the first entry (primary agent).
+	 *
+	 * For multi-agent steps (agents[] format), use `resolveTaskTypesForStep()`
+	 * to get per-agent results.
+	 */
+	resolveTaskTypeForStep(step: WorkflowStep): ResolvedTaskType {
+		return this.resolveTaskTypesForStep(step)[0];
 	}
 
 	/**
@@ -891,7 +928,7 @@ export class SpaceRuntime {
 			this.config.workflowRunRepo,
 			workspacePath,
 			undefined, // use default commandRunner
-			(step) => this.resolveTaskTypeForStep(step) // inject TaskTypeResolver
+			(step) => this.resolveTaskTypesForStep(step) // inject TaskTypeResolver (multi-agent)
 		);
 	}
 }

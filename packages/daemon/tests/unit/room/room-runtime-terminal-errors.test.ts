@@ -270,4 +270,44 @@ describe('RoomRuntime - terminal error detection', () => {
 			expect(updatedGroup!.feedbackIteration).toBe(1);
 		});
 	});
+
+	describe('usage_limit handling', () => {
+		it('pauses task when usage_limit detected and no fallback model configured', async () => {
+			// No fallback models configured (default), so usage_limit should pause the task
+			// (like rate_limit behavior) instead of failing
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should NOT be failed — it should pause (rate_limited)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('needs_attention');
+
+			// Group should have a rate limit backoff set
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).not.toBeNull();
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+		});
+
+		it('appends rate_limited event when usage_limit detected and no fallback model configured', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Check that a rate_limited event was appended (not status)
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const rateLimitedEvents = events.filter((e) => e.kind === 'rate_limited');
+			expect(rateLimitedEvents.length).toBeGreaterThan(0);
+			const payload = JSON.parse(rateLimitedEvents[0].payloadJson ?? '{}');
+			expect(payload.text).toContain('Usage limit');
+		});
+	});
 });

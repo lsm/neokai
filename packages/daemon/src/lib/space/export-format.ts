@@ -24,6 +24,7 @@ import type {
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
 	ExportedWorkflowStep,
+	ExportedWorkflowStepAgent,
 	ExportedWorkflowTransition,
 	ExportedWorkflowRule,
 	SpaceExportBundle,
@@ -35,7 +36,7 @@ import type {
 
 const workflowConditionSchema = z
 	.object({
-		type: z.enum(['always', 'human', 'condition']),
+		type: z.enum(['always', 'human', 'condition', 'task_result']),
 		expression: z.string().optional(),
 		description: z.string().optional(),
 		maxRetries: z.number().int().nonnegative().optional(),
@@ -49,19 +50,52 @@ const workflowConditionSchema = z
 				path: ['expression'],
 			});
 		}
+		if (val.type === 'task_result' && (!val.expression || !val.expression.trim())) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "'task_result' type requires a non-empty expression (match value)",
+				path: ['expression'],
+			});
+		}
 	});
 
-const exportedWorkflowStepSchema = z.object({
+const exportedWorkflowStepAgentSchema = z.object({
 	agentRef: z.string().min(1),
-	name: z.string().min(1),
 	instructions: z.string().optional(),
 });
+
+const workflowChannelSchema = z.object({
+	from: z.string().min(1),
+	to: z.union([z.string().min(1), z.array(z.string().min(1))]),
+	direction: z.enum(['one-way', 'bidirectional']),
+	label: z.string().optional(),
+});
+
+const exportedWorkflowStepSchema = z
+	.object({
+		agentRef: z.string().min(1).optional(),
+		agents: z.array(exportedWorkflowStepAgentSchema).optional(),
+		channels: z.array(workflowChannelSchema).optional(),
+		name: z.string().min(1),
+		instructions: z.string().optional(),
+	})
+	.superRefine((val, ctx) => {
+		const hasAgentRef = val.agentRef !== undefined && val.agentRef.length > 0;
+		const hasAgents = val.agents !== undefined && val.agents.length > 0;
+		if (!hasAgentRef && !hasAgents) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'step must have either agentRef or agents (non-empty)',
+			});
+		}
+	});
 
 const exportedWorkflowTransitionSchema = z.object({
 	fromStep: z.string().min(1),
 	toStep: z.string().min(1),
 	condition: workflowConditionSchema.optional(),
 	order: z.number().int().optional(),
+	isCyclic: z.boolean().optional(),
 });
 
 const exportedWorkflowRuleSchema = z.object({
@@ -180,11 +214,38 @@ export function exportWorkflow(
 		agentIdToName.set(agent.id, agent.name);
 	}
 
-	// Export steps — strip `id`, remap agentId UUID → agent name
+	// Export steps — strip `id`, remap agentId UUIDs → agent names.
+	// Multi-agent steps (agents[] non-empty) export an `agents` array.
+	// Single-agent steps export a scalar `agentRef` (backward-compatible shorthand).
+	// Channels are exported as-is (they already use role strings, not UUIDs).
 	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		const agentRef = agentIdToName.get(step.agentId) ?? step.agentId;
-		const exported: ExportedWorkflowStep = { agentRef, name: step.name };
+		const exported: ExportedWorkflowStep = { name: step.name };
+
+		if (step.agents && step.agents.length > 0) {
+			// Multi-agent step: export agents array with agentRef names
+			const exportedAgents: ExportedWorkflowStepAgent[] = step.agents.map((a) => {
+				const entry: ExportedWorkflowStepAgent = {
+					agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
+				};
+				if (a.instructions !== undefined) entry.instructions = a.instructions;
+				return entry;
+			});
+			exported.agents = exportedAgents;
+		} else {
+			// Single-agent step: export as scalar agentRef.
+			// Only set agentRef when agentId is present — a step with neither agentId
+			// nor agents is invalid; leaving agentRef unset produces a clear Zod error
+			// ("step must have either agentRef or agents") rather than a confusing
+			// min-length failure on an empty string.
+			const primaryAgentId = step.agentId;
+			if (primaryAgentId) {
+				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
+			}
+		}
+
 		if (step.instructions !== undefined) exported.instructions = step.instructions;
+		if (step.channels && step.channels.length > 0) exported.channels = step.channels;
+
 		return exported;
 	});
 
@@ -195,6 +256,7 @@ export function exportWorkflow(
 		const exported: ExportedWorkflowTransition = { fromStep, toStep };
 		if (t.condition !== undefined) exported.condition = t.condition;
 		if (t.order !== undefined) exported.order = t.order;
+		if (t.isCyclic !== undefined) exported.isCyclic = t.isCyclic;
 		return exported;
 	});
 

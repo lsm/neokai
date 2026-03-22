@@ -14,6 +14,9 @@ export interface CreateSessionGroupParams {
 	description?: string;
 	workflowRunId?: string;
 	currentStepId?: string;
+	taskId?: string;
+	/** Initial lifecycle status (default: 'active') */
+	status?: 'active' | 'completed' | 'failed';
 }
 
 export interface UpdateSessionGroupParams {
@@ -21,6 +24,26 @@ export interface UpdateSessionGroupParams {
 	description?: string;
 	workflowRunId?: string | null;
 	currentStepId?: string | null;
+	taskId?: string | null;
+	status?: 'active' | 'completed' | 'failed';
+}
+
+export interface AddMemberParams {
+	/** Freeform role string matching SpaceAgent.role (e.g. 'coder', 'reviewer', 'security-auditor') */
+	role: string;
+	/** Display order within the group (default: 0) */
+	orderIndex?: number;
+	/** ID of the SpaceAgent config this session uses (nullable for system agents) */
+	agentId?: string;
+	/** Initial lifecycle state (default: 'active') */
+	status?: 'active' | 'completed' | 'failed';
+}
+
+export interface UpdateMemberParams {
+	role?: string;
+	orderIndex?: number;
+	agentId?: string | null;
+	status?: 'active' | 'completed' | 'failed';
 }
 
 export class SpaceSessionGroupRepository {
@@ -33,21 +56,23 @@ export class SpaceSessionGroupRepository {
 		const id = generateUUID();
 		const now = Date.now();
 
-		const stmt = this.db.prepare(
-			`INSERT INTO space_session_groups (id, space_id, name, description, workflow_run_id, current_step_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		);
-
-		stmt.run(
-			id,
-			params.spaceId,
-			params.name,
-			params.description ?? null,
-			params.workflowRunId ?? null,
-			params.currentStepId ?? null,
-			now,
-			now
-		);
+		this.db
+			.prepare(
+				`INSERT INTO space_session_groups (id, space_id, name, description, workflow_run_id, current_step_id, task_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			)
+			.run(
+				id,
+				params.spaceId,
+				params.name,
+				params.description ?? null,
+				params.workflowRunId ?? null,
+				params.currentStepId ?? null,
+				params.taskId ?? null,
+				params.status ?? 'active',
+				now,
+				now
+			);
 
 		return this.getGroup(id)!;
 	}
@@ -81,16 +106,14 @@ export class SpaceSessionGroupRepository {
 	}
 
 	/**
-	 * Get all session groups that contain a specific task's associated sessions.
-	 * Returns groups matching by spaceId and name pattern (groups for a given task).
+	 * Get all session groups associated with a specific task.
+	 * Queries by the `task_id` column set at group creation time.
 	 */
 	getGroupsByTask(spaceId: string, taskId: string): SpaceSessionGroup[] {
-		// Groups are associated to tasks by their name convention (e.g. "task:{taskId}")
-		// or by querying members. We query groups that are named for a task.
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_session_groups WHERE space_id = ? AND name = ? ORDER BY created_at ASC`
+			`SELECT * FROM space_session_groups WHERE space_id = ? AND task_id = ? ORDER BY created_at ASC`
 		);
-		const rows = stmt.all(spaceId, `task:${taskId}`) as Record<string, unknown>[];
+		const rows = stmt.all(spaceId, taskId) as Record<string, unknown>[];
 
 		return rows.map((row) => {
 			const members = this.getGroupMembers(row.id as string);
@@ -121,6 +144,14 @@ export class SpaceSessionGroupRepository {
 			fields.push('current_step_id = ?');
 			values.push(params.currentStepId ?? null);
 		}
+		if (params.taskId !== undefined) {
+			fields.push('task_id = ?');
+			values.push(params.taskId ?? null);
+		}
+		if (params.status !== undefined) {
+			fields.push('status = ?');
+			values.push(params.status);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -145,61 +176,160 @@ export class SpaceSessionGroupRepository {
 	}
 
 	/**
-	 * Add a session member to a group
-	 * Idempotent — updates role/orderIndex if the session is already a member
+	 * Add a session member to a group.
+	 * Idempotent — if the session is already a member, updates all provided fields.
+	 * The member write and group timestamp touch are performed atomically.
 	 */
-	addMember(
-		groupId: string,
-		sessionId: string,
-		role: 'worker' | 'leader',
-		orderIndex = 0
-	): SpaceSessionGroupMember {
+	addMember(groupId: string, sessionId: string, params: AddMemberParams): SpaceSessionGroupMember {
+		const { role, orderIndex = 0, agentId, status = 'active' } = params;
+
 		const existing = this.db
 			.prepare(`SELECT * FROM space_session_group_members WHERE group_id = ? AND session_id = ?`)
 			.get(groupId, sessionId) as Record<string, unknown> | undefined;
 
 		if (existing) {
-			this.db
-				.prepare(
-					`UPDATE space_session_group_members SET role = ?, order_index = ? WHERE group_id = ? AND session_id = ?`
-				)
-				.run(role, orderIndex, groupId, sessionId);
+			const now = Date.now();
+			this.db.transaction(() => {
+				this.db
+					.prepare(
+						`UPDATE space_session_group_members SET role = ?, order_index = ?, agent_id = ?, status = ? WHERE group_id = ? AND session_id = ?`
+					)
+					.run(role, orderIndex, agentId ?? null, status, groupId, sessionId);
+				this.db
+					.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+					.run(now, groupId);
+			})();
 			return this.getMember(existing.id as string)!;
 		}
 
 		const id = generateUUID();
 		const now = Date.now();
 
-		this.db
-			.prepare(
-				`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-			)
-			.run(id, groupId, sessionId, role, orderIndex, now);
-
-		// Touch group updated_at
-		this.db
-			.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
-			.run(now, groupId);
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO space_session_group_members (id, group_id, session_id, role, agent_id, status, order_index, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(id, groupId, sessionId, role, agentId ?? null, status, orderIndex, now);
+			this.db
+				.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+				.run(now, groupId);
+		})();
 
 		return this.getMember(id)!;
 	}
 
 	/**
-	 * Remove a session from a group
+	 * Update fields on an existing group member (e.g. transition status after session completes).
+	 * Returns null if the member record does not exist.
+	 * The member write and group timestamp touch are performed atomically.
 	 */
-	removeMember(groupId: string, sessionId: string): boolean {
-		const result = this.db
-			.prepare(`DELETE FROM space_session_group_members WHERE group_id = ? AND session_id = ?`)
-			.run(groupId, sessionId);
+	updateMember(
+		groupId: string,
+		sessionId: string,
+		params: UpdateMemberParams
+	): SpaceSessionGroupMember | null {
+		const fields: string[] = [];
+		const values: (string | number | null)[] = [];
 
-		if (result.changes > 0) {
+		if (params.role !== undefined) {
+			fields.push('role = ?');
+			values.push(params.role);
+		}
+		if (params.orderIndex !== undefined) {
+			fields.push('order_index = ?');
+			values.push(params.orderIndex);
+		}
+		if (params.agentId !== undefined) {
+			fields.push('agent_id = ?');
+			values.push(params.agentId ?? null);
+		}
+		if (params.status !== undefined) {
+			fields.push('status = ?');
+			values.push(params.status);
+		}
+
+		if (fields.length === 0) {
+			// Nothing to update — return current state
+			const row = this.db
+				.prepare(`SELECT * FROM space_session_group_members WHERE group_id = ? AND session_id = ?`)
+				.get(groupId, sessionId) as Record<string, unknown> | undefined;
+			return row ? this.rowToMember(row) : null;
+		}
+
+		values.push(groupId, sessionId);
+		let updated: Record<string, unknown> | undefined;
+
+		this.db.transaction(() => {
+			const result = this.db
+				.prepare(
+					`UPDATE space_session_group_members SET ${fields.join(', ')} WHERE group_id = ? AND session_id = ?`
+				)
+				.run(...values);
+
+			if (result.changes === 0) return;
+
 			this.db
 				.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
 				.run(Date.now(), groupId);
-		}
 
-		return result.changes > 0;
+			updated = this.db
+				.prepare(`SELECT * FROM space_session_group_members WHERE group_id = ? AND session_id = ?`)
+				.get(groupId, sessionId) as Record<string, unknown> | undefined;
+		})();
+
+		return updated ? this.rowToMember(updated) : null;
+	}
+
+	/**
+	 * Update status on an existing member by member ID.
+	 * Returns null if the member record does not exist.
+	 * The member update and group timestamp touch are performed atomically.
+	 */
+	updateMemberStatus(
+		memberId: string,
+		status: 'active' | 'completed' | 'failed'
+	): SpaceSessionGroupMember | null {
+		const row = this.db
+			.prepare(`SELECT * FROM space_session_group_members WHERE id = ?`)
+			.get(memberId) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+
+		this.db.transaction(() => {
+			this.db
+				.prepare(`UPDATE space_session_group_members SET status = ? WHERE id = ?`)
+				.run(status, memberId);
+			this.db
+				.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+				.run(Date.now(), row.group_id as string);
+		})();
+
+		return this.getMember(memberId);
+	}
+
+	/**
+	 * Remove a session from a group.
+	 * The delete and group timestamp touch are performed atomically.
+	 */
+	removeMember(groupId: string, sessionId: string): boolean {
+		let changed = false;
+
+		this.db.transaction(() => {
+			const result = this.db
+				.prepare(`DELETE FROM space_session_group_members WHERE group_id = ? AND session_id = ?`)
+				.run(groupId, sessionId);
+
+			if (result.changes > 0) {
+				changed = true;
+				this.db
+					.prepare(`UPDATE space_session_groups SET updated_at = ? WHERE id = ?`)
+					.run(Date.now(), groupId);
+			}
+		})();
+
+		return changed;
 	}
 
 	/**
@@ -240,6 +370,8 @@ export class SpaceSessionGroupRepository {
 			description: (row.description as string | null) ?? undefined,
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
 			currentStepId: (row.current_step_id as string | null) ?? undefined,
+			taskId: (row.task_id as string | null) ?? undefined,
+			status: ((row.status as string | null) ?? 'active') as 'active' | 'completed' | 'failed',
 			members,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
@@ -254,7 +386,9 @@ export class SpaceSessionGroupRepository {
 			id: row.id as string,
 			groupId: row.group_id as string,
 			sessionId: row.session_id as string,
-			role: row.role as 'worker' | 'leader',
+			role: row.role as string,
+			agentId: (row.agent_id as string | null) ?? undefined,
+			status: ((row.status as string | null) ?? 'active') as 'active' | 'completed' | 'failed',
 			orderIndex: row.order_index as number,
 			createdAt: row.created_at as number,
 		};

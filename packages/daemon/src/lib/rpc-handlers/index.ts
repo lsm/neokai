@@ -150,6 +150,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		defaultWorkspacePath: deps.config.workspaceRoot,
 		defaultModel: deps.config.defaultModel,
+		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 	});
 	roomRuntimeService.start().catch((error) => {
 		log.error('Failed to start RoomRuntimeService:', error);
@@ -205,7 +206,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		getAgentById(spaceId: string, id: string) {
 			const agent = spaceAgentRepo.getById(id);
 			if (!agent || agent.spaceId !== spaceId) return null;
-			return { id: agent.id, name: agent.name };
+			return { id: agent.id, name: agent.name, role: agent.role };
 		},
 	};
 	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);

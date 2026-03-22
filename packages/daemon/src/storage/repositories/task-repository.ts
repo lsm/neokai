@@ -69,16 +69,16 @@ export class TaskRepository {
 
 	/**
 	 * List tasks for a room, optionally filtered.
-	 * By default, archived tasks (archived_at IS NOT NULL) are excluded.
+	 * By default, archived tasks (status = 'archived') are excluded.
 	 * Use filter.includeArchived = true to include archived tasks.
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
 		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
 
-		// Exclude archived tasks by default
+		// Exclude archived tasks by default (status is the source of truth for archival)
 		if (!filter?.includeArchived) {
-			query += ` AND archived_at IS NULL`;
+			query += ` AND status != 'archived'`;
 		}
 
 		if (filter?.status) {
@@ -126,6 +126,9 @@ export class TaskRepository {
 			) {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
+			} else if (params.status === 'archived') {
+				fields.push('archived_at = ?');
+				values.push(Date.now());
 			}
 		}
 		if (params.priority !== undefined) {
@@ -161,7 +164,8 @@ export class TaskRepository {
 			params.activeSession === undefined &&
 			(params.status === 'completed' ||
 				params.status === 'needs_attention' ||
-				params.status === 'cancelled')
+				params.status === 'cancelled' ||
+				params.status === 'archived')
 		) {
 			fields.push('active_session = ?');
 			values.push(null);
@@ -202,13 +206,16 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Archive a task by setting archived_at timestamp.
+	 * Archive a task by setting status to 'archived' and archived_at timestamp.
+	 * status = 'archived' is the canonical source of truth; archived_at is a derived timestamp.
 	 * Archived tasks are hidden from UI by default.
 	 * Returns the updated task or null if not found.
 	 */
 	archiveTask(id: string): NeoTask | null {
 		const now = Date.now();
-		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ?, updated_at = ? WHERE id = ?`);
+		const stmt = this.db.prepare(
+			`UPDATE tasks SET status = 'archived', archived_at = ?, active_session = NULL, updated_at = ? WHERE id = ?`
+		);
 		stmt.run(now, now, id);
 		return this.getTask(id);
 	}
@@ -233,11 +240,11 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Count all active (non-completed, non-needs_attention, non-cancelled) tasks for a room
+	 * Count all active (non-completed, non-needs_attention, non-cancelled, non-archived) tasks for a room
 	 */
 	countActiveTasks(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled')`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled', 'archived')`
 		);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;

@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SessionInfo } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import {
 	useSessionQuestionState,
@@ -24,6 +25,7 @@ import {
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
+import { getModelLabel } from '../../lib/session-utils';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -71,8 +73,13 @@ const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: s
 };
 
 function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
+	// messageType is used for DB records; type is used for WebSocket real-time events.
+	// Normalize to whichever field is set.
+	const msgAny = msg as unknown as Record<string, unknown>;
+	const msgType = msgAny.messageType ?? msgAny.type;
+
 	// Status messages are plain text, not JSON
-	if (msg.messageType === 'status') {
+	if (msgType === 'status') {
 		return {
 			type: 'status',
 			text: msg.content,
@@ -85,8 +92,8 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 
-	// Leader summary messages are plain text with distinct rendering
-	if (msg.messageType === 'leader_summary') {
+	// Leader summary messages: rendered as a distinct card
+	if (msgType === 'leader_summary') {
 		return {
 			type: 'leader_summary',
 			text: msg.content,
@@ -98,6 +105,35 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 			},
 		} as unknown as SDKMessage;
 	}
+
+	// Rate limited: rendered as an amber notification
+	if (msgType === 'rate_limited') {
+		return {
+			type: 'rate_limited',
+			text: msg.content,
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: `rate-limited-${msg.id}`,
+				iteration: 0,
+			},
+		} as unknown as SDKMessage;
+	}
+
+	// Model fallback: rendered as an amber notification
+	if (msgType === 'model_fallback') {
+		return {
+			type: 'model_fallback',
+			text: msg.content,
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: `model-fallback-${msg.id}`,
+				iteration: 0,
+			},
+		} as unknown as SDKMessage;
+	}
+
 	try {
 		return JSON.parse(msg.content) as SDKMessage;
 	} catch {
@@ -155,6 +191,70 @@ export function TaskConversationRenderer({
 	// buffered here and merged (with dedup) once the fetch resolves.
 	const fetchingRef = useRef(true);
 	const pendingDeltasRef = useRef<SDKMessage[]>([]);
+
+	// Fetch session model info for leader and worker
+	const [sessionModels, setSessionModels] = useState<{
+		leaderModel: string | null;
+		workerModel: string | null;
+	}>({ leaderModel: null, workerModel: null });
+
+	useEffect(() => {
+		let cancelled = false;
+		const fetchSessionModels = async () => {
+			try {
+				const [leaderRes, workerRes] = await Promise.all([
+					request<{ session: SessionInfo }>('session.get', { sessionId: leaderSessionId }),
+					request<{ session: SessionInfo }>('session.get', { sessionId: workerSessionId }),
+				]);
+				if (!cancelled) {
+					setSessionModels({
+						leaderModel: leaderRes.session?.config?.model ?? null,
+						workerModel: workerRes.session?.config?.model ?? null,
+					});
+				}
+			} catch {
+				// Silently ignore — model names just won't be shown
+			}
+		};
+
+		void fetchSessionModels();
+		return () => {
+			cancelled = true;
+		};
+	}, [leaderSessionId, workerSessionId, request]);
+
+	// Build role divider labels that include model names for leader/worker
+	function getRoleLabel(
+		role: string,
+		authorSessionId: string | undefined
+	): { label: string; labelColor: string } {
+		const base = ROLE_COLORS[role] ?? ROLE_COLORS.system;
+		if (role === 'leader') {
+			const modelLabel =
+				authorSessionId === leaderSessionId ? getModelLabel(sessionModels.leaderModel) : '';
+			return {
+				label: modelLabel ? `Leader · ${modelLabel}` : 'Leader',
+				labelColor: base.labelColor,
+			};
+		}
+		if (role === 'lead') {
+			const modelLabel =
+				authorSessionId === leaderSessionId ? getModelLabel(sessionModels.leaderModel) : '';
+			return {
+				label: modelLabel ? `Lead · ${modelLabel}` : 'Lead',
+				labelColor: base.labelColor,
+			};
+		}
+		if (role === 'coder' || role === 'craft') {
+			const modelLabel =
+				authorSessionId === workerSessionId ? getModelLabel(sessionModels.workerModel) : '';
+			return {
+				label: modelLabel ? `${base.label} · ${modelLabel}` : base.label,
+				labelColor: base.labelColor,
+			};
+		}
+		return { label: base.label, labelColor: base.labelColor };
+	}
 
 	useEffect(() => {
 		const channel = `group:${groupId}`;
@@ -401,6 +501,45 @@ export function TaskConversationRenderer({
 					);
 				}
 
+				// Rate limited event: render as an amber notification
+				if (raw.type === 'rate_limited') {
+					const text = typeof raw.text === 'string' ? raw.text : 'Rate limit reached';
+					const resetsAt =
+						typeof raw.resetsAt === 'number' ? new Date(raw.resetsAt).toLocaleTimeString() : null;
+					const sessionRole = typeof raw.sessionRole === 'string' ? raw.sessionRole : '';
+					const roleLabel =
+						sessionRole === 'leader' ? 'Leader' : sessionRole === 'worker' ? 'Worker' : 'Agent';
+					return (
+						<div
+							key={key}
+							class="my-2 rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2"
+						>
+							<div class="flex items-center gap-2">
+								<svg
+									class="w-4 h-4 text-amber-400 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+									/>
+								</svg>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-amber-300 font-medium">{roleLabel} rate limited</p>
+									<p class="text-xs text-amber-400/80 mt-0.5">
+										{text}
+										{resetsAt ? ` Resets at ${resetsAt}.` : ''}
+									</p>
+								</div>
+							</div>
+						</div>
+					);
+				}
+
 				// Leader summary messages: render as a context card
 				if (raw.type === 'leader_summary') {
 					const rawText = typeof raw.text === 'string' ? raw.text : '';
@@ -433,6 +572,43 @@ export function TaskConversationRenderer({
 					);
 				}
 
+				// Model fallback event: show a prominent amber notification about the model switch
+				if (raw.type === 'model_fallback') {
+					const fromModel = typeof raw.fromModel === 'string' ? raw.fromModel : '';
+					const toModel = typeof raw.toModel === 'string' ? raw.toModel : '';
+					const sessionRole = typeof raw.sessionRole === 'string' ? raw.sessionRole : '';
+					const roleLabel =
+						sessionRole === 'leader' ? 'Leader' : sessionRole === 'worker' ? 'Worker' : 'Agent';
+					return (
+						<div
+							key={key}
+							class="my-2 rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2"
+						>
+							<div class="flex items-center gap-2">
+								<svg
+									class="w-4 h-4 text-amber-400 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+									/>
+								</svg>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-amber-300 font-medium">{roleLabel} model switched</p>
+									<p class="text-xs text-amber-400/80 mt-0.5">
+										{fromModel || 'Previous model'} → {toModel || 'New model'}
+									</p>
+								</div>
+							</div>
+						</div>
+					);
+				}
+
 				// Insert a role transition divider when the agent changes
 				const showTransition = roleTransitions.has(i);
 
@@ -447,15 +623,18 @@ export function TaskConversationRenderer({
 					questionState = workerQuestionState;
 				}
 
+				// Get role label (includes model name for leader/worker/coder/craft roles)
+				const roleLabel = getRoleLabel(role, authorSessionId);
+
 				return (
 					<div key={key}>
 						{showTransition && (
 							<div class="flex items-center gap-2 py-1.5 mt-1">
 								<div class="flex-1 h-px bg-dark-700" />
 								<span
-									class={`text-[10px] font-semibold uppercase tracking-wide ${style.labelColor}`}
+									class={`text-[10px] font-semibold uppercase tracking-wide ${roleLabel.labelColor}`}
 								>
-									{style.label}
+									{roleLabel.label}
 								</span>
 								<div class="flex-1 h-px bg-dark-700" />
 							</div>

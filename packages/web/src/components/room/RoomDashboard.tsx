@@ -6,9 +6,8 @@
  * - Model indicator showing current leader/worker model
  * - Archive button to archive the room
  * - Confirmation dialogs for pause, stop, and archive actions
- * - Stats overview (sessions, pending, active, completed, failed tasks)
  * - Sessions list
- * - Tasks list grouped by status
+ * - Tasks list grouped by status (Active/Review/Done/Archived tabs)
  */
 
 import { useState } from 'preact/hooks';
@@ -207,6 +206,20 @@ export function RoomDashboard() {
 					onReject={async (taskId, feedback) => {
 						try {
 							await roomStore.rejectTask(taskId, feedback);
+						} catch {
+							// Error handled by store
+						}
+					}}
+					onApprove={async (taskId) => {
+						try {
+							await roomStore.approveTask(taskId);
+						} catch {
+							// Error handled by store
+						}
+					}}
+					onReactivate={async (taskId) => {
+						try {
+							await roomStore.setTaskStatus(taskId, 'in_progress');
 						} catch {
 							// Error handled by store
 						}

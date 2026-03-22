@@ -85,7 +85,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 
 		// Allow event propagation so runtime picks up the updated room config
 		await Bun.sleep(100);
-	}, 30_000);
+	}, 60_000);
 
 	afterAll(
 		async () => {
@@ -95,10 +95,9 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 				delete process.env.DEFAULT_MODEL;
 			}
 
-			if (daemon) {
-				daemon.kill('SIGTERM');
-				await daemon.waitForExit();
-			}
+			if (!daemon) return;
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
 		},
 		{ timeout: 20_000 }
 	);

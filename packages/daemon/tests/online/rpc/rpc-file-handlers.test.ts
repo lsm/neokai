@@ -23,9 +23,10 @@ describe('File RPC Handlers', () => {
 		mkdirSync(`${testDir}/subdir`, { recursive: true });
 		writeFileSync(`${testDir}/test.txt`, 'Hello File');
 		writeFileSync(`${testDir}/subdir/nested.txt`, 'Nested');
-	});
+	}, 30_000);
 
 	afterEach(async () => {
+		if (!daemon) return;
 		await daemon.waitForExit();
 		try {
 			rmSync(testDir, { recursive: true, force: true });

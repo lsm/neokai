@@ -20,6 +20,7 @@ import type {
 	Room,
 	TaskSummary,
 	NeoTask,
+	TaskStatus,
 	SessionSummary,
 	RoomOverview,
 	RoomGoal,
@@ -59,6 +60,8 @@ interface GoalEventPayload {
 
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
+import { navigateToRoom } from './router';
+import { currentRoomSessionIdSignal } from './signals';
 import { toast } from './toast';
 
 const logger = new Logger('kai:web:roomstore');
@@ -138,6 +141,9 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
+	/** Archived tasks */
+	readonly archivedTasks = computed(() => this.tasks.value.filter((t) => t.status === 'archived'));
+
 	/** Tasks in review status */
 	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
 
@@ -149,6 +155,59 @@ class RoomStore {
 
 	/** Active goals */
 	readonly activeGoals = computed(() => this.goals.value.filter((g) => g.status === 'active'));
+
+	/** Tasks grouped by goal ID (Map<goalId, TaskSummary[]>) */
+	readonly tasksByGoalId = computed(() => {
+		const goals = this.goals.value;
+		const tasks = this.tasks.value;
+		const taskMap = new Map<string, TaskSummary>();
+		for (const t of tasks) {
+			taskMap.set(t.id, t);
+		}
+		const result = new Map<string, TaskSummary[]>();
+		for (const goal of goals) {
+			const linked: TaskSummary[] = [];
+			for (const taskId of goal.linkedTaskIds) {
+				const task = taskMap.get(taskId);
+				if (task) linked.push(task);
+			}
+			result.set(goal.id, linked);
+		}
+		return result;
+	});
+
+	/** Tasks not linked to any goal */
+	readonly orphanTasks = computed(() => {
+		const linkedIds = new Set<string>();
+		for (const goal of this.goals.value) {
+			for (const taskId of goal.linkedTaskIds) {
+				linkedIds.add(taskId);
+			}
+		}
+		return this.tasks.value.filter((t) => !linkedIds.has(t.id));
+	});
+
+	/** Orphan tasks that are active (draft, pending, or in_progress) */
+	readonly orphanTasksActive = computed(() =>
+		this.orphanTasks.value.filter(
+			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+		)
+	);
+
+	/** Orphan tasks in review (review or needs_attention) */
+	readonly orphanTasksReview = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'review' || t.status === 'needs_attention')
+	);
+
+	/** Orphan tasks that are done (completed or cancelled) */
+	readonly orphanTasksDone = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'completed' || t.status === 'cancelled')
+	);
+
+	/** Orphan tasks that are archived */
+	readonly orphanTasksArchived = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'archived')
+	);
 
 	// ========================================
 	// Private State
@@ -361,7 +420,47 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Fetch initial state via RPC
+			// 5. Session lifecycle events (delete / status change)
+			// Re-fetch the authoritative session list from the server on meaningful session
+			// changes. This avoids manual array splicing and self-heals events missed during
+			// WebSocket reconnect gaps.
+			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
+				'session.deleted',
+				(event) => {
+					if (event.roomId !== roomId) return;
+					this.refresh()
+						.then(() => {
+							// If the user is currently viewing the deleted session, navigate
+							// back to the room dashboard so they don't land on a dead view.
+							const activeSessionId = currentRoomSessionIdSignal.value;
+							if (activeSessionId && !this.sessions.value.some((s) => s.id === activeSessionId)) {
+								navigateToRoom(roomId);
+							}
+						})
+						.catch((err) => {
+							logger.error('Failed to refresh after session.deleted:', err);
+						});
+				}
+			);
+			this.cleanupFunctions.push(unsubSessionDeleted);
+
+			// session.updated: only refresh when a status field is present.
+			// Draft saves (useInputDraft, ~250 ms debounce) only carry title/inputDraft —
+			// no status — so this guard keeps RPC calls at zero during typing.
+			const unsubSessionUpdated = hub.onEvent<{
+				sessionId: string;
+				roomId?: string;
+				status?: string;
+			}>('session.updated', (event) => {
+				if (event.roomId !== roomId) return;
+				if (event.status === undefined) return;
+				this.refresh().catch((err) => {
+					logger.error('Failed to refresh after session.updated:', err);
+				});
+			});
+			this.cleanupFunctions.push(unsubSessionUpdated);
+
+			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -493,6 +592,29 @@ class RoomStore {
 		await hub.request<{ success: boolean }>('task.approve', {
 			roomId,
 			taskId,
+		});
+
+		// Task state updates arrive via room.task.update events
+	}
+
+	/**
+	 * Set task status directly (e.g., reactivate completed/cancelled to in_progress).
+	 */
+	async setTaskStatus(taskId: string, status: TaskStatus): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ success: boolean }>('task.setStatus', {
+			roomId,
+			taskId,
+			status,
 		});
 
 		// Task state updates arrive via room.task.update events

@@ -23,6 +23,7 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	completed: 'Completed',
 	needs_attention: 'Needs Attention',
 	cancelled: 'Cancelled',
+	archived: 'Archived',
 };
 
 const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
@@ -33,6 +34,7 @@ const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
 	completed: 'bg-green-900/30 text-green-300 border-green-700/50',
 	needs_attention: 'bg-yellow-900/30 text-yellow-300 border-yellow-700/50',
 	cancelled: 'bg-gray-800 text-gray-500 border-gray-700',
+	archived: 'bg-gray-900 text-gray-600 border-gray-800',
 };
 
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {

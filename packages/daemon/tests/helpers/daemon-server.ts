@@ -32,8 +32,9 @@ import {
 
 export interface DaemonServerOptions {
 	/**
-	 * Port for the daemon server
-	 * Default: random port in 19400-20400 range
+	 * Port for the daemon server.
+	 * Default: 0 (OS-assigned). The actual port is read back from the server
+	 * after startup (via server.port for in-process, stdout parsing for spawned).
 	 */
 	port?: number;
 
@@ -348,7 +349,7 @@ async function acquireDevProxyLease(
  */
 async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<DaemonServerContext> {
 	const {
-		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		port: userPort = 0, // Use port 0 for OS-assigned port; actual port parsed from stdout
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
@@ -390,9 +391,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		detached: false,
 	});
 
-	// Wait for the server to be ready
+	// Wait for the server to be ready and parse the actual port from stdout
 	let stderrOutput = '';
 	let stdoutOutput = '';
+	let actualPort = userPort;
 	await new Promise<void>((resolve, reject) => {
 		const timeout = setTimeout(() => reject(new Error('Daemon server startup timeout')), 20000);
 
@@ -403,7 +405,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 			if (process.env.TEST_VERBOSE) {
 				console.error(`[DAEMON-PROCESS] ${output.trim()}`);
 			}
-			if (output.includes('Running on port')) {
+			// Parse actual port from "Running on port XXXX" output
+			const portMatch = output.match(/Running on port (\d+)/);
+			if (portMatch) {
+				actualPort = Number.parseInt(portMatch[1], 10);
 				clearTimeout(timeout);
 				daemonProcess.stdout!.off('data', onData);
 				daemonProcess.stderr!.off('data', onData);
@@ -430,7 +435,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	});
 
 	// Create WebSocket client to communicate with the daemon
-	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
+	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
 	const transport = new WebSocketClientTransport({
 		url: wsUrl,
 		autoReconnect: false, // Don't auto-reconnect in tests
@@ -461,7 +466,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	return {
 		pid: daemonProcess.pid!,
 		messageHub,
-		baseUrl: `http://127.0.0.1:${userPort}`,
+		baseUrl: `http://127.0.0.1:${actualPort}`,
 		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
@@ -499,7 +504,7 @@ async function createInProcessDaemonServer(
 	options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext & { daemonContext: DaemonAppContext }> {
 	const {
-		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		port: userPort = 0, // Use port 0 for OS-assigned port to avoid collisions in CI
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
@@ -576,8 +581,11 @@ async function createInProcessDaemonServer(
 		});
 	}
 
+	// Read back the actual port from the server (handles port 0 / OS-assigned ports)
+	const actualPort = daemonContext.server.port;
+
 	// Connect to the daemon's WebSocket server (just like a real client)
-	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
+	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
 	const transport = new WebSocketClientTransport({
 		url: wsUrl,
 		autoReconnect: false, // Don't auto-reconnect in tests
@@ -614,7 +622,7 @@ async function createInProcessDaemonServer(
 	return {
 		pid: process.pid, // Same process
 		messageHub,
-		baseUrl: `http://127.0.0.1:${userPort}`,
+		baseUrl: `http://127.0.0.1:${actualPort}`,
 		daemonContext, // Expose for advanced usage
 		devProxy,
 		kill: () => {

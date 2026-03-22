@@ -38,6 +38,7 @@ RPC_FILES=(
   rpc-settings-handlers.test.ts
   rpc-state-sync.test.ts
   rpc-task-draft-handlers.test.ts
+  rpc-task-lifecycle.test.ts
   session-handlers.test.ts
 )
 
