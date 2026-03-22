@@ -1,18 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
-import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
-
-const noOpReactiveDb = {
-	notifyChange: () => {},
-	on: () => {},
-	off: () => {},
-	getTableVersion: () => 0,
-	beginTransaction: () => {},
-	commitTransaction: () => {},
-	abortTransaction: () => {},
-	db: null as never,
-} as ReactiveDatabase;
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
 import {

@@ -16,18 +16,7 @@ import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { MissionMetric } from '@neokai/shared';
-import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
-
-const noOpReactiveDb = {
-	notifyChange: () => {},
-	on: () => {},
-	off: () => {},
-	getTableVersion: () => 0,
-	beginTransaction: () => {},
-	commitTransaction: () => {},
-	abortTransaction: () => {},
-	db: null as never,
-} as ReactiveDatabase;
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // Inline goals table DDL matching the V2 schema (mirrors what migration 28 adds)
 const GOALS_TABLE_DDL = `

@@ -19,18 +19,7 @@ import {
 } from './room-runtime-test-helpers';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
-import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
-
-const noOpReactiveDb = {
-	notifyChange: () => {},
-	on: () => {},
-	off: () => {},
-	getTableVersion: () => 0,
-	beginTransaction: () => {},
-	commitTransaction: () => {},
-	abortTransaction: () => {},
-	db: null as never,
-} as ReactiveDatabase;
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // ─── Schema helper ────────────────────────────────────────────────────────────
 

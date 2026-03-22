@@ -17,18 +17,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
-import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
-
-const noOpReactiveDb = {
-	notifyChange: () => {},
-	on: () => {},
-	off: () => {},
-	getTableVersion: () => 0,
-	beginTransaction: () => {},
-	commitTransaction: () => {},
-	abortTransaction: () => {},
-	db: null as never,
-} as ReactiveDatabase;
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // ============================================================
 // Tests

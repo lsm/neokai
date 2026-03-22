@@ -71,12 +71,6 @@ const METHOD_TABLE_MAP: Record<string, string> = {
 	blockInboxItem: 'inbox_items',
 	deleteInboxItem: 'inbox_items',
 	deleteInboxItemsForRepository: 'inbox_items',
-	// Goal operations
-	createGoal: 'goals',
-	updateGoal: 'goals',
-	deleteGoal: 'goals',
-	linkTaskToGoal: 'goals',
-	unlinkTaskFromGoal: 'goals',
 };
 
 export function createReactiveDatabase(db: Database): ReactiveDatabase {

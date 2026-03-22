@@ -25,18 +25,7 @@ import {
 	GoalRepository,
 	getEffectiveMaxPlanningAttempts,
 } from '../../../../src/storage/repositories/goal-repository.ts';
-import type { ReactiveDatabase } from '../../../../src/storage/reactive-database.ts';
-
-const noOpReactiveDb = {
-	notifyChange: () => {},
-	on: () => {},
-	off: () => {},
-	getTableVersion: () => 0,
-	beginTransaction: () => {},
-	commitTransaction: () => {},
-	abortTransaction: () => {},
-	db: null as never,
-} as ReactiveDatabase;
+import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
 // ---------------------------------------------------------------------------
 // Shared test database setup helpers

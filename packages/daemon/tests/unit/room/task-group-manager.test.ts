@@ -10,18 +10,7 @@ import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
-import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
-
-const noOpReactiveDb = {
-	notifyChange: () => {},
-	on: () => {},
-	off: () => {},
-	getTableVersion: () => 0,
-	beginTransaction: () => {},
-	commitTransaction: () => {},
-	abortTransaction: () => {},
-	db: null as never,
-} as ReactiveDatabase;
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { LeaderToolCallbacks } from '../../../src/lib/room/agents/leader-agent';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
