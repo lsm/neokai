@@ -85,7 +85,6 @@ export function setupSpaceSessionGroupHandlers(
 				log.warn('Failed to emit spaceSessionGroup.created:', err);
 			});
 
-		const members = [];
 		for (let i = 0; i < (params.members ?? []).length; i++) {
 			const m = params.members![i];
 			const member = sessionGroupRepo.addMember(group.id, m.sessionId, {
@@ -94,7 +93,6 @@ export function setupSpaceSessionGroupHandlers(
 				status: m.status ?? 'active',
 				orderIndex: i,
 			});
-			members.push(member);
 
 			await daemonHub
 				.emit('spaceSessionGroup.memberAdded', {

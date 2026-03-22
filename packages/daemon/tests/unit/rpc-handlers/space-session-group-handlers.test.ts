@@ -11,7 +11,7 @@
  *   cross-space group rejection
  */
 
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceSessionGroup, SpaceSessionGroupMember } from '@neokai/shared';
 import { setupSpaceSessionGroupHandlers } from '../../../src/lib/rpc-handlers/space-session-group-handlers';
@@ -191,10 +191,10 @@ describe('space.sessionGroup.create', () => {
 		setupSpaceSessionGroupHandlers(hub, daemonHub, spaceManager, repo);
 	});
 
-	// Restore NODE_ENV after each test
-	const afterEach = () => {
+	// Always restore NODE_ENV, even when a test assertion throws
+	afterEach(() => {
 		process.env.NODE_ENV = originalNodeEnv;
-	};
+	});
 
 	it('creates group and returns it with empty members list', async () => {
 		const result = (await handlers.get('space.sessionGroup.create')!({
@@ -208,7 +208,6 @@ describe('space.sessionGroup.create', () => {
 			name: 'task:task-1',
 			taskId: 'task-1',
 		});
-		afterEach();
 	});
 
 	it('emits spaceSessionGroup.created event after creating group', async () => {
@@ -223,7 +222,6 @@ describe('space.sessionGroup.create', () => {
 			taskId: 'task-1',
 			group: mockGroup,
 		});
-		afterEach();
 	});
 
 	it('emits spaceSessionGroup.created with empty taskId when taskId is omitted', async () => {
@@ -237,7 +235,6 @@ describe('space.sessionGroup.create', () => {
 			taskId: '',
 			group: mockGroup,
 		});
-		afterEach();
 	});
 
 	it('adds each member and emits spaceSessionGroup.memberAdded per member', async () => {
@@ -275,7 +272,6 @@ describe('space.sessionGroup.create', () => {
 			groupId: mockGroup.id,
 			member: mockMember,
 		});
-		afterEach();
 	});
 
 	it('returns full group (with members) after creation', async () => {
@@ -290,7 +286,6 @@ describe('space.sessionGroup.create', () => {
 			members: [{ sessionId: 'session-a', role: 'task-agent' }],
 		})) as { group: SpaceSessionGroup };
 		expect(result.group.members).toEqual([mockMember]);
-		afterEach();
 	});
 
 	it('throws in production environment', async () => {
@@ -301,21 +296,18 @@ describe('space.sessionGroup.create', () => {
 				name: 'task:task-1',
 			})
 		).rejects.toThrow('not available in production');
-		afterEach();
 	});
 
 	it('throws if spaceId is missing', async () => {
 		await expect(
 			handlers.get('space.sessionGroup.create')!({ name: 'task:task-1' })
 		).rejects.toThrow('spaceId is required');
-		afterEach();
 	});
 
 	it('throws if name is missing', async () => {
 		await expect(
 			handlers.get('space.sessionGroup.create')!({ spaceId: 'space-1' })
 		).rejects.toThrow('name is required');
-		afterEach();
 	});
 
 	it('throws if space not found', async () => {
@@ -325,7 +317,6 @@ describe('space.sessionGroup.create', () => {
 		await expect(
 			h.get('space.sessionGroup.create')!({ spaceId: 'bad-space', name: 'task:task-1' })
 		).rejects.toThrow('Space not found: bad-space');
-		afterEach();
 	});
 
 	it('creates group with no members when members array is empty', async () => {
@@ -335,7 +326,6 @@ describe('space.sessionGroup.create', () => {
 			members: [],
 		});
 		expect(repo.addMember).not.toHaveBeenCalled();
-		afterEach();
 	});
 });
 
