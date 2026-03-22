@@ -3,7 +3,7 @@
  *
  * Extracted from AgentSession to reduce complexity.
  * Handles:
- * - Detecting messages stuck in 'sent' status with no system:init response
+ * - Detecting messages stuck in 'consumed' status with no system:init response
  * - Marking those messages as 'failed' so they appear in the UI as undelivered
  */
 
@@ -28,23 +28,23 @@ export class MessageRecoveryHandler {
 	}
 
 	/**
-	 * Mark orphaned sent messages as failed
+	 * Mark orphaned consumed messages as failed
 	 *
-	 * For sent messages with no system:init boundary after them (i.e. the server
+	 * For consumed messages with no system:init boundary after them (i.e. the server
 	 * crashed before Claude responded), mark them as 'failed' so they appear in
 	 * the UI as undelivered. The user can see what was lost without silent re-dispatch.
 	 *
 	 * Synthetic messages and tool_result-only messages are skipped — they are
 	 * SDK-internal and should not be surfaced as user-facing failures.
 	 */
-	recoverOrphanedSentMessages(): void {
+	recoverOrphanedConsumedMessages(): void {
 		const { session, db, logger } = this;
 
 		try {
-			// Sent messages may need recovery if they never got a corresponding
-			// system:init/response boundary after being marked sent.
-			const sentMessages = db.getMessagesByStatus(session.id, 'sent');
-			const allStuckMessages = [...sentMessages];
+			// Consumed messages may need recovery if they never got a corresponding
+			// system:init/response boundary after being marked consumed.
+			const consumedMessages = db.getMessagesByStatus(session.id, 'consumed');
+			const allStuckMessages = [...consumedMessages];
 
 			if (allStuckMessages.length === 0) {
 				return;
@@ -71,15 +71,15 @@ export class MessageRecoveryHandler {
 				timestamp: number;
 			}> = [];
 
-			for (const sentMsg of allStuckMessages) {
-				if (!isSDKUserMessage(sentMsg)) {
+			for (const consumedMsg of allStuckMessages) {
+				if (!isSDKUserMessage(consumedMsg)) {
 					continue;
 				}
 
 				// Skip synthetic messages (SDK-generated tool results, not human-typed).
 				// These are saved by saveSDKMessage with isSynthetic=true and should not
 				// be recovered — they are internal SDK messages, not user input.
-				const userMsg = sentMsg as SDKUserMessage & { isSynthetic?: boolean };
+				const userMsg = consumedMsg as SDKUserMessage & { isSynthetic?: boolean };
 				if (userMsg.isSynthetic) {
 					continue;
 				}
@@ -91,14 +91,14 @@ export class MessageRecoveryHandler {
 					continue;
 				}
 
-				const msgWithTimestamp = sentMsg as SDKMessage & { timestamp?: number };
+				const msgWithTimestamp = consumedMsg as SDKMessage & { timestamp?: number };
 				const msgTimestamp = msgWithTimestamp.timestamp || 0;
 
 				// If no system:init after this message, it's orphaned
 				if (msgTimestamp > latestInitTimestamp) {
 					orphanedMessages.push({
-						dbId: sentMsg.dbId,
-						uuid: sentMsg.uuid || 'unknown',
+						dbId: consumedMsg.dbId,
+						uuid: consumedMsg.uuid || 'unknown',
 						timestamp: msgTimestamp,
 					});
 				}
@@ -112,7 +112,7 @@ export class MessageRecoveryHandler {
 			const dbIds = orphanedMessages.map((m) => m.dbId);
 			db.updateMessageStatus(dbIds, 'failed');
 		} catch (error) {
-			logger.warn('Failed to mark orphaned sent messages as failed:', error);
+			logger.warn('Failed to mark orphaned consumed messages as failed:', error);
 			// Don't throw - recovery failure shouldn't prevent session from loading
 		}
 	}

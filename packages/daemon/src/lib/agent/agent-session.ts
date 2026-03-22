@@ -308,13 +308,13 @@ export class AgentSession
 
 		// Recover orphaned messages
 		const recoveryHandler = new MessageRecoveryHandler(session, db, this.logger);
-		recoveryHandler.recoverOrphanedSentMessages();
+		recoveryHandler.recoverOrphanedConsumedMessages();
 
 		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
 		this.eventSubscriptionSetup.setup();
 
 		// Replay persisted pending messages after startup/recovery in immediate mode.
-		// Priority: queued/current-turn first, then saved/next-turn.
+		// Priority: enqueued/immediate first, then deferred/defer.
 		const restoredState = this.stateManager.getState();
 		if (session.config.queryMode !== 'manual' && restoredState.status !== 'waiting_for_input') {
 			queueMicrotask(() => {

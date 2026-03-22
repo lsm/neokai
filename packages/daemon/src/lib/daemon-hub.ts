@@ -157,21 +157,21 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		userMessageText: string;
 		needsWorkspaceInit: boolean;
 		hasDraftToClear: boolean;
-		sendStatus: 'saved' | 'queued' | 'sent';
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
 		deliveryMode: MessageDeliveryMode;
 	};
 
 	// Query mode events
-	// Trigger to send saved messages (Manual mode)
+	// Trigger to send deferred messages (manual mode)
 	'query.trigger': { sessionId: string };
 	// Notification when message statuses change
 	'messages.statusChanged': {
 		sessionId: string;
 		messageIds: string[];
-		status: 'saved' | 'queued' | 'sent';
+		status: 'deferred' | 'enqueued' | 'consumed';
 	};
-	// Send queued messages on turn end (Auto-queue mode)
-	'query.sendQueuedOnTurnEnd': { sessionId: string };
+	// Send enqueued messages on turn end (auto-defer mode)
+	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
 
 	// Rewind events
 	'rewind.started': {

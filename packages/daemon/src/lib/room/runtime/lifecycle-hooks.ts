@@ -599,7 +599,7 @@ export async function checkLeaderDraftsExist(
 		bounceMessage:
 			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
 			'To fix this:\n' +
-			'1. Call `send_to_worker` (mode: "queue") with: "The plan is approved. Please:\n' +
+			'1. Call `send_to_worker` (mode: "defer") with: "The plan is approved. Please:\n' +
 			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER>`\n' +
 			'   2. Read the plan file under docs/plans/\n' +
 			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +

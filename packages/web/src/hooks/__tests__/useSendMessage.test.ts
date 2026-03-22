@@ -339,14 +339,14 @@ describe('useSendMessage', () => {
 			);
 
 			await act(async () => {
-				await result.current.sendMessage('Queue this', undefined, 'next_turn');
+				await result.current.sendMessage('Queue this', undefined, 'defer');
 			});
 
 			expect(mockRequest).toHaveBeenCalledWith('message.send', {
 				sessionId: 'session-1',
 				content: 'Queue this',
 				images: undefined,
-				deliveryMode: 'next_turn',
+				deliveryMode: 'defer',
 			});
 		});
 	});

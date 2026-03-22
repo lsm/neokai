@@ -2,9 +2,9 @@
  * Message Delivery Mode Queue Flow (Online)
  *
  * End-to-end validation for:
- * - current_turn delivery
- * - next_turn delivery while busy (saved queue + auto-dispatch)
- * - next_turn fallback while idle
+ * - immediate delivery
+ * - defer delivery while busy (saved queue + auto-dispatch)
+ * - defer fallback while idle
  *
  * MODES:
  * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
@@ -88,7 +88,7 @@ describe('Message delivery mode queue flow', () => {
 	}
 
 	test(
-		'next_turn while busy should be saved then auto-dispatched on turn end',
+		'defer while busy should be saved then auto-dispatched on turn end',
 		async () => {
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/delivery-mode-flow-${Date.now()}`,
@@ -116,7 +116,7 @@ describe('Message delivery mode queue flow', () => {
 					daemon,
 					sessionId,
 					'After your current response finishes, reply exactly: FOLLOWUP_OK',
-					{ deliveryMode: 'next_turn' }
+					{ deliveryMode: 'defer' }
 				);
 				expect(second.messageId).toBeString();
 				expect(second.messageId).not.toBe(first.messageId);
@@ -139,7 +139,7 @@ describe('Message delivery mode queue flow', () => {
 	);
 
 	test(
-		'next_turn while idle should fallback to immediate dispatch',
+		'defer while idle should fallback to immediate dispatch',
 		async () => {
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/delivery-mode-idle-fallback-${Date.now()}`,
@@ -154,10 +154,10 @@ describe('Message delivery mode queue flow', () => {
 			expect(stateBefore.status).toBe('idle');
 
 			await sendMessage(daemon, sessionId, 'Reply exactly: IDLE_FALLBACK_OK', {
-				deliveryMode: 'next_turn',
+				deliveryMode: 'defer',
 			});
 
-			// next_turn while idle should not remain in saved queue
+			// defer while idle should not remain in saved queue
 			await waitForCount(sessionId, 'saved', (count) => count === 0, 10000);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 			const queuedCleared = await waitForCount(sessionId, 'queued', (count) => count === 0, 20000)
@@ -175,7 +175,7 @@ describe('Message delivery mode queue flow', () => {
 	);
 
 	test(
-		'current_turn steering while busy should have timestamp between assistant messages',
+		'immediate steering while busy should have timestamp between assistant messages',
 		async () => {
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/steer-position-${Date.now()}`,
@@ -204,12 +204,12 @@ describe('Message delivery mode queue flow', () => {
 				// Wait a moment to ensure some assistant content has been streamed
 				await new Promise((resolve) => setTimeout(resolve, 2000));
 
-				// Send a steering message (current_turn while busy)
+				// Send a steering message (immediate while busy)
 				const steerResult = await sendMessage(
 					daemon,
 					sessionId,
 					'Actually, stop what you are doing. Reply with exactly: STEERED_OK',
-					{ deliveryMode: 'current_turn' }
+					{ deliveryMode: 'immediate' }
 				);
 				expect(steerResult.messageId).toBeString();
 
@@ -274,7 +274,7 @@ describe('Message delivery mode queue flow', () => {
 	);
 
 	test(
-		'multiple current_turn steers while busy should all be acknowledged',
+		'multiple immediate steers while busy should all be acknowledged',
 		async () => {
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: `${TMP_DIR}/multi-steer-${Date.now()}`,
@@ -308,14 +308,14 @@ describe('Message delivery mode queue flow', () => {
 					sessionId,
 					'STEER_MESSAGE_ONE: Acknowledge this.',
 					{
-						deliveryMode: 'current_turn',
+						deliveryMode: 'immediate',
 					}
 				);
 				const steer2 = await sendMessage(
 					daemon,
 					sessionId,
 					'STEER_MESSAGE_TWO: Also acknowledge this.',
-					{ deliveryMode: 'current_turn' }
+					{ deliveryMode: 'immediate' }
 				);
 
 				expect(steer1.messageId).toBeString();

@@ -167,7 +167,7 @@ export async function provisionGlobalSpacesAgent(
 				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
 				`has completed.${summaryPart}`;
 			void sessionFactory
-				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
+				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'defer' })
 				.catch((err) => {
 					log.warn(
 						`Failed to inject task.completed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`
@@ -182,7 +182,7 @@ export async function provisionGlobalSpacesAgent(
 				`Task '${event.taskTitle}' (taskId: ${event.taskId}, spaceId: ${event.spaceId}) ` +
 				`has ${statusLabel}.${summaryPart}`;
 			void sessionFactory
-				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'next_turn' })
+				.injectMessage(GLOBAL_SESSION_ID, message, { deliveryMode: 'defer' })
 				.catch((err) => {
 					log.warn(
 						`Failed to inject task.failed notification into ${GLOBAL_SESSION_ID}: ${err instanceof Error ? err.message : String(err)}`

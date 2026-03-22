@@ -5,8 +5,8 @@
  * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
  *
  * Handles:
- * - handleQueryTrigger - Manual mode: send all saved messages
- * - sendQueuedMessagesOnTurnEnd - Auto-queue mode: send queued messages after turn
+ * - handleQueryTrigger - manual mode: send all deferred messages
+ * - sendEnqueuedMessagesOnTurnEnd - auto-defer mode: send enqueued messages after turn
  */
 
 import type { Session } from '@neokai/shared';
@@ -40,7 +40,7 @@ export class QueryModeHandler {
 	/**
 	 * Handle manual query trigger (Manual mode)
 	 *
-	 * Retrieves all 'saved' messages from the database and sends them to Claude.
+	 * Retrieves all 'deferred' messages from the database and sends them to Claude.
 	 */
 	async handleQueryTrigger(): Promise<{
 		success: boolean;
@@ -50,29 +50,29 @@ export class QueryModeHandler {
 		const { session, db, daemonHub, messageQueue, logger } = this.ctx;
 
 		try {
-			// Get all saved messages
-			const savedMessages = db.getMessagesByStatus(session.id, 'saved');
+			// Get all deferred messages
+			const deferredMessages = db.getMessagesByStatus(session.id, 'deferred');
 
-			if (savedMessages.length === 0) {
+			if (deferredMessages.length === 0) {
 				return { success: true, messageCount: 0 };
 			}
 
-			// Update status to 'queued'
-			const dbIds = savedMessages.map((m) => m.dbId);
-			db.updateMessageStatus(dbIds, 'queued');
+			// Update status to 'enqueued'
+			const dbIds = deferredMessages.map((m) => m.dbId);
+			db.updateMessageStatus(dbIds, 'enqueued');
 
 			// Emit status change event
 			await daemonHub.emit('messages.statusChanged', {
 				sessionId: session.id,
 				messageIds: dbIds,
-				status: 'queued',
+				status: 'enqueued',
 			});
 
 			// Ensure query is started
 			await this.ctx.ensureQueryStarted();
 
 			// Enqueue each message
-			for (const msg of savedMessages) {
+			for (const msg of deferredMessages) {
 				if (!isSDKUserMessage(msg)) {
 					continue;
 				}
@@ -86,7 +86,7 @@ export class QueryModeHandler {
 				}
 			}
 
-			return { success: true, messageCount: savedMessages.length };
+			return { success: true, messageCount: deferredMessages.length };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			logger.error('Failed to trigger query:', error);
@@ -95,14 +95,14 @@ export class QueryModeHandler {
 	}
 
 	/**
-	 * Send queued messages when agent turn ends (Auto-queue mode)
+	 * Send enqueued messages when the agent turn ends (auto-defer mode)
 	 */
-	async sendQueuedMessagesOnTurnEnd(): Promise<void> {
+	async sendEnqueuedMessagesOnTurnEnd(): Promise<void> {
 		const { session, db, messageQueue, logger } = this.ctx;
 
 		try {
 			// Get all queued messages
-			const queuedMessages = db.getMessagesByStatus(session.id, 'queued');
+			const queuedMessages = db.getMessagesByStatus(session.id, 'enqueued');
 
 			if (queuedMessages.length === 0) {
 				return;
@@ -132,10 +132,10 @@ export class QueryModeHandler {
 
 	/**
 	 * Replay persisted pending messages for immediate mode startup/recovery.
-	 * Priority: current-turn queued messages first, then next-turn saved messages.
+	 * Priority: current-turn queued messages first, then next-turn deferred messages.
 	 */
 	async replayPendingMessagesForImmediateMode(): Promise<void> {
-		await this.sendQueuedMessagesOnTurnEnd();
+		await this.sendEnqueuedMessagesOnTurnEnd();
 		await this.handleQueryTrigger();
 	}
 

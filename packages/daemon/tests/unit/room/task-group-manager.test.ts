@@ -67,7 +67,7 @@ function createMockSessionFactory(
 		async injectMessage(
 			sessionId: string,
 			message: string,
-			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+			opts?: { deliveryMode?: 'immediate' | 'defer' }
 		) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
@@ -460,7 +460,7 @@ describe('TaskGroupManager', () => {
 				async injectMessage(
 					sessionId: string,
 					message: string,
-					opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+					opts?: { deliveryMode?: 'immediate' | 'defer' }
 				) {
 					callOrder.push(`injectMessage:${sessionId.split(':')[0]}`);
 					await sessionFactory.injectMessage(sessionId, message, opts);
@@ -498,7 +498,7 @@ describe('TaskGroupManager', () => {
 			trackingFactory.injectMessage = async (
 				sessionId: string,
 				message: string,
-				opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+				opts?: { deliveryMode?: 'immediate' | 'defer' }
 			) => {
 				if (sessionId.startsWith('coder:')) {
 					observerRegisteredBeforeInject = workerObserverRegistered;

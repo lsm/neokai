@@ -255,9 +255,9 @@ describe('SDKMessageHandler', () => {
 			expect((message as unknown as { isSynthetic: boolean }).isSynthetic).toBe(true);
 		});
 
-		it('should acknowledge persisted queued user messages without duplicate save', async () => {
+		it('should acknowledge persisted enqueued user messages without duplicate save', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'queued' ? [{ dbId: 'db-msg-1', uuid: 'test-uuid' }] : []
+				status === 'enqueued' ? [{ dbId: 'db-msg-1', uuid: 'test-uuid' }] : []
 			);
 
 			const message: SDKMessage = {
@@ -268,14 +268,14 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
 			// Bug fix: timestamp must be updated so message appears at correct position
 			// after page refresh (not at original queue time)
 			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-msg-1');
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
 				messageIds: ['db-msg-1'],
-				status: 'sent',
+				status: 'consumed',
 			});
 			expect(publishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
@@ -290,25 +290,25 @@ describe('SDKMessageHandler', () => {
 			expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
 		});
 
-		it('should acknowledge persisted saved user messages and update timestamp', async () => {
+		it('should acknowledge persisted deferred user messages and update timestamp', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'saved' ? [{ dbId: 'db-saved-1', uuid: 'saved-uuid' }] : []
+				status === 'deferred' ? [{ dbId: 'db-deferred-1', uuid: 'deferred-uuid' }] : []
 			);
 
 			const message: SDKMessage = {
 				type: 'user',
-				uuid: 'saved-uuid',
+				uuid: 'deferred-uuid',
 				message: { role: 'user', content: 'Saved message' },
 			} as unknown as SDKMessage;
 
 			await handler.handleMessage(message);
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-saved-1'], 'sent');
-			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-saved-1');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-deferred-1'], 'consumed');
+			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-deferred-1');
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
-				messageIds: ['db-saved-1'],
-				status: 'sent',
+				messageIds: ['db-deferred-1'],
+				status: 'consumed',
 			});
 			expect(publishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
@@ -322,13 +322,13 @@ describe('SDKMessageHandler', () => {
 			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
 		});
 
-		it('should suppress duplicate SDK replay for already-sent persisted user message', async () => {
+		it('should suppress duplicate SDK replay for already-consumed persisted user message', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'sent' ? [{ dbId: 'db-msg-1', uuid: 'sent-user-uuid' }] : []
+				status === 'consumed' ? [{ dbId: 'db-msg-1', uuid: 'consumed-user-uuid' }] : []
 			);
 			const message: SDKMessage = {
 				type: 'user',
-				uuid: 'sent-user-uuid',
+				uuid: 'consumed-user-uuid',
 				message: { role: 'user', content: 'Already shown' },
 			} as unknown as SDKMessage;
 
@@ -493,7 +493,7 @@ describe('SDKMessageHandler', () => {
 
 		it('should not block handleResultMessage when /context enqueue fails', async () => {
 			// Bug fix: /context enqueue is fire-and-forget. If it rejects,
-			// handleResultMessage must still complete (set idle, ack queued, etc.)
+			// handleResultMessage must still complete (set idle, ack enqueued, etc.)
 			(mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mockImplementation(async () => {
 				throw new Error('Queue timeout');
 			});
@@ -521,13 +521,13 @@ describe('SDKMessageHandler', () => {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 		});
 
-		it('should fallback-ack oldest queued user on turn end when replay is absent', async () => {
+		it('should fallback-ack oldest enqueued user on turn end when replay is absent', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
-				if (status === 'queued') {
+				if (status === 'enqueued') {
 					return [
 						{
 							dbId: 'db-msg-1',
-							uuid: 'queued-user-uuid',
+							uuid: 'enqueued-user-uuid',
 							type: 'user',
 							timestamp: 1700000000000,
 							message: { role: 'user', content: 'Queued message' },
@@ -553,7 +553,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
 			// Fallback-ack preserves original timestamp (T1) instead of updating
 			// to turn-end time — the message was already positioned at yield time
 			// by handleMessageYielded, or if that didn't fire, T1 is a better
@@ -562,7 +562,7 @@ describe('SDKMessageHandler', () => {
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
 				messageIds: ['db-msg-1'],
-				status: 'sent',
+				status: 'consumed',
 			});
 			expect(publishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
@@ -570,7 +570,7 @@ describe('SDKMessageHandler', () => {
 					added: expect.arrayContaining([
 						expect.objectContaining({
 							type: 'user',
-							uuid: 'queued-user-uuid',
+							uuid: 'enqueued-user-uuid',
 						}),
 					]),
 					timestamp: expect.any(Number),
@@ -868,7 +868,7 @@ describe('SDKMessageHandler', () => {
 
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Verify an assistant message was saved
+			// Verify an assistant message was deferred
 			const saveCalls = saveSDKMessageSpy.mock.calls;
 			const assistantSaves = saveCalls.filter(
 				(call: unknown[]) => (call[1] as SDKMessage).type === 'assistant'
@@ -996,7 +996,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(contextResponseMessage);
 
-			// Context response should NOT be saved to DB (early return)
+			// Context response should NOT be deferred to DB (early return)
 			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
 
 			// But context tracker should be updated
@@ -1230,7 +1230,7 @@ describe('SDKMessageHandler', () => {
 			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
 
 			// Step 5: next normal result — internalContextCommandIds must be empty now
-			// so /context gets queued again
+			// so /context gets enqueued again
 			const nextNormalResult: SDKMessage = {
 				type: 'result',
 				subtype: 'success',
@@ -1245,7 +1245,7 @@ describe('SDKMessageHandler', () => {
 				modelUsage: {},
 			} as unknown as SDKMessage;
 			await handler.handleMessage(nextNormalResult);
-			// internalContextCommandIds was cleared in step 4, so /context is queued again
+			// internalContextCommandIds was cleared in step 4, so /context is enqueued again
 			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(2);
 		});
 

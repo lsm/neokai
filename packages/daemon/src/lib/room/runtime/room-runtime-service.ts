@@ -251,7 +251,7 @@ export class RoomRuntimeService {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
 
-				const deliveryMode = opts?.deliveryMode ?? 'current_turn';
+				const deliveryMode = opts?.deliveryMode ?? 'immediate';
 				const state = session.getProcessingState();
 				const isBusy = state.status === 'processing' || state.status === 'queued';
 
@@ -267,11 +267,11 @@ export class RoomRuntimeService {
 					},
 				};
 
-				// Queue-mode semantics:
-				// - next_turn + busy => persist as 'saved' (replayed after current turn)
-				// - otherwise => enqueue now ('queued') so worker can start ASAP when idle
-				if (deliveryMode === 'next_turn' && isBusy) {
-					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
+				// Defer-mode semantics:
+				// - defer + busy => persist as 'deferred' (replayed after current turn)
+				// - otherwise => enqueue now ('enqueued') so worker can start ASAP when idle
+				if (deliveryMode === 'defer' && isBusy) {
+					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
 					return;
 				}
 
@@ -279,7 +279,7 @@ export class RoomRuntimeService {
 				// restart, restored sessions are in cache but haven't started
 				// their query yet (lazy start to avoid startup timeout).
 				await session.ensureQueryStarted();
-				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
+				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
 				await session.messageQueue.enqueueWithId(messageId, message);
 			},
 			hasSession: (sessionId) => {

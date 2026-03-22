@@ -312,11 +312,11 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
 	/**
 	 * Query mode for message sending behavior
-	 * - 'immediate': Messages sent to Claude immediately (default)
-	 * - 'manual': Messages saved but not sent until explicitly triggered
+	 * - 'immediate': Messages are enqueued for immediate delivery (default)
+	 * - 'manual': Messages are deferred until explicitly triggered
 	 *
-	 * Note: Auto-queue behavior (messages queued during processing) is automatic
-	 * and doesn't require a separate mode setting.
+	 * Note: auto-defer behavior (messages enqueued during active processing)
+	 * is automatic and doesn't require a separate mode setting.
 	 * @default 'immediate'
 	 */
 	queryMode?: 'immediate' | 'manual';
@@ -604,7 +604,7 @@ export interface MessageImage {
 	media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 }
 
-export type MessageDeliveryMode = 'current_turn' | 'next_turn';
+export type MessageDeliveryMode = 'immediate' | 'defer';
 
 // Tool types
 export interface Tool {

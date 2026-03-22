@@ -882,7 +882,7 @@ export function setupTaskHandlers(
 					null,
 					JSON.stringify(sdkPayload),
 					new Date().toISOString(),
-					'sent'
+					'consumed'
 				);
 			reactiveDb.notifyChange('sdk_messages');
 			return { id: rowId };

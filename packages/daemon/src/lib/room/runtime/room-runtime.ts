@@ -130,7 +130,7 @@ export interface RoomRuntimeConfig {
 	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
 	/**
-	 * Job queue used to schedule and cancel room.tick jobs.
+	 * Job defer used to schedule and cancel room.tick jobs.
 	 * When provided, scheduleTick() enqueues a room.tick job via enqueueRoomTick.
 	 * When absent (e.g., in unit tests), tick scheduling is a no-op and tests
 	 * drive ticks directly via runtime.tick().
@@ -1123,7 +1123,7 @@ export class RoomRuntime {
 		toolName: string,
 		params: {
 			message?: string;
-			mode?: 'steer' | 'queue';
+			mode?: 'immediate' | 'defer';
 			summary?: string;
 			reason?: string;
 			pr_url?: string;
@@ -1170,8 +1170,8 @@ export class RoomRuntime {
 					});
 				}
 				const message = params.message ?? '';
-				const mode = params.mode ?? 'queue';
-				const deliveryMode = mode === 'queue' ? 'next_turn' : 'current_turn';
+				const mode = params.mode ?? 'defer';
+				const deliveryMode = mode === 'defer' ? 'defer' : 'immediate';
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
@@ -1488,7 +1488,7 @@ export class RoomRuntime {
 			sendToWorker: async (
 				_groupId: string,
 				message: string,
-				mode?: 'steer' | 'queue',
+				mode?: 'immediate' | 'defer',
 				progressSummary?: string
 			) => {
 				return this.handleLeaderTool(groupId, 'send_to_worker', {
@@ -2266,7 +2266,7 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Main scheduling loop. Concurrency is managed by the job queue — at most one
+	 * Main scheduling loop. Concurrency is managed by the job defer — at most one
 	 * pending room.tick job exists per room, so concurrent calls are not expected
 	 * in production. In unit tests, callers drive ticks directly and sequentially.
 	 */
@@ -2719,7 +2719,7 @@ export class RoomRuntime {
 			return; // Don't start execution groups in the same tick
 		}
 
-		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
+		// Find pending non-planning tasks (planning tasks are spawned directly, not via defer)
 		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
 		const planningTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') === 'planning');
 		if (planningTasks.length > 0) {
@@ -2737,7 +2737,7 @@ export class RoomRuntime {
 		// Uses allActiveGroups (including submitted-for-review) to prevent spawning
 		// a duplicate group while another is awaiting human review.
 		// This prevents duplicate group spawning when concurrent ticks race
-		// (the job queue processor runs up to maxConcurrent jobs in parallel,
+		// (the job defer processor runs up to maxConcurrent jobs in parallel,
 		// so two ticks can both see a task as 'pending' before either transitions
 		// it to 'in_progress').
 		const activeGroupTaskIds = new Set(allActiveGroups.map((g) => g.taskId));
@@ -3246,7 +3246,7 @@ export class RoomRuntime {
 		// Notify UI: planning task created
 		this.emitTaskUpdate(planningTask);
 
-		// Spawn the planning group directly (bypasses the tick queue)
+		// Spawn the planning group directly (bypasses the tick defer)
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
@@ -3457,7 +3457,7 @@ export class RoomRuntime {
 
 	/**
 	 * If the completed task was a planning task, promote its draft children to pending
-	 * so they enter the execution queue on the next tick.
+	 * so they enter the execution defer on the next tick.
 	 */
 	private async promoteDraftTasksIfPlanning(taskId: string): Promise<void> {
 		const task = await this.taskManager.getTask(taskId);

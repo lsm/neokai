@@ -952,7 +952,7 @@ export class TaskAgentManager {
 
 		// Notify the Task Agent that a sub-session has completed.
 		// Include the agent's result summary so the Task Agent has immediate context.
-		// This sends a next_turn message so the Task Agent can call advance_workflow.
+		// This sends a defer message so the Task Agent can call advance_workflow.
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
 			try {
@@ -964,7 +964,7 @@ export class TaskAgentManager {
 				await this.injectMessageIntoSession(
 					taskAgentSession,
 					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_step_status to verify, then call advance_workflow to proceed.`,
-					'next_turn'
+					'defer'
 				);
 			} catch (err) {
 				log.warn(
@@ -1235,19 +1235,19 @@ export class TaskAgentManager {
 	private async injectMessageIntoSession(
 		session: AgentSession,
 		message: string,
-		deliveryMode: 'current_turn' | 'next_turn' = 'current_turn'
+		deliveryMode: 'immediate' | 'defer' = 'immediate'
 	): Promise<void> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
 		// 'processing'/'queued' = actively running; 'waiting_for_input' = human gate open;
 		// 'interrupted' = the current turn was interrupted but the session is still alive.
-		// All four states mean a next_turn message cannot be safely delivered right now —
+		// All four states mean a defer message cannot be safely delivered right now —
 		// defer it for replay after the current interaction resolves.
 		//
-		// Note on 'interrupted': an interrupted session CAN accept a new current_turn
-		// message (ensureQueryStarted restarts the query), so only next_turn delivery is
+		// Note on 'interrupted': an interrupted session CAN accept a new immediate
+		// message (ensureQueryStarted restarts the query), so only defer delivery is
 		// deferred. This matches the pattern for 'processing'/'queued': the message is
-		// saved and replayed once the session becomes idle.
+		// persisted as deferred and replayed once the session becomes idle.
 		const isBusy =
 			state.status === 'processing' ||
 			state.status === 'queued' ||
@@ -1266,14 +1266,14 @@ export class TaskAgentManager {
 			},
 		};
 
-		// next_turn + busy → save for replay after current turn completes
-		if (deliveryMode === 'next_turn' && isBusy) {
-			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
+		// defer + busy → persist as deferred for replay after current turn completes
+		if (deliveryMode === 'defer' && isBusy) {
+			this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
 			return;
 		}
 
 		await session.ensureQueryStarted();
-		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
+		this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
 		await session.messageQueue.enqueueWithId(messageId, message);
 	}
 

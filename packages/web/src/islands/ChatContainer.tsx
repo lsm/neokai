@@ -641,7 +641,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		async (
 			content: string,
 			images?: MessageImage[],
-			deliveryMode: MessageDeliveryMode = 'current_turn'
+			deliveryMode: MessageDeliveryMode = 'immediate'
 		) => {
 			// If session is pending worktree choice, set the mode first
 			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
