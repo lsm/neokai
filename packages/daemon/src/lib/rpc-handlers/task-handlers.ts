@@ -889,4 +889,36 @@ export function setupTaskHandlers(
 
 		return { success: true };
 	});
+
+	// session_group.stop - Force-stop a session group by ID.
+	// Kills worker and leader agent sessions and removes the group record from the DB.
+	// Frees the concurrency slot so the runtime can pick up new tasks.
+	// Task status is NOT changed; call task.cancel separately if needed.
+	messageHub.onRequest('session_group.stop', async (data) => {
+		const params = data as { roomId: string; groupId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.groupId) {
+			throw new Error('Group ID is required');
+		}
+
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for session_group.stop');
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const result = await runtime.forceStopSessionGroup(params.groupId);
+		if (!result.success) {
+			throw new Error(result.error ?? `Failed to stop session group ${params.groupId}`);
+		}
+
+		emitRoomOverview(params.roomId);
+		return { success: true };
+	});
 }
