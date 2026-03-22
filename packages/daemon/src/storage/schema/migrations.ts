@@ -151,6 +151,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 40: Flexible session groups — add task_id + status to space_session_groups,
 	// drop role CHECK constraint and add agent_id + status to space_session_group_members.
 	runMigration40(db);
+
+	// Migration 41: Create session_group_messages table for LiveQuery-based message streaming.
+	// This table was dropped in migration 19 (legacy mirror table). It is recreated here
+	// as an append-only store for the LiveQuery protocol (Milestone 4).
+	runMigration41(db);
 }
 
 /**
@@ -2419,4 +2424,36 @@ function runMigration40(db: BunDatabase): void {
 			db.exec('PRAGMA foreign_keys = ON');
 		}
 	}
+}
+
+/**
+ * Migration 41: Create session_group_messages table.
+ *
+ * The original session_group_messages table was a mirror of SDK messages and was
+ * dropped in migration 19 because it was redundant at the time.  This new table
+ * is an append-only store for the LiveQuery message streaming path introduced in
+ * Milestone 4.  Fresh databases already get the table from createTables(); this
+ * migration creates it for existing (migrated) databases.
+ *
+ * Idempotency: guarded by `CREATE TABLE IF NOT EXISTS` and a table-existence
+ * check so the migration is safe to run multiple times.
+ */
+function runMigration41(db: BunDatabase): void {
+	if (tableExists(db, 'session_group_messages')) {
+		return; // Already created (fresh DB or re-run)
+	}
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS session_group_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+			session_id TEXT,
+			role TEXT NOT NULL DEFAULT 'system',
+			message_type TEXT NOT NULL DEFAULT 'status',
+			content TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_sgm_group ON session_group_messages(group_id, created_at, id)`
+	);
 }
