@@ -52,7 +52,6 @@ export interface ModelSwitchHandlerContext {
 
 	// SDK state
 	readonly queryObject: Query | null;
-	readonly firstMessageReceived: boolean;
 }
 
 /**
@@ -102,7 +101,6 @@ export class ModelSwitchHandler {
 			logger,
 			lifecycleManager,
 			queryObject,
-			firstMessageReceived,
 		} = this.ctx;
 
 		try {
@@ -161,9 +159,6 @@ export class ModelSwitchHandler {
 				{ channel: `session:${session.id}` }
 			);
 
-			// Check if query is running AND ProcessTransport is ready
-			const transportReady = firstMessageReceived;
-
 			// Locate the provider instance for the new model.
 			// newProvider is a required string, so detectProviderForModel always receives
 			// an explicit provider — no heuristic fallback is needed.
@@ -179,8 +174,8 @@ export class ModelSwitchHandler {
 				return { success: false, model: session.config.model, error: errMsg };
 			}
 
-			if (!queryObject || !transportReady) {
-				// Query not started yet OR transport not ready - just update config
+			if (!queryObject) {
+				// Query hasn't been created yet - just update config, it will be used when query starts
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
@@ -204,7 +199,12 @@ export class ModelSwitchHandler {
 					session: { config: session.config },
 				});
 			} else {
-				// Query is running - restart it to ensure system:init is regenerated with new model
+				// Query exists - always restart to apply the new model/provider.
+				// We must restart even if firstMessageReceived is false because the SDK
+				// subprocess is already running with the old model. The restart spawns a new
+				// subprocess with the updated config and resumes the conversation if the
+				// SDK session file is still valid.
+				//
 				// FIX: SDK's setModel() doesn't update the cached system:init message,
 				// causing MessageInfoDropdown to show stale model info.
 				// Restarting forces SDK to emit fresh system:init with correct model.
@@ -225,6 +225,15 @@ export class ModelSwitchHandler {
 
 				// Update context tracker model
 				contextTracker.setModel(resolvedModel);
+
+				// Emit session.updated event so state-manager and UI know the model changed
+				// This prevents stale model display during the restart window before
+				// the restarted query emits a fresh system:init with the new model
+				await daemonHub.emit('session.updated', {
+					sessionId: session.id,
+					source: 'model-switch',
+					session: { config: session.config },
+				});
 
 				// Restart the query via lifecycle manager
 				// This spawns a new SDK subprocess with the new model configuration

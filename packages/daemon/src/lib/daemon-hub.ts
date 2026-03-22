@@ -140,6 +140,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	// Reset events
 	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
 	'agent.reset': { sessionId: string; success: boolean; error?: string };
+	'agent.restart': { sessionId: string; success: boolean; error?: string };
 
 	// Message sending events
 	'message.sendRequest': {

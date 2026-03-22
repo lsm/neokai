@@ -384,12 +384,28 @@ describe('ModelSwitchHandler', () => {
 		});
 
 		describe('when transport not ready', () => {
-			it('should update config only when transport not ready', async () => {
+			it('should restart query when queryObject exists even if transport not ready', async () => {
+				// When queryObject exists but firstMessageReceived is false, we still need to
+				// restart because the SDK subprocess is already running with the old model.
+				// Without restart, the new model would not take effect.
 				handler = createHandler({ firstMessageReceived: false });
 				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
+				// Restart IS called because queryObject exists - the new model must take effect
+				expect(restartSpy).toHaveBeenCalled();
+			});
+
+			it('should not restart when queryObject does not exist (query not started)', async () => {
+				// Only when query hasn't been created at all should we skip restart.
+				// The new model will be used when the query finally starts.
+				handler = createHandler({ queryObject: null, firstMessageReceived: false });
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				expect(result.success).toBe(true);
+				expect(updateSessionSpy).toHaveBeenCalled();
+				// No restart because queryObject doesn't exist
 				expect(restartSpy).not.toHaveBeenCalled();
 			});
 		});
