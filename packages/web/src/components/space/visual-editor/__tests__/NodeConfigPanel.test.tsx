@@ -357,4 +357,179 @@ describe('NodeConfigPanel', () => {
 			expect(container.textContent).not.toContain('Workflow ends here');
 		});
 	});
+
+	// ============================================================================
+	// Multi-agent: AgentsSection
+	// ============================================================================
+
+	describe('multi-agent mode', () => {
+		it('shows single agent dropdown in single-agent mode', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			// Single agent mode shows the agent-select dropdown
+			expect(getByTestId('agent-select')).toBeTruthy();
+		});
+
+		it('shows "Add agent" button in single-agent mode', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(getByTestId('add-agent-button')).toBeTruthy();
+		});
+
+		it('clicking "Add agent" switches to multi-agent mode with existing agent', () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			fireEvent.click(getByTestId('add-agent-button'));
+			expect(onUpdate).toHaveBeenCalledOnce();
+			const updatedStep = onUpdate.mock.calls[0][0];
+			expect(updatedStep.agents).toHaveLength(1);
+			expect(updatedStep.agents[0].agentId).toBe('agent-1'); // existing agentId preserved
+		});
+
+		it('shows agents list in multi-agent mode', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			});
+			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('agents-list')).toBeTruthy();
+			// Single agent dropdown should not be present
+			expect(queryByTestId('agent-select')).toBeNull();
+		});
+
+		it('renders one entry per agent in multi-agent mode', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getAllByTestId('agent-entry')).toHaveLength(2);
+		});
+
+		it('shows agent name and role in each agent entry', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			const entry = getByTestId('agents-list');
+			expect(entry.textContent).toContain('Planner');
+			expect(entry.textContent).toContain('planner');
+		});
+
+		it('remove agent button calls onUpdate without that agent', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getAllByTestId('remove-agent-button')[0]);
+			const updatedStep = onUpdate.mock.calls[0][0];
+			expect(updatedStep.agents).toHaveLength(1);
+			expect(updatedStep.agents[0].agentId).toBe('agent-2');
+		});
+
+		it('removing last agent switches back to single-agent mode', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getByTestId('remove-agent-button'));
+			const updatedStep = onUpdate.mock.calls[0][0];
+			expect(updatedStep.agents).toBeUndefined();
+		});
+
+		it('shows add-agent-select dropdown for agents not yet in step', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			// agent-2 is not in step yet, should appear in dropdown
+			const select = getByTestId('add-agent-select');
+			expect(select.textContent).toContain('Coder');
+		});
+
+		it('shows channels section in multi-agent mode', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('channels-section')).toBeTruthy();
+		});
+
+		it('does not show channels section in single-agent mode', () => {
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(queryByTestId('channels-section')).toBeNull();
+		});
+
+		it('renders existing channels in channels list', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				channels: [
+					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
+					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
+				],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getAllByTestId('channel-entry')).toHaveLength(2);
+		});
+
+		it('remove channel button calls onUpdate without that channel', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				channels: [
+					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
+					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
+				],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getAllByTestId('remove-channel-button')[0]);
+			const updatedStep = onUpdate.mock.calls[0][0];
+			expect(updatedStep.channels).toHaveLength(1);
+			expect(updatedStep.channels[0].from).toBe('reviewer');
+		});
+
+		it('add channel button is disabled when from or to is empty', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			const addBtn = getByTestId('add-channel-button');
+			expect(addBtn.hasAttribute('disabled')).toBe(true);
+		});
+
+		it('add channel adds a new channel entry', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			// Set from
+			act(() => {
+				fireEvent.change(getByTestId('channel-from-select'), { target: { value: 'coder' } });
+			});
+			// Set to
+			act(() => {
+				fireEvent.input(getByTestId('channel-to-input'), { target: { value: 'reviewer' } });
+			});
+			// Click add
+			act(() => {
+				fireEvent.click(getByTestId('add-channel-button'));
+			});
+			expect(onUpdate).toHaveBeenCalled();
+			const updatedStep = onUpdate.mock.calls[0][0];
+			expect(updatedStep.channels).toHaveLength(1);
+			expect(updatedStep.channels[0].from).toBe('coder');
+			expect(updatedStep.channels[0].to).toBe('reviewer');
+			expect(updatedStep.channels[0].direction).toBe('one-way');
+		});
+	});
 });

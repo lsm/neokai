@@ -515,9 +515,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			return;
 		}
 
-		// Validate each step has an agent assigned
+		// Validate each step has an agent assigned (single or multi-agent)
 		for (let i = 0; i < nodes.length; i++) {
-			if (!nodes[i].step.agentId) {
+			const step = nodes[i].step;
+			const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
+			if (!hasMultiAgent && !step.agentId) {
 				setError(`Step ${i + 1} requires an agent.`);
 				return;
 			}

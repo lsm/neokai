@@ -8,7 +8,7 @@
  * Expanded: name input, agent dropdown, entry/exit gate selectors, instructions
  */
 
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, WorkflowStepAgent, WorkflowChannel } from '@neokai/shared';
 import type { WorkflowConditionType } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
@@ -24,8 +24,22 @@ export interface StepDraft {
 	/** Existing step ID when editing an existing workflow */
 	id?: string;
 	name: string;
+	/** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
 	agentId: string;
+	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
+	agents?: WorkflowStepAgent[];
+	/** Directed messaging topology between agents. */
+	channels?: WorkflowChannel[];
 	instructions: string;
+}
+
+// ============================================================================
+// Multi-agent helpers
+// ============================================================================
+
+/** Returns true when this step has multiple agents configured. */
+export function isMultiAgentStep(step: StepDraft): boolean {
+	return Array.isArray(step.agents) && step.agents.length > 0;
 }
 
 // Re-export ConditionDraft so existing importers don't break
@@ -102,6 +116,310 @@ function ChevronUp() {
 }
 
 // ============================================================================
+// MultiAgentSection — manages the agents list in expanded view
+// ============================================================================
+
+interface MultiAgentSectionProps {
+	step: StepDraft;
+	agents: SpaceAgent[];
+	onUpdate: (step: StepDraft) => void;
+}
+
+function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
+	const stepAgents = step.agents ?? [];
+
+	function updateAgents(next: WorkflowStepAgent[]) {
+		if (next.length === 0) {
+			// Switch back to single-agent mode
+			onUpdate({ ...step, agents: undefined, agentId: '' });
+		} else if (next.length === 1) {
+			// Keep multi-agent mode with 1 entry so user can add more
+			onUpdate({ ...step, agents: next, agentId: '' });
+		} else {
+			onUpdate({ ...step, agents: next, agentId: '' });
+		}
+	}
+
+	function addAgent(agentId: string) {
+		if (!agentId) return;
+		if (stepAgents.some((a) => a.agentId === agentId)) return;
+		updateAgents([...stepAgents, { agentId }]);
+	}
+
+	function removeAgent(agentId: string) {
+		const next = stepAgents.filter((a) => a.agentId !== agentId);
+		updateAgents(next);
+	}
+
+	function updateAgentInstructions(agentId: string, instructions: string) {
+		updateAgents(
+			stepAgents.map((a) =>
+				a.agentId === agentId ? { ...a, instructions: instructions || undefined } : a
+			)
+		);
+	}
+
+	const usedIds = new Set(stepAgents.map((a) => a.agentId));
+	const availableAgents = agents.filter((a) => !usedIds.has(a.id));
+
+	return (
+		<div class="space-y-2">
+			<div class="flex items-center justify-between">
+				<label class="text-xs font-medium text-gray-400">
+					Agents <span class="text-gray-600">({stepAgents.length})</span>
+				</label>
+				{stepAgents.length === 1 && (
+					<button
+						type="button"
+						onClick={() =>
+							onUpdate({ ...step, agents: undefined, agentId: stepAgents[0]?.agentId ?? '' })
+						}
+						class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+					>
+						Switch to single
+					</button>
+				)}
+			</div>
+
+			{/* Agent list */}
+			<div class="space-y-1.5">
+				{stepAgents.map((sa) => {
+					const agentInfo = agents.find((a) => a.id === sa.agentId);
+					return (
+						<div key={sa.agentId} class="bg-dark-800 border border-dark-600 rounded p-2 space-y-1">
+							<div class="flex items-center justify-between">
+								<span class="text-xs font-medium text-gray-200">
+									{agentInfo?.name ?? sa.agentId}
+									{agentInfo && <span class="text-gray-500 ml-1">({agentInfo.role})</span>}
+								</span>
+								<button
+									type="button"
+									onClick={() => removeAgent(sa.agentId)}
+									class="text-gray-600 hover:text-red-400 transition-colors"
+									title="Remove agent"
+								>
+									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M6 18L18 6M6 6l12 12"
+										/>
+									</svg>
+								</button>
+							</div>
+							<input
+								type="text"
+								value={sa.instructions ?? ''}
+								onInput={(e) =>
+									updateAgentInstructions(sa.agentId, (e.currentTarget as HTMLInputElement).value)
+								}
+								placeholder="Per-agent instructions (optional)…"
+								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+							/>
+						</div>
+					);
+				})}
+			</div>
+
+			{/* Add agent dropdown */}
+			{availableAgents.length > 0 && (
+				<select
+					value=""
+					onChange={(e) => {
+						addAgent((e.currentTarget as HTMLSelectElement).value);
+						(e.currentTarget as HTMLSelectElement).value = '';
+					}}
+					class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-500 focus:outline-none focus:border-blue-500"
+				>
+					<option value="">+ Add agent…</option>
+					{availableAgents.map((a) => (
+						<option key={a.id} value={a.id}>
+							{a.name} ({a.role})
+						</option>
+					))}
+				</select>
+			)}
+
+			{/* Channels section */}
+			<ChannelsSection step={step} agents={agents} onUpdate={onUpdate} />
+		</div>
+	);
+}
+
+// ============================================================================
+// ChannelsSection — manages messaging topology channels
+// ============================================================================
+
+interface ChannelsSectionProps {
+	step: StepDraft;
+	agents: SpaceAgent[];
+	onUpdate: (step: StepDraft) => void;
+}
+
+/** Human-readable label for a channel direction. */
+function channelDirectionLabel(direction: 'one-way' | 'bidirectional'): string {
+	return direction === 'bidirectional' ? '↔' : '→';
+}
+
+/** Format a to value for display. */
+function formatTo(to: string | string[]): string {
+	return Array.isArray(to) ? `[${to.join(', ')}]` : to;
+}
+
+function ChannelsSection({ step, agents, onUpdate }: ChannelsSectionProps) {
+	const channels = step.channels ?? [];
+	const stepAgents = step.agents ?? [];
+
+	// Collect known roles from step agents (+ wildcard)
+	const knownRoles = [
+		'*',
+		...stepAgents.map((sa) => agents.find((a) => a.id === sa.agentId)?.role ?? sa.agentId),
+	];
+
+	function updateChannels(next: WorkflowChannel[]) {
+		onUpdate({ ...step, channels: next.length > 0 ? next : undefined });
+	}
+
+	function removeChannel(index: number) {
+		updateChannels(channels.filter((_, i) => i !== index));
+	}
+
+	function addChannel(from: string, to: string, direction: 'one-way' | 'bidirectional') {
+		if (!from || !to) return;
+		// Support comma-separated multi-select for fan-out
+		const toValue: string | string[] = to.includes(',')
+			? to
+					.split(',')
+					.map((s) => s.trim())
+					.filter(Boolean)
+			: to;
+		updateChannels([...channels, { from, to: toValue, direction }]);
+	}
+
+	return (
+		<div class="space-y-2 pt-2 border-t border-dark-700">
+			<label class="text-xs font-medium text-gray-400">
+				Channels <span class="text-gray-600 font-normal">(messaging topology)</span>
+			</label>
+
+			{channels.length === 0 && (
+				<p class="text-xs text-gray-600">No channels — agents are isolated.</p>
+			)}
+
+			{/* Channel list */}
+			<div class="space-y-1">
+				{channels.map((ch, i) => (
+					<div
+						key={i}
+						class="flex items-center gap-2 bg-dark-800 border border-dark-600 rounded px-2 py-1.5"
+					>
+						<span class="text-xs text-gray-300 font-mono flex-1">
+							{ch.from} {channelDirectionLabel(ch.direction)} {formatTo(ch.to)}
+							{ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
+						</span>
+						<button
+							type="button"
+							onClick={() => removeChannel(i)}
+							class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+							title="Remove channel"
+						>
+							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M6 18L18 6M6 6l12 12"
+								/>
+							</svg>
+						</button>
+					</div>
+				))}
+			</div>
+
+			{/* Add channel form */}
+			<AddChannelForm knownRoles={knownRoles} onAdd={addChannel} />
+		</div>
+	);
+}
+
+interface AddChannelFormProps {
+	knownRoles: string[];
+	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional') => void;
+}
+
+function AddChannelForm({ knownRoles, onAdd }: AddChannelFormProps) {
+	return (
+		<details class="group">
+			<summary class="text-xs text-blue-400 hover:text-blue-300 cursor-pointer list-none">
+				+ Add channel
+			</summary>
+			<ChannelFormBody knownRoles={knownRoles} onAdd={onAdd} />
+		</details>
+	);
+}
+
+interface ChannelFormBodyProps {
+	knownRoles: string[];
+	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional') => void;
+}
+
+function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
+	// We use a form inside details to avoid useState — just read values on submit
+	function handleSubmit(e: Event) {
+		e.preventDefault();
+		const form = e.currentTarget as HTMLFormElement;
+		const from = (form.elements.namedItem('from') as HTMLSelectElement).value;
+		const to = (form.elements.namedItem('to') as HTMLInputElement).value.trim();
+		const direction = (form.elements.namedItem('direction') as HTMLSelectElement).value as
+			| 'one-way'
+			| 'bidirectional';
+		onAdd(from, to, direction);
+		form.reset();
+	}
+
+	return (
+		<form
+			onSubmit={handleSubmit}
+			class="mt-2 space-y-2 bg-dark-800 border border-dark-600 rounded p-2"
+		>
+			<div class="flex gap-2">
+				<select
+					name="from"
+					class="flex-1 text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
+				>
+					<option value="">From…</option>
+					{knownRoles.map((r) => (
+						<option key={r} value={r}>
+							{r}
+						</option>
+					))}
+				</select>
+				<select
+					name="direction"
+					class="text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
+				>
+					<option value="one-way">→ one-way</option>
+					<option value="bidirectional">↔ bidirectional</option>
+				</select>
+			</div>
+			<input
+				name="to"
+				type="text"
+				placeholder="To role(s) — comma-separated for fan-out, * for all"
+				class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+			/>
+			<button
+				type="submit"
+				class="w-full text-xs py-1 rounded bg-dark-700 hover:bg-dark-600 text-gray-300 transition-colors"
+			>
+				Add
+			</button>
+		</form>
+	);
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -148,6 +466,7 @@ export function WorkflowStepCard({
 	onRemove,
 	disableRemove = false,
 }: WorkflowStepCardProps) {
+	const multi = isMultiAgentStep(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
 
 	return (
@@ -167,12 +486,28 @@ export function WorkflowStepCard({
 
 				{/* Step info */}
 				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-1.5 min-w-0">
+					<div class="flex items-center gap-1.5 min-w-0 flex-wrap">
 						<span class="text-xs font-medium text-gray-200 truncate">
 							{step.name || 'Unnamed Step'}
 						</span>
 						<span class="text-xs text-gray-600 flex-shrink-0">·</span>
-						<span class="text-xs text-gray-500 truncate flex-shrink-0">{agentName || '—'}</span>
+						{multi ? (
+							<span class="flex items-center gap-1 flex-wrap">
+								{step.agents!.map((a) => {
+									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId;
+									return (
+										<span
+											key={a.agentId}
+											class="text-xs bg-dark-700 border border-dark-600 text-gray-300 rounded px-1 py-0.5"
+										>
+											{name}
+										</span>
+									);
+								})}
+							</span>
+						) : (
+							<span class="text-xs text-gray-500 truncate flex-shrink-0">{agentName || '—'}</span>
+						)}
 					</div>
 				</div>
 
@@ -248,25 +583,42 @@ export function WorkflowStepCard({
 						/>
 					</div>
 
-					{/* Agent */}
-					<div class="space-y-1">
-						<label class="text-xs font-medium text-gray-400">Agent</label>
-						<select
-							value={step.agentId}
-							onChange={(e) =>
-								onUpdate({ ...step, agentId: (e.currentTarget as HTMLSelectElement).value })
-							}
-							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
-						>
-							<option value="">— Select agent —</option>
-							{agents.map((a) => (
-								<option key={a.id} value={a.id}>
-									{a.name}
-									{` (${a.role})`}
-								</option>
-							))}
-						</select>
-					</div>
+					{/* Agent(s) */}
+					{multi ? (
+						<MultiAgentSection step={step} agents={agents} onUpdate={onUpdate} />
+					) : (
+						<div class="space-y-1">
+							<div class="flex items-center justify-between">
+								<label class="text-xs font-medium text-gray-400">Agent</label>
+								<button
+									type="button"
+									onClick={() => {
+										const firstId = step.agentId;
+										const existing: WorkflowStepAgent[] = firstId ? [{ agentId: firstId }] : [];
+										onUpdate({ ...step, agents: existing, agentId: '' });
+									}}
+									class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+								>
+									+ Add agent
+								</button>
+							</div>
+							<select
+								value={step.agentId}
+								onChange={(e) =>
+									onUpdate({ ...step, agentId: (e.currentTarget as HTMLSelectElement).value })
+								}
+								class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+							>
+								<option value="">— Select agent —</option>
+								{agents.map((a) => (
+									<option key={a.id} value={a.id}>
+										{a.name}
+										{` (${a.role})`}
+									</option>
+								))}
+							</select>
+						</div>
+					)}
 
 					{/* Entry Gate */}
 					<GateConfig

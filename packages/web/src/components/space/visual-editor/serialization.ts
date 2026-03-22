@@ -31,6 +31,8 @@ import type {
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 	WorkflowCondition,
+	WorkflowStepAgent,
+	WorkflowChannel,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { StepDraft } from '../WorkflowStepCard';
@@ -121,6 +123,8 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			id: s.id,
 			name: s.name,
 			agentId: s.agentId ?? '',
+			agents: s.agents,
+			channels: s.channels,
 			instructions: s.instructions ?? '',
 		};
 		return { step, position };
@@ -155,7 +159,14 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
  * Shared structure returned by both create and update serialisation.
  */
 interface BuiltWorkflowFields {
-	steps: Array<{ id: string; name: string; agentId: string; instructions?: string }>;
+	steps: Array<{
+		id: string;
+		name: string;
+		agentId?: string;
+		agents?: WorkflowStepAgent[];
+		channels?: WorkflowChannel[];
+		instructions?: string;
+	}>;
 	transitions: Array<{
 		from: string;
 		to: string;
@@ -225,10 +236,16 @@ function buildWorkflowFields(state: VisualEditorState): {
 	const steps = state.nodes.map((node, i) => {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = nodeMap.get(key)!.persistedId;
+		const hasMultiAgent = Array.isArray(node.step.agents) && node.step.agents.length > 0;
 		return {
 			id: persistedId,
 			name: node.step.name || `Step ${i + 1}`,
-			agentId: node.step.agentId,
+			// When agents array is provided and non-empty, omit agentId (agents takes precedence).
+			// Otherwise use the single agentId (may be empty string, serialized as undefined).
+			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
+			agents: hasMultiAgent ? node.step.agents : undefined,
+			channels:
+				node.step.channels && node.step.channels.length > 0 ? node.step.channels : undefined,
 			instructions: node.step.instructions || undefined,
 		};
 	});
