@@ -483,6 +483,9 @@ class RoomStore {
 					}
 				}
 				this.liveQueryCleanups.delete(roomId);
+				// Reset goalsLoading: it was set to true above but the snapshot
+				// handler (which normally clears it) will never fire.
+				this.goalsLoading.value = false;
 				return;
 			}
 
@@ -515,7 +518,22 @@ class RoomStore {
 			});
 		} catch (err) {
 			this.liveQueryActive.delete(roomId);
+			// Run any cleanups that were registered before the error, so that
+			// event handlers registered up to the point of failure are removed
+			// and activeSubscriptionIds entries are cleared.
+			const failedCleanups = this.liveQueryCleanups.get(roomId);
+			if (failedCleanups) {
+				for (const fn of failedCleanups) {
+					try {
+						fn();
+					} catch {
+						/* ignore */
+					}
+				}
+			}
 			this.liveQueryCleanups.delete(roomId);
+			// Reset goalsLoading in case the error occurred after it was set to true.
+			this.goalsLoading.value = false;
 			logger.error('Failed to subscribe room LiveQuery:', err);
 		}
 	}

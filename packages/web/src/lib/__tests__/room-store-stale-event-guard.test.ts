@@ -299,3 +299,99 @@ describe('RoomStore — stale-event guard (Task 3.6)', () => {
 		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t1', 't2']);
 	});
 });
+
+describe('RoomStore — reconnect re-subscribe and guard interaction (Task 3.6)', () => {
+	let hub: MockHub;
+
+	beforeEach(async () => {
+		hub = createMockHub();
+		setupHubRequests(hub);
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(hub as never);
+		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoom(ROOM_ID);
+	});
+
+	afterEach(async () => {
+		roomStore.unsubscribeRoom(ROOM_ID);
+		await roomStore.select(null);
+		vi.clearAllMocks();
+	});
+
+	it('re-subscribes on reconnect and accepts the resulting snapshot', () => {
+		// Initial snapshot populates tasks
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: TASKS_SUB_ID,
+			rows: [makeTask('t1')],
+			version: 1,
+		});
+		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t1']);
+
+		// Simulate WebSocket reconnect
+		hub.request.mockClear();
+		hub.fireConnection('connected');
+
+		// The reconnect handler must have sent a liveQuery.subscribe request
+		const calls = hub.request.mock.calls as [string, unknown][];
+		const resubCall = calls.find(
+			([method, params]) =>
+				method === 'liveQuery.subscribe' &&
+				(params as { queryName: string }).queryName === 'tasks.byRoom'
+		);
+		expect(resubCall).toBeDefined();
+		expect(resubCall![1]).toMatchObject({
+			queryName: 'tasks.byRoom',
+			params: [ROOM_ID],
+			subscriptionId: TASKS_SUB_ID,
+		});
+
+		// The server sends a fresh snapshot — guard must allow it through
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: TASKS_SUB_ID,
+			rows: [makeTask('t1'), makeTask('t2')],
+			version: 2,
+		});
+		expect(roomStore.tasks.value.map((t) => t.id)).toEqual(['t1', 't2']);
+	});
+
+	it('does NOT re-subscribe on reconnect after unsubscribeRoom', () => {
+		// Unsubscribe (simulates component unmount / room switch away)
+		roomStore.unsubscribeRoom(ROOM_ID);
+		hub.request.mockClear();
+
+		// Reconnect fires — should NOT trigger re-subscribe since room is unsubscribed
+		hub.fireConnection('connected');
+
+		const calls = hub.request.mock.calls as [string, unknown][];
+		const resubCall = calls.find(
+			([method, params]) =>
+				method === 'liveQuery.subscribe' &&
+				(params as { queryName: string }).queryName === 'tasks.byRoom'
+		);
+		expect(resubCall).toBeUndefined();
+	});
+
+	it('reconnect snapshot for goals passes the guard and clears goalsLoading', () => {
+		// Clear initial loading state with a snapshot
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: GOALS_SUB_ID,
+			rows: [],
+			version: 1,
+		});
+		expect(roomStore.goalsLoading.value).toBe(false);
+
+		// Simulate reconnect — reconnect handler sets goalsLoading = true
+		hub.request.mockClear();
+		hub.fireConnection('connected');
+		expect(roomStore.goalsLoading.value).toBe(true);
+
+		// Fresh snapshot from server must pass guard and clear loading
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: GOALS_SUB_ID,
+			rows: [makeGoal('g1')],
+			version: 2,
+		});
+		expect(roomStore.goalsLoading.value).toBe(false);
+		expect(roomStore.goals.value.map((g) => g.id)).toEqual(['g1']);
+	});
+});
