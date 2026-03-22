@@ -19,6 +19,7 @@ export * from './types/github.ts';
 export * from './types/space.ts';
 export * from './types/space-utils.ts';
 export * from './types/tools.ts';
+export * from './live-query-types.ts';
 export * from './prompts/index.ts';
 
 // Unified logger
