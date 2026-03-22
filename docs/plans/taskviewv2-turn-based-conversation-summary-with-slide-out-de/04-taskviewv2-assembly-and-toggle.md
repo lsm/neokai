@@ -56,9 +56,9 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
 2. Create `packages/web/src/components/room/TaskViewV2.tsx`:
    - **Props**: `{ roomId: string; taskId: string }` — same as TaskView V1
    - Use `useTaskViewData(roomId, taskId)` (extracted in Task 1.1) for task/group/session data
-   - Use `useGroupMessages(groupId)` (extracted in Task 1.1) for message fetching
-   - Feed messages into `useTurnBlocks(messages, isAtTail)` to get `TurnBlockItem[]`
-     - `isAtTail` is the `isAtTail` field from the `useGroupMessages` return value (added in Task 1.1)
+   - Use `useGroupMessages(groupId)` (already extracted at `packages/web/src/hooks/useGroupMessages.ts`, uses LiveQuery) for message fetching — returns `{ messages: SessionGroupMessage[], isLoading, isReconnecting }`
+   - Feed messages into `useTurnBlocks(messages)` to get `TurnBlockItem[]`
+     - `isAtTail` defaults to `true` — LiveQuery streams all messages, no client-side pagination
    - Render the list of `TurnBlockItem[]`:
      - `type: 'turn'` items render as `TurnSummaryBlock` components
      - `type: 'runtime'` items render as `RuntimeMessageRenderer` components
