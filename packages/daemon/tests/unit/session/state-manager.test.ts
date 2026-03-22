@@ -618,7 +618,6 @@ describe('StateManager', () => {
 				expect(eventHandlers.has('room.overview')).toBe(true);
 				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
 				expect(eventHandlers.has('goal.created')).toBe(true);
-				expect(eventHandlers.has('goal.updated')).toBe(true);
 				expect(eventHandlers.has('goal.completed')).toBe(true);
 				expect(eventHandlers.has('goal.progressUpdated')).toBe(true);
 			});
@@ -713,26 +712,6 @@ describe('StateManager', () => {
 					handler!(data);
 
 					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.created', data, {
-						channel: 'room:room-123',
-					});
-				});
-			});
-
-			describe('goal.updated', () => {
-				it('should forward goal updates to room channel', () => {
-					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
-
-					const handler = eventHandlers.get('goal.updated');
-					const data = {
-						sessionId: 'room:room-123',
-						roomId: 'room-123',
-						goalId: 'goal-1',
-						goal: { title: 'Updated Goal 1' },
-					};
-
-					handler!(data);
-
-					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.updated', data, {
 						channel: 'room:room-123',
 					});
 				});

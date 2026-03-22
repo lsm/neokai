@@ -280,10 +280,10 @@ describe('Room', () => {
 			expect(screen.getByTestId('room-agents')).toBeTruthy();
 		});
 
-		it('renders Missions tab content when Missions tab is clicked', () => {
+		it('renders Goals tab content when Goals tab is clicked', () => {
 			render(<Room roomId={roomId} />);
 
-			fireEvent.click(screen.getByText('Missions'));
+			fireEvent.click(screen.getByText('Goals'));
 			expect(screen.getByTestId('goals-editor')).toBeTruthy();
 		});
 
