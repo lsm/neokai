@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
@@ -241,7 +242,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	);
 
 	const mockHub = createMockDaemonHub();
-	const groupRepo = new SessionGroupRepository(db as never);
+	const groupRepo = new SessionGroupRepository(createReactiveDatabase(db));
 	const observer = new SessionObserver(mockHub as unknown as DaemonHub);
 	const taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
 	const goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);

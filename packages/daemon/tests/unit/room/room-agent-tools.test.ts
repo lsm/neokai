@@ -4,6 +4,7 @@ import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import {
 	createRoomAgentToolHandlers,
 	createRoomAgentMcpServer,
@@ -119,7 +120,7 @@ describe('Room Agent Tools', () => {
 
 		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
 		taskManager = new TaskManager(db as never, roomId, noOpReactiveDb);
-		groupRepo = new SessionGroupRepository(db as never);
+		groupRepo = new SessionGroupRepository(createReactiveDatabase(db));
 		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});
 

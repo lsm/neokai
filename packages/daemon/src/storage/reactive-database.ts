@@ -130,7 +130,10 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
 			const table = METHOD_TABLE_MAP[prop];
 			if (!table) {
-				return value;
+				// Bind to original target so methods that access private fields (e.g.
+				// Database#rawDb or BunDatabase's internal Statement constructor) work
+				// correctly when called through the proxy.
+				return (value as (...args: unknown[]) => unknown).bind(target);
 			}
 
 			// Wrap the write method to emit change events on success
