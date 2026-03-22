@@ -355,35 +355,6 @@ describe('TaskManager', () => {
 		});
 	});
 
-	describe('resetTaskToPending', () => {
-		it('should reset in_progress task to pending', async () => {
-			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
-			await taskManager.startTask(task.id);
-
-			const updated = await taskManager.resetTaskToPending(task.id);
-
-			expect(updated.status).toBe('pending');
-			expect(updated.error ?? null).toBeNull();
-			expect(updated.result ?? null).toBeNull();
-		});
-
-		it('should reset needs_attention task to pending and clear error', async () => {
-			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
-			await taskManager.failTask(task.id, 'some error');
-
-			const updated = await taskManager.resetTaskToPending(task.id);
-
-			expect(updated.status).toBe('pending');
-			expect(updated.error ?? null).toBeNull();
-		});
-
-		it('should throw for non-existent task', async () => {
-			await expect(taskManager.resetTaskToPending('non-existent')).rejects.toThrow(
-				'Task not found: non-existent'
-			);
-		});
-	});
-
 	describe('cancelTask', () => {
 		it('should cancel task with cancelled status (not needs_attention)', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
