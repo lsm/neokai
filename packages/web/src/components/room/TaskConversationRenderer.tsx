@@ -2,19 +2,13 @@
  * TaskConversationRenderer
  *
  * Renders a flat chronological conversation timeline for a task group.
- * Uses pagination to load messages efficiently:
- * - Initial load: fetches the newest N messages (default 50)
- * - "Load older" button at the top to load more history
- * - Real-time updates via state.groupMessages.delta events
+ * Messages are streamed via LiveQuery (liveQuery.subscribe) for real-time updates.
  *
  * Each message is rendered inline with a thin colored left border indicating
  * which agent produced it. Role transitions show a small divider label.
- *
- * Subscribes to state.groupMessages.delta on channel group:{groupId} for
- * real-time updates.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { SessionInfo } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
@@ -26,6 +20,7 @@ import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { getModelLabel } from '../../lib/session-utils';
+import { useGroupMessages, type SessionGroupMessage } from '../../hooks/useGroupMessages';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -39,16 +34,6 @@ interface TaskMeta {
 	authorSessionId: string;
 	turnId: string;
 	iteration: number;
-}
-
-interface GroupMessage {
-	id: number;
-	groupId: string;
-	sessionId: string | null;
-	role: string;
-	messageType: string;
-	content: string;
-	createdAt: number;
 }
 
 interface TaskConversationRendererProps {
@@ -72,7 +57,7 @@ const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: s
 	lead: { border: 'border-l-purple-500', label: 'Lead', labelColor: 'text-purple-400' },
 };
 
-function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
+function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 	// messageType is used for DB records; type is used for WebSocket real-time events.
 	// Normalize to whichever field is set.
 	const msgAny = msg as unknown as Record<string, unknown>;
@@ -146,51 +131,25 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-/**
- * Returns a stable deduplication key for a message.
- * Agent messages use their uuid; status messages use _taskMeta.turnId as a fallback.
- * Returns null for messages with no identifiable key (they pass through unfiltered).
- */
-function getMessageId(msg: SDKMessage): string | null {
-	const uuid = (msg as SDKMessage & { uuid?: string }).uuid;
-	if (uuid) return uuid;
-	return getTaskMeta(msg)?.turnId ?? null;
-}
-
-const PAGE_SIZE = 50;
-
 export function TaskConversationRenderer({
 	groupId,
 	leaderSessionId,
 	workerSessionId,
 	onMessageCountChange,
 }: TaskConversationRendererProps) {
-	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
+	const { request } = useMessageHub();
 
 	// Subscribe to question state for each agent session so AskUserQuestion
 	// renders as an interactive form rather than a plain message
 	const leaderQuestionState = useSessionQuestionState(leaderSessionId);
 	const workerQuestionState = useSessionQuestionState(workerSessionId);
-	const [messages, setMessages] = useState<SDKMessage[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [loadingOlder, setLoadingOlder] = useState(false);
-	const [hasOlder, setHasOlder] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	// Incremented to trigger a retry of the initial fetch
-	const [retryKey, setRetryKey] = useState(0);
-	// Track the oldest cursor for loading older messages
-	const oldestCursorRef = useRef<string | null>(null);
-	// Refs for useCallback guards (avoids recreating callback on state changes)
-	const loadingOlderRef = useRef(false);
-	const hasOlderRef = useRef(false);
-	// Tracks every message ID (uuid or turnId) added to state, enabling deduplication
-	// across: the initial fetch, buffered pre-fetch deltas, and live post-fetch deltas
-	// (e.g. replays on WebSocket reconnect).
-	const seenIdsRef = useRef<Set<string>>(new Set());
-	// Guards the fetch/delta race: deltas received while the fetch is in-flight are
-	// buffered here and merged (with dedup) once the fetch resolves.
-	const fetchingRef = useRef(true);
-	const pendingDeltasRef = useRef<SDKMessage[]>([]);
+
+	const { messages: rawMessages, isLoading } = useGroupMessages(groupId);
+
+	const messages = useMemo(
+		() => rawMessages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null),
+		[rawMessages]
+	);
 
 	// Fetch session model info for leader and worker
 	const [sessionModels, setSessionModels] = useState<{
@@ -256,165 +215,6 @@ export function TaskConversationRenderer({
 		return { label: base.label, labelColor: base.labelColor };
 	}
 
-	useEffect(() => {
-		const channel = `group:${groupId}`;
-		joinRoom(channel);
-		seenIdsRef.current.clear();
-		fetchingRef.current = true;
-		pendingDeltasRef.current = [];
-		oldestCursorRef.current = null;
-		loadingOlderRef.current = false;
-		hasOlderRef.current = false;
-		setError(null);
-		let cancelled = false;
-
-		// Subscribe first so no live messages can slip through before the fetch starts.
-		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
-			'state.groupMessages.delta',
-			(event) => {
-				if (event.added && event.added.length > 0) {
-					if (fetchingRef.current) {
-						// Buffer deltas that arrive while the initial fetch is in-flight.
-						pendingDeltasRef.current = [...pendingDeltasRef.current, ...event.added];
-					} else {
-						// Deduplicate against seenIds — handles replays on reconnect and
-						// the same event firing twice within the buffer.
-						const newMessages = event.added.filter((m) => {
-							const id = getMessageId(m);
-							if (id && seenIdsRef.current.has(id)) return false;
-							if (id) seenIdsRef.current.add(id);
-							return true;
-						});
-						if (newMessages.length > 0) {
-							setMessages((prev) => [...prev, ...newMessages]);
-						}
-					}
-				}
-			}
-		);
-
-		const fetchInitialMessages = async () => {
-			try {
-				const res: {
-					messages: GroupMessage[];
-					hasMore: boolean;
-					nextCursor: string | null;
-					hasOlder: boolean;
-					oldestCursor: string | null;
-				} = await request('task.getGroupMessages', {
-					groupId,
-					limit: PAGE_SIZE,
-				});
-
-				if (!cancelled) {
-					// Merge fetched messages with buffered deltas.
-					const parsed = res.messages
-						.map(parseGroupMessage)
-						.filter((m): m is SDKMessage => m !== null);
-
-					const uniqueParsed = parsed.filter((m) => {
-						const id = getMessageId(m);
-						if (id && seenIdsRef.current.has(id)) return false;
-						if (id) seenIdsRef.current.add(id);
-						return true;
-					});
-
-					// Merge buffered deltas, deduplicating against seenIds.
-					const newDeltas = pendingDeltasRef.current.filter((m) => {
-						const id = getMessageId(m);
-						if (id && seenIdsRef.current.has(id)) return false;
-						if (id) seenIdsRef.current.add(id);
-						return true;
-					});
-
-					if (uniqueParsed.length > 0 || newDeltas.length > 0) {
-						setMessages([...uniqueParsed, ...newDeltas]);
-					}
-					setHasOlder(res.hasOlder);
-					hasOlderRef.current = res.hasOlder;
-					oldestCursorRef.current = res.oldestCursor;
-					fetchingRef.current = false;
-					pendingDeltasRef.current = [];
-					setLoading(false);
-				}
-			} catch (err) {
-				if (!cancelled) {
-					// On fetch failure, still surface any buffered deltas
-					const newDeltas = pendingDeltasRef.current.filter((m) => {
-						const id = getMessageId(m);
-						if (id && seenIdsRef.current.has(id)) return false;
-						if (id) seenIdsRef.current.add(id);
-						return true;
-					});
-					if (newDeltas.length > 0) {
-						setMessages([...newDeltas]);
-					}
-					fetchingRef.current = false;
-					pendingDeltasRef.current = [];
-					setLoading(false);
-					setError(err instanceof Error ? err.message : 'Failed to load messages');
-				}
-			}
-		};
-
-		fetchInitialMessages();
-
-		return () => {
-			cancelled = true;
-			unsub();
-			leaveRoom(channel);
-		};
-	}, [groupId, retryKey, joinRoom, leaveRoom, onEvent, request]);
-
-	const retryInitialFetch = useCallback(() => {
-		setRetryKey((k) => k + 1);
-	}, []);
-
-	const loadOlderMessages = useCallback(async () => {
-		// Use refs for guards to avoid recreating callback on state changes
-		if (loadingOlderRef.current || !hasOlderRef.current || !oldestCursorRef.current) return;
-
-		loadingOlderRef.current = true;
-		setLoadingOlder(true);
-		setError(null); // Clear previous errors on retry
-		try {
-			const res: {
-				messages: GroupMessage[];
-				hasMore: boolean;
-				nextCursor: string | null;
-				hasOlder: boolean;
-				oldestCursor: string | null;
-			} = await request('task.getGroupMessages', {
-				groupId,
-				before: oldestCursorRef.current,
-				limit: PAGE_SIZE,
-			});
-
-			const parsed = res.messages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null);
-
-			// Deduplicate and prepend to existing messages
-			const uniqueParsed = parsed.filter((m) => {
-				const id = getMessageId(m);
-				if (id && seenIdsRef.current.has(id)) return false;
-				if (id) seenIdsRef.current.add(id);
-				return true;
-			});
-
-			if (uniqueParsed.length > 0) {
-				setMessages((prev) => [...uniqueParsed, ...prev]);
-			}
-			setHasOlder(res.hasOlder);
-			hasOlderRef.current = res.hasOlder;
-			oldestCursorRef.current = res.oldestCursor;
-		} catch (err) {
-			// Show error feedback to user
-			setError(err instanceof Error ? err.message : 'Failed to load older messages');
-		} finally {
-			loadingOlderRef.current = false;
-			setLoadingOlder(false);
-		}
-	}, [groupId, request]);
-
 	// Notify parent when message count changes so it can drive autoscroll
 	useEffect(() => {
 		onMessageCountChange?.(messages.length);
@@ -437,24 +237,10 @@ export function TaskConversationRenderer({
 		return transitions;
 	}, [messages]);
 
-	if (loading) {
+	if (isLoading) {
 		return (
 			<div class="flex-1 flex items-center justify-center">
 				<p class="text-gray-400 text-sm">Loading conversation…</p>
-			</div>
-		);
-	}
-
-	if (messages.length === 0 && error) {
-		return (
-			<div class="flex-1 flex flex-col items-center justify-center gap-2">
-				<p class="text-red-400 text-sm">{error}</p>
-				<button
-					class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
-					onClick={retryInitialFetch}
-				>
-					Retry
-				</button>
 			</div>
 		);
 	}
@@ -469,19 +255,6 @@ export function TaskConversationRenderer({
 
 	return (
 		<div class="px-4 py-3 space-y-0.5">
-			{/* Load older messages button */}
-			{hasOlder && (
-				<div class="flex flex-col items-center gap-2 py-2">
-					{error && <p class="text-xs text-red-400">{error}</p>}
-					<button
-						class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
-						onClick={loadOlderMessages}
-						disabled={loadingOlder}
-					>
-						{loadingOlder ? 'Loading…' : 'Load older messages'}
-					</button>
-				</div>
-			)}
 			{messages.map((msg, i) => {
 				const meta = getTaskMeta(msg);
 				const role = meta?.authorRole ?? 'system';
