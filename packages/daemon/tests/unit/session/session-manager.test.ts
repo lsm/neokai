@@ -13,6 +13,8 @@ import type { AuthManager } from '../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
 import type { MessageHub, Session } from '@neokai/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
+import type { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../../src/storage/job-queue-processor';
 
 describe('SessionManager', () => {
 	let sessionManager: SessionManager;
@@ -21,6 +23,8 @@ describe('SessionManager', () => {
 	let mockAuthManager: AuthManager;
 	let mockSettingsManager: SettingsManager;
 	let mockEventBus: DaemonHub;
+	let mockJobQueue: JobQueueRepository;
+	let mockJobProcessor: JobQueueProcessor;
 	let config: Record<string, unknown>;
 	let eventHandlers: Map<string, (...args: unknown[]) => unknown>;
 
@@ -99,6 +103,19 @@ describe('SessionManager', () => {
 			initialize: mock(async () => {}),
 		} as unknown as DaemonHub;
 
+		// Job queue mocks
+		mockJobQueue = {
+			enqueue: mock(() => ({ id: 'job-id', queue: 'session.title_generation' })),
+			listJobs: mock(() => []),
+		} as unknown as JobQueueRepository;
+
+		// Job processor mocks
+		mockJobProcessor = {
+			register: mock(() => {}),
+			start: mock(() => {}),
+			stop: mock(async () => {}),
+		} as unknown as JobQueueProcessor;
+
 		// Config
 		config = {
 			defaultModel: 'claude-sonnet-4-20250514',
@@ -114,7 +131,9 @@ describe('SessionManager', () => {
 			mockAuthManager,
 			mockSettingsManager,
 			mockEventBus,
-			config as Parameters<typeof SessionManager>[5]
+			config as Parameters<typeof SessionManager>[5],
+			mockJobQueue,
+			mockJobProcessor
 		);
 	});
 
@@ -139,6 +158,30 @@ describe('SessionManager', () => {
 
 		it('should have no active sessions initially', () => {
 			expect(sessionManager.getActiveSessions()).toBe(0);
+		});
+	});
+
+	describe('start', () => {
+		it('should register session.title_generation handler on jobProcessor', () => {
+			sessionManager.start();
+
+			expect(mockJobProcessor.register).toHaveBeenCalledWith(
+				'session.title_generation',
+				expect.any(Function)
+			);
+		});
+
+		it('should not enqueue a job before start is called', async () => {
+			const handler = eventHandlers.get('message.persisted');
+
+			await handler?.({
+				sessionId: 'test-id',
+				userMessageText: 'test message',
+				needsWorkspaceInit: false,
+				hasDraftToClear: false,
+			});
+
+			expect(mockJobQueue.enqueue).not.toHaveBeenCalled();
 		});
 	});
 
@@ -494,11 +537,11 @@ describe('SessionManager', () => {
 			expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
 		});
 
-		it('should wait for pending background tasks with timeout', async () => {
-			// This tests the timeout behavior for background tasks
+		it('should complete without draining pending tasks (processor handles drain)', async () => {
+			// Background task draining is now handled by the job processor,
+			// not by SessionManager. Cleanup should be immediate.
 			await sessionManager.cleanup();
 
-			// Should complete within reasonable time
 			expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
 		});
 	});
@@ -561,13 +604,9 @@ describe('SessionManager', () => {
 				);
 			});
 
-			it('should skip background tasks during cleanup', async () => {
-				// Start cleanup to set barrier
-				const cleanupPromise = sessionManager.cleanup();
-
+			it('should enqueue title generation job when needsWorkspaceInit is true', async () => {
 				const handler = eventHandlers.get('message.persisted');
 
-				// This should be skipped due to cleanup barrier
 				await handler?.({
 					sessionId: 'test-id',
 					userMessageText: 'test message',
@@ -575,7 +614,11 @@ describe('SessionManager', () => {
 					hasDraftToClear: false,
 				});
 
-				await cleanupPromise;
+				expect(mockJobQueue.enqueue).toHaveBeenCalledWith({
+					queue: 'session.title_generation',
+					payload: { sessionId: 'test-id', userMessageText: 'test message' },
+					maxRetries: 2,
+				});
 			});
 
 			it('should clear draft when hasDraftToClear is true', async () => {

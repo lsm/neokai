@@ -188,8 +188,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,
 			workspaceRoot: config.workspaceRoot,
-		}
+		},
+		jobQueue,
+		jobProcessor
 	);
+
+	// Register session title generation handler before jobProcessor starts
+	sessionManager.start();
 
 	// Initialize State Manager (listens to EventBus, clean dependency graph!)
 	const stateManager = new StateManager(
