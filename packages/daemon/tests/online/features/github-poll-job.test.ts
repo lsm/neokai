@@ -6,7 +6,10 @@
  * - Initial github.poll job is enqueued on startup
  * - Job transitions through pending -> processing -> completed
  * - Self-scheduling: next poll job is automatically enqueued after completion
- * - Dedup: no duplicate pending poll jobs exist simultaneously
+ * - Dedup: no duplicate pending poll jobs exist simultaneously (including
+ *   during the processing window)
+ * - Recovery: a stale processing job left by a simulated crash is reclaimed
+ *   by reclaimStale() and eventually completes
  *
  * GitHubPollingService.triggerPoll() is stubbed immediately after daemon
  * startup to prevent any real GitHub API calls. Even without the stub the
@@ -87,6 +90,28 @@ async function waitForGitHubPollJob(
 		const jobs = daemonCtx.jobQueue.listJobs({ queue: GITHUB_POLL, status: statuses });
 		if (jobs.length > 0) {
 			return jobs[0];
+		}
+		await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+	}
+	return undefined;
+}
+
+/**
+ * Poll the job queue until a specific job (by id) reaches one of the given
+ * statuses, or until the timeout expires.
+ */
+async function waitForJobById(
+	daemonCtx: DaemonAppContext,
+	jobId: string,
+	statuses: JobStatus[],
+	timeoutMs: number = JOB_WAIT_TIMEOUT_MS
+): Promise<Job | undefined> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const jobs = daemonCtx.jobQueue.listJobs({ queue: GITHUB_POLL, status: statuses });
+		const match = jobs.find((j) => j.id === jobId);
+		if (match) {
+			return match;
 		}
 		await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
 	}
@@ -182,11 +207,20 @@ describe('GitHub polling via job queue (online)', () => {
 	test('dedup: at most one pending github.poll job exists at any time', async () => {
 		const daemonCtx = getDaemonCtx(daemon);
 
+		// Assert immediately after startup: exactly 1 job exists (the initial
+		// pending job) and 0 duplicates.  The processor has not picked it up yet
+		// because it polls every 1 s and we are measuring right after startup.
+		const atStartup = daemonCtx.jobQueue.listJobs({
+			queue: GITHUB_POLL,
+			status: ['pending', 'processing'],
+		});
+		expect(atStartup.length).toBe(1);
+
 		// Let the initial job run and the next job be enqueued.
 		await waitForGitHubPollJob(daemonCtx, ['completed']);
 		await waitForGitHubPollJob(daemonCtx, ['pending']);
 
-		// Check that the handler did not create multiple pending jobs.
+		// After self-scheduling: still exactly 1 pending job, never more.
 		const pendingJobs = daemonCtx.jobQueue.listJobs({
 			queue: GITHUB_POLL,
 			status: ['pending'],
@@ -202,4 +236,50 @@ describe('GitHub polling via job queue (online)', () => {
 		expect(daemonCtx.gitHubService).not.toBeNull();
 		expect(daemonCtx.gitHubService!.isPolling()).toBe(true);
 	});
+
+	test('recovery: stale processing job from a simulated crash is reclaimed and completes', async () => {
+		const daemonCtx = getDaemonCtx(daemon);
+		stubTriggerPoll(daemonCtx);
+
+		// Wait for the initial job to finish so no real processing jobs exist.
+		await waitForGitHubPollJob(daemonCtx, ['completed']);
+
+		// Simulate a daemon crash: insert a github.poll job directly into the
+		// database with status='processing' and a started_at that is 6 minutes
+		// old (exceeding the processor's 5-minute stale threshold).
+		const crashedStartedAt = Date.now() - 6 * 60 * 1000;
+		const rawDb = daemonCtx.db.getDatabase();
+		const staleJobId = crypto.randomUUID();
+		rawDb
+			.prepare(
+				`INSERT INTO job_queue
+				(id, queue, status, payload, result, error, priority, max_retries, retry_count, run_at, created_at, started_at, completed_at)
+				VALUES (?, ?, 'processing', '{}', NULL, NULL, 0, 3, 0, ?, ?, ?, NULL)`
+			)
+			.run(staleJobId, GITHUB_POLL, crashedStartedAt, crashedStartedAt, crashedStartedAt);
+
+		// Verify the stale job is visible as 'processing' before reclamation.
+		const beforeReclaim = daemonCtx.jobQueue.listJobs({
+			queue: GITHUB_POLL,
+			status: ['processing'],
+		});
+		expect(beforeReclaim.some((j) => j.id === staleJobId)).toBe(true);
+
+		// Trigger stale reclamation with a 5-minute cutoff — exactly what
+		// JobQueueProcessor.start() does eagerly on daemon restart.
+		const reclaimed = daemonCtx.jobQueue.reclaimStale(Date.now() - 5 * 60 * 1000);
+		expect(reclaimed).toBeGreaterThanOrEqual(1);
+
+		// The reclaimed job is now 'pending' and ready to be picked up.
+		const afterReclaim = daemonCtx.jobQueue.listJobs({
+			queue: GITHUB_POLL,
+			status: ['pending'],
+		});
+		expect(afterReclaim.some((j) => j.id === staleJobId)).toBe(true);
+
+		// The running job processor picks it up and completes it.
+		const completed = await waitForJobById(daemonCtx, staleJobId, ['completed']);
+		expect(completed).toBeDefined();
+		expect(completed!.status).toBe('completed');
+	}, 15_000);
 });
