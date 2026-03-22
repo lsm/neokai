@@ -5,9 +5,13 @@
  * is clicked. Shows task info and available actions.
  *
  * Info section:
+ * - Task ID (full, with copy button)
+ * - Session Group ID (full, with copy button)
  * - Worktree path (last 2 segments, full path on hover)
- * - Session IDs (worker/leader)
- * - Current model
+ * - Session IDs for worker and leader (full, with copy buttons)
+ * - Model switcher (allows changing model for current session)
+ * - Task creation time
+ * - PR number/link if available
  *
  * Actions section:
  * - Complete, Cancel, Archive buttons (context-aware based on task state)
@@ -15,8 +19,8 @@
 
 import type { SessionInfo } from '@neokai/shared';
 import { borderColors } from '../../lib/design-tokens.ts';
-import { getModelLabel } from '../../lib/session-utils.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
+import { TaskViewModelSelector } from './TaskViewModelSelector.tsx';
 
 /**
  * Map session status to a CSS color class.
@@ -40,8 +44,33 @@ function getLastPathSegments(path: string, segments: number = 2): string {
 	return '.../' + parts.slice(-segments).join('/');
 }
 
+/**
+ * Format a timestamp in milliseconds to a human-readable date/time string.
+ */
+function formatTimestamp(ms: number): string {
+	return new Date(ms).toLocaleString(undefined, {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+	});
+}
+
 export interface TaskInfoPanelProps {
 	isOpen: boolean;
+	/** Full task ID */
+	taskId?: string;
+	/** Full session group ID */
+	groupId?: string;
+	/** Feedback iteration number (0 = first run) */
+	feedbackIteration?: number;
+	/** Task creation timestamp in milliseconds */
+	taskCreatedAt?: number;
+	/** Pull request URL */
+	prUrl?: string | null;
+	/** Pull request number */
+	prNumber?: number | null;
 	/** Worktree path to display (full path shown on hover) */
 	worktreePath?: string;
 	/** Worker session info */
@@ -73,6 +102,12 @@ export interface TaskInfoPanelProps {
 
 export function TaskInfoPanel({
 	isOpen,
+	taskId,
+	groupId,
+	feedbackIteration,
+	taskCreatedAt,
+	prUrl,
+	prNumber,
 	worktreePath,
 	workerSession,
 	leaderSession,
@@ -82,7 +117,15 @@ export function TaskInfoPanel({
 }: TaskInfoPanelProps) {
 	if (!isOpen) return null;
 
-	const hasWorktreeInfo = worktreePath || workerSession || leaderSession;
+	const hasWorktreeInfo =
+		taskId ||
+		groupId ||
+		worktreePath ||
+		workerSession ||
+		leaderSession ||
+		taskCreatedAt ||
+		prUrl ||
+		prNumber;
 	const displayPath = worktreePath ? getLastPathSegments(worktreePath) : null;
 
 	// Git branch: prefer worker worktree branch, then worker gitBranch, then leader equivalents
@@ -99,6 +142,9 @@ export function TaskInfoPanel({
 		visibleActions.archive ||
 		visibleActions.setStatus;
 
+	// Model switcher: use worker session as primary, fall back to leader
+	const modelSession = workerSession ?? leaderSession;
+
 	return (
 		<div
 			class={`border-b ${borderColors.ui.secondary} bg-dark-850 flex-shrink-0`}
@@ -110,10 +156,40 @@ export function TaskInfoPanel({
 					<div>
 						<h3 class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Info</h3>
 						<div class="space-y-1.5 text-xs">
+							{/* Task ID */}
+							{taskId && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">Task ID:</span>
+									<span
+										class="text-gray-300 font-mono truncate flex-1 min-w-0"
+										title={taskId}
+										data-testid="task-info-panel-task-id"
+									>
+										{taskId}
+									</span>
+									<CopyButton text={taskId} />
+								</div>
+							)}
+
+							{/* Group ID */}
+							{groupId && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">Group ID:</span>
+									<span
+										class="text-gray-300 font-mono truncate flex-1 min-w-0"
+										title={groupId}
+										data-testid="task-info-panel-group-id"
+									>
+										{groupId}
+									</span>
+									<CopyButton text={groupId} />
+								</div>
+							)}
+
 							{/* Worktree path */}
 							{worktreePath && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-12">Path:</span>
+									<span class="text-gray-500 flex-shrink-0 w-14">Path:</span>
 									<span class="text-gray-300 font-mono truncate flex-1" title={worktreePath}>
 										{displayPath}
 									</span>
@@ -124,7 +200,7 @@ export function TaskInfoPanel({
 							{/* Git branch */}
 							{gitBranch && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-12">Branch:</span>
+									<span class="text-gray-500 flex-shrink-0 w-14">Branch:</span>
 									<span class="text-gray-300 font-mono truncate flex-1" title={gitBranch}>
 										{gitBranch}
 									</span>
@@ -132,12 +208,16 @@ export function TaskInfoPanel({
 								</div>
 							)}
 
-							{/* Session IDs */}
+							{/* Worker session */}
 							{workerSession && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-12">Worker:</span>
-									<span class="text-gray-300 font-mono truncate flex-1" title={workerSession.id}>
-										{workerSession.id.slice(0, 8)}...
+									<span class="text-gray-500 flex-shrink-0 w-14">Worker:</span>
+									<span
+										class="text-gray-300 font-mono truncate flex-1 min-w-0"
+										title={workerSession.id}
+										data-testid="worker-session-id"
+									>
+										{workerSession.id}
 									</span>
 									<span
 										class={`text-xs flex-shrink-0 ${sessionStatusColor(workerSession.status)}`}
@@ -148,11 +228,17 @@ export function TaskInfoPanel({
 									<CopyButton text={workerSession.id} />
 								</div>
 							)}
+
+							{/* Leader session */}
 							{leaderSession && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-12">Leader:</span>
-									<span class="text-gray-300 font-mono truncate flex-1" title={leaderSession.id}>
-										{leaderSession.id.slice(0, 8)}...
+									<span class="text-gray-500 flex-shrink-0 w-14">Leader:</span>
+									<span
+										class="text-gray-300 font-mono truncate flex-1 min-w-0"
+										title={leaderSession.id}
+										data-testid="leader-session-id"
+									>
+										{leaderSession.id}
 									</span>
 									<span
 										class={`text-xs flex-shrink-0 ${sessionStatusColor(leaderSession.status)}`}
@@ -164,13 +250,56 @@ export function TaskInfoPanel({
 								</div>
 							)}
 
-							{/* Model info */}
-							{(workerSession?.config.model || leaderSession?.config.model) && (
+							{/* Model switcher */}
+							{modelSession?.config.model && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-12">Model:</span>
-									<span class="text-gray-300">
-										{getModelLabel(workerSession?.config.model ?? leaderSession?.config.model)}
+									<span class="text-gray-500 flex-shrink-0 w-14">Model:</span>
+									<TaskViewModelSelector
+										sessionId={modelSession.id}
+										currentModel={modelSession.config.model}
+										currentProvider={modelSession.config.provider}
+									/>
+								</div>
+							)}
+
+							{/* Feedback iteration */}
+							{feedbackIteration !== undefined && feedbackIteration > 0 && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">Iteration:</span>
+									<span class="text-gray-300" data-testid="task-info-panel-iteration">
+										{feedbackIteration}
 									</span>
+								</div>
+							)}
+
+							{/* Created at */}
+							{taskCreatedAt && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">Created:</span>
+									<span
+										class="text-gray-300"
+										title={new Date(taskCreatedAt).toISOString()}
+										data-testid="task-info-panel-created-at"
+									>
+										{formatTimestamp(taskCreatedAt)}
+									</span>
+								</div>
+							)}
+
+							{/* PR link */}
+							{prUrl && prNumber && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">PR:</span>
+									<a
+										href={prUrl}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="text-purple-400 hover:text-purple-300 transition-colors"
+										data-testid="task-info-panel-pr-link"
+									>
+										#{prNumber}
+									</a>
+									<CopyButton text={prUrl} />
 								</div>
 							)}
 						</div>
