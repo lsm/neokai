@@ -441,13 +441,13 @@ export class TaskManager {
 	 * Archive task - transitions to 'archived' status and sets archivedAt timestamp.
 	 * Validates that the current status allows transitioning to 'archived'.
 	 */
-	async archiveTask(taskId: string): Promise<NeoTask> {
+	async archiveTask(taskId: string, options?: { mode?: 'runtime' | 'manual' }): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		if (!isValidStatusTransition(task.status, 'archived')) {
+		if (options?.mode !== 'manual' && !isValidStatusTransition(task.status, 'archived')) {
 			throw new Error(
 				`Cannot archive task in '${task.status}' status. ` +
 					`Allowed transitions: ${VALID_STATUS_TRANSITIONS[task.status].join(', ') || 'none'}`

@@ -22,7 +22,7 @@ import type { Database } from '../../storage/database';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
-import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
+import { TaskManager } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
@@ -385,26 +385,17 @@ export function setupTaskHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
-		// Validate status transition (skip in manual mode — user can do any transition)
-		if (params.mode !== 'manual') {
-			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-			if (!allowedTransitions.includes(params.status)) {
-				throw new Error(
-					`Invalid status transition from '${task.status}' to '${params.status}'. ` +
-						`Allowed: ${allowedTransitions.join(', ') || 'none'}`
-				);
-			}
-		}
-
 		// Archiving: delegate entirely to archiveTaskGroup (terminates sessions + cleans worktree)
 		// or archiveTask (no runtime — sets archivedAt directly). Early return skips generic path.
 		// Only applies to transitioning TO 'archived' (unarchiving is handled by the generic path below).
+		// Transition validation is owned by archiveTask/setTaskStatus — no duplicate check here.
 		if (params.status === 'archived') {
 			const runtime = runtimeService?.getRuntime(params.roomId);
+			const modeOpts = params.mode ? { mode: params.mode } : undefined;
 			if (runtime) {
-				await runtime.archiveTaskGroup(params.taskId);
+				await runtime.archiveTaskGroup(params.taskId, modeOpts);
 			} else {
-				await taskManager.archiveTask(params.taskId);
+				await taskManager.archiveTask(params.taskId, modeOpts);
 			}
 
 			const archivedTask = await taskManager.getTask(params.taskId);
