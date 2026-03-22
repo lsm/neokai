@@ -31,7 +31,7 @@ The `emitTaskUpdate()` in `task.fail` is now redundant.
 - [ ] Test: `goal.created`, `goal.updated`, `goal.progressUpdated` still fire from `goal-handlers.ts`
 
 **Why only `task.fail`:** The remaining seven `emitTaskUpdate` calls (`task.cancel` ×2,
-`task.archive`, `task.setStatus` ×3, `task.sendMessage`) are preserved because the frontend still
+`task.archive`, `task.setStatus` ×3, `task.sendHumanMessage`) are preserved because the frontend still
 relies on `room.task.update` via `hub.onEvent` until Task 3.3 replaces it. Removing all handler
 emits now would make task mutations invisible to the UI.
 
@@ -190,10 +190,31 @@ be reimplemented in the delta handler.
 
 ---
 
-## Post-milestone note: remaining `emitTaskUpdate` dead code
+## Post-milestone note: known dead code after Milestone 3
+
+### Remaining `emitTaskUpdate` calls in `task-handlers.ts`
 
 After Task 3.3 removes the frontend `room.task.update` listener, the seven remaining
-`emitTaskUpdate()` calls in `task-handlers.ts` become dead code from the frontend's perspective.
+`emitTaskUpdate()` calls in `task-handlers.ts` (`task.cancel` ×2, `task.archive`,
+`task.setStatus` ×3, `task.sendHumanMessage`) become dead code from the frontend's perspective.
 They are **intentionally retained** because `room-runtime-service.ts` subscribes to
 `room.task.update` on `daemonHub` to drive `scheduleTick()`. A follow-up task can audit and remove
 these after confirming runtime-layer coverage is complete.
+
+### `goal.progressUpdated` daemon-side emissions
+
+After Milestone 3, `goal.progressUpdated` is emitted from `room-runtime.ts` (~3 sites) and
+`room-agent-tools.ts` (~1 site) via `daemonHub`, but no frontend consumer exists (there was never
+a `goal.progressUpdated` listener in `room-store.ts`; progress updates now surface via the
+`goals.byRoom` LiveQuery since `progress` is a stored column). These emissions are **intentionally
+out of scope** for this plan — they flow through `daemonHub` harmlessly and may serve future
+internal subscribers. A follow-up task can remove them if no internal consumer is added.
+
+### `state-manager.ts` event bridge entries
+
+`packages/daemon/src/lib/state-manager.ts` has bridge listeners for `goal.updated`,
+`goal.progressUpdated`, and `goal.completed` that forward these events to `messageHub`. After
+Milestones 3–4 remove all frontend consumers for these events, these bridge entries become dead
+code. They are **intentionally out of scope** for the same reason — harmless overhead in a
+single-user deployment. A follow-up cleanup pass can remove them alongside the `emitTaskUpdate`
+audit above.
