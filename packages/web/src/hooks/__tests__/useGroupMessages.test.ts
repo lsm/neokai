@@ -509,22 +509,85 @@ describe('useGroupMessages', () => {
 	});
 
 	describe('subscribe error handling', () => {
-		it('clears isLoading when subscribe request fails', async () => {
-			mockRequest.mockRejectedValueOnce(new Error('subscribe failed'));
+		it('clears isLoading after all retries are exhausted', async () => {
+			vi.useFakeTimers();
+			// All 3 attempts (initial + 2 retries) fail.
+			mockRequest.mockRejectedValue(new Error('subscribe failed'));
 
 			const { result } = renderHook(() => useGroupMessages('group-1'));
 
 			expect(result.current.isLoading).toBe(true);
 
-			// Let microtasks drain so the .catch() handler runs.
+			// Drain microtasks for first failure.
 			await act(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 0));
+				await Promise.resolve();
+			});
+			// Still loading — retries pending.
+			expect(result.current.isLoading).toBe(true);
+
+			// Advance past first retry delay (500ms) and drain its microtasks.
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+				await Promise.resolve();
+			});
+			// Still loading — second retry pending.
+			expect(result.current.isLoading).toBe(true);
+
+			// Advance past second retry delay (1500ms) and drain its microtasks.
+			await act(async () => {
+				vi.advanceTimersByTime(1500);
+				await Promise.resolve();
 			});
 
+			// All retries exhausted — isLoading must be false now.
 			expect(result.current.isLoading).toBe(false);
+
+			vi.useRealTimers();
+		});
+
+		it('succeeds on retry after initial subscribe failure', async () => {
+			vi.useFakeTimers();
+
+			// First call fails, second succeeds.
+			mockRequest
+				.mockRejectedValueOnce(new Error('first attempt failed'))
+				.mockResolvedValue({ ok: true });
+
+			const { result } = renderHook(() => useGroupMessages('group-1'));
+
+			// Drain microtasks for the first failure.
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			// Advance past first retry delay and let the retry request run.
+			await act(async () => {
+				vi.advanceTimersByTime(500);
+				await Promise.resolve();
+			});
+
+			// Retry succeeded — still loading (waiting for snapshot).
+			expect(result.current.isLoading).toBe(true);
+
+			// Snapshot arrives on the new subscription.
+			const subId = lastSubscribeSubId();
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.isLoading).toBe(false);
+
+			vi.useRealTimers();
 		});
 
 		it('does not clear isLoading after error if groupId already changed', async () => {
+			vi.useFakeTimers();
+
 			let rejectSubscribe: (err: Error) => void;
 			// First call (group-1 subscribe) hangs.
 			mockRequest.mockReturnValueOnce(
@@ -546,12 +609,101 @@ describe('useGroupMessages', () => {
 			// Reject group-1's subscribe after the switch.
 			await act(async () => {
 				rejectSubscribe(new Error('late failure'));
-				await new Promise((resolve) => setTimeout(resolve, 0));
+				await Promise.resolve();
 			});
 
 			// group-2 is still loading (snapshot hasn't arrived) — stale error must
 			// not clear the loading flag.
 			expect(result.current.isLoading).toBe(true);
+
+			vi.useRealTimers();
+		});
+
+		it('cancels pending retry when groupId changes', async () => {
+			vi.useFakeTimers();
+
+			// group-1 subscribe fails → retry scheduled.
+			mockRequest.mockRejectedValueOnce(new Error('fail'));
+			// All subsequent calls resolve (unsubscribe, group-2 subscribe).
+			mockRequest.mockResolvedValue({ ok: true });
+
+			const { result, rerender } = renderHook(
+				({ groupId }: { groupId: string | null }) => useGroupMessages(groupId),
+				{ initialProps: { groupId: 'group-1' } }
+			);
+
+			// Drain microtasks so the failure registers.
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			// Switch groupId — this cancels the pending retry for group-1.
+			rerender({ groupId: 'group-2' });
+
+			// Advance past retry delay — the retry should NOT fire for group-2.
+			await act(async () => {
+				vi.advanceTimersByTime(600);
+				await Promise.resolve();
+			});
+
+			// group-2 subscribe was called exactly once (no extra retry calls for group-1).
+			const group2Calls = mockRequest.mock.calls.filter(
+				(call) => call[0] === 'liveQuery.subscribe' && call[1]?.params?.[0] === 'group-2'
+			);
+			expect(group2Calls).toHaveLength(1);
+
+			// group-2 is still loading (snapshot hasn't arrived).
+			expect(result.current.isLoading).toBe(true);
+
+			vi.useRealTimers();
+		});
+	});
+
+	describe('isReconnecting state', () => {
+		it('is false when connected with a groupId', () => {
+			mockIsConnected.value = true;
+			const { result } = renderHook(() => useGroupMessages('group-1'));
+			expect(result.current.isReconnecting).toBe(false);
+		});
+
+		it('is false when groupId is null regardless of connection state', () => {
+			mockIsConnected.value = false;
+			const { result } = renderHook(() => useGroupMessages(null));
+			expect(result.current.isReconnecting).toBe(false);
+		});
+
+		it('is true when disconnected but groupId is set', () => {
+			const { result, rerender } = renderHook(
+				({ isConn }: { isConn: boolean }) => {
+					mockIsConnected.value = isConn;
+					return useGroupMessages('group-1');
+				},
+				{ initialProps: { isConn: true } }
+			);
+
+			expect(result.current.isReconnecting).toBe(false);
+
+			act(() => {
+				rerender({ isConn: false });
+			});
+
+			expect(result.current.isReconnecting).toBe(true);
+		});
+
+		it('transitions back to false once reconnected', () => {
+			const { result, rerender } = renderHook(
+				({ isConn }: { isConn: boolean }) => {
+					mockIsConnected.value = isConn;
+					return useGroupMessages('group-1');
+				},
+				{ initialProps: { isConn: true } }
+			);
+
+			act(() => rerender({ isConn: false }));
+			expect(result.current.isReconnecting).toBe(true);
+
+			act(() => rerender({ isConn: true }));
+			expect(result.current.isReconnecting).toBe(false);
 		});
 	});
 
