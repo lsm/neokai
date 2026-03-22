@@ -445,6 +445,15 @@ export class RoomRuntime {
 		}
 		this.mirroringCleanups.clear();
 		this.observer.dispose();
+
+		// Safety net: mark zombie groups (active groups for terminal tasks) as completed.
+		// Runs synchronously at stop time — no session recovery, just DB consistency.
+		const zombiesCleaned = this.groupRepo.cleanupZombieGroupsForRoom(this.roomId);
+		if (zombiesCleaned > 0) {
+			log.warn(
+				`[stop] Room ${this.roomId}: cleaned up ${zombiesCleaned} zombie group(s) on runtime stop`
+			);
+		}
 	}
 
 	getState(): RuntimeState {
@@ -3147,10 +3156,12 @@ export class RoomRuntime {
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
 		// Defense-in-depth: verify no active group exists for this task right before spawning.
 		// Catches races that slip past the executeTick() filter (e.g., concurrent ticks).
-		const existingGroup = this.groupRepo.getGroupByTaskId(task.id);
-		if (existingGroup && existingGroup.completedAt === null) {
+		// Check ALL active groups, not just the most recent — a stale older group with
+		// completedAt === null would be missed by getGroupByTaskId() which returns only the latest.
+		const allActiveGroups = this.groupRepo.getActiveGroupsForTask(task.id);
+		if (allActiveGroups.length > 0) {
 			log.warn(
-				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has active group ${existingGroup.id} — skipping duplicate spawn`
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has ${allActiveGroups.length} active group(s) (${allActiveGroups.map((g) => g.id).join(', ')}) — skipping duplicate spawn`
 			);
 			return;
 		}

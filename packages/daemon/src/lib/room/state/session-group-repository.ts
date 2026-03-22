@@ -291,6 +291,30 @@ export class SessionGroupRepository {
 		return this.rowToGroup(row);
 	}
 
+	/**
+	 * Returns ALL active (completedAt IS NULL) groups for a specific task.
+	 * Used for defense-in-depth deduplication in spawnGroupForTask — checks every
+	 * active group, not just the most recent, to catch stale zombie groups that
+	 * would otherwise allow a duplicate spawn.
+	 */
+	getActiveGroupsForTask(taskId: string): SessionGroup[] {
+		const rows = this.db
+			.prepare(
+				`SELECT
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
+					sg.created_at, sg.completed_at,
+					worker.session_id AS worker_session_id,
+					leader.session_id AS leader_session_id
+				FROM session_groups sg
+				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
+				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
+				WHERE sg.ref_id = ? AND sg.group_type IN ('task', 'task_pair') AND sg.completed_at IS NULL
+				ORDER BY sg.created_at DESC`
+			)
+			.all(taskId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToGroup(r));
+	}
+
 	getActiveGroups(roomId: string): SessionGroup[] {
 		const rows = this.db
 			.prepare(
@@ -333,6 +357,57 @@ export class SessionGroupRepository {
 		if (result.changes === 0) return null;
 		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
+	}
+
+	/**
+	 * DB-level zombie cleanup for a room: marks active session groups as completed
+	 * when their task is in a terminal state (completed, cancelled, archived).
+	 *
+	 * Synchronous and safe to call from stop() without async/await.
+	 * Returns the number of groups cleaned up.
+	 */
+	cleanupZombieGroupsForRoom(roomId: string): number {
+		const now = Date.now();
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = ?, version = version + 1
+				 WHERE completed_at IS NULL
+				   AND group_type IN ('task', 'task_pair')
+				   AND ref_id IN (
+				     SELECT t.id FROM tasks t
+				     WHERE t.room_id = ?
+				       AND t.status IN ('completed', 'cancelled', 'archived')
+				   )`
+			)
+			.run(now, roomId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
+		return result.changes;
+	}
+
+	/**
+	 * Force-complete all active groups for a task except the specified one.
+	 * Used as a safety net in complete()/fail() to clean up any duplicate/stale
+	 * groups that slipped past the deduplication check.
+	 *
+	 * Returns the number of groups cleaned up.
+	 */
+	cleanupStaleGroupsForTask(taskId: string, keepGroupId: string): number {
+		const now = Date.now();
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = ?, version = version + 1
+				 WHERE ref_id = ? AND group_type IN ('task', 'task_pair')
+				   AND completed_at IS NULL AND id != ?`
+			)
+			.run(now, taskId, keepGroupId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
+		return result.changes;
 	}
 
 	/**

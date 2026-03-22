@@ -566,6 +566,14 @@ export class TaskGroupManager {
 		const updated = this.groupRepo.completeGroup(groupId, group.version);
 		if (!updated) return null;
 
+		// Safety net: clean up any other stale active groups for this task
+		const staleCount = this.groupRepo.cleanupStaleGroupsForTask(group.taskId, groupId);
+		if (staleCount > 0) {
+			log.warn(
+				`[complete] Task ${group.taskId}: cleaned up ${staleCount} stale active group(s) on completion`
+			);
+		}
+
 		// Complete the task
 		await this.taskManager.completeTask(group.taskId, summary);
 
@@ -591,6 +599,14 @@ export class TaskGroupManager {
 		// Fail the group
 		const updated = this.groupRepo.failGroup(groupId, group.version);
 		if (!updated) return null;
+
+		// Safety net: clean up any other stale active groups for this task
+		const staleCount = this.groupRepo.cleanupStaleGroupsForTask(group.taskId, groupId);
+		if (staleCount > 0) {
+			log.warn(
+				`[fail] Task ${group.taskId}: cleaned up ${staleCount} stale active group(s) on failure`
+			);
+		}
 
 		// Fail the task
 		await this.taskManager.failTask(group.taskId, reason);

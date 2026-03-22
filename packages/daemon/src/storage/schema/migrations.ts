@@ -156,6 +156,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// This table was dropped in migration 19 (legacy mirror table). It is recreated here
 	// as an append-only store for the LiveQuery protocol (Milestone 4).
 	runMigration41(db);
+
+	// Migration 42: Clean up stale/zombie session groups and add partial unique index
+	// on session_groups(ref_id) WHERE completed_at IS NULL to prevent future duplicates.
+	runMigration42(db);
 }
 
 /**
@@ -2455,5 +2459,64 @@ function runMigration41(db: BunDatabase): void {
 	`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_sgm_group ON session_group_messages(group_id, created_at, id)`
+	);
+}
+
+/**
+ * Migration 42: Clean up stale/zombie session groups and enforce uniqueness.
+ *
+ * Step 1: Mark active groups as completed when their task is in a terminal state
+ *         (completed, cancelled, archived). These are zombie groups that were never
+ *         cleaned up when the task finished.
+ *
+ * Step 2: For tasks that still have multiple active groups after step 1, keep the
+ *         most recent one and mark all older ones as completed (deduplication).
+ *
+ * Step 3: Add a partial unique index on session_groups(ref_id) WHERE completed_at IS NULL
+ *         to enforce DB-level uniqueness: only ONE active group per task at any time.
+ */
+function runMigration42(db: BunDatabase): void {
+	if (!tableExists(db, 'session_groups') || !tableExists(db, 'tasks')) {
+		return;
+	}
+
+	const now = Date.now();
+
+	// Step 1: Complete groups whose tasks are already in a terminal state
+	db.exec(`
+		UPDATE session_groups
+		SET completed_at = ${now}
+		WHERE completed_at IS NULL
+		  AND group_type IN ('task', 'task_pair')
+		  AND ref_id IN (
+		    SELECT id FROM tasks
+		    WHERE status IN ('completed', 'cancelled', 'archived')
+		  )
+	`);
+
+	// Step 2: For tasks with multiple active groups, keep the newest, complete the rest
+	// Find all ref_ids that still have more than one active group
+	const duplicateTasks = db
+		.prepare(
+			`SELECT ref_id, MAX(created_at) AS max_created_at
+			 FROM session_groups
+			 WHERE completed_at IS NULL AND group_type IN ('task', 'task_pair')
+			 GROUP BY ref_id
+			 HAVING COUNT(*) > 1`
+		)
+		.all() as { ref_id: string; max_created_at: number }[];
+
+	for (const { ref_id, max_created_at } of duplicateTasks) {
+		db.prepare(
+			`UPDATE session_groups
+			 SET completed_at = ?
+			 WHERE ref_id = ? AND completed_at IS NULL AND created_at < ?`
+		).run(now, ref_id, max_created_at);
+	}
+
+	// Step 3: Add partial unique index — only one active group per task at the DB level
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+		 ON session_groups(ref_id) WHERE completed_at IS NULL`
 	);
 }

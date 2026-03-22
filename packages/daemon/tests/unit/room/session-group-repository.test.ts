@@ -689,4 +689,192 @@ describe('SessionGroupRepository', () => {
 			expect(updated.leaderProgressSummary).toBe('Progress so far');
 		});
 	});
+
+	describe('getActiveGroupsForTask', () => {
+		it('returns empty array when no groups exist', () => {
+			expect(repo.getActiveGroupsForTask(taskId)).toEqual([]);
+		});
+
+		it('returns the single active group for a task', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const result = repo.getActiveGroupsForTask(taskId);
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe(group.id);
+		});
+
+		it('returns multiple active groups for the same task', () => {
+			// Bypass createGroup (which would conflict with unique constraint if enabled)
+			// by using direct DB inserts with unique session IDs
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('group-a', 'task', '${taskId}', 0, '{}', ${now - 1000});
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('group-b', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('group-a', 'worker-a', 'worker', ${now}),
+				       ('group-a', 'leader-a', 'leader', ${now}),
+				       ('group-b', 'worker-b', 'worker', ${now}),
+				       ('group-b', 'leader-b', 'leader', ${now});
+			`);
+			const result = repo.getActiveGroupsForTask(taskId);
+			expect(result).toHaveLength(2);
+			// Should be ordered by created_at DESC (newest first)
+			expect(result[0].id).toBe('group-b');
+			expect(result[1].id).toBe('group-a');
+		});
+
+		it('does not return completed groups', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
+				VALUES ('group-done', 'task', '${taskId}', 0, '{}', ${now - 2000}, ${now - 1000});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('group-done', 'worker-done', 'worker', ${now}),
+				       ('group-done', 'leader-done', 'leader', ${now});
+			`);
+			const result = repo.getActiveGroupsForTask(taskId);
+			expect(result).toHaveLength(0);
+		});
+
+		it('does not return groups for other tasks', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('group-task2', 'task', 'task-2', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('group-task2', 'worker-t2', 'worker', ${now}),
+				       ('group-task2', 'leader-t2', 'leader', ${now});
+			`);
+			const result = repo.getActiveGroupsForTask(taskId);
+			expect(result).toHaveLength(0);
+			expect(repo.getActiveGroupsForTask('task-2')).toHaveLength(1);
+		});
+
+		it('returns only active groups when mix of active and completed exists', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
+				VALUES ('group-old', 'task', '${taskId}', 0, '{}', ${now - 2000}, ${now - 1000});
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('group-new', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('group-old', 'worker-old', 'worker', ${now}),
+				       ('group-old', 'leader-old', 'leader', ${now}),
+				       ('group-new', 'worker-new', 'worker', ${now}),
+				       ('group-new', 'leader-new', 'leader', ${now});
+			`);
+			const result = repo.getActiveGroupsForTask(taskId);
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe('group-new');
+		});
+	});
+
+	describe('cleanupStaleGroupsForTask', () => {
+		it('returns 0 when no other active groups exist', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const cleaned = repo.cleanupStaleGroupsForTask(taskId, group.id);
+			expect(cleaned).toBe(0);
+		});
+
+		it('marks other active groups as completed, leaving the kept group active', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('stale-group-1', 'task', '${taskId}', 0, '{}', ${now - 2000}),
+				       ('stale-group-2', 'task', '${taskId}', 0, '{}', ${now - 1000}),
+				       ('active-group', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('stale-group-1', 'w1', 'worker', ${now}), ('stale-group-1', 'l1', 'leader', ${now}),
+				       ('stale-group-2', 'w2', 'worker', ${now}), ('stale-group-2', 'l2', 'leader', ${now}),
+				       ('active-group', 'w3', 'worker', ${now}), ('active-group', 'l3', 'leader', ${now});
+			`);
+			const cleaned = repo.cleanupStaleGroupsForTask(taskId, 'active-group');
+			expect(cleaned).toBe(2);
+
+			// Kept group is still active
+			const kept = repo.getGroup('active-group');
+			expect(kept!.completedAt).toBeNull();
+
+			// Stale groups are now completed
+			const stale1 = repo.getGroup('stale-group-1');
+			expect(stale1!.completedAt).not.toBeNull();
+			const stale2 = repo.getGroup('stale-group-2');
+			expect(stale2!.completedAt).not.toBeNull();
+		});
+
+		it('does not touch already-completed groups', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
+				VALUES ('already-done', 'task', '${taskId}', 0, '{}', ${now - 2000}, ${now - 1000});
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('kept-group', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('already-done', 'w-done', 'worker', ${now}), ('already-done', 'l-done', 'leader', ${now}),
+				       ('kept-group', 'w-kept', 'worker', ${now}), ('kept-group', 'l-kept', 'leader', ${now});
+			`);
+			const cleaned = repo.cleanupStaleGroupsForTask(taskId, 'kept-group');
+			expect(cleaned).toBe(0);
+		});
+	});
+
+	describe('cleanupZombieGroupsForRoom', () => {
+		it('returns 0 when no zombie groups exist', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const cleaned = repo.cleanupZombieGroupsForRoom(roomId);
+			// Task is still pending, so the active group is NOT a zombie
+			expect(cleaned).toBe(0);
+			expect(repo.getGroup(group.id)!.completedAt).toBeNull();
+		});
+
+		it('completes active groups for tasks in terminal state', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('zombie-1', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('zombie-1', 'w-z', 'worker', ${now}), ('zombie-1', 'l-z', 'leader', ${now});
+				UPDATE tasks SET status = 'completed' WHERE id = '${taskId}';
+			`);
+			const cleaned = repo.cleanupZombieGroupsForRoom(roomId);
+			expect(cleaned).toBe(1);
+			const zombie = repo.getGroup('zombie-1');
+			expect(zombie!.completedAt).not.toBeNull();
+		});
+
+		it('handles cancelled and archived tasks', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('zombie-cancelled', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('zombie-cancelled', 'wc', 'worker', ${now}), ('zombie-cancelled', 'lc', 'leader', ${now});
+				UPDATE tasks SET status = 'cancelled' WHERE id = '${taskId}';
+
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('zombie-archived', 'task', 'task-2', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('zombie-archived', 'wa', 'worker', ${now}), ('zombie-archived', 'la', 'leader', ${now});
+				UPDATE tasks SET status = 'archived' WHERE id = 'task-2';
+			`);
+			const cleaned = repo.cleanupZombieGroupsForRoom(roomId);
+			expect(cleaned).toBe(2);
+		});
+
+		it('does not touch active groups for non-terminal tasks', () => {
+			const now = Date.now();
+			db.exec(`
+				INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+				VALUES ('in-progress-group', 'task', '${taskId}', 0, '{}', ${now});
+				INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				VALUES ('in-progress-group', 'wip', 'worker', ${now}), ('in-progress-group', 'lip', 'leader', ${now});
+				UPDATE tasks SET status = 'in_progress' WHERE id = '${taskId}';
+			`);
+			const cleaned = repo.cleanupZombieGroupsForRoom(roomId);
+			expect(cleaned).toBe(0);
+			const group = repo.getGroup('in-progress-group');
+			expect(group!.completedAt).toBeNull();
+		});
+	});
 });
