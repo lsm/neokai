@@ -30,11 +30,18 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import type { DaemonAppContext } from '../../../src/app';
 import { ROOM_TICK } from '../../../src/lib/job-queue-constants';
+import { DEFAULT_TICK_INTERVAL_MS } from '../../../src/lib/job-handlers/room-tick.handler';
 import type { Job, JobStatus } from '../../../src/storage/repositories/job-queue-repository';
 
 // ---------------------------------------------------------------------------
 // Test configuration
 // ---------------------------------------------------------------------------
+
+// This test suite requires in-process daemon access to inspect the job queue
+// directly. Spawned-process mode does not expose daemonContext.
+if (process.env.DAEMON_TEST_SPAWN === 'true') {
+	describe.skip('room tick via job queue (online) — requires in-process daemon (DAEMON_TEST_SPAWN=true is set)', () => {});
+}
 
 /** Maximum time (ms) to wait for a job to reach a desired status. */
 const JOB_WAIT_TIMEOUT_MS = 10_000;
@@ -71,6 +78,10 @@ async function createRoom(daemon: DaemonServerContext, name: string): Promise<st
 
 /**
  * Return all room.tick jobs for a specific room matching any of the given statuses.
+ *
+ * listJobs returns rows ordered by priority DESC, run_at ASC. The first element
+ * is the job with highest priority and earliest scheduled time — suitable for
+ * checking existence and status but not for ordering assertions.
  */
 function getRoomTickJobs(
 	daemonCtx: DaemonAppContext,
@@ -208,10 +219,10 @@ describe('room tick via job queue (online)', () => {
 		expect(next).toBeDefined();
 		expect(next!.queue).toBe(ROOM_TICK);
 
-		// Next job should be scheduled ~30 s in the future (DEFAULT_TICK_INTERVAL_MS).
-		// Allow generous slack for CI timing (5 s is well below the 30 s interval).
-		const minExpectedRunAt = Date.now() + 5_000;
-		expect(next!.runAt).toBeGreaterThan(minExpectedRunAt);
+		// Next job must be scheduled at least DEFAULT_TICK_INTERVAL_MS from now.
+		// Allow 2 s of slack for CI timing — a correct 30 s interval easily clears this.
+		const slack = 2_000;
+		expect(next!.runAt).toBeGreaterThan(Date.now() + DEFAULT_TICK_INTERVAL_MS - slack);
 	}, 15_000);
 
 	test('dedup: at most one pending room.tick job exists per room at any time', async () => {
@@ -235,20 +246,28 @@ describe('room tick via job queue (online)', () => {
 		const daemonCtx = getDaemonCtx(daemon);
 		const roomId = await createRoom(daemon, 'tick-pause-test');
 
-		// Wait for an initial tick to land and re-schedule (so there is a pending job
-		// to cancel — the immediate 0-delay tick might already be in-flight).
+		// Wait for the initial 0-delay tick to complete and for the self-scheduled job to appear.
+		// The self-scheduled job has runAt ≈ now + DEFAULT_TICK_INTERVAL_MS (30 s), so the
+		// processor will not dequeue it for at least ~30 s. Pausing within that window is safe:
+		// the job is still 'pending' when cancelPendingTickJobs() runs.
 		await waitForRoomTickJob(daemonCtx, roomId, ['completed']);
-
-		// Ensure the self-scheduled pending job is present before pausing.
 		const pendingBeforePause = await waitForRoomTickJob(daemonCtx, roomId, ['pending']);
 		expect(pendingBeforePause).toBeDefined();
 
-		// Pause the runtime — cancelPendingTickJobs() is called synchronously inside pause().
+		// Pause the runtime — cancelPendingTickJobs() deletes all pending tick jobs.
 		await pauseRuntime(daemon, roomId);
 
-		// No pending tick jobs should remain for this room.
+		// No pending tick jobs should remain for this room after pause.
 		const pendingAfterPause = getRoomTickJobs(daemonCtx, roomId, ['pending']);
 		expect(pendingAfterPause.length).toBe(0);
+
+		// If a tick were still 'processing' when pause was called, the handler's finally
+		// block would check runtime.getState() === 'running' (false when paused) and skip
+		// re-enqueue. Wait one full processor poll cycle (1 s) to confirm no new pending
+		// job appears, covering both the cancellation and the in-flight self-termination paths.
+		await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+		const noPendingAfterWait = getRoomTickJobs(daemonCtx, roomId, ['pending']);
+		expect(noPendingAfterWait.length).toBe(0);
 	}, 15_000);
 
 	test('resume enqueues a fresh tick after pause', async () => {
@@ -264,13 +283,16 @@ describe('room tick via job queue (online)', () => {
 		await pauseRuntime(daemon, roomId);
 		expect(getRoomTickJobs(daemonCtx, roomId, ['pending']).length).toBe(0);
 
-		// Resume — scheduleTick() is called, a new tick job is enqueued immediately (delay=0).
+		// Resume — scheduleTick() is called with delay=0, so runAt ≈ now.
+		const beforeResume = Date.now();
 		await resumeRuntime(daemon, roomId);
 
 		const freshTick = await waitForRoomTickJob(daemonCtx, roomId, ['pending', 'processing']);
 		expect(freshTick).toBeDefined();
 		expect(freshTick!.queue).toBe(ROOM_TICK);
 		expect((freshTick!.payload as { roomId: string }).roomId).toBe(roomId);
+		// Verify it was enqueued immediately (delay=0): runAt must be ≤ 1 s after resume.
+		expect(freshTick!.runAt).toBeLessThanOrEqual(beforeResume + 1000);
 	}, 15_000);
 
 	test('stop cancels pending ticks and prevents further scheduling', async () => {
@@ -288,8 +310,10 @@ describe('room tick via job queue (online)', () => {
 		const pendingAfterStop = getRoomTickJobs(daemonCtx, roomId, ['pending']);
 		expect(pendingAfterStop.length).toBe(0);
 
-		// Brief wait to confirm no new tick job is enqueued (runtime is stopped).
-		await new Promise<void>((resolve) => setTimeout(resolve, 500));
+		// Wait more than one full processor poll cycle (1 s) to confirm no new tick job
+		// is enqueued. The runtime has been deleted from the map, so the handler returns
+		// {skipped:true} without re-scheduling even if a stale job somehow fires.
+		await new Promise<void>((resolve) => setTimeout(resolve, 1200));
 		const stillNoPending = getRoomTickJobs(daemonCtx, roomId, ['pending', 'processing']);
 		expect(stillNoPending.length).toBe(0);
 	}, 15_000);
@@ -304,12 +328,15 @@ describe('room tick via job queue (online)', () => {
 		expect(getRoomTickJobs(daemonCtx, roomId, ['pending']).length).toBe(0);
 
 		// Restart — a fresh runtime is created and start() → scheduleTick() → enqueueRoomTick(0).
+		const beforeRestart = Date.now();
 		await startRuntime(daemon, roomId);
 
 		const freshTick = await waitForRoomTickJob(daemonCtx, roomId, ['pending', 'processing']);
 		expect(freshTick).toBeDefined();
 		expect(freshTick!.queue).toBe(ROOM_TICK);
 		expect((freshTick!.payload as { roomId: string }).roomId).toBe(roomId);
+		// Verify it was enqueued immediately (delay=0): runAt must be ≤ 1 s after restart.
+		expect(freshTick!.runAt).toBeLessThanOrEqual(beforeRestart + 1000);
 	}, 15_000);
 
 	test('recovery: stale processing job is reclaimed and completes', async () => {
@@ -319,14 +346,10 @@ describe('room tick via job queue (online)', () => {
 		// Wait for the initial tick to complete so there are no live processing jobs.
 		await waitForRoomTickJob(daemonCtx, roomId, ['completed']);
 
-		// Stop the runtime so the recovered stale tick is not skipped by the handler.
-		// (The handler returns {skipped:true} when runtime state !== 'running'.)
-		// We insert a stale job that the processor will reclaim and execute. Since the
-		// room's runtime is running, the handler will find it and call tick().
-		// Actually we keep runtime running — the recovered job will be processed normally.
-
 		// Simulate a daemon crash: insert a room.tick job with status='processing' and
-		// a started_at that exceeds the 5-minute stale threshold.
+		// a started_at that exceeds the 5-minute stale threshold. The runtime is kept
+		// running so the reclaimed job's handler finds the runtime and calls tick()
+		// (returns {skipped:true} only when state !== 'running').
 		const crashedStartedAt = Date.now() - 6 * 60 * 1000;
 		const rawDb = daemonCtx.db.getDatabase();
 		const staleJobId = crypto.randomUUID();
@@ -367,5 +390,11 @@ describe('room tick via job queue (online)', () => {
 		const completed = await waitForJobById(daemonCtx, roomId, staleJobId, ['completed']);
 		expect(completed).toBeDefined();
 		expect(completed!.status).toBe('completed');
+
+		// After completion, the handler's finally block checks runtime.getState() === 'running'
+		// (the runtime was never stopped), so it enqueues a new tick. Verify the next tick
+		// is scheduled, confirming the recovery path leaves the runtime in a healthy state.
+		const nextTick = await waitForRoomTickJob(daemonCtx, roomId, ['pending'], 5_000);
+		expect(nextTick).toBeDefined();
 	}, 20_000);
 });
