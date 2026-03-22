@@ -168,8 +168,11 @@ async function failGroupAndTask(
 	group: SessionGroup,
 	groupRepo: SessionGroupRepository,
 	taskManager: TaskManager,
-	reason: string
+	_reason: string
 ): Promise<void> {
 	groupRepo.failGroup(group.id, group.version);
-	await taskManager.failTask(group.taskId, reason);
+	// Reset task to pending so it is automatically re-spawned on the next tick.
+	// After a daemon restart, lost sessions are a transient condition — the task
+	// should retry rather than require human intervention ('needs_attention').
+	await taskManager.resetTaskToPending(group.taskId);
 }

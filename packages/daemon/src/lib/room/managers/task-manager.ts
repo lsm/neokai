@@ -260,6 +260,23 @@ export class TaskManager {
 	}
 
 	/**
+	 * Reset task to pending for automatic re-spawn after daemon restart.
+	 *
+	 * Used during recovery when a group's sessions are lost and the task should
+	 * be automatically re-queued rather than requiring human intervention.
+	 * Directly sets status to 'pending' regardless of current status (bypasses
+	 * state machine validation since 'in_progress → pending' is not a normal
+	 * user-facing transition).
+	 */
+	async resetTaskToPending(taskId: string): Promise<NeoTask> {
+		return this.updateTaskStatus(taskId, 'pending', {
+			error: null,
+			result: null,
+			progress: null,
+		});
+	}
+
+	/**
 	 * Cancel task (intentionally stopped, distinct from failure).
 	 * Cascades cancellation to any pending tasks that depend on this task,
 	 * since they can never be satisfied once their dependency is cancelled.

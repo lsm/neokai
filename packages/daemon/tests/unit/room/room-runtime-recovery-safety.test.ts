@@ -81,7 +81,7 @@ describe('Zombie detection in tick', () => {
 		expect(updated!.completedAt).toBeNull();
 	});
 
-	it('should fail group when zombie worker cannot be restored', async () => {
+	it('should terminate zombie group and automatically re-spawn task when worker cannot be restored', async () => {
 		const { taskId, groupId, workerSessionId } = await createTaskWithGroup(ctx);
 
 		// Worker missing AND restoreSession fails
@@ -94,13 +94,19 @@ describe('Zombie detection in tick', () => {
 		ctx.runtime.start();
 		await ctx.runtime.tick();
 
-		// Group should be failed
+		// Old zombie group should be terminated
 		const updated = ctx.groupRepo.getGroup(groupId);
 		expect(updated!.completedAt).not.toBeNull();
 
-		// Task should be failed
+		// Task should be re-spawned on the same tick (reset to pending → spawn loop picks it up)
 		const updatedTask = await ctx.taskManager.getTask(taskId);
-		expect(updatedTask!.status).toBe('needs_attention');
+		expect(updatedTask!.status).toBe('in_progress');
+
+		// A new (fresh) group should exist for this task
+		const activeGroups = ctx.groupRepo.getActiveGroups('room-1');
+		const newGroup = activeGroups.find((g) => g.taskId === taskId);
+		expect(newGroup).toBeDefined();
+		expect(newGroup!.id).not.toBe(groupId);
 	});
 
 	it('should restore a zombie leader session during tick', async () => {
@@ -238,7 +244,7 @@ describe('Zombie detection in tick', () => {
 		expect(updated!.completedAt).toBeNull();
 	});
 
-	it('should fail submitted_for_review group when worker cannot be restored', async () => {
+	it('should terminate zombie submitted_for_review group and re-spawn task automatically', async () => {
 		const { taskId, groupId, workerSessionId } = await createTaskWithGroup(ctx, true);
 
 		ctx.sessionFactory.hasSession = (sessionId: string) => {
@@ -250,11 +256,19 @@ describe('Zombie detection in tick', () => {
 		ctx.runtime.start();
 		await ctx.runtime.tick();
 
+		// Old zombie group should be terminated
 		const updated = ctx.groupRepo.getGroup(groupId);
 		expect(updated!.completedAt).not.toBeNull();
 
+		// Task should be re-spawned: reset to pending then picked up by spawn loop
 		const updatedTask = await ctx.taskManager.getTask(taskId);
-		expect(updatedTask!.status).toBe('needs_attention');
+		expect(updatedTask!.status).toBe('in_progress');
+
+		// A fresh group should exist for this task
+		const activeGroups = ctx.groupRepo.getActiveGroups('room-1');
+		const newGroup = activeGroups.find((g) => g.taskId === taskId);
+		expect(newGroup).toBeDefined();
+		expect(newGroup!.id).not.toBe(groupId);
 	});
 
 	it('should reattach observer after restoring zombie worker', async () => {

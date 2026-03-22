@@ -235,7 +235,7 @@ describe('Runtime Recovery', () => {
 		expect(result.failedGroups).toBe(0);
 	});
 
-	it('should fail groups with lost worker sessions', async () => {
+	it('should reset task to pending when worker session cannot be restored', async () => {
 		const { taskId, group } = createTaskAndGroup('awaiting_worker');
 
 		const checker = createDefaultChecker({
@@ -256,8 +256,10 @@ describe('Runtime Recovery', () => {
 		const updatedGroup = groupRepo.getGroup(group!.id);
 		expect(updatedGroup!.completedAt).not.toBeNull();
 
+		// Task should be reset to pending (not needs_attention) so it is
+		// automatically re-spawned on the next tick after daemon restart.
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('needs_attention');
+		expect(task!.status).toBe('pending');
 	});
 
 	it('should fail groups with lost leader sessions', async () => {
@@ -393,7 +395,7 @@ describe('Runtime Recovery', () => {
 		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
 	});
 
-	it('should fail awaiting_human group when worker cannot be restored', async () => {
+	it('should reset awaiting_human group task to pending when worker cannot be restored', async () => {
 		const { taskId, group } = createTaskAndGroup('awaiting_human');
 
 		const checker = createDefaultChecker({
@@ -414,8 +416,9 @@ describe('Runtime Recovery', () => {
 		const updatedGroup = groupRepo.getGroup(group!.id);
 		expect(updatedGroup!.completedAt).not.toBeNull();
 
+		// Task should be reset to pending for automatic re-spawn.
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('needs_attention');
+		expect(task!.status).toBe('pending');
 	});
 
 	it('should restore sessions not live in cache for awaiting_worker', async () => {
@@ -463,5 +466,88 @@ describe('Runtime Recovery', () => {
 		expect(result.recoveredGroups).toBe(3);
 		// Each group observes both worker and leader sessions.
 		expect(result.reattachedObservers).toBe(6);
+	});
+
+	describe('daemon restart respawn behavior', () => {
+		it('should re-queue multiple tasks to pending when all sessions are unrestorable', async () => {
+			const { taskId: taskId1, group: group1 } = createTaskAndGroup('awaiting_worker');
+			const { taskId: taskId2, group: group2 } = createTaskAndGroup('awaiting_worker');
+
+			// Simulate daemon restart where all sessions are gone from DB (not restorable)
+			const checker = createDefaultChecker({
+				sessionExists: () => false,
+				isLive: () => false,
+			});
+
+			const result = await recoverRuntime(
+				'room-1',
+				groupRepo,
+				taskManager,
+				observer,
+				checker,
+				runtime
+			);
+
+			expect(result.failedGroups).toBe(2);
+
+			// Both groups should be terminated
+			expect(groupRepo.getGroup(group1!.id)!.completedAt).not.toBeNull();
+			expect(groupRepo.getGroup(group2!.id)!.completedAt).not.toBeNull();
+
+			// Both tasks should be reset to pending (not needs_attention) for re-spawn
+			const task1 = await taskManager.getTask(taskId1);
+			const task2 = await taskManager.getTask(taskId2);
+			expect(task1!.status).toBe('pending');
+			expect(task2!.status).toBe('pending');
+		});
+
+		it('should leave successfully recovered sessions with tasks still in_progress', async () => {
+			const { taskId } = createTaskAndGroup('awaiting_worker');
+
+			// Sessions can be restored
+			const checker = createDefaultChecker({
+				isLive: () => false,
+				restoreSession: async () => true,
+			});
+
+			const result = await recoverRuntime(
+				'room-1',
+				groupRepo,
+				taskManager,
+				observer,
+				checker,
+				runtime
+			);
+
+			expect(result.failedGroups).toBe(0);
+			expect(result.restoredSessions).toBeGreaterThanOrEqual(1);
+
+			// Task should remain in_progress (sessions restored, work continues)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+		});
+
+		it('should clear error field when resetting failed task to pending', async () => {
+			const taskId = `task-${Date.now()}`;
+			const now = Date.now();
+			// Insert a task that was previously in needs_attention
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, error, created_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			).run(taskId, 'room-1', 'Failed task', 'Description', 'in_progress', 'previous error', now);
+
+			groupRepo.createGroup(taskId, `worker:${taskId}`, `leader:${taskId}`);
+
+			const checker = createDefaultChecker({
+				sessionExists: () => false,
+				isLive: () => false,
+			});
+
+			await recoverRuntime('room-1', groupRepo, taskManager, observer, checker, runtime);
+
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('pending');
+			expect(task!.error ?? null).toBeNull();
+		});
 	});
 });

@@ -2397,13 +2397,14 @@ export class RoomRuntime {
 					workerRestored = true;
 				} else {
 					log.error(
-						`Failed to restore worker ${group.workerSessionId}. Failing group ${group.id}.`
+						`Failed to restore worker ${group.workerSessionId}. Terminating group ${group.id} and re-queuing task.`
 					);
-					await this.taskGroupManager.fail(
-						group.id,
-						'Worker session lost and could not be restored'
-					);
-					this.cleanupMirroring(group.id, 'Worker session lost — could not be restored.');
+					// Terminate the group (marks completedAt, frees unique constraint slot)
+					// without setting the task to needs_attention. Then reset task to pending
+					// so the next tick spawns a fresh group automatically.
+					await this.taskGroupManager.terminateGroup(group.id);
+					await this.taskManager.resetTaskToPending(group.taskId);
+					this.cleanupMirroring(group.id, 'Worker session lost — re-queuing task for respawn.');
 					await this.emitTaskUpdateById(group.taskId);
 					continue;
 				}

@@ -2,9 +2,9 @@
  * Tests for the UNIQUE constraint crash fix in spawnGroupForTask:
  *
  * 1. recoverZombieGroups() in executeTick() handles the normal zombie case (task row
- *    present, both sessions missing) — it fails the group and moves the task to
- *    needs_attention BEFORE the spawn loop runs. cleanStaleGroupsForTask() is NOT
- *    the handler for this case.
+ *    present, both sessions missing) — it terminates the group and resets the task to
+ *    pending for automatic re-spawn BEFORE the spawn loop runs. cleanStaleGroupsForTask()
+ *    is NOT the handler for this case.
  *
  * 2. cleanStaleGroupsForTask()'s exclusive territory: zombie group whose task row was
  *    hard-deleted from the tasks table. getActiveGroups() (INNER JOIN) misses such
@@ -39,13 +39,12 @@ describe('recoverZombieGroups — normal zombie case (task row present)', () => 
 		ctx.db.close();
 	});
 
-	it('recoverZombieGroups fails zombie group and moves task to needs_attention when both sessions missing', async () => {
+	it('recoverZombieGroups terminates zombie group and immediately re-spawns task on same tick', async () => {
 		// Normal zombie scenario: task row exists, both sessions are missing from cache.
 		// recoverZombieGroups() in executeTick() runs BEFORE the spawn loop, finds the
-		// zombie via getActiveGroups() (INNER JOIN on tasks), and calls fail() which
-		// terminates the group AND moves the task to needs_attention.
-		// cleanStaleGroupsForTask() does NOT run here because after recoverZombieGroups
-		// the task is no longer pending when the spawn loop executes.
+		// zombie via getActiveGroups() (INNER JOIN on tasks), terminates the group and
+		// resets the task to pending. The spawn loop then picks up the pending task in
+		// the SAME tick and spawns a fresh group — task ends up in_progress again.
 		const { task } = await createGoalAndTask(ctx);
 
 		// Spawn initial group
@@ -59,16 +58,22 @@ describe('recoverZombieGroups — normal zombie case (task row present)', () => 
 		// Simulate daemon restart: both sessions missing, restoreSession also fails
 		ctx.sessionFactory.missingSessionIds = new Set([workerSessionId, leaderSessionId]);
 
-		// Tick: recoverZombieGroups detects the zombie worker, fails the group
+		// Tick: recoverZombieGroups detects the zombie worker, terminates the group,
+		// resets task to pending, then spawn loop spawns a fresh group.
 		await ctx.runtime.tick();
 
-		// Group is now terminated (completedAt set)
+		// Old zombie group is now terminated (completedAt set)
 		const zombieGroup = ctx.groupRepo.getGroup(zombieGroupId);
 		expect(zombieGroup?.completedAt).not.toBeNull();
 
-		// Task moved to needs_attention by recoverZombieGroups' fail() call
+		// A fresh group should have been spawned — task is back in_progress
 		const taskAfter = await ctx.taskManager.getTask(task.id);
-		expect(taskAfter?.status).toBe('needs_attention');
+		expect(taskAfter?.status).toBe('in_progress');
+
+		// New active group should exist (different from the zombie)
+		const newGroups = ctx.groupRepo.getActiveGroups('room-1');
+		expect(newGroups).toHaveLength(1);
+		expect(newGroups[0].id).not.toBe(zombieGroupId);
 
 		ctx.sessionFactory.missingSessionIds = undefined;
 	});
@@ -110,7 +115,7 @@ describe('recoverZombieGroups — normal zombie case (task row present)', () => 
 		ctx.sessionFactory.missingSessionIds = undefined;
 	});
 
-	it('recoverZombieGroups processes zombie when only worker session is missing', async () => {
+	it('recoverZombieGroups processes zombie when only worker session is missing and re-spawns immediately', async () => {
 		// When only the worker is missing, recoverZombieGroups handles it (zombie worker).
 		// cleanStaleGroupsForTask does NOT trigger because both sessions must be missing.
 		const { task } = await createGoalAndTask(ctx);
@@ -118,19 +123,24 @@ describe('recoverZombieGroups — normal zombie case (task row present)', () => 
 
 		const groups = ctx.groupRepo.getActiveGroups('room-1');
 		expect(groups).toHaveLength(1);
+		const zombieGroupId = groups[0].id;
 		const workerSessionId = groups[0].workerSessionId;
 
 		// Only worker missing — not both sessions gone
 		ctx.sessionFactory.missingSessionIds = new Set([workerSessionId]);
 
-		// Reset task to pending to trigger spawn loop in next tick
+		// Reset task to pending to trigger zombie detection in next tick
 		await ctx.taskManager.updateTaskStatus(task.id, 'pending');
 		await ctx.runtime.tick();
 
-		// recoverZombieGroups processes the zombie (worker missing)
-		// and moves the task to needs_attention
+		// recoverZombieGroups processes the zombie (worker missing),
+		// terminates the group, resets task to pending, then spawn loop re-spawns immediately
 		const taskAfter = await ctx.taskManager.getTask(task.id);
-		expect(taskAfter?.status).toBe('needs_attention');
+		expect(taskAfter?.status).toBe('in_progress');
+
+		// Old zombie group terminated, new group spawned
+		const zombieGroup = ctx.groupRepo.getGroup(zombieGroupId);
+		expect(zombieGroup?.completedAt).not.toBeNull();
 
 		ctx.sessionFactory.missingSessionIds = undefined;
 	});
