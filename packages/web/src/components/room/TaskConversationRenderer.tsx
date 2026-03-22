@@ -173,12 +173,17 @@ export function TaskConversationRenderer({
 	}>({ leaderModel: null, workerModel: null });
 
 	useEffect(() => {
+		if (!leaderSessionId && !workerSessionId) return;
 		let cancelled = false;
 		const fetchSessionModels = async () => {
 			try {
 				const [leaderRes, workerRes] = await Promise.all([
-					request<{ session: SessionInfo }>('session.get', { sessionId: leaderSessionId }),
-					request<{ session: SessionInfo }>('session.get', { sessionId: workerSessionId }),
+					leaderSessionId
+						? request<{ session: SessionInfo }>('session.get', { sessionId: leaderSessionId })
+						: Promise.resolve({ session: null }),
+					workerSessionId
+						? request<{ session: SessionInfo }>('session.get', { sessionId: workerSessionId })
+						: Promise.resolve({ session: null }),
 				]);
 				if (!cancelled) {
 					setSessionModels({

@@ -2191,14 +2191,21 @@ export class RoomRuntime {
 			messageType === 'rate_limited' || messageType === 'model_fallback'
 				? JSON.stringify({ ...payload, type: messageType })
 				: (payload?.text ?? kind);
-		this.groupRepo.appendGroupMessage({
-			groupId,
-			sessionId: null,
-			role: 'system',
-			messageType,
-			content,
-			createdAt: now,
-		});
+		try {
+			this.groupRepo.appendGroupMessage({
+				groupId,
+				sessionId: null,
+				role: 'system',
+				messageType,
+				content,
+				createdAt: now,
+			});
+		} catch (err) {
+			log.warn(
+				`appendGroupEvent: failed to persist group message for group ${groupId} (type=${messageType}, secondary write — ignored):`,
+				err
+			);
+		}
 
 		if (this.messageHub) {
 			this.messageHub.event(
