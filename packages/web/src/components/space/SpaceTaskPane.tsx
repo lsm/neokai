@@ -249,7 +249,7 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	}
 
 	const task = tasks.find((t) => t.id === taskId);
-	const taskGroups = taskId ? (sessionGroupsByTask.get(taskId) ?? []) : [];
+	const taskGroups = sessionGroupsByTask.get(taskId) ?? [];
 
 	if (!task) {
 		return (

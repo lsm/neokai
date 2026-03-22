@@ -85,7 +85,6 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		name: 'Backend Engineer',
 		role: 'coder',
 		description: '',
-		capabilities: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -385,6 +384,32 @@ describe('SpaceTaskPane', () => {
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Step 1 Group')).toBeTruthy();
 		expect(getByText('Step 2 Group')).toBeTruthy();
+	});
+
+	it('renders groups newest-first by createdAt', () => {
+		const now = Date.now();
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [
+			makeSessionGroup({
+				id: 'group-old',
+				name: 'Older Group',
+				taskId: 'task-1',
+				createdAt: now - 10000,
+				members: [],
+			}),
+			makeSessionGroup({
+				id: 'group-new',
+				name: 'Newer Group',
+				taskId: 'task-1',
+				createdAt: now,
+				members: [],
+			}),
+		];
+		const { container } = render(<SpaceTaskPane taskId="task-1" />);
+		const groupNames = Array.from(
+			container.querySelectorAll('.text-xs.font-medium.text-gray-300.truncate')
+		).map((el) => el.textContent);
+		expect(groupNames.indexOf('Newer Group')).toBeLessThan(groupNames.indexOf('Older Group'));
 	});
 
 	it('does NOT show groups from a different task', () => {
