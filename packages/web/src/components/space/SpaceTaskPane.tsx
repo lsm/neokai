@@ -12,6 +12,7 @@ import type {
 	SpaceTask,
 	SpaceTaskStatus,
 	SpaceTaskPriority,
+	SpaceAgent,
 	SpaceSessionGroup,
 	SpaceSessionGroupMember,
 } from '@neokai/shared';
@@ -97,18 +98,18 @@ function MemberStatusBadge({ status }: { status: SpaceSessionGroupMember['status
 			{status === 'completed' && (
 				<svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
 					<path
-						fill-rule="evenodd"
+						fillRule="evenodd"
 						d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-						clip-rule="evenodd"
+						clipRule="evenodd"
 					/>
 				</svg>
 			)}
 			{status === 'failed' && (
 				<svg class="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
 					<path
-						fill-rule="evenodd"
+						fillRule="evenodd"
 						d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-						clip-rule="evenodd"
+						clipRule="evenodd"
 					/>
 				</svg>
 			)}
@@ -119,11 +120,10 @@ function MemberStatusBadge({ status }: { status: SpaceSessionGroupMember['status
 
 interface WorkingAgentsProps {
 	groups: SpaceSessionGroup[];
+	agents: SpaceAgent[];
 }
 
-function WorkingAgents({ groups }: WorkingAgentsProps) {
-	const agents = spaceStore.agents.value;
-
+function WorkingAgents({ groups, agents }: WorkingAgentsProps) {
 	// Show the most recent group first; if there are multiple, show them all
 	const sortedGroups = [...groups].sort((a, b) => b.createdAt - a.createdAt);
 
@@ -253,6 +253,7 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 
 export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
+	const agents = spaceStore.agents.value;
 	const sessionGroupsByTask = spaceStore.sessionGroupsByTask.value;
 
 	if (!taskId) {
@@ -264,7 +265,7 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	}
 
 	const task = tasks.find((t) => t.id === taskId);
-	const taskGroups = taskId ? (sessionGroupsByTask.get(taskId) ?? []) : [];
+	const taskGroups = sessionGroupsByTask.get(taskId) ?? [];
 
 	if (!task) {
 		return (
@@ -372,7 +373,7 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 				)}
 
 				{/* Working Agents */}
-				{taskGroups.length > 0 && <WorkingAgents groups={taskGroups} />}
+				{taskGroups.length > 0 && <WorkingAgents groups={taskGroups} agents={agents} />}
 
 				{/* Result */}
 				{task.result && (

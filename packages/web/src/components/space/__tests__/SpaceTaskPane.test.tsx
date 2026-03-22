@@ -334,7 +334,7 @@ describe('SpaceTaskPane', () => {
 	it('renders multiple groups when they share the same taskId', () => {
 		mockTasks.value = [makeTask()];
 		mockSessionGroups.value = [
-			makeGroup({ id: 'group-1', name: 'First Group', taskId: 'task-1' }),
+			makeGroup({ id: 'group-1', name: 'First Group', taskId: 'task-1', createdAt: 1000000 }),
 			makeGroup({ id: 'group-2', name: 'Second Group', taskId: 'task-1', createdAt: 2000000 }),
 		];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
@@ -342,11 +342,37 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('Second Group')).toBeTruthy();
 	});
 
+	it('renders most recent group first (sort order)', () => {
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [
+			makeGroup({ id: 'group-1', name: 'Older Group', taskId: 'task-1', createdAt: 1000000 }),
+			makeGroup({ id: 'group-2', name: 'Newer Group', taskId: 'task-1', createdAt: 2000000 }),
+		];
+		const { container } = render(<SpaceTaskPane taskId="task-1" />);
+		const groupNames = Array.from(
+			container.querySelectorAll('.text-gray-300.text-xs.font-medium')
+		).map((el) => el.textContent);
+		const newerIdx = groupNames.indexOf('Newer Group');
+		const olderIdx = groupNames.indexOf('Older Group');
+		expect(newerIdx).toBeGreaterThanOrEqual(0);
+		expect(olderIdx).toBeGreaterThanOrEqual(0);
+		expect(newerIdx).toBeLessThan(olderIdx);
+	});
+
 	it('shows "No members yet" when group has no members', () => {
 		mockTasks.value = [makeTask()];
 		mockSessionGroups.value = [makeGroup({ members: [] })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('No members yet')).toBeTruthy();
+	});
+
+	it('falls back to member.role when agentId does not match any agent and role is not task-agent', () => {
+		const member = makeMember({ agentId: 'nonexistent-agent', role: 'security-auditor' });
+		mockTasks.value = [makeTask()];
+		mockSessionGroups.value = [makeGroup({ members: [member] })];
+		mockAgents.value = []; // no agents loaded
+		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByText('security-auditor')).toBeTruthy();
 	});
 });
 
