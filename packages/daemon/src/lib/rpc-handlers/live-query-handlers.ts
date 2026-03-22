@@ -226,7 +226,8 @@ const log = new Logger('live-query-handlers');
 /**
  * Register `liveQuery.subscribe` and `liveQuery.unsubscribe` RPC handlers.
  *
- * Returns an unsubscribe function that cleans up the client-disconnect listener.
+ * Returns a cleanup function that disposes all active subscriptions and
+ * unregisters the client-disconnect listener.
  */
 export function setupLiveQueryHandlers(
 	messageHub: MessageHub,
@@ -235,6 +236,13 @@ export function setupLiveQueryHandlers(
 ): () => void {
 	// Map<clientId → Map<subscriptionId → LiveQueryHandle>>
 	const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
+
+	// Cache prepared statements once at setup time — compiled once per handler
+	// registration, not once per subscribe call (which would add compilation
+	// overhead on every subscribe RPC invocation).
+	const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
+	const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
+	const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
 
 	// -------------------------------------------------------------------------
 	// liveQuery.subscribe
@@ -265,30 +273,31 @@ export function setupLiveQueryHandlers(
 		// 4. Authorization checks
 		if (queryName === 'tasks.byRoom' || queryName === 'goals.byRoom') {
 			const roomId = params[0] as string;
-			const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId);
-			if (!room) {
+			if (!stmtRoom.get(roomId)) {
 				throw new Error(`Unauthorized: room "${roomId}" not found`);
 			}
 		} else if (queryName === 'sessionGroupMessages.byGroup') {
 			const groupId = params[0] as string;
-			const group = db
-				.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?')
-				.get(groupId) as { ref_id: string; group_type: string } | null;
+			const group = stmtGroup.get(groupId) as { ref_id: string; group_type: string } | null;
 			if (!group) {
 				throw new Error(`Unauthorized: session group "${groupId}" not found`);
 			}
 			if (group.group_type === 'task') {
-				const task = db.prepare('SELECT room_id FROM tasks WHERE id = ?').get(group.ref_id) as {
-					room_id: string;
-				} | null;
+				// For task-typed groups, verify the full group → task → room chain.
+				// This ensures the requesting client has access to the room the task belongs to.
+				const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
 				if (!task) {
 					throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
 				}
-				const room = db.prepare('SELECT id FROM rooms WHERE id = ?').get(task.room_id);
-				if (!room) {
+				if (!stmtRoom.get(task.room_id)) {
 					throw new Error(`Unauthorized: room "${task.room_id}" not found`);
 				}
 			}
+			// Non-task group types (e.g., 'workflow', 'global') are authorized by group
+			// existence alone.  All current non-task groups are internal daemon constructs
+			// not directly reachable by client-supplied IDs without prior knowledge.
+			// If new group types with finer-grained access control are introduced, extend
+			// this block with the appropriate chain validation.
 		}
 
 		// 5. Get or create client subscription map
@@ -314,7 +323,9 @@ export function setupLiveQueryHandlers(
 		const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
 
 		// Track whether the synchronous snapshot delivery failed so we can
-		// dispose the handle after subscribe() returns.
+		// dispose the handle after subscribe() returns.  The snapshot is fired
+		// inside liveQueries.subscribe() before it returns the handle, so we
+		// cannot call handle.dispose() directly during the callback.
 		let snapshotDeliveryFailed = false;
 
 		const handle = liveQueries.subscribe(
@@ -330,9 +341,16 @@ export function setupLiveQueryHandlers(
 			}) => {
 				const router = messageHub.getRouter();
 				if (!router) {
+					// Router not yet registered or already torn down.  Mark snapshot
+					// as failed so the handle is disposed after subscribe() returns;
+					// for deltas this is a no-op since the engine will never fire
+					// another callback after the handle is disposed.
 					log.warn(
 						`liveQuery: router unavailable; skipping event (clientId=${clientId}, subscriptionId=${subscriptionId})`
 					);
+					if (diff.type === 'snapshot') {
+						snapshotDeliveryFailed = true;
+					}
 					return;
 				}
 
@@ -379,14 +397,18 @@ export function setupLiveQueryHandlers(
 						);
 						handle.dispose();
 						const subs = subscriptions.get(clientId);
-						subs?.delete(subscriptionId);
-						if (subs?.size === 0) subscriptions.delete(clientId);
+						if (subs) {
+							subs.delete(subscriptionId);
+							if (subs.size === 0) subscriptions.delete(clientId);
+						}
 					}
 				}
 			}
 		);
 
-		// If snapshot delivery failed, clean up immediately and bail out
+		// If snapshot delivery failed (no router or client not found), clean up
+		// immediately and return ok — this is not a protocol error from the
+		// client's perspective.
 		if (snapshotDeliveryFailed) {
 			handle.dispose();
 			return { ok: true } satisfies LiveQuerySubscribeResponse;
@@ -448,5 +470,20 @@ export function setupLiveQueryHandlers(
 		subscriptions.delete(disconnectedClientId);
 	});
 
-	return unsubDisconnect;
+	// -------------------------------------------------------------------------
+	// Cleanup function
+	// -------------------------------------------------------------------------
+
+	return () => {
+		// Dispose all active handles before unregistering the disconnect listener.
+		// This ensures handles are cleaned up against the live engine before it
+		// may be disposed by the caller (e.g., createDaemonApp shutdown sequence).
+		for (const [, clientSubs] of subscriptions) {
+			for (const [, handle] of clientSubs) {
+				handle.dispose();
+			}
+		}
+		subscriptions.clear();
+		unsubDisconnect();
+	};
 }

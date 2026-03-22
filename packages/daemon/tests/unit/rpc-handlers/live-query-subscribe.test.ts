@@ -60,6 +60,7 @@ function createMockSetup() {
 	let disconnectHandler: ((clientId: string) => void) | null = null;
 	const sentMessages: SentMessage[] = [];
 	let sendToClientResult = true; // override per-test if needed
+	let routerEnabled = true; // set to false to simulate null router
 
 	const mockRouter = {
 		sendToClient: mock((clientId: string, message: unknown) => {
@@ -73,7 +74,7 @@ function createMockSetup() {
 			handlers.set(method, handler);
 			return () => handlers.delete(method);
 		}),
-		getRouter: mock(() => mockRouter),
+		getRouter: mock(() => (routerEnabled ? mockRouter : null)),
 		onClientDisconnect: mock((handler: (clientId: string) => void) => {
 			disconnectHandler = handler;
 			return () => {
@@ -108,7 +109,20 @@ function createMockSetup() {
 		sendToClientResult = result;
 	};
 
-	return { hub, handlers, sentMessages, callHandler, fireDisconnect, setSendResult, mockRouter };
+	const setRouterEnabled = (enabled: boolean) => {
+		routerEnabled = enabled;
+	};
+
+	return {
+		hub,
+		handlers,
+		sentMessages,
+		callHandler,
+		fireDisconnect,
+		setSendResult,
+		setRouterEnabled,
+		mockRouter,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -484,5 +498,75 @@ describe('setupLiveQueryHandlers', () => {
 		});
 		// Should not throw; the subscription was attempted
 		expect(result).toEqual({ ok: true });
+	});
+
+	// -----------------------------------------------------------------------
+	// P1: Null router during snapshot — subscription disposed, returns ok
+	// -----------------------------------------------------------------------
+
+	test('subscribe: null router during snapshot disposes handle and returns ok', async () => {
+		setup.setRouterEnabled(false);
+		const result = await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom',
+			params: [roomId],
+			subscriptionId: 'sub-no-router',
+		});
+		// No message was sent (router was null)
+		expect(setup.sentMessages.length).toBe(0);
+		// Returns ok — not a protocol error
+		expect(result).toEqual({ ok: true });
+
+		// After router is re-enabled, a second subscribe with the same id should work
+		// cleanly (old handle was disposed, not leaked into the tracking map)
+		setup.setRouterEnabled(true);
+		const result2 = await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom',
+			params: [roomId],
+			subscriptionId: 'sub-no-router',
+		});
+		expect(result2).toEqual({ ok: true });
+		expect(setup.sentMessages.length).toBe(1);
+		expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+	});
+
+	// -----------------------------------------------------------------------
+	// P1: Version monotonically increasing across deltas
+	// -----------------------------------------------------------------------
+
+	test('version is monotonically increasing across snapshot and deltas', async () => {
+		await setup.callHandler('liveQuery.subscribe', {
+			queryName: 'tasks.byRoom',
+			params: [roomId],
+			subscriptionId: 'sub-version',
+		});
+
+		// First message is snapshot
+		expect(setup.sentMessages.length).toBe(1);
+		const snapshotVersion = setup.sentMessages[0].message.data.version;
+		expect(typeof snapshotVersion).toBe('number');
+
+		// Trigger first delta
+		insertTask(db, 'task-v2', roomId);
+		reactiveDb.notifyChange('tasks');
+		await new Promise((r) => setTimeout(r, 10));
+
+		// Trigger second delta
+		insertTask(db, 'task-v3', roomId);
+		reactiveDb.notifyChange('tasks');
+		await new Promise((r) => setTimeout(r, 10));
+
+		// Collect all delta messages
+		const deltas = setup.sentMessages
+			.slice(1)
+			.filter((m) => m.message.method === 'liveQuery.delta');
+		expect(deltas.length).toBeGreaterThanOrEqual(1);
+
+		// Verify version is non-decreasing across snapshot → delta1 → delta2
+		let prevVersion = snapshotVersion;
+		for (const delta of deltas) {
+			const v = delta.message.data.version;
+			expect(v).toBeGreaterThanOrEqual(prevVersion);
+			prevVersion = v;
+		}
 	});
 });
