@@ -12,7 +12,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Space, SpaceTask, SpaceWorkflowRun, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type {
+	Space,
+	SpaceTask,
+	SpaceWorkflowRun,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceSessionGroup,
+	SpaceSessionGroupMember,
+} from '@neokai/shared';
 
 // -------------------------------------------------------
 // Mocks — declared before imports so vi.mock hoisting works
@@ -98,6 +106,36 @@ function makeWorkflow(id: string): SpaceWorkflow {
 	};
 }
 
+function makeSessionGroupMember(
+	id: string,
+	groupId: string,
+	sessionId: string
+): SpaceSessionGroupMember {
+	return {
+		id,
+		groupId,
+		sessionId,
+		role: 'coder',
+		status: 'active',
+		orderIndex: 0,
+		createdAt: Date.now(),
+	};
+}
+
+function makeSessionGroup(id: string, taskId?: string): SpaceSessionGroup {
+	const member = makeSessionGroupMember(`${id}-m1`, id, `session-${id}`);
+	return {
+		id,
+		spaceId: 'space-1',
+		name: `task:${taskId ?? id}`,
+		status: 'active',
+		members: [member],
+		taskId,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	};
+}
+
 function makeMockHub() {
 	return {
 		joinChannel: vi.fn(),
@@ -126,6 +164,7 @@ function makeMockHub() {
 			}
 			if (method === 'spaceAgent.list') return { agents: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			if (method === 'space.sessionGroup.list') return { groups: [] as SpaceSessionGroup[] };
 			// Daemon returns Space directly (not wrapped)
 			if (method === 'space.update') return makeSpace();
 			// Daemon returns SpaceTask directly (not wrapped)
@@ -223,6 +262,7 @@ describe('SpaceStore — space selection', () => {
 		expect(spaceStore.workflowRuns.value).toEqual([]);
 		expect(spaceStore.agents.value).toEqual([]);
 		expect(spaceStore.workflows.value).toEqual([]);
+		expect(spaceStore.sessionGroups.value).toEqual([]);
 	});
 
 	it('is a no-op when selecting the same space', async () => {
@@ -327,6 +367,10 @@ describe('SpaceStore — event subscriptions auto-cleanup', () => {
 		expect(mockEventHandlers.has('spaceWorkflow.created')).toBe(true);
 		expect(mockEventHandlers.has('spaceWorkflow.updated')).toBe(true);
 		expect(mockEventHandlers.has('spaceWorkflow.deleted')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.created')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.memberAdded')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.memberUpdated')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.deleted')).toBe(true);
 	});
 
 	it('removes event handlers on clearSpace()', async () => {
@@ -1048,5 +1092,283 @@ describe('SpaceStore — refresh', () => {
 		await spaceStore.refresh();
 
 		expect(mockHub.request).not.toHaveBeenCalledWith('space.overview', expect.anything());
+	});
+});
+
+// -------------------------------------------------------
+// Session Groups
+// -------------------------------------------------------
+
+describe('SpaceStore — sessionGroups signal', () => {
+	beforeEach(async () => {
+		await resetStore();
+		resetGlobalListState();
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('starts empty before space selected', () => {
+		expect(spaceStore.sessionGroups.value).toEqual([]);
+	});
+
+	it('clears sessionGroups when space deselected', async () => {
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview')
+				return { space: makeSpace(), tasks: [], workflowRuns: [], sessions: [] };
+			if (method === 'space.sessionGroup.list')
+				return { groups: [makeSessionGroup('g1', 'task-1')] as SpaceSessionGroup[] };
+			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+
+		await spaceStore.clearSpace();
+		expect(spaceStore.sessionGroups.value).toEqual([]);
+	});
+
+	it('populates sessionGroups from space.sessionGroup.list on initial fetch', async () => {
+		const g1 = makeSessionGroup('g1', 'task-1');
+		const g2 = makeSessionGroup('g2', 'task-2');
+
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview')
+				return { space: makeSpace(), tasks: [], workflowRuns: [], sessions: [] };
+			if (method === 'space.sessionGroup.list') return { groups: [g1, g2] as SpaceSessionGroup[] };
+			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.sessionGroups.value).toEqual([g1, g2]);
+	});
+
+	it('keeps sessionGroups empty when space.sessionGroup.list RPC fails', async () => {
+		// The default mockHub.request returns { groups: [] as SpaceSessionGroup[] }
+		// Simulate the sessionGroup.list call throwing — should not propagate
+		const originalImpl = mockHub.request.getMockImplementation();
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.sessionGroup.list') throw new Error('RPC failure');
+			return originalImpl ? originalImpl(method) : {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.sessionGroups.value).toEqual([]);
+	});
+});
+
+describe('SpaceStore — sessionGroupsByTask computed', () => {
+	beforeEach(async () => {
+		await resetStore();
+		resetGlobalListState();
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('returns empty map when no groups loaded', () => {
+		expect(spaceStore.sessionGroupsByTask.value.size).toBe(0);
+	});
+
+	it('maps taskId -> groups array', async () => {
+		const g1 = makeSessionGroup('g1', 'task-1');
+		const g2 = makeSessionGroup('g2', 'task-2');
+		const g3 = makeSessionGroup('g3', 'task-1'); // same task
+
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview')
+				return { space: makeSpace(), tasks: [], workflowRuns: [], sessions: [] };
+			if (method === 'space.sessionGroup.list')
+				return { groups: [g1, g2, g3] as SpaceSessionGroup[] };
+			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		const map = spaceStore.sessionGroupsByTask.value;
+
+		expect(map.get('task-1')).toEqual([g1, g3]);
+		expect(map.get('task-2')).toEqual([g2]);
+	});
+
+	it('ignores groups without taskId in the map', async () => {
+		const gWithTask = makeSessionGroup('g1', 'task-1');
+		const gNoTask = makeSessionGroup('g2'); // no taskId
+
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview')
+				return { space: makeSpace(), tasks: [], workflowRuns: [], sessions: [] };
+			if (method === 'space.sessionGroup.list')
+				return { groups: [gWithTask, gNoTask] as SpaceSessionGroup[] };
+			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		const map = spaceStore.sessionGroupsByTask.value;
+
+		expect(map.has('g2')).toBe(false);
+		expect(map.get('task-1')).toEqual([gWithTask]);
+		expect(map.size).toBe(1);
+	});
+});
+
+describe('SpaceStore — spaceSessionGroup events', () => {
+	beforeEach(async () => {
+		await resetStore();
+		resetGlobalListState();
+		// Select a space with no initial groups
+		await spaceStore.selectSpace('space-1');
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('appends new group on spaceSessionGroup.created', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', {
+			spaceId: 'space-1',
+			taskId: 'task-1',
+			group,
+		});
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+		expect(spaceStore.sessionGroups.value[0]).toEqual(group);
+	});
+
+	it('does not duplicate group on repeated spaceSessionGroup.created', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+	});
+
+	it('ignores spaceSessionGroup.created from other spaces', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-other', taskId: 'task-1', group });
+		expect(spaceStore.sessionGroups.value).toHaveLength(0);
+	});
+
+	it('adds member on spaceSessionGroup.memberAdded', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		const newMember = makeSessionGroupMember('m2', 'g1', 'session-2');
+		fireMockEvent('spaceSessionGroup.memberAdded', {
+			spaceId: 'space-1',
+			groupId: 'g1',
+			member: newMember,
+		});
+
+		const updated = spaceStore.sessionGroups.value[0];
+		expect(updated.members).toHaveLength(2);
+		expect(updated.members[1]).toEqual(newMember);
+	});
+
+	it('does not duplicate member on repeated memberAdded', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		const member = group.members[0];
+		fireMockEvent('spaceSessionGroup.memberAdded', {
+			spaceId: 'space-1',
+			groupId: 'g1',
+			member,
+		});
+		// Same member added again — should not duplicate
+		fireMockEvent('spaceSessionGroup.memberAdded', {
+			spaceId: 'space-1',
+			groupId: 'g1',
+			member,
+		});
+
+		expect(spaceStore.sessionGroups.value[0].members).toHaveLength(1);
+	});
+
+	it('ignores memberAdded for unknown groupId', () => {
+		const newMember = makeSessionGroupMember('m1', 'unknown-group', 'session-1');
+		fireMockEvent('spaceSessionGroup.memberAdded', {
+			spaceId: 'space-1',
+			groupId: 'unknown-group',
+			member: newMember,
+		});
+		// No groups — nothing should throw
+		expect(spaceStore.sessionGroups.value).toHaveLength(0);
+	});
+
+	it('updates member status on spaceSessionGroup.memberUpdated', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		const originalMember = group.members[0];
+		const updatedMember = { ...originalMember, status: 'completed' as const };
+		fireMockEvent('spaceSessionGroup.memberUpdated', {
+			spaceId: 'space-1',
+			groupId: 'g1',
+			memberId: originalMember.id,
+			member: updatedMember,
+		});
+
+		const updatedGroup = spaceStore.sessionGroups.value[0];
+		expect(updatedGroup.members[0].status).toBe('completed');
+	});
+
+	it('ignores memberUpdated for unknown memberId', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		fireMockEvent('spaceSessionGroup.memberUpdated', {
+			spaceId: 'space-1',
+			groupId: 'g1',
+			memberId: 'unknown-member',
+			member: { ...group.members[0], status: 'completed' },
+		});
+
+		// Group unchanged
+		expect(spaceStore.sessionGroups.value[0].members[0].status).toBe('active');
+	});
+
+	it('ignores memberUpdated from other spaces', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		fireMockEvent('spaceSessionGroup.memberUpdated', {
+			spaceId: 'space-other',
+			groupId: 'g1',
+			memberId: group.members[0].id,
+			member: { ...group.members[0], status: 'completed' },
+		});
+
+		expect(spaceStore.sessionGroups.value[0].members[0].status).toBe('active');
+	});
+
+	it('removes group on spaceSessionGroup.deleted', () => {
+		const g1 = makeSessionGroup('g1', 'task-1');
+		const g2 = makeSessionGroup('g2', 'task-2');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group: g1 });
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-2', group: g2 });
+		expect(spaceStore.sessionGroups.value).toHaveLength(2);
+
+		fireMockEvent('spaceSessionGroup.deleted', { spaceId: 'space-1', groupId: 'g1' });
+
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+		expect(spaceStore.sessionGroups.value[0].id).toBe('g2');
+	});
+
+	it('ignores spaceSessionGroup.deleted from other spaces', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		fireMockEvent('spaceSessionGroup.deleted', { spaceId: 'space-other', groupId: 'g1' });
+
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+	});
+
+	it('is a no-op when spaceSessionGroup.deleted targets unknown groupId', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		fireMockEvent('spaceSessionGroup.deleted', { spaceId: 'space-1', groupId: 'unknown-group' });
+
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
 	});
 });

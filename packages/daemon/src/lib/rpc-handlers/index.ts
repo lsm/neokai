@@ -70,6 +70,7 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
+import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -354,6 +355,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceRuntimeService,
 		spaceWorkflowRunTaskManagerFactory,
 		deps.daemonHub
+	);
+
+	// Space session group admin handlers
+	setupSpaceSessionGroupHandlers(
+		deps.messageHub,
+		deps.daemonHub,
+		deps.spaceManager,
+		spaceSessionGroupRepo
 	);
 
 	// Provision the Global Spaces Agent session (spaces:global)
