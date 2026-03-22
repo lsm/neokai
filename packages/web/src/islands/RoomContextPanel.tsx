@@ -332,7 +332,8 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 									t.status === 'needs_attention'
 							);
 							const completedLinkedTasks = linkedTasks.filter(
-								(t) => t.status === 'completed' || t.status === 'cancelled'
+								(t) =>
+									t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
 							);
 							const hasCompletedTasks = completedLinkedTasks.length > 0;
 							return (

@@ -467,6 +467,23 @@ describe('RoomContextPanel', () => {
 		expect(screen.getByLabelText('Show completed tasks')).toBeTruthy();
 	});
 
+	it('reads persisted show-completed state from localStorage on mount', () => {
+		// Pre-set localStorage to show completed tasks
+		storage.set('neokai:goals:showCompletedTasks', 'true');
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Completed Task', 'completed'),
+		];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1', 't2'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand the goal
+		fireEvent.click(screen.getByText('My Goal'));
+
+		// Completed task should be visible immediately because localStorage says so
+		expect(screen.getByText('Completed Task')).toBeTruthy();
+	});
+
 	// -- Tasks section (orphan tasks) --
 
 	it('shows orphan tasks under Active tab by default', () => {
