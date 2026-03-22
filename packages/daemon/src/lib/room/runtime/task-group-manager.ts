@@ -562,6 +562,16 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
+		// Safety net: clean up any other stale active groups for this task BEFORE completing
+		// the canonical group. This ensures we aren't racing against the unique index, and
+		// any stale duplicates are resolved before the primary group transitions.
+		const staleCount = this.groupRepo.cleanupStaleGroupsForTask(group.taskId, groupId);
+		if (staleCount > 0) {
+			log.warn(
+				`[complete] Task ${group.taskId}: cleaned up ${staleCount} stale active group(s) before completion`
+			);
+		}
+
 		// Complete the group
 		const updated = this.groupRepo.completeGroup(groupId, group.version);
 		if (!updated) return null;
@@ -573,8 +583,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 
 		return updated;
 	}
@@ -588,6 +597,16 @@ export class TaskGroupManager {
 	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
+
+		// Safety net: clean up any other stale active groups for this task BEFORE failing
+		// the canonical group. This ensures stale duplicates are resolved before the
+		// primary group transitions.
+		const staleCount = this.groupRepo.cleanupStaleGroupsForTask(group.taskId, groupId);
+		if (staleCount > 0) {
+			log.warn(
+				`[fail] Task ${group.taskId}: cleaned up ${staleCount} stale active group(s) before failure`
+			);
+		}
 
 		// Fail the group
 		const updated = this.groupRepo.failGroup(groupId, group.version);
@@ -728,8 +747,7 @@ export class TaskGroupManager {
 		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
-			// Already terminal - cleanup worktree if not done
-			await this.cleanupWorktree(group);
+			// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 			return group;
 		}
 
@@ -739,8 +757,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 
 		return updated;
 	}

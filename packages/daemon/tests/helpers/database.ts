@@ -5,6 +5,7 @@
 import type { Session } from '@neokai/shared';
 import { mock } from 'bun:test';
 import { Database } from '../../src/storage/database';
+import { createReactiveDatabase } from '../../src/storage/reactive-database';
 import { createDaemonHub, type DaemonHub } from '../../src/lib/daemon-hub';
 
 /**
@@ -12,7 +13,8 @@ import { createDaemonHub, type DaemonHub } from '../../src/lib/daemon-hub';
  */
 export async function createTestDb(): Promise<Database> {
 	const db = new Database(':memory:');
-	await db.initialize();
+	const reactiveDb = createReactiveDatabase(db);
+	await db.initialize(reactiveDb);
 	return db;
 }
 

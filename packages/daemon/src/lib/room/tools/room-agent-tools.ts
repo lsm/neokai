@@ -357,17 +357,42 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					if (runtime) {
 						const group = groupRepo.getGroupByTaskId(args.task_id);
 						if (group && group.completedAt === null) {
-							// There's an active group - cancel it first if moving to terminal state
-							if (
-								args.status === 'completed' ||
-								args.status === 'needs_attention' ||
-								args.status === 'cancelled'
-							) {
-								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
-								if (!cancelledGroup) {
+							if (args.status === 'cancelled') {
+								// Use runtime.cancelTask() which properly handles group termination
+								// AND cascades the cancellation to pending dependent tasks.
+								const cancelResult = await runtime.cancelTask(args.task_id);
+								if (!cancelResult.success) {
 									return jsonResult({
 										success: false,
-										error: `Failed to cancel active group for task ${args.task_id} — group may have been modified concurrently`,
+										error: `Failed to cancel task ${args.task_id} — runtime cancellation was unsuccessful`,
+									});
+								}
+								// cancelTask already set status and emitted task updates; emit UI updates and return
+								if (daemonHub) {
+									for (const cancelledId of cancelResult.cancelledTaskIds) {
+										const cancelledTask = await taskManager.getTask(cancelledId);
+										if (cancelledTask) {
+											void daemonHub.emit('room.task.update', {
+												sessionId: `room:${roomId}`,
+												roomId,
+												task: cancelledTask,
+											});
+										}
+									}
+								}
+								return jsonResult({
+									success: true,
+									message: `Task ${args.task_id} cancelled successfully.`,
+								});
+							} else if (args.status === 'completed' || args.status === 'needs_attention') {
+								// Terminate the group WITHOUT cascading cancellation to pending dependent tasks.
+								// Only cancellation of a dependency should affect dependents — completing or
+								// marking a task as needs_attention should leave dependents untouched.
+								const terminated = await runtime.terminateTaskGroup(args.task_id);
+								if (!terminated) {
+									return jsonResult({
+										success: false,
+										error: `Failed to terminate active group for task ${args.task_id} — group may have been modified concurrently`,
 									});
 								}
 							}
@@ -376,8 +401,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
-			// Handle restart/revive: update group state for needs_attention/cancelled tasks
-			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+			// Handle restart/revive: update group state for needs_attention, completed, and cancelled tasks
+			if (
+				task.status === 'needs_attention' ||
+				task.status === 'cancelled' ||
+				task.status === 'completed'
+			) {
 				const group = groupRepo.getGroupByTaskId(args.task_id);
 				if (group) {
 					if (args.status === 'pending' || args.status === 'in_progress') {
@@ -394,10 +423,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						task.status === 'needs_attention' &&
 						group.completedAt !== null
 					) {
-						// Lightweight revive (failed → review only): clear completedAt without
-						// resetting metadata. Only supported for failed tasks — cancelled tasks
-						// have their worktree cleaned up so reviving the group would point
-						// sessions at a gone workspace.
+						// Lightweight revive: clear completedAt without resetting metadata.
+						// Supported for needs_attention (failed) → review only. Cancelled and
+						// completed tasks use resetGroupForRestart() above for a clean slate.
 						const revived = groupRepo.reviveGroup(group.id);
 						if (!revived) {
 							return jsonResult({
@@ -509,25 +537,20 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
 
-			// Cancelled tasks cannot be revived via message — the worktree is cleaned
-			// up on cancellation so restoring the session would point to a gone
-			// workspace. Direct the caller to restart the task from scratch instead.
-			if (task.status === 'cancelled') {
-				return jsonResult({
-					success: false,
-					error:
-						`Task ${args.task_id} is cancelled. Cancelled tasks cannot receive messages ` +
-						'because their workspace has been cleaned up. Use set_task_status to restart it ' +
-						'(e.g. status: "pending" or "in_progress").',
-				});
-			}
-
-			// Auto-revive: if the task needs attention, transition it to 'review' and
-			// restore the agent sessions so the message can be delivered. Needs_attention
-			// tasks preserve their worktree, so session restoration is safe.
-			if (task.status === 'needs_attention') {
+			// Auto-revive: needs_attention and cancelled tasks auto-reactivate so the message
+			// can be delivered without manual intervention. Worktrees are preserved for both
+			// statuses (only archiveGroup cleans them up), so session restoration is safe.
+			//
+			// Deliberate asymmetry with set_task_status:
+			//   set_task_status(cancelled → in_progress) → resetGroupForRestart (clean slate)
+			//   send_message_to_task(cancelled task)    → reviveTaskForMessage  (keep history)
+			// Sending a message is a "continue this conversation" action; history is preserved.
+			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+				// needs_attention transitions through 'review' (its prior working state);
+				// cancelled transitions directly to 'in_progress'.
+				const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 				try {
-					await taskManager.setTaskStatus(args.task_id, 'review');
+					await taskManager.setTaskStatus(args.task_id, intermediateStatus);
 				} catch (err) {
 					return jsonResult({
 						success: false,
@@ -537,9 +560,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
 				if (!revived) {
-					// Roll back the task status; review → needs_attention is a valid transition.
+					// Roll back the task status to its original state.
 					try {
-						await taskManager.setTaskStatus(args.task_id, 'needs_attention');
+						await taskManager.setTaskStatus(args.task_id, task.status);
 					} catch {
 						// Rollback is best-effort; swallow to avoid masking the original error
 					}
@@ -547,12 +570,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						success: false,
 						error:
 							`Failed to revive task ${args.task_id}: agent sessions could not be restored. ` +
-							'Task status has been reset to needs_attention.',
+							`Task status has been reset to ${task.status}.`,
 					});
 				}
+				const fromTo = `${task.status} to ${intermediateStatus}`;
 				return jsonResult({
 					success: true,
-					message: `Task ${args.task_id} revived from needs_attention to review and message delivered to agent`,
+					message: `Task ${args.task_id} revived from ${fromTo} and message delivered to agent`,
 				});
 			}
 

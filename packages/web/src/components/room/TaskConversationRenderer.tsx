@@ -2,20 +2,15 @@
  * TaskConversationRenderer
  *
  * Renders a flat chronological conversation timeline for a task group.
- * Uses pagination to load messages efficiently:
- * - Initial load: fetches the newest N messages (default 50)
- * - "Load older" button at the top to load more history
- * - Real-time updates via state.groupMessages.delta events
+ * Subscribes to real-time message streaming via the useGroupMessages hook (LiveQuery).
  *
  * Each message is rendered inline with a thin colored left border indicating
  * which agent produced it. Role transitions show a small divider label.
- *
- * Subscribes to state.groupMessages.delta on channel group:{groupId} for
- * real-time updates.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SessionInfo } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import {
 	useSessionQuestionState,
@@ -24,6 +19,8 @@ import {
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
+import { getModelLabel } from '../../lib/session-utils';
+import { useGroupMessages, type SessionGroupMessage } from '../../hooks/useGroupMessages';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -37,16 +34,6 @@ interface TaskMeta {
 	authorSessionId: string;
 	turnId: string;
 	iteration: number;
-}
-
-interface GroupMessage {
-	id: number;
-	groupId: string;
-	sessionId: string | null;
-	role: string;
-	messageType: string;
-	content: string;
-	createdAt: number;
 }
 
 interface TaskConversationRendererProps {
@@ -70,9 +57,14 @@ const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: s
 	lead: { border: 'border-l-purple-500', label: 'Lead', labelColor: 'text-purple-400' },
 };
 
-function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
+export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
+	// messageType is used for DB records; type is used for WebSocket real-time events.
+	// Normalize to whichever field is set.
+	const msgAny = msg as unknown as Record<string, unknown>;
+	const msgType = msgAny.messageType ?? msgAny.type;
+
 	// Status messages are plain text, not JSON
-	if (msg.messageType === 'status') {
+	if (msgType === 'status') {
 		return {
 			type: 'status',
 			text: msg.content,
@@ -85,8 +77,8 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 
-	// Leader summary messages are plain text with distinct rendering
-	if (msg.messageType === 'leader_summary') {
+	// Leader summary messages: rendered as a distinct card
+	if (msgType === 'leader_summary') {
 		return {
 			type: 'leader_summary',
 			text: msg.content,
@@ -98,6 +90,49 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 			},
 		} as unknown as SDKMessage;
 	}
+
+	// Rate limited: stored as JSON with rich payload (resetsAt, sessionRole).
+	// Fall back to content as plain text if not valid JSON.
+	if (msgType === 'rate_limited') {
+		let parsed: Record<string, unknown> = {};
+		try {
+			parsed = JSON.parse(msg.content) as Record<string, unknown>;
+		} catch {
+			parsed = { text: msg.content };
+		}
+		return {
+			...parsed,
+			type: 'rate_limited',
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: `rate-limited-${msg.id}`,
+				iteration: 0,
+			},
+		} as unknown as SDKMessage;
+	}
+
+	// Model fallback: stored as JSON with rich payload (fromModel, toModel, sessionRole).
+	// Fall back to content as plain text if not valid JSON.
+	if (msgType === 'model_fallback') {
+		let parsed: Record<string, unknown> = {};
+		try {
+			parsed = JSON.parse(msg.content) as Record<string, unknown>;
+		} catch {
+			parsed = { text: msg.content };
+		}
+		return {
+			...parsed,
+			type: 'model_fallback',
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: `model-fallback-${msg.id}`,
+				iteration: 0,
+			},
+		} as unknown as SDKMessage;
+	}
+
 	try {
 		return JSON.parse(msg.content) as SDKMessage;
 	} catch {
@@ -110,210 +145,95 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-/**
- * Returns a stable deduplication key for a message.
- * Agent messages use their uuid; status messages use _taskMeta.turnId as a fallback.
- * Returns null for messages with no identifiable key (they pass through unfiltered).
- */
-function getMessageId(msg: SDKMessage): string | null {
-	const uuid = (msg as SDKMessage & { uuid?: string }).uuid;
-	if (uuid) return uuid;
-	return getTaskMeta(msg)?.turnId ?? null;
-}
-
-const PAGE_SIZE = 50;
-
 export function TaskConversationRenderer({
 	groupId,
 	leaderSessionId,
 	workerSessionId,
 	onMessageCountChange,
 }: TaskConversationRendererProps) {
-	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
+	const { request } = useMessageHub();
 
 	// Subscribe to question state for each agent session so AskUserQuestion
 	// renders as an interactive form rather than a plain message
 	const leaderQuestionState = useSessionQuestionState(leaderSessionId);
 	const workerQuestionState = useSessionQuestionState(workerSessionId);
-	const [messages, setMessages] = useState<SDKMessage[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [loadingOlder, setLoadingOlder] = useState(false);
-	const [hasOlder, setHasOlder] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	// Incremented to trigger a retry of the initial fetch
-	const [retryKey, setRetryKey] = useState(0);
-	// Track the oldest cursor for loading older messages
-	const oldestCursorRef = useRef<string | null>(null);
-	// Refs for useCallback guards (avoids recreating callback on state changes)
-	const loadingOlderRef = useRef(false);
-	const hasOlderRef = useRef(false);
-	// Tracks every message ID (uuid or turnId) added to state, enabling deduplication
-	// across: the initial fetch, buffered pre-fetch deltas, and live post-fetch deltas
-	// (e.g. replays on WebSocket reconnect).
-	const seenIdsRef = useRef<Set<string>>(new Set());
-	// Guards the fetch/delta race: deltas received while the fetch is in-flight are
-	// buffered here and merged (with dedup) once the fetch resolves.
-	const fetchingRef = useRef(true);
-	const pendingDeltasRef = useRef<SDKMessage[]>([]);
+
+	// Subscribe to group messages via LiveQuery (handles initial snapshot + live deltas)
+	const { messages: rawMessages, isLoading } = useGroupMessages(groupId);
+
+	const messages = useMemo(
+		() => rawMessages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null),
+		[rawMessages]
+	);
+
+	// Fetch session model info for leader and worker
+	const [sessionModels, setSessionModels] = useState<{
+		leaderModel: string | null;
+		workerModel: string | null;
+	}>({ leaderModel: null, workerModel: null });
 
 	useEffect(() => {
-		const channel = `group:${groupId}`;
-		joinRoom(channel);
-		seenIdsRef.current.clear();
-		fetchingRef.current = true;
-		pendingDeltasRef.current = [];
-		oldestCursorRef.current = null;
-		loadingOlderRef.current = false;
-		hasOlderRef.current = false;
-		setError(null);
+		if (!leaderSessionId && !workerSessionId) return;
 		let cancelled = false;
-
-		// Subscribe first so no live messages can slip through before the fetch starts.
-		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
-			'state.groupMessages.delta',
-			(event) => {
-				if (event.added && event.added.length > 0) {
-					if (fetchingRef.current) {
-						// Buffer deltas that arrive while the initial fetch is in-flight.
-						pendingDeltasRef.current = [...pendingDeltasRef.current, ...event.added];
-					} else {
-						// Deduplicate against seenIds — handles replays on reconnect and
-						// the same event firing twice within the buffer.
-						const newMessages = event.added.filter((m) => {
-							const id = getMessageId(m);
-							if (id && seenIdsRef.current.has(id)) return false;
-							if (id) seenIdsRef.current.add(id);
-							return true;
-						});
-						if (newMessages.length > 0) {
-							setMessages((prev) => [...prev, ...newMessages]);
-						}
-					}
-				}
-			}
-		);
-
-		const fetchInitialMessages = async () => {
+		const fetchSessionModels = async () => {
 			try {
-				const res: {
-					messages: GroupMessage[];
-					hasMore: boolean;
-					nextCursor: string | null;
-					hasOlder: boolean;
-					oldestCursor: string | null;
-				} = await request('task.getGroupMessages', {
-					groupId,
-					limit: PAGE_SIZE,
-				});
-
+				const [leaderRes, workerRes] = await Promise.all([
+					leaderSessionId
+						? request<{ session: SessionInfo }>('session.get', { sessionId: leaderSessionId })
+						: Promise.resolve({ session: null }),
+					workerSessionId
+						? request<{ session: SessionInfo }>('session.get', { sessionId: workerSessionId })
+						: Promise.resolve({ session: null }),
+				]);
 				if (!cancelled) {
-					// Merge fetched messages with buffered deltas.
-					const parsed = res.messages
-						.map(parseGroupMessage)
-						.filter((m): m is SDKMessage => m !== null);
-
-					const uniqueParsed = parsed.filter((m) => {
-						const id = getMessageId(m);
-						if (id && seenIdsRef.current.has(id)) return false;
-						if (id) seenIdsRef.current.add(id);
-						return true;
+					setSessionModels({
+						leaderModel: leaderRes.session?.config?.model ?? null,
+						workerModel: workerRes.session?.config?.model ?? null,
 					});
-
-					// Merge buffered deltas, deduplicating against seenIds.
-					const newDeltas = pendingDeltasRef.current.filter((m) => {
-						const id = getMessageId(m);
-						if (id && seenIdsRef.current.has(id)) return false;
-						if (id) seenIdsRef.current.add(id);
-						return true;
-					});
-
-					if (uniqueParsed.length > 0 || newDeltas.length > 0) {
-						setMessages([...uniqueParsed, ...newDeltas]);
-					}
-					setHasOlder(res.hasOlder);
-					hasOlderRef.current = res.hasOlder;
-					oldestCursorRef.current = res.oldestCursor;
-					fetchingRef.current = false;
-					pendingDeltasRef.current = [];
-					setLoading(false);
 				}
-			} catch (err) {
-				if (!cancelled) {
-					// On fetch failure, still surface any buffered deltas
-					const newDeltas = pendingDeltasRef.current.filter((m) => {
-						const id = getMessageId(m);
-						if (id && seenIdsRef.current.has(id)) return false;
-						if (id) seenIdsRef.current.add(id);
-						return true;
-					});
-					if (newDeltas.length > 0) {
-						setMessages([...newDeltas]);
-					}
-					fetchingRef.current = false;
-					pendingDeltasRef.current = [];
-					setLoading(false);
-					setError(err instanceof Error ? err.message : 'Failed to load messages');
-				}
+			} catch {
+				// Silently ignore — model names just won't be shown
 			}
 		};
 
-		fetchInitialMessages();
-
+		void fetchSessionModels();
 		return () => {
 			cancelled = true;
-			unsub();
-			leaveRoom(channel);
 		};
-	}, [groupId, retryKey, joinRoom, leaveRoom, onEvent, request]);
+	}, [leaderSessionId, workerSessionId, request]);
 
-	const retryInitialFetch = useCallback(() => {
-		setRetryKey((k) => k + 1);
-	}, []);
-
-	const loadOlderMessages = useCallback(async () => {
-		// Use refs for guards to avoid recreating callback on state changes
-		if (loadingOlderRef.current || !hasOlderRef.current || !oldestCursorRef.current) return;
-
-		loadingOlderRef.current = true;
-		setLoadingOlder(true);
-		setError(null); // Clear previous errors on retry
-		try {
-			const res: {
-				messages: GroupMessage[];
-				hasMore: boolean;
-				nextCursor: string | null;
-				hasOlder: boolean;
-				oldestCursor: string | null;
-			} = await request('task.getGroupMessages', {
-				groupId,
-				before: oldestCursorRef.current,
-				limit: PAGE_SIZE,
-			});
-
-			const parsed = res.messages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null);
-
-			// Deduplicate and prepend to existing messages
-			const uniqueParsed = parsed.filter((m) => {
-				const id = getMessageId(m);
-				if (id && seenIdsRef.current.has(id)) return false;
-				if (id) seenIdsRef.current.add(id);
-				return true;
-			});
-
-			if (uniqueParsed.length > 0) {
-				setMessages((prev) => [...uniqueParsed, ...prev]);
-			}
-			setHasOlder(res.hasOlder);
-			hasOlderRef.current = res.hasOlder;
-			oldestCursorRef.current = res.oldestCursor;
-		} catch (err) {
-			// Show error feedback to user
-			setError(err instanceof Error ? err.message : 'Failed to load older messages');
-		} finally {
-			loadingOlderRef.current = false;
-			setLoadingOlder(false);
+	// Build role divider labels that include model names for leader/worker
+	function getRoleLabel(
+		role: string,
+		authorSessionId: string | undefined
+	): { label: string; labelColor: string } {
+		const base = ROLE_COLORS[role] ?? ROLE_COLORS.system;
+		if (role === 'leader') {
+			const modelLabel =
+				authorSessionId === leaderSessionId ? getModelLabel(sessionModels.leaderModel) : '';
+			return {
+				label: modelLabel ? `Leader · ${modelLabel}` : 'Leader',
+				labelColor: base.labelColor,
+			};
 		}
-	}, [groupId, request]);
+		if (role === 'lead') {
+			const modelLabel =
+				authorSessionId === leaderSessionId ? getModelLabel(sessionModels.leaderModel) : '';
+			return {
+				label: modelLabel ? `Lead · ${modelLabel}` : 'Lead',
+				labelColor: base.labelColor,
+			};
+		}
+		if (role === 'coder' || role === 'craft') {
+			const modelLabel =
+				authorSessionId === workerSessionId ? getModelLabel(sessionModels.workerModel) : '';
+			return {
+				label: modelLabel ? `${base.label} · ${modelLabel}` : base.label,
+				labelColor: base.labelColor,
+			};
+		}
+		return { label: base.label, labelColor: base.labelColor };
+	}
 
 	// Notify parent when message count changes so it can drive autoscroll
 	useEffect(() => {
@@ -337,24 +257,10 @@ export function TaskConversationRenderer({
 		return transitions;
 	}, [messages]);
 
-	if (loading) {
+	if (isLoading) {
 		return (
 			<div class="flex-1 flex items-center justify-center">
 				<p class="text-gray-400 text-sm">Loading conversation…</p>
-			</div>
-		);
-	}
-
-	if (messages.length === 0 && error) {
-		return (
-			<div class="flex-1 flex flex-col items-center justify-center gap-2">
-				<p class="text-red-400 text-sm">{error}</p>
-				<button
-					class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
-					onClick={retryInitialFetch}
-				>
-					Retry
-				</button>
 			</div>
 		);
 	}
@@ -369,19 +275,6 @@ export function TaskConversationRenderer({
 
 	return (
 		<div class="px-4 py-3 space-y-0.5">
-			{/* Load older messages button */}
-			{hasOlder && (
-				<div class="flex flex-col items-center gap-2 py-2">
-					{error && <p class="text-xs text-red-400">{error}</p>}
-					<button
-						class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
-						onClick={loadOlderMessages}
-						disabled={loadingOlder}
-					>
-						{loadingOlder ? 'Loading…' : 'Load older messages'}
-					</button>
-				</div>
-			)}
 			{messages.map((msg, i) => {
 				const meta = getTaskMeta(msg);
 				const role = meta?.authorRole ?? 'system';
@@ -397,6 +290,45 @@ export function TaskConversationRenderer({
 							<div class="flex-1 h-px bg-dark-700" />
 							<span class="text-xs text-gray-500 whitespace-nowrap">{statusText}</span>
 							<div class="flex-1 h-px bg-dark-700" />
+						</div>
+					);
+				}
+
+				// Rate limited event: render as an amber notification
+				if (raw.type === 'rate_limited') {
+					const text = typeof raw.text === 'string' ? raw.text : 'Rate limit reached';
+					const resetsAt =
+						typeof raw.resetsAt === 'number' ? new Date(raw.resetsAt).toLocaleTimeString() : null;
+					const sessionRole = typeof raw.sessionRole === 'string' ? raw.sessionRole : '';
+					const roleLabel =
+						sessionRole === 'leader' ? 'Leader' : sessionRole === 'worker' ? 'Worker' : 'Agent';
+					return (
+						<div
+							key={key}
+							class="my-2 rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2"
+						>
+							<div class="flex items-center gap-2">
+								<svg
+									class="w-4 h-4 text-amber-400 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+									/>
+								</svg>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-amber-300 font-medium">{roleLabel} rate limited</p>
+									<p class="text-xs text-amber-400/80 mt-0.5">
+										{text}
+										{resetsAt ? ` Resets at ${resetsAt}.` : ''}
+									</p>
+								</div>
+							</div>
 						</div>
 					);
 				}
@@ -433,6 +365,43 @@ export function TaskConversationRenderer({
 					);
 				}
 
+				// Model fallback event: show a prominent amber notification about the model switch
+				if (raw.type === 'model_fallback') {
+					const fromModel = typeof raw.fromModel === 'string' ? raw.fromModel : '';
+					const toModel = typeof raw.toModel === 'string' ? raw.toModel : '';
+					const sessionRole = typeof raw.sessionRole === 'string' ? raw.sessionRole : '';
+					const roleLabel =
+						sessionRole === 'leader' ? 'Leader' : sessionRole === 'worker' ? 'Worker' : 'Agent';
+					return (
+						<div
+							key={key}
+							class="my-2 rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2"
+						>
+							<div class="flex items-center gap-2">
+								<svg
+									class="w-4 h-4 text-amber-400 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+									/>
+								</svg>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-amber-300 font-medium">{roleLabel} model switched</p>
+									<p class="text-xs text-amber-400/80 mt-0.5">
+										{fromModel || 'Previous model'} → {toModel || 'New model'}
+									</p>
+								</div>
+							</div>
+						</div>
+					);
+				}
+
 				// Insert a role transition divider when the agent changes
 				const showTransition = roleTransitions.has(i);
 
@@ -447,15 +416,18 @@ export function TaskConversationRenderer({
 					questionState = workerQuestionState;
 				}
 
+				// Get role label (includes model name for leader/worker/coder/craft roles)
+				const roleLabel = getRoleLabel(role, authorSessionId);
+
 				return (
 					<div key={key}>
 						{showTransition && (
 							<div class="flex items-center gap-2 py-1.5 mt-1">
 								<div class="flex-1 h-px bg-dark-700" />
 								<span
-									class={`text-[10px] font-semibold uppercase tracking-wide ${style.labelColor}`}
+									class={`text-[10px] font-semibold uppercase tracking-wide ${roleLabel.labelColor}`}
 								>
-									{style.label}
+									{roleLabel.label}
 								</span>
 								<div class="flex-1 h-px bg-dark-700" />
 							</div>

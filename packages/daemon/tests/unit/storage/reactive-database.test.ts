@@ -62,8 +62,8 @@ describe('ReactiveDatabase', () => {
 	beforeEach(async () => {
 		dbPath = makeTempDbPath();
 		db = new Database(dbPath);
-		await db.initialize();
 		reactiveDb = createReactiveDatabase(db);
+		await db.initialize(reactiveDb);
 	});
 
 	afterEach(() => {

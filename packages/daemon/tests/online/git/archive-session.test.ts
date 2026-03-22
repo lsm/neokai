@@ -41,6 +41,7 @@ describe('Archive Session', () => {
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
+		if (!daemon) return;
 		await daemon.waitForExit();
 	}, SETUP_TIMEOUT);
 

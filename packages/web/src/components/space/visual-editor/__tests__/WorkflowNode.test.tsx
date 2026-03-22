@@ -252,6 +252,69 @@ describe('WorkflowNode click', () => {
 });
 
 // ============================================================================
+// Multi-agent rendering tests
+// ============================================================================
+
+describe('WorkflowNode multi-agent rendering', () => {
+	it('renders agent badges when step has agents array', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+		};
+		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		const badges = getByTestId('agent-badges');
+		expect(badges).toBeTruthy();
+		// agent-name element should not be present in multi-agent mode
+		expect(queryByTestId('agent-name')).toBeNull();
+		// Both agent names should appear
+		expect(badges.textContent).toContain('Alpha Agent');
+		expect(badges.textContent).toContain('Beta Agent');
+	});
+
+	it('renders single agent name when agents array is absent', () => {
+		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps()} />);
+		expect(getByTestId('agent-name')).toBeTruthy();
+		expect(queryByTestId('agent-badges')).toBeNull();
+	});
+
+	it('renders single agent name when agents array is empty', () => {
+		const step = { ...STEP_DRAFT, agents: [] as { agentId: string }[] };
+		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		// Empty agents array = single-agent mode
+		expect(getByTestId('agent-name')).toBeTruthy();
+		expect(queryByTestId('agent-badges')).toBeNull();
+	});
+
+	it('falls back to agentId as badge label when agent not found', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'unknown-agent-id' }],
+		};
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		expect(getByTestId('agent-badges').textContent).toContain('unknown-agent-id');
+	});
+
+	it('uses wider minWidth for multi-agent steps', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+		};
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		const node = getByTestId('workflow-node-step-local-1');
+		expect(node.style.minWidth).toBe('200px');
+	});
+
+	it('uses default minWidth for single-agent steps', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps()} />);
+		const node = getByTestId('workflow-node-step-local-1');
+		expect(node.style.minWidth).toBe('160px');
+	});
+});
+
+// ============================================================================
 // Drag-and-drop tests
 // ============================================================================
 

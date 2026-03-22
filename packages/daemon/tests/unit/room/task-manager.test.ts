@@ -16,7 +16,11 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { TaskManager, extractPrNumber } from '../../../src/lib/room/managers/task-manager';
+import {
+	TaskManager,
+	extractPrNumber,
+	VALID_STATUS_TRANSITIONS,
+} from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 describe('TaskManager', () => {
@@ -41,7 +45,7 @@ describe('TaskManager', () => {
 		roomId = room.id;
 
 		// Create task manager
-		taskManager = new TaskManager(db, roomId);
+		taskManager = new TaskManager(db, roomId, { notifyChange: () => {} } as never);
 	});
 
 	afterEach(() => {
@@ -146,7 +150,7 @@ describe('TaskManager', () => {
 
 			// Create another room and task manager
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 
 			// Should not be able to access room 1's task from room 2's manager
 			const retrieved = await taskManager2.getTask(created.id);
@@ -198,7 +202,7 @@ describe('TaskManager', () => {
 			await taskManager.createTask({ title: 'Room 1 Task', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 			await taskManager2.createTask({ title: 'Room 2 Task', description: '' });
 
 			const tasks1 = await taskManager.listTasks();
@@ -529,7 +533,7 @@ describe('TaskManager', () => {
 			const task = await taskManager.createTask({ title: 'Room 1 Task', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 
 			const result = await taskManager2.deleteTask(task.id);
 
@@ -751,7 +755,7 @@ describe('TaskManager', () => {
 		it('should isolate tasks between rooms', async () => {
 			// Create another room
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 
 			// Add tasks to both rooms
 			await taskManager.createTask({ title: 'Room 1 Task', description: '' });
@@ -851,7 +855,7 @@ describe('TaskManager', () => {
 			expect(revived.error).toBeUndefined();
 		});
 
-		it('should reject cancelled → review transition (worktree is cleaned up on cancel)', async () => {
+		it('should reject cancelled → review transition (not a valid reactivation path)', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
 			await taskManager.cancelTask(task.id);
@@ -869,6 +873,245 @@ describe('TaskManager', () => {
 			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
 				'Invalid status transition'
 			);
+		});
+	});
+
+	describe('archived status transitions', () => {
+		it('should allow completed → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow cancelled → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow cancelled → completed transition (e.g. PR merged after cancellation)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const completed = await taskManager.setTaskStatus(task.id, 'completed');
+			expect(completed.status).toBe('completed');
+		});
+
+		it('should allow needs_attention → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const archived = await taskManager.setTaskStatus(task.id, 'archived');
+			expect(archived.status).toBe('archived');
+		});
+
+		it('should allow completed → in_progress reactivation', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+		});
+
+		it('should clear result and progress when reactivating a completed task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'previous result');
+
+			const completed = await taskManager.getTask(task.id);
+			expect(completed!.result).toBe('previous result');
+			expect(completed!.progress).toBe(100);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+			expect(reactivated.result).toBeUndefined();
+			expect(reactivated.progress).toBeUndefined();
+		});
+
+		it('should reject archived → any transition (true terminal)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			await taskManager.setTaskStatus(task.id, 'archived');
+
+			const allStatuses = [
+				'draft',
+				'pending',
+				'in_progress',
+				'review',
+				'completed',
+				'needs_attention',
+				'cancelled',
+				'archived',
+			] as const;
+			for (const status of allStatuses) {
+				await expect(taskManager.setTaskStatus(task.id, status)).rejects.toThrow(
+					'Invalid status transition'
+				);
+			}
+		});
+
+		it('should allow cancelled → pending transition (restart)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const restarted = await taskManager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+		});
+
+		it('should allow cancelled → in_progress transition (reactivation)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const reactivated = await taskManager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.status).toBe('in_progress');
+		});
+
+		it('should allow needs_attention → pending transition (restart)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const restarted = await taskManager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+		});
+
+		it('should reject review → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
+
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject draft → archived transition', async () => {
+			const task = await taskManager.createTask({
+				title: 'T',
+				description: '',
+				status: 'draft',
+			});
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject pending → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject in_progress → archived transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await expect(taskManager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+	});
+
+	describe('archiveTask method', () => {
+		it('should archive a completed task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should archive a cancelled task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should archive a needs_attention task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'error');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.status).toBe('archived');
+			expect(archived.archivedAt).toBeDefined();
+		});
+
+		it('should reject archiving a pending task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await expect(taskManager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'pending'"
+			);
+		});
+
+		it('should reject archiving an in_progress task via archiveTask()', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await expect(taskManager.archiveTask(task.id)).rejects.toThrow(
+				"Cannot archive task in 'in_progress'"
+			);
+		});
+
+		it('should clear active_session when archiving', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			await taskManager.completeTask(task.id, 'done');
+
+			const archived = await taskManager.archiveTask(task.id);
+			expect(archived.activeSession).toBeNull();
+		});
+
+		it('should throw for non-existent task', async () => {
+			await expect(taskManager.archiveTask('non-existent')).rejects.toThrow(
+				'Task not found: non-existent'
+			);
+		});
+	});
+
+	describe('VALID_STATUS_TRANSITIONS map', () => {
+		it('archived is a true terminal state with no transitions', () => {
+			expect(VALID_STATUS_TRANSITIONS.archived).toEqual([]);
+		});
+
+		it('completed allows reactivation and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.completed).toEqual(['in_progress', 'archived']);
+		});
+
+		it('cancelled allows restart, completion, and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.cancelled).toEqual([
+				'pending',
+				'in_progress',
+				'completed',
+				'archived',
+			]);
+		});
+
+		it('needs_attention allows restart, review, and archival', () => {
+			expect(VALID_STATUS_TRANSITIONS.needs_attention).toEqual([
+				'pending',
+				'in_progress',
+				'review',
+				'archived',
+			]);
 		});
 	});
 
@@ -941,6 +1184,135 @@ describe('TaskManager', () => {
 			const fetched = await taskManager.getTask(task.id);
 			expect(fetched!.activeSession).toBe('worker');
 		});
+	});
+});
+
+describe('setTaskStatus — manual mode', () => {
+	let db: Database;
+	let taskManager: TaskManager;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createTables(db);
+		const roomManager = new RoomManager(db);
+		const room = roomManager.createRoom({
+			name: 'Test Room',
+			allowedPaths: [{ path: '/workspace/test' }],
+			defaultPath: '/workspace/test',
+		});
+		taskManager = new TaskManager(db, room.id, { notifyChange: () => {} } as never);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('should allow any status transition when mode is manual', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// completed is not normally reachable from pending in one step, but manual mode allows it
+		const updated = await taskManager.setTaskStatus(task.id, 'completed', { mode: 'manual' });
+		expect(updated.status).toBe('completed');
+	});
+
+	it('should allow archived → pending transition in manual mode (not allowed in runtime mode)', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// Archive the task first using updateTaskStatus (bypasses state machine)
+		await taskManager.updateTaskStatus(task.id, 'archived');
+		expect((await taskManager.getTask(task.id))!.status).toBe('archived');
+
+		// Manual mode should allow unarchiving
+		const unarchived = await taskManager.setTaskStatus(task.id, 'pending', { mode: 'manual' });
+		expect(unarchived.status).toBe('pending');
+		// archivedAt should be cleared
+		expect(unarchived.archivedAt).toBeUndefined();
+	});
+
+	it('should reject invalid transitions in runtime mode (default)', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// pending → completed is not valid in runtime mode
+		await expect(taskManager.setTaskStatus(task.id, 'completed')).rejects.toThrow(
+			"Invalid status transition from 'pending' to 'completed'"
+		);
+	});
+
+	it('should reject invalid transitions in explicit runtime mode', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		await expect(
+			taskManager.setTaskStatus(task.id, 'completed', { mode: 'runtime' })
+		).rejects.toThrow("Invalid status transition from 'pending' to 'completed'");
+	});
+
+	it('should clear error/result/progress when manually unarchiving', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		// Put the task in completed state with result
+		await taskManager.updateTaskStatus(task.id, 'completed', { result: 'done', progress: 100 });
+		// Archive it
+		await taskManager.updateTaskStatus(task.id, 'archived');
+
+		// Unarchive via manual mode
+		const unarchived = await taskManager.setTaskStatus(task.id, 'pending', { mode: 'manual' });
+		expect(unarchived.status).toBe('pending');
+		expect(unarchived.result).toBeUndefined();
+		expect(unarchived.progress).toBeUndefined();
+	});
+
+	it('should clear error when manually restarting from needs_attention to review', async () => {
+		const task = await taskManager.createTask({ title: 'T', description: '' });
+		await taskManager.updateTaskStatus(task.id, 'in_progress');
+		await taskManager.failTask(task.id, 'Some error');
+		expect((await taskManager.getTask(task.id))!.error).toBe('Some error');
+
+		const revived = await taskManager.setTaskStatus(task.id, 'review', { mode: 'manual' });
+		expect(revived.status).toBe('review');
+		expect(revived.error).toBeUndefined();
+	});
+
+	it('completing a task does not affect its dependent tasks in runtime mode', async () => {
+		// Create parent and dependent tasks
+		const parent = await taskManager.createTask({ title: 'Parent', description: '' });
+		const dep1 = await taskManager.createTask({
+			title: 'Dependent 1',
+			description: '',
+			dependsOn: [parent.id],
+		});
+		const dep2 = await taskManager.createTask({
+			title: 'Dependent 2',
+			description: '',
+			dependsOn: [parent.id],
+		});
+
+		// Start and complete the parent task
+		await taskManager.updateTaskStatus(parent.id, 'in_progress');
+		await taskManager.completeTask(parent.id, 'done');
+
+		// Dependent tasks should remain in pending state (not cancelled)
+		const dep1After = await taskManager.getTask(dep1.id);
+		const dep2After = await taskManager.getTask(dep2.id);
+		expect(dep1After!.status).toBe('pending');
+		expect(dep2After!.status).toBe('pending');
+	});
+
+	it('cancelling a task cascades to pending dependents', async () => {
+		// Create parent and dependent tasks
+		const parent = await taskManager.createTask({ title: 'Parent', description: '' });
+		const dep1 = await taskManager.createTask({
+			title: 'Dependent 1',
+			description: '',
+			dependsOn: [parent.id],
+		});
+		const dep2 = await taskManager.createTask({
+			title: 'Dependent 2',
+			description: '',
+			dependsOn: [parent.id],
+		});
+
+		// Cancel the parent task — should cascade to dependents
+		await taskManager.cancelTask(parent.id);
+
+		const dep1After = await taskManager.getTask(dep1.id);
+		const dep2After = await taskManager.getTask(dep2.id);
+		expect(dep1After!.status).toBe('cancelled');
+		expect(dep2After!.status).toBe('cancelled');
 	});
 });
 

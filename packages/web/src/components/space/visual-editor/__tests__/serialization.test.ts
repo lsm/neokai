@@ -779,3 +779,166 @@ describe('visualStateToUpdateParams', () => {
 		expect(params.rules![0].id).toBeTruthy();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Multi-agent step serialization
+// ---------------------------------------------------------------------------
+
+describe('multi-agent step serialization', () => {
+	it('workflowToVisualState preserves agents array from WorkflowStep', () => {
+		const workflow = makeWorkflow({
+			steps: [
+				{
+					id: 's1',
+					name: 'Parallel Step',
+					agents: [{ agentId: 'a1' }, { agentId: 'a2', instructions: 'focus on security' }],
+				},
+			],
+		});
+		const state = workflowToVisualState(workflow);
+		const step = state.nodes[0].step;
+		expect(step.agents).toHaveLength(2);
+		expect(step.agents![0].agentId).toBe('a1');
+		expect(step.agents![1].agentId).toBe('a2');
+		expect(step.agents![1].instructions).toBe('focus on security');
+		// agentId should be empty (multi-agent step)
+		expect(step.agentId).toBe('');
+	});
+
+	it('workflowToVisualState preserves channels array from WorkflowStep', () => {
+		const workflow = makeWorkflow({
+			steps: [
+				{
+					id: 's1',
+					name: 'Parallel Step',
+					agents: [{ agentId: 'a1' }, { agentId: 'a2' }],
+					channels: [
+						{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'PR' },
+						{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' },
+					],
+				},
+			],
+		});
+		const state = workflowToVisualState(workflow);
+		const step = state.nodes[0].step;
+		expect(step.channels).toHaveLength(2);
+		expect(step.channels![0]).toEqual({
+			from: 'coder',
+			to: 'reviewer',
+			direction: 'one-way',
+			label: 'PR',
+		});
+		expect(step.channels![1]).toEqual({
+			from: 'reviewer',
+			to: ['coder', 'qa'],
+			direction: 'bidirectional',
+		});
+	});
+
+	it('visualStateToCreateParams outputs agents array for multi-agent steps', () => {
+		const state: VisualEditorState = {
+			nodes: [
+				{
+					step: {
+						localId: 'local-1',
+						id: 's1',
+						name: 'Parallel Step',
+						agentId: '',
+						agents: [{ agentId: 'a1' }, { agentId: 'a2', instructions: 'custom' }],
+						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+						instructions: '',
+					},
+					position: { x: 0, y: 0 },
+				},
+			],
+			edges: [],
+			startStepId: 's1',
+			rules: [],
+			tags: [],
+		};
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		const step = params.steps![0];
+		expect(step.agents).toHaveLength(2);
+		expect(step.agents![0].agentId).toBe('a1');
+		expect(step.agents![1].instructions).toBe('custom');
+		expect(step.channels).toHaveLength(1);
+		expect(step.channels![0].from).toBe('coder');
+		// agentId should be absent (undefined) when agents is set
+		expect(step.agentId).toBeUndefined();
+	});
+
+	it('visualStateToCreateParams omits empty channels array', () => {
+		const state: VisualEditorState = {
+			nodes: [
+				{
+					step: {
+						localId: 'local-1',
+						id: 's1',
+						name: 'Step',
+						agentId: '',
+						agents: [{ agentId: 'a1' }],
+						channels: [],
+						instructions: '',
+					},
+					position: { x: 0, y: 0 },
+				},
+			],
+			edges: [],
+			startStepId: 's1',
+			rules: [],
+			tags: [],
+		};
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.steps![0].channels).toBeUndefined();
+	});
+
+	it('single-agent step round-trip: agentId preserved, no agents array', () => {
+		const workflow = makeWorkflow({
+			steps: [makeStep('s1', 'Code', 'agent-coder')],
+		});
+		const state = workflowToVisualState(workflow);
+		expect(state.nodes[0].step.agentId).toBe('agent-coder');
+		expect(state.nodes[0].step.agents).toBeUndefined();
+
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.steps![0].agentId).toBe('agent-coder');
+		expect(params.steps![0].agents).toBeUndefined();
+	});
+
+	it('full round-trip workflowToVisualState → visualStateToUpdateParams preserves multi-agent data', () => {
+		const workflow = makeWorkflow({
+			steps: [
+				{
+					id: 's1',
+					name: 'Parallel',
+					agents: [{ agentId: 'a1', instructions: 'focus on tests' }, { agentId: 'a2' }],
+					channels: [
+						{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
+						{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' as const },
+					],
+				},
+			],
+			layout: { s1: { x: 0, y: 0 } },
+		});
+		const state = workflowToVisualState(workflow);
+		const params = visualStateToUpdateParams(state);
+
+		const step = params.steps![0];
+		// agents array preserved through update round-trip
+		expect(step.agents).toHaveLength(2);
+		expect(step.agents![0].agentId).toBe('a1');
+		expect(step.agents![0].instructions).toBe('focus on tests');
+		expect(step.agents![1].agentId).toBe('a2');
+		expect(step.agents![1].instructions).toBeUndefined();
+		// agentId should be absent for multi-agent steps
+		expect(step.agentId).toBeUndefined();
+		// channels preserved
+		expect(step.channels).toHaveLength(2);
+		expect(step.channels![0]).toEqual({ from: 'coder', to: 'reviewer', direction: 'one-way' });
+		expect(step.channels![1]).toEqual({
+			from: 'reviewer',
+			to: ['coder', 'qa'],
+			direction: 'bidirectional',
+		});
+	});
+});

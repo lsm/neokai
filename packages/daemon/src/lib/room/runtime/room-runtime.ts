@@ -22,6 +22,8 @@ import {
 	type TaskPriority,
 	type AgentType,
 	type RuntimeState,
+	type GlobalSettings,
+	type FallbackModelEntry,
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
@@ -36,6 +38,7 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
+import type { ModelSwitchResult } from '../../agent/model-switch-handler';
 import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
 import type {
@@ -74,6 +77,8 @@ import {
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 import { getNextRunAt } from './cron-utils';
 import { inferProviderForModel } from '../../providers/registry';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import { enqueueRoomTick, cancelPendingTickJobs } from '../../job-handlers/room-tick.handler';
 
 const log = new Logger('room-runtime');
 
@@ -81,6 +86,13 @@ export const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
 export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
 /** Default when room config does not specify maxPlanningRetries (no auto-retry) */
 const DEFAULT_MAX_PLANNING_RETRIES = 0;
+
+/**
+ * Task statuses that indicate a group is stale and should be auto-cleaned.
+ * Groups whose tasks are in these terminal states but still marked active
+ * consume concurrency slots and prevent new tasks from being picked up.
+ */
+const STALE_TASK_STATUSES = new Set<string>(['completed', 'cancelled', 'archived']);
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -91,6 +103,12 @@ export interface WorkerMessage {
 	text: string;
 	/** Names of tools called (for envelope summary) */
 	toolCallNames: string[];
+}
+
+/** Response from session.model.get RPC */
+interface SessionModelGetResult {
+	currentModel: string;
+	modelInfo?: { provider?: string };
 }
 
 export interface RoomRuntimeConfig {
@@ -111,8 +129,13 @@ export interface RoomRuntimeConfig {
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
-	/** Tick interval in ms (default: 30000) */
-	tickInterval?: number;
+	/**
+	 * Job queue used to schedule and cancel room.tick jobs.
+	 * When provided, scheduleTick() enqueues a room.tick job via enqueueRoomTick.
+	 * When absent (e.g., in unit tests), tick scheduling is a no-op and tests
+	 * drive ticks directly via runtime.tick().
+	 */
+	jobQueue?: JobQueueRepository;
 	/**
 	 * Fetch Worker assistant messages for forwarding to Leader.
 	 * Returns messages after (exclusive) the message with afterMessageId.
@@ -133,6 +156,8 @@ export interface RoomRuntimeConfig {
 	getTask: (taskId: string) => Promise<NeoTask | null>;
 	/** Fetch goal from DB by ID (for lazy leader init with current data) */
 	getGoal: (goalId: string) => Promise<RoomGoal | null>;
+	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
+	getGlobalSettings: () => GlobalSettings;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -141,9 +166,7 @@ function jsonResult(data: Record<string, unknown>): LeaderToolResult {
 
 export class RoomRuntime {
 	private state: RuntimeState = 'paused';
-	private tickLocked = false;
-	private tickQueued = false;
-	private tickTimer: ReturnType<typeof setInterval> | null = null;
+	private readonly jobQueue: JobQueueRepository | null;
 
 	private readonly roomId: string;
 	private room: Room;
@@ -154,7 +177,6 @@ export class RoomRuntime {
 	private readonly sessionFactory: SessionFactory;
 	private maxConcurrentGroups: number;
 	private maxFeedbackIterations: number;
-	private readonly tickInterval: number;
 	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
@@ -162,6 +184,7 @@ export class RoomRuntime {
 	private readonly deadLoopConfig: DeadLoopConfig;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
+	private readonly getGlobalSettings: () => GlobalSettings;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -260,7 +283,7 @@ export class RoomRuntime {
 		this.sessionFactory = config.sessionFactory;
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? DEFAULT_MAX_CONCURRENT_GROUPS;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
-		this.tickInterval = config.tickInterval ?? 30_000;
+		this.jobQueue = config.jobQueue ?? null;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
@@ -268,6 +291,7 @@ export class RoomRuntime {
 		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
+		this.getGlobalSettings = config.getGlobalSettings;
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -297,17 +321,121 @@ export class RoomRuntime {
 	}
 
 	// =========================================================================
+	// Fallback Model Switching (for rate limit handling)
+	// =========================================================================
+
+	/**
+	 * Attempt to switch a session to a fallback model when a rate limit is detected.
+	 * Returns true if a fallback was attempted, false if no fallback is available.
+	 */
+	private async trySwitchToFallbackModel(
+		groupId: string,
+		sessionId: string,
+		sessionRole: 'worker' | 'leader'
+	): Promise<boolean> {
+		const settings = this.getGlobalSettings();
+		const fallbackModels = settings.fallbackModels ?? [];
+
+		if (fallbackModels.length === 0) {
+			return false;
+		}
+
+		// Get current model info from the session
+		let currentModel: string;
+		let currentProvider: string;
+		try {
+			const modelInfo = (await this.messageHub?.request('session.model.get', { sessionId })) as
+				| SessionModelGetResult
+				| undefined;
+			if (!modelInfo || !modelInfo.currentModel) {
+				log.warn(`Could not get current model for session ${sessionId}`);
+				return false;
+			}
+			currentModel = modelInfo.currentModel;
+			currentProvider = modelInfo.modelInfo?.provider ?? 'anthropic';
+		} catch (err) {
+			log.warn(`Error getting current model for session ${sessionId}:`, err);
+			return false;
+		}
+
+		// Find the index of the current model in the fallback chain
+		const currentIndex = fallbackModels.findIndex(
+			(f) => f.model === currentModel && f.provider === currentProvider
+		);
+
+		// Determine the next fallback model
+		let fallback: FallbackModelEntry | undefined;
+		if (currentIndex === -1) {
+			// Current model is not in fallback chain, use the first fallback
+			fallback = fallbackModels[0];
+		} else {
+			// Try the next one in the chain
+			const nextIndex = currentIndex + 1;
+			if (nextIndex < fallbackModels.length) {
+				fallback = fallbackModels[nextIndex];
+			}
+			// If current is the last in chain and there's only one fallback, no point switching
+			// to itself, so don't fall back
+		}
+
+		if (!fallback) {
+			log.info(
+				`No fallback model available for ${sessionRole} session ${sessionId} ` +
+					`(current: ${currentProvider}/${currentModel}, chain exhausted)`
+			);
+			return false;
+		}
+
+		// Don't switch to the same model
+		if (fallback.model === currentModel && fallback.provider === currentProvider) {
+			return false;
+		}
+
+		try {
+			const result = (await this.messageHub?.request('session.model.switch', {
+				sessionId,
+				model: fallback.model,
+				provider: fallback.provider,
+			})) as ModelSwitchResult | undefined;
+
+			if (result?.success) {
+				log.info(
+					`Switched ${sessionRole} session ${sessionId} from ${currentProvider}/${currentModel} ` +
+						`to ${fallback.provider}/${fallback.model} due to rate limit`
+				);
+				this.appendGroupEvent(groupId, 'model_fallback', {
+					text: `Switched from ${currentModel} to ${fallback.model} due to rate limit`,
+					fromModel: currentModel,
+					fromProvider: currentProvider,
+					toModel: fallback.model,
+					toProvider: fallback.provider,
+					sessionRole,
+				});
+				return true;
+			} else {
+				log.warn(
+					`Fallback model switch failed for ${sessionRole} session ${sessionId}: ${result?.error ?? 'unknown error'}`
+				);
+			}
+		} catch (err) {
+			log.error(`Error switching ${sessionRole} session ${sessionId} to fallback model:`, err);
+		}
+
+		return false;
+	}
+
+	// =========================================================================
 	// Lifecycle
 	// =========================================================================
 
 	start(): void {
 		this.state = 'running';
-		this.tickTimer = setInterval(() => this.tick(), this.tickInterval);
 		this.scheduleTick();
 	}
 
 	pause(): void {
 		this.state = 'paused';
+		if (this.jobQueue) cancelPendingTickJobs(this.roomId, this.jobQueue);
 	}
 
 	resume(): void {
@@ -317,16 +445,22 @@ export class RoomRuntime {
 
 	stop(): void {
 		this.state = 'stopped';
-		if (this.tickTimer) {
-			clearInterval(this.tickTimer);
-			this.tickTimer = null;
-		}
+		if (this.jobQueue) cancelPendingTickJobs(this.roomId, this.jobQueue);
 		// Clean up all mirroring subscriptions
 		for (const cleanup of this.mirroringCleanups.values()) {
 			cleanup();
 		}
 		this.mirroringCleanups.clear();
 		this.observer.dispose();
+
+		// Safety net: mark zombie groups (active groups for terminal tasks) as completed.
+		// Runs synchronously at stop time — no session recovery, just DB consistency.
+		const zombiesCleaned = this.groupRepo.cleanupZombieGroupsForRoom(this.roomId);
+		if (zombiesCleaned > 0) {
+			log.warn(
+				`[stop] Room ${this.roomId}: cleaned up ${zombiesCleaned} zombie group(s) on runtime stop`
+			);
+		}
 	}
 
 	getState(): RuntimeState {
@@ -530,8 +664,9 @@ export class RoomRuntime {
 		// worktree gate next would bounce the worker straight back into another failing API
 		// call — creating a rapid bounce loop.  Detecting the error first prevents that.
 		//
-		// terminal   → fail task immediately (4xx — unrecoverable, no point bouncing)
-		// rate_limit → set initial backoff and pause (only on first detection; re-triggers fall through)
+		// terminal    → fail task immediately (4xx — unrecoverable, no point bouncing)
+		// rate_limit  → set initial backoff and pause (only on first detection; re-triggers fall through)
+		// usage_limit → immediately try fallback model; if none available, fall through to rate_limit behavior (backoff + pause)
 		// recoverable / null → fall through to worktree check and exit gate
 		{
 			const errorClass = classifyError(workerOutputText);
@@ -576,10 +711,46 @@ export class RoomRuntime {
 						sessionRole: 'worker',
 					});
 					this.scheduleTickAfterRateLimitReset(groupId);
+					// Try to switch to a fallback model if configured
+					await this.trySwitchToFallbackModel(groupId, group.workerSessionId, 'worker');
 					return;
 				}
 				// group.rateLimit already set (even if expired): re-trigger after expiry.
 				// Fall through to the worktree check so the worker can attempt cleanup/retry.
+			}
+			if (errorClass?.class === 'usage_limit') {
+				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+				// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
+				log.info(
+					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
+				);
+				const switched = await this.trySwitchToFallbackModel(
+					groupId,
+					group.workerSessionId,
+					'worker'
+				);
+				if (!switched) {
+					// No fallback available — fall through to rate_limit behavior (backoff + pause)
+					// Parse reset time from the usage limit message, or use 1-minute default
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(workerOutputText, 'worker')
+						: null;
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'worker',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'worker',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
+					return;
+				}
+				// Fall through to normal routing — fallback model switch event was already appended
+				// in trySwitchToFallbackModel so the UI shows the switch clearly.
 			}
 		}
 
@@ -833,10 +1004,11 @@ export class RoomRuntime {
 		}
 
 		// Classify any API errors in leader output.
-		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
-		// rate_limit → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
-		//              (no parseable reset time) mirroring skips setRateLimit, so we must apply a
-		//              minimum backoff here to prevent the task stalling indefinitely.
+		// terminal    → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
+		// rate_limit  → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
+		//               (no parseable reset time) mirroring skips setRateLimit, so we must apply a
+		//               minimum backoff here to prevent the task stalling indefinitely.
+		// usage_limit → immediately try fallback model; if none available, fall through to rate_limit behavior (backoff + pause)
 		// recoverable / null → fall through (leader finished without calling a tool — that's fine)
 		//
 		// Note: fetching with afterMessageId=null returns all leader messages since session start.
@@ -895,7 +1067,41 @@ export class RoomRuntime {
 						sessionRole: 'leader',
 					});
 					this.scheduleTickAfterRateLimitReset(groupId);
+					// Try to switch to a fallback model if configured
+					await this.trySwitchToFallbackModel(groupId, group.leaderSessionId, 'leader');
 					return;
+				}
+				if (errorClass?.class === 'usage_limit') {
+					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
+					log.info(
+						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
+					);
+					const switched = await this.trySwitchToFallbackModel(
+						groupId,
+						group.leaderSessionId,
+						'leader'
+					);
+					if (!switched) {
+						// No fallback available — fall through to rate_limit behavior (backoff + pause)
+						const rateLimitBackoff = errorClass.resetsAt
+							? createRateLimitBackoff(leaderOutputText, 'leader')
+							: null;
+						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+							detectedAt: Date.now(),
+							resetsAt: Date.now() + 60 * 1000,
+							sessionRole: 'leader',
+						};
+						this.groupRepo.setRateLimit(groupId, backoff);
+						this.appendGroupEvent(groupId, 'rate_limited', {
+							text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+							resetsAt: backoff.resetsAt,
+							sessionRole: 'leader',
+						});
+						this.scheduleTickAfterRateLimitReset(groupId);
+						return;
+					}
+					// Fall through to normal completion — fallback model switch event was already appended
 				}
 			}
 		}
@@ -1023,6 +1229,7 @@ export class RoomRuntime {
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							rootWorkspacePath: this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
@@ -1151,11 +1358,16 @@ export class RoomRuntime {
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							rootWorkspacePath: this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
 							groupId,
 							hasReviewers,
+							// approved and workerBypassed intentionally omitted: runLeaderSubmitGate
+							// does not call checkLeaderRootRepoSynced (submit is pre-merge), so
+							// these fields are not needed here. If a future hook in runLeaderSubmitGate
+							// requires them, add them explicitly to avoid silent skips.
 						};
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
@@ -1538,22 +1750,44 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Archive a task group - cleanup worktree regardless of state.
+	 * Archive a task group - terminate active sessions, cleanup worktree, and set archived status.
 	 *
-	 * Called when user archives a task via UI. This cleans up the worktree
-	 * to free disk space even for failed tasks (kept for debugging initially).
-	 * Also sets the archivedAt timestamp on the task.
+	 * Called when user archives a task via UI. This:
+	 * 1. Terminates any active sessions and mirroring (if group is still active).
+	 * 2. Cleans up the worktree to free disk space.
+	 * 3. Sets the task status to 'archived' with archivedAt timestamp.
 	 */
-	async archiveTaskGroup(taskId: string): Promise<boolean> {
+	async archiveTaskGroup(
+		taskId: string,
+		options?: { mode?: 'runtime' | 'manual' }
+	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 
-		// Cleanup worktree via TaskGroupManager (handles both active and completed groups)
 		if (group) {
+			// Terminate active sessions if group is still active.
+			// If terminateGroup() fails (e.g., concurrent version conflict), we log and
+			// continue rather than aborting — archive is destructive and non-reversible,
+			// so the worktree and task must still be cleaned up regardless of group state.
+			// This is a deliberate best-effort approach (distinct from terminateTaskGroup
+			// which returns false on failure and lets the caller decide).
+			const isActiveGroup = group.completedAt === null;
+			if (isActiveGroup) {
+				const terminated = await this.taskGroupManager.terminateGroup(group.id);
+				if (!terminated) {
+					log.warn(
+						`archiveTaskGroup: failed to terminate active group ${group.id} for task ${taskId}`
+					);
+				}
+			}
+			await this.terminateGroupSessions(group);
+			this.cleanupMirroring(group.id, isActiveGroup ? 'Task archived by user.' : undefined);
+
+			// Cleanup worktree via TaskGroupManager
 			await this.taskGroupManager.archiveGroup(group.id);
 		}
 
-		// Set archivedAt timestamp on task
-		await this.taskManager.archiveTask(taskId);
+		// Set archivedAt timestamp on task (transitions to 'archived' status)
+		await this.taskManager.archiveTask(taskId, { mode: options?.mode });
 
 		return true;
 	}
@@ -1606,6 +1840,70 @@ export class RoomRuntime {
 
 		this.scheduleTick();
 		return { success: true, cancelledTaskIds: [...cancelledTaskIds] };
+	}
+
+	/**
+	 * Force-stop a session group by ID.
+	 *
+	 * Kills worker and leader sessions, marks the group as failed, and deletes the
+	 * group record from the DB. Used for manual cleanup of stale or stuck groups
+	 * via the `session_group.stop` RPC.
+	 *
+	 * Task status is NOT changed — the group is removed while leaving the task
+	 * in its current state. Call task.cancel separately if needed.
+	 *
+	 * Returns { success: false } if the group doesn't exist or belongs to a
+	 * different room (validated by checking the task via this room's TaskManager).
+	 */
+	async forceStopSessionGroup(groupId: string): Promise<{ success: boolean; error?: string }> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) {
+			return { success: false, error: `Session group ${groupId} not found` };
+		}
+
+		// Validate the group belongs to this room by fetching the task via this
+		// room's TaskManager (which is scoped to this.roomId).
+		const task = await this.taskManager.getTask(group.taskId);
+		if (!task) {
+			// Task not in this room or doesn't exist. Refuse to act on foreign groups.
+			return {
+				success: false,
+				error: `Group ${groupId} belongs to a different room or its task no longer exists`,
+			};
+		}
+
+		// Stop the actual agent processes first (best-effort).
+		await this.terminateGroupSessions(group);
+
+		// Mark group as terminal in the DB (unobserves sessions too).
+		if (group.completedAt === null) {
+			const terminated = await this.taskGroupManager.terminateGroup(groupId);
+			if (!terminated) {
+				// Concurrent modification (optimistic lock conflict) — the group may have
+				// already been terminated by another code path. Log and continue; the
+				// deleteGroup() below will still free the concurrency slot.
+				log.warn(
+					`[forceStopSessionGroup] terminateGroup(${groupId}) returned null — ` +
+						`possible concurrent modification; proceeding with delete`
+				);
+			}
+		}
+
+		// Clean up message mirroring subscriptions.
+		this.cleanupMirroring(groupId, 'Force-stopped by user.');
+
+		// Delete the group record from the DB (freeing the concurrency slot).
+		this.groupRepo.deleteGroup(groupId);
+
+		// Emit task update so the frontend reflects the removed group.
+		// emitGoalProgressForTask is intentionally omitted: goal progress is derived
+		// from task status, which forceStopSessionGroup deliberately leaves unchanged.
+		// There is nothing for the goal progress bar to update.
+		await this.emitTaskUpdateById(group.taskId);
+		this.scheduleTick();
+
+		log.info(`[forceStopSessionGroup] Group ${groupId} for task ${group.taskId} force-stopped`);
+		return { success: true };
 	}
 
 	/**
@@ -1848,14 +2146,12 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Set up live message forwarding for a group's worker/leader sessions.
+	 * Set up live message monitoring for a group's worker/leader sessions.
 	 *
-	 * Subscribes to DaemonHub sdk.message events and broadcasts enriched deltas
-	 * on state.groupMessages.delta for TaskConversationRenderer.
-	 *
-	 * IMPORTANT: We intentionally do NOT mirror worker/leader SDK messages into
-	 * any group message table anymore. Task view history is reconstructed from each
-	 * session's sdk_messages stream via task.getGroupMessages.
+	 * Subscribes to DaemonHub sdk.message events, persists each enriched message
+	 * to session_group_messages (for LiveQuery). Does NOT broadcast
+	 * state.groupMessages.delta — message delivery to the frontend is handled
+	 * by the LiveQuery subscription (sessionGroupMessages.byGroup).
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -1898,23 +2194,29 @@ export class RoomRuntime {
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
 					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-					// Broadcast enriched delta to subscribed frontends.
-					if (this.messageHub) {
-						const enrichedMessage = {
-							...event.message,
-							_taskMeta: {
-								authorRole: role,
-								authorSessionId: sessionId,
-								turnId,
-								iteration,
-							},
-						};
-						this.messageHub.event(
-							'state.groupMessages.delta',
-							{ added: [{ ...enrichedMessage, timestamp: Date.now() }], timestamp: Date.now() },
-							{ channel: `group:${group.id}` }
-						);
-					}
+					// Persist to session_group_messages so LiveQuery subscribers receive the event.
+					const enrichedMessage = {
+						...event.message,
+						_taskMeta: {
+							authorRole: role,
+							authorSessionId: sessionId,
+							turnId,
+							iteration,
+						},
+					};
+					const sdkNow = Date.now();
+					const sdkMsgType =
+						'type' in event.message && typeof event.message.type === 'string'
+							? event.message.type
+							: 'assistant';
+					this.groupRepo.appendGroupMessage({
+						groupId: group.id,
+						sessionId,
+						role,
+						messageType: sdkMsgType,
+						content: JSON.stringify(enrichedMessage),
+						createdAt: sdkNow,
+					});
 				},
 				{ sessionId }
 			);
@@ -1944,21 +2246,41 @@ export class RoomRuntime {
 			kind,
 			payloadJson: payload ? JSON.stringify(payload) : undefined,
 		});
-		if (this.messageHub) {
-			const now = Date.now();
-			this.messageHub.event(
-				'state.groupMessages.delta',
-				{
-					added: [
-						{
-							type: kind === 'leader_summary' ? 'leader_summary' : 'status',
-							text: payload?.text ?? kind,
-							timestamp: now,
-						},
-					],
-					timestamp: now,
-				},
-				{ channel: `group:${groupId}` }
+		const now = Date.now();
+		// Map event kinds to message types for the frontend.
+		// 'leader_summary' is a special case (rendered as a distinct card).
+		// 'rate_limited' and 'model_fallback' get their own type so the frontend
+		// can render them as prominent notifications.
+		const messageType =
+			kind === 'leader_summary'
+				? 'leader_summary'
+				: kind === 'rate_limited'
+					? 'rate_limited'
+					: kind === 'model_fallback'
+						? 'model_fallback'
+						: 'status';
+
+		// Persist to session_group_messages so LiveQuery subscribers receive the event.
+		// For rich event types (rate_limited, model_fallback) store the full payload as
+		// JSON so the frontend can render extra fields (resetsAt, sessionRole, etc.).
+		// For simple status/leader_summary, store just the text.
+		const content =
+			messageType === 'rate_limited' || messageType === 'model_fallback'
+				? JSON.stringify({ ...payload, type: messageType })
+				: (payload?.text ?? kind);
+		try {
+			this.groupRepo.appendGroupMessage({
+				groupId,
+				sessionId: null,
+				role: 'system',
+				messageType,
+				content,
+				createdAt: now,
+			});
+		} catch (err) {
+			log.warn(
+				`appendGroupEvent: failed to persist group message for group ${groupId} (type=${messageType}, secondary write — ignored):`,
+				err
 			);
 		}
 	}
@@ -1998,29 +2320,13 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Main scheduling loop. Idempotent with mutex protection.
+	 * Main scheduling loop. Concurrency is managed by the job queue — at most one
+	 * pending room.tick job exists per room, so concurrent calls are not expected
+	 * in production. In unit tests, callers drive ticks directly and sequentially.
 	 */
 	async tick(): Promise<void> {
 		if (this.state !== 'running') return;
-
-		// Mutex: only one tick at a time
-		if (this.tickLocked) {
-			this.tickQueued = true;
-			return;
-		}
-
-		this.tickLocked = true;
-		try {
-			await this.executeTick();
-		} finally {
-			this.tickLocked = false;
-			// Re-tick if queued while we were running
-			if (this.tickQueued) {
-				this.tickQueued = false;
-				// Use microtask to avoid stack depth issues
-				queueMicrotask(() => this.tick());
-			}
-		}
+		await this.executeTick();
 	}
 
 	/**
@@ -2205,28 +2511,43 @@ export class RoomRuntime {
 	 * 1. Observer callback fired but the routing threw an error (now logged, but still need recovery)
 	 * 2. Observer callback was missed due to a race condition (extremely rare)
 	 * 3. Any other silent failure in the worker→leader routing path
+	 * 4. Worker paused by rate limit — when the backoff expires the timer fires scheduleTick()
+	 *    which calls this function; the group is re-triggered regardless of feedbackIteration.
 	 *
 	 * Conditions for a "stuck worker":
-	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
+	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never
+	 *   happened), OR the group has an expired rate limit that was set during a later iteration —
+	 *   in that case the leader was never triggered (onWorkerTerminalState returned early after
+	 *   detecting the rate limit) so recovery is still needed.
 	 * - Worker session IS in the session factory (not a zombie)
 	 * - Worker session processing state is terminal (idle or interrupted)
 	 * - Leader session may or may not exist (with eager init, it always exists; with old lazy
 	 *   init, it may not exist yet — both cases are handled by routeWorkerToLeader)
 	 * - Group is NOT awaiting human review
-	 * - Group is NOT rate-limited
+	 * - Group is NOT actively rate-limited (resetsAt still in the future)
 	 * - Group is NOT paused waiting for a question answer (waiting_for_input is intentional pause)
 	 * - A recovery for this group is NOT already in-flight from a previous tick
 	 */
 	private recoverStuckWorkers(): void {
 		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
 
+		const now = Date.now();
 		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
 		for (const group of activeGroups) {
-			// Only recover groups that haven't routed to leader yet
-			if (group.feedbackIteration > 0) continue;
+			// An expired rate limit means the worker was paused mid-iteration (feedbackIteration may
+			// be > 0) and the leader was never triggered. Allow recovery in that case.
+			// isRateLimited() already returns false for expired limits, so we check the raw field.
+			const hasExpiredRateLimit = group.rateLimit !== null && now >= group.rateLimit.resetsAt;
+
+			// Skip groups where the leader is actively working (feedbackIteration > 0 means the
+			// worker→leader routing already happened at least once and the leader may still be
+			// reviewing). The exception is an expired rate limit: in that case onWorkerTerminalState
+			// returned early (before routing to the leader) so feedbackIteration was NOT incremented
+			// for this iteration — the leader is idle and recovery is safe.
+			if (group.feedbackIteration > 0 && !hasExpiredRateLimit) continue;
 			// Skip groups awaiting human
 			if (group.submittedForReview) continue;
-			// Skip rate-limited groups
+			// Skip actively rate-limited groups (backoff not yet expired)
 			if (this.groupRepo.isRateLimited(group.id)) continue;
 			// Skip groups paused waiting for a question answer — waiting_for_input is an
 			// intentional pause, not a stuck state; the task resumes when the user answers
@@ -2245,6 +2566,9 @@ export class RoomRuntime {
 			// resumeLeaderFromHuman (or resumeWorkerFromHuman) but the worker has not
 			// produced any new output yet — re-routing would inject a sentinel string
 			// into the leader while it is already processing the human's message.
+			// For the expired-rate-limit case this also acts as a safety net: if the LEADER
+			// hit the rate limit (rateLimit.sessionRole === 'leader'), the worker messages were
+			// already forwarded (lastForwardedMessageId updated) and this check skips re-routing.
 			// When getWorkerMessages is absent (some test contexts), fall through to
 			// preserve the original safety-net behavior.
 			if (this.getWorkerMessages) {
@@ -2264,9 +2588,12 @@ export class RoomRuntime {
 				continue;
 			}
 
+			const reason = hasExpiredRateLimit
+				? `rate limit expired (feedbackIteration=${group.feedbackIteration})`
+				: `feedbackIteration=0, waitingForQuestion=false`;
 			log.warn(
 				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but routing to leader not yet ` +
-					`completed (feedbackIteration=0, waitingForQuestion=false). Re-triggering worker→leader routing.`
+					`completed (${reason}). Re-triggering worker→leader routing.`
 			);
 			this.appendGroupEvent(group.id, 'status', {
 				text: `Worker found in ${workerState} state with routing not yet complete — re-triggering routing to Leader.`,
@@ -2287,7 +2614,61 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Auto-clean stale session groups whose tasks have reached a terminal state.
+	 *
+	 * Groups become stale when a task transitions to completed/cancelled/archived
+	 * while its group was still marked active (e.g., after a daemon crash or an
+	 * external status change). Stale groups consume concurrency slots and prevent
+	 * new tasks from being picked up.
+	 *
+	 * This runs at the start of every tick as a safety net. Stale groups are
+	 * terminated (sessions stopped, group marked failed) so slots are freed.
+	 */
+	private async cleanStaleGroups(): Promise<void> {
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		if (activeGroups.length === 0) return;
+
+		// NOTE: getActiveGroups() uses an INNER JOIN on tasks — groups whose tasks
+		// were hard-deleted from the DB will not appear here. Those groups are handled
+		// by the zombie recovery path (findZombieGroups / recoverZombieGroups).
+
+		for (const group of activeGroups) {
+			try {
+				const task = await this.taskManager.getTask(group.taskId);
+				const isStale = !task || STALE_TASK_STATUSES.has(task.status);
+				if (!isStale) continue;
+
+				log.warn(
+					`[cleanStaleGroups] Group ${group.id} is stale ` +
+						`(task ${group.taskId} status=${task?.status ?? 'not found'}) — auto-cleaning`
+				);
+
+				// Stop the actual agent processes (best-effort).
+				await this.terminateGroupSessions(group);
+
+				// Mark group as terminal (unobserves sessions); no-op if already terminal.
+				if (group.completedAt === null) {
+					await this.taskGroupManager.terminateGroup(group.id);
+				}
+
+				// Clean up mirroring subscriptions.
+				this.cleanupMirroring(group.id, 'Stale group auto-cleaned by tick.');
+
+				// Emit UI updates so the frontend reflects the cleaned-up state.
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+			} catch (error) {
+				log.error(`[cleanStaleGroups] Failed to clean stale group ${group.id} — skipping:`, error);
+			}
+		}
+	}
+
 	private async executeTick(): Promise<void> {
+		// Safety net: clean up stale groups whose tasks have already reached a
+		// terminal state. This frees concurrency slots blocked by orphaned groups.
+		await this.cleanStaleGroups();
+
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
 		// Ordering: zombie recovery runs BEFORE tickRecurringMissions so that any
 		// in-flight execution from a prior restart is recovered first, preventing a
@@ -2316,10 +2697,9 @@ export class RoomRuntime {
 		}
 
 		// Check capacity — groups awaiting human review don't consume slots
-		const activeGroups = this.groupRepo
-			.getActiveGroups(this.roomId)
-			.filter((g) => !g.submittedForReview);
-		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
+		const workingGroups = allActiveGroups.filter((g) => !g.submittedForReview);
+		const availableSlots = this.maxConcurrentGroups - workingGroups.length;
 
 		if (availableSlots <= 0) return;
 
@@ -2345,9 +2725,24 @@ export class RoomRuntime {
 		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 		if (executableTasks.length === 0) return;
 
+		// Collect task IDs that already have an active (non-terminal) group.
+		// Uses allActiveGroups (including submitted-for-review) to prevent spawning
+		// a duplicate group while another is awaiting human review.
+		// This prevents duplicate group spawning when concurrent ticks race
+		// (the job queue processor runs up to maxConcurrent jobs in parallel,
+		// so two ticks can both see a task as 'pending' before either transitions
+		// it to 'in_progress').
+		const activeGroupTaskIds = new Set(allActiveGroups.map((g) => g.taskId));
+
 		// Filter to tasks whose dependencies are all completed
 		const readyTasks: NeoTask[] = [];
 		for (const task of executableTasks) {
+			if (activeGroupTaskIds.has(task.id)) {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — active group already exists`
+				);
+				continue;
+			}
 			if (await this.taskManager.areDependenciesMet(task)) {
 				readyTasks.push(task);
 			} else {
@@ -2899,6 +3294,18 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
+		// Defense-in-depth: verify no active group exists for this task right before spawning.
+		// Catches races that slip past the executeTick() filter (e.g., concurrent ticks).
+		// Check ALL active groups, not just the most recent — a stale older group with
+		// completedAt === null would be missed by getGroupByTaskId() which returns only the latest.
+		const allActiveGroups = this.groupRepo.getActiveGroupsForTask(task.id);
+		if (allActiveGroups.length > 0) {
+			log.warn(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has ${allActiveGroups.length} active group(s) (${allActiveGroups.map((g) => g.id).join(', ')}) — skipping duplicate spawn`
+			);
+			return;
+		}
+
 		// Find the goal linked to this task. Goal is optional — tasks without a goal still run.
 		const goals = await this.goalManager.getGoalsForTask(task.id);
 		const goal = goals[0] ?? null;
@@ -3176,39 +3583,31 @@ export class RoomRuntime {
 
 	private scheduleTick(): void {
 		if (this.state !== 'running') return;
-		// Use queueMicrotask for non-blocking tick scheduling
-		queueMicrotask(() => this.tick());
+		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, 0);
 	}
 
 	/**
 	 * Schedule a tick after rate limit reset time.
 	 * Used to resume work after API rate limit backoff period expires.
+	 *
+	 * Do NOT clearRateLimit here. The expired (non-null) rateLimit object serves as the
+	 * re-detection sentinel in onWorkerTerminalState / onLeaderTerminalState: the
+	 * `!group.rateLimit` guard uses it to distinguish "first detection" from "re-trigger
+	 * after expiry", preventing an infinite 60-second bounce loop.
+	 * The rate limit is cleared in `send_to_worker` when a new worker iteration genuinely starts.
 	 */
 	private scheduleTickAfterRateLimitReset(groupId: string): void {
 		const remainingMs = this.groupRepo.getRateLimitRemainingMs(groupId);
-		if (remainingMs <= 0) {
-			// Rate limit already expired, schedule immediate tick
-			this.scheduleTick();
-			return;
+		const delayMs = remainingMs <= 0 ? 0 : remainingMs + 5000;
+
+		if (delayMs > 0) {
+			log.info(
+				`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
+					`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
+			);
 		}
 
-		// Add a small buffer (5 seconds) to ensure rate limit has fully reset
-		const delayMs = remainingMs + 5000;
-
-		log.info(
-			`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
-				`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
-		);
-
-		setTimeout(() => {
-			// Do NOT clearRateLimit here.  The expired (non-null) rateLimit object serves as the
-			// re-detection sentinel in onWorkerTerminalState / onLeaderTerminalState: the
-			// `!group.rateLimit` guard uses it to distinguish "first detection" from "re-trigger
-			// after expiry", preventing an infinite 60-second bounce loop.
-			// The rate limit is cleared at the right place: in `send_to_worker` when a new worker
-			// iteration genuinely starts, at which point fresh 429s should be re-detected.
-			this.scheduleTick();
-		}, delayMs);
+		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, delayMs);
 	}
 
 	/**

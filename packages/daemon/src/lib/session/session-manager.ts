@@ -9,7 +9,6 @@
  *
  * Also manages:
  * - EventBus subscriptions for async message processing
- * - Background task tracking for cleanup
  */
 
 import type { Session, MessageHub, MessageDeliveryMode } from '@neokai/shared';
@@ -21,6 +20,10 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor';
+import { SESSION_TITLE_GENERATION } from '../job-queue-constants';
+import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler';
 
 // Import extracted modules
 import { SessionCache } from './session-cache';
@@ -35,12 +38,11 @@ import { MessagePersistence } from './message-persistence';
 /**
  * Cleanup state machine for SessionManager
  *
- * Prevents race conditions during cleanup by tracking state and
- * preventing new background tasks from starting during cleanup.
+ * Prevents concurrent or redundant cleanup calls.
  *
  * States:
  * - IDLE: Normal operation, cleanup not started
- * - CLEANING: Cleanup in progress, barrier active for new background tasks
+ * - CLEANING: Cleanup in progress
  * - CLEANED: Cleanup complete, no further operations allowed
  */
 export enum CleanupState {
@@ -53,10 +55,7 @@ export class SessionManager {
 	private logger: Logger;
 	private worktreeManager: WorktreeManager;
 	private eventBusUnsubscribers: Array<() => void> = [];
-
-	// Track pending background tasks (like title generation) for cleanup
-	// These are fire-and-forget operations that must complete before DB closes
-	private pendingBackgroundTasks: Set<Promise<unknown>> = new Set();
+	private started = false;
 
 	// Cleanup state machine - prevents race conditions during shutdown
 	private cleanupState: CleanupState = CleanupState.IDLE;
@@ -73,7 +72,9 @@ export class SessionManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private eventBus: DaemonHub,
-		private config: SessionLifecycleConfig
+		private config: SessionLifecycleConfig,
+		private jobQueue: JobQueueRepository,
+		private jobProcessor: JobQueueProcessor
 	) {
 		this.logger = new Logger('SessionManager');
 		this.worktreeManager = new WorktreeManager();
@@ -113,6 +114,21 @@ export class SessionManager {
 	}
 
 	/**
+	 * Register job handlers and start background processing.
+	 * Must be called after construction but before jobProcessor.start().
+	 * Throws if called more than once to catch accidental double-registration.
+	 */
+	start(): void {
+		if (this.started) {
+			throw new Error('SessionManager.start() called more than once');
+		}
+		this.started = true;
+		this.jobProcessor.register(SESSION_TITLE_GENERATION, (job) =>
+			handleSessionTitleGeneration(job, this.sessionLifecycle)
+		);
+	}
+
+	/**
 	 * Setup EventBus subscriptions for async message processing
 	 * ARCHITECTURE: EventBus-centric pattern - SessionManager handles message persistence
 	 */
@@ -138,29 +154,14 @@ export class SessionManager {
 			const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
 
 			try {
-				// STEP 1: Generate title and rename branch (if needed)
+				// STEP 1: Enqueue title generation job (if needed)
 				// Only run if workspace initialization is needed (first message)
-				// CRITICAL: Check cleanup barrier to prevent race conditions
 				if (needsWorkspaceInit) {
-					// BARRIER: Skip new background tasks during cleanup
-					// This prevents race conditions where tasks complete during shutdown
-					/* v8 ignore next */
-					if (this.cleanupState !== CleanupState.IDLE) return;
-
-					const titleGenTask = this.sessionLifecycle
-						.generateTitleAndRenameBranch(sessionId, userMessageText)
-						.catch((error) => {
-							// Title generation failure is non-fatal
-							this.logger.error(`[SessionManager] Title generation failed:`, error);
-						});
-
-					// Track task for cleanup barrier
-					this.pendingBackgroundTasks.add(titleGenTask);
-					titleGenTask.finally(() => {
-						this.pendingBackgroundTasks.delete(titleGenTask);
+					this.jobQueue.enqueue({
+						queue: SESSION_TITLE_GENERATION,
+						payload: { sessionId, userMessageText },
+						maxRetries: 2,
 					});
-
-					await titleGenTask;
 				}
 
 				// STEP 2: Clear draft if it matches the sent message content
@@ -219,8 +220,7 @@ export class SessionManager {
 	}
 
 	/**
-	 * Get the session lifecycle manager (exposed for testing)
-	 * @internal
+	 * Get the session lifecycle manager.
 	 */
 	getSessionLifecycle(): SessionLifecycle {
 		return this.sessionLifecycle;
@@ -325,11 +325,14 @@ export class SessionManager {
 	 * Cleanup all sessions (called during shutdown)
 	 *
 	 * Uses a state machine to prevent race conditions:
-	 * - IDLE → CLEANING: Sets barrier, prevents new background tasks
+	 * - IDLE → CLEANING: Sets barrier
 	 * - CLEANING: Executes cleanup in phases
 	 * - CLEANING → CLEANED: Final state, no more operations allowed
 	 *
 	 * If cleanup fails, state returns to IDLE to allow retry.
+	 *
+	 * Title generation jobs are drained by the job processor (stopped in app.ts
+	 * before sessionManager.cleanup() is called), not here.
 	 */
 	async cleanup(): Promise<void> {
 		// State check: prevent concurrent cleanup
@@ -337,7 +340,7 @@ export class SessionManager {
 			return;
 		}
 
-		// Transition to CLEANING state - sets the barrier for new background tasks
+		// Transition to CLEANING state
 		this.cleanupState = CleanupState.CLEANING;
 
 		try {
@@ -352,31 +355,7 @@ export class SessionManager {
 			}
 			this.eventBusUnsubscribers = [];
 
-			// PHASE 2: Wait for pending background tasks (like title generation) with timeout
-			// These are fire-and-forget operations from EventBus handlers
-			// The cleanup barrier prevents new tasks from starting
-			// Use a timeout to prevent hanging in CI when title generation takes too long
-			const BACKGROUND_TASK_TIMEOUT_MS = 5000; // 5 seconds max wait
-
-			if (this.pendingBackgroundTasks.size > 0) {
-				const timeoutPromise = new Promise<'timeout'>((resolve) =>
-					setTimeout(() => resolve('timeout'), BACKGROUND_TASK_TIMEOUT_MS)
-				);
-
-				await Promise.race([
-					Promise.all(Array.from(this.pendingBackgroundTasks))
-						.then(() => 'completed' as const)
-						.catch((error) => {
-							this.logger.error(`[SessionManager] Error waiting for background tasks:`, error);
-							return 'error' as const;
-						}),
-					timeoutPromise,
-				]);
-
-				this.pendingBackgroundTasks.clear();
-			}
-
-			// PHASE 3: Cleanup all in-memory sessions in parallel
+			// PHASE 2: Cleanup all in-memory sessions in parallel
 			// CRITICAL: Each AgentSession.cleanup() now properly stops SDK queries
 			// with lifecycle manager, ensuring subprocesses exit before we continue
 			const cleanupPromises: Promise<void>[] = [];

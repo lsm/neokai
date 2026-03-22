@@ -80,38 +80,6 @@ export function setupGoalHandlers(
 			});
 	};
 
-	/**
-	 * Emit goal.updated event to notify UI clients
-	 */
-	const emitGoalUpdated = (roomId: string, goalId: string, goal?: RoomGoal) => {
-		daemonHub
-			.emit('goal.updated', {
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId,
-				goal,
-			})
-			.catch((error) => {
-				log.warn(`Failed to emit goal.updated for room ${roomId}:`, error);
-			});
-	};
-
-	/**
-	 * Emit goal.progressUpdated event to notify UI clients
-	 */
-	const emitGoalProgressUpdated = (roomId: string, goalId: string, progress: number) => {
-		daemonHub
-			.emit('goal.progressUpdated', {
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId,
-				progress,
-			})
-			.catch((error) => {
-				log.warn(`Failed to emit goal.progressUpdated for room ${roomId}:`, error);
-			});
-	};
-
 	// goal.create - Create a new goal
 	messageHub.onRequest('goal.create', async (data) => {
 		const params = data as {
@@ -254,8 +222,6 @@ export function setupGoalHandlers(
 			);
 		}
 
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-
 		return { goal };
 	});
 
@@ -273,8 +239,6 @@ export function setupGoalHandlers(
 		const goalManager = goalManagerFactory(params.roomId);
 		const goal = await goalManager.needsHumanGoal(params.goalId);
 
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-
 		return { goal };
 	});
 
@@ -291,8 +255,6 @@ export function setupGoalHandlers(
 
 		const goalManager = goalManagerFactory(params.roomId);
 		const goal = await goalManager.reactivateGoal(params.goalId);
-
-		emitGoalUpdated(params.roomId, params.goalId, goal);
 
 		return { goal };
 	});
@@ -331,10 +293,6 @@ export function setupGoalHandlers(
 			goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
 		}
 
-		// Emit goal.updated event (task linked and progress recalculated)
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-		emitGoalProgressUpdated(params.roomId, params.goalId, goal.progress);
-
 		return { goal };
 	});
 
@@ -351,9 +309,6 @@ export function setupGoalHandlers(
 
 		const goalManager = goalManagerFactory(params.roomId);
 		const success = await goalManager.deleteGoal(params.goalId);
-
-		// Emit goal.updated event with undefined goal to signal deletion
-		emitGoalUpdated(params.roomId, params.goalId);
 
 		return { success };
 	});
@@ -397,7 +352,6 @@ export function setupGoalHandlers(
 			missionType: 'recurring',
 		});
 
-		emitGoalUpdated(params.roomId, params.goalId, updated);
 		return { goal: updated, nextRunAt };
 	});
 
@@ -418,7 +372,6 @@ export function setupGoalHandlers(
 		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
 			schedulePaused: true,
 		});
-		emitGoalUpdated(params.roomId, params.goalId, updated);
 		return { goal: updated };
 	});
 
@@ -446,7 +399,6 @@ export function setupGoalHandlers(
 			schedulePaused: false,
 			nextRunAt: nextRunAt ?? undefined,
 		});
-		emitGoalUpdated(params.roomId, params.goalId, updated);
 		return { goal: updated, nextRunAt };
 	});
 

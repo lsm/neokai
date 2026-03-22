@@ -12,6 +12,7 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import type { Config } from '../../config';
 import type { Database } from '../../storage/database';
+import type { ReactiveDatabase } from '../../storage/reactive-database';
 
 import { setupSessionHandlers } from './session-handlers';
 import { setupMessageHandlers } from './message-handlers';
@@ -58,6 +59,10 @@ import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor';
+import { SpaceSessionGroupRepository } from '../../storage/repositories/space-session-group-repository';
+import { enqueueRoomTick } from '../job-handlers/room-tick.handler';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -65,6 +70,9 @@ import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
 import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
 import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
+import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
+import { setupLiveQueryHandlers } from './live-query-handlers';
+import { LiveQueryEngine } from '../../storage/live-query';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -78,6 +86,21 @@ export interface RPCHandlerDependencies {
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
+	/**
+	 * Persistent job queue repository.
+	 * TODO: consumed by Milestones 2–5 handlers (session title generation,
+	 * GitHub polling, room tick, cleanup jobs).
+	 */
+	jobQueue: JobQueueRepository;
+	/**
+	 * Persistent job queue processor.
+	 * TODO: consumed by Milestones 2–5 handlers for registering queue handlers.
+	 */
+	jobProcessor: JobQueueProcessor;
+	/** Reactive database wrapper for change event emission */
+	reactiveDb: ReactiveDatabase;
+	/** Live query engine for reactive SQL subscriptions */
+	liveQueries: LiveQueryEngine;
 }
 
 const log = new Logger('rpc-handlers');
@@ -107,12 +130,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Create factory function for per-room goal managers
 	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
-		return new GoalManager(deps.db.getDatabase(), roomId);
+		return new GoalManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
 	};
 
 	// Create factory function for per-room task managers (used by goal review handlers)
 	const goalTaskManagerFactory: GoalTaskManagerFactory = (roomId: string) => {
-		return new TaskManager(deps.db.getDatabase(), roomId);
+		return new TaskManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
 	};
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
@@ -137,7 +160,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomManager,
 		deps.daemonHub,
 		deps.config.workspaceRoot,
-		deps.sessionManager
+		deps.sessionManager,
+		deps.jobQueue
 	);
 
 	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
@@ -150,10 +174,36 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		defaultWorkspacePath: deps.config.workspaceRoot,
 		defaultModel: deps.config.defaultModel,
+		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
+		reactiveDb: deps.reactiveDb,
+		jobQueue: deps.jobQueue,
+		jobProcessor: deps.jobProcessor,
 	});
-	roomRuntimeService.start().catch((error) => {
-		log.error('Failed to start RoomRuntimeService:', error);
-	});
+
+	// Seed an initial room.tick job for every room after startup, and for each
+	// newly created room. The handler's finally block keeps the loop going; this
+	// is the only bootstrap call needed.
+	const seedRoomTick = (roomId: string) => enqueueRoomTick(roomId, deps.jobQueue);
+
+	roomRuntimeService
+		.start()
+		.then(() => {
+			for (const room of roomManager.listRooms()) {
+				seedRoomTick(room.id);
+			}
+		})
+		.catch((error) => {
+			log.error('Failed to start RoomRuntimeService:', error);
+		});
+
+	// Seed a tick for rooms created after startup.
+	const unsubRoomCreated = deps.daemonHub.on(
+		'room.created',
+		(event) => {
+			seedRoomTick(event.room.id);
+		},
+		{ sessionId: 'global' }
+	);
 
 	// Wire question handlers now that roomRuntimeService is available.
 	// Pass its session lookup so question.respond reaches the correct live AgentSession
@@ -163,12 +213,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		roomRuntimeService.getAgentSession(sessionId)
 	);
 
-	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService);
+	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService, deps.jobQueue);
 	setupTaskHandlers(
 		deps.messageHub,
 		roomManager,
 		deps.daemonHub,
 		deps.db,
+		deps.reactiveDb,
 		undefined,
 		roomRuntimeService
 	);
@@ -194,6 +245,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
+	// LiveQuery subscribe/unsubscribe handlers
+	const unsubLiveQuery = setupLiveQueryHandlers(
+		deps.messageHub,
+		deps.liveQueries,
+		deps.db.getDatabase()
+	);
+
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
@@ -205,7 +263,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		getAgentById(spaceId: string, id: string) {
 			const agent = spaceAgentRepo.getById(id);
 			if (!agent || agent.spaceId !== spaceId) return null;
-			return { id: agent.id, name: agent.name };
+			return { id: agent.id, name: agent.name, role: agent.role };
 		},
 	};
 	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
@@ -252,6 +310,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 	});
 
+	// SpaceSessionGroupRepository — persists session groups for Task Agents and sub-sessions.
+	// Constructed once here and injected into TaskAgentManager.
+	const spaceSessionGroupRepo = new SpaceSessionGroupRepository(deps.db.getDatabase());
+
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
@@ -268,6 +330,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		messageHub: deps.messageHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
+		sessionGroupRepo: spaceSessionGroupRepo,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -303,6 +366,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceRuntimeService,
 		spaceWorkflowRunTaskManagerFactory,
 		deps.daemonHub
+	);
+
+	// Space session group admin handlers
+	setupSpaceSessionGroupHandlers(
+		deps.messageHub,
+		deps.daemonHub,
+		deps.spaceManager,
+		spaceSessionGroupRepo
 	);
 
 	// Provision the Global Spaces Agent session (spaces:global)
@@ -355,6 +426,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Return result with cleanup function and exposed services
 	return {
 		cleanup: () => {
+			unsubRoomCreated();
+			unsubLiveQuery();
 			roomRuntimeService.stop();
 			spaceRuntimeService.stop();
 		},

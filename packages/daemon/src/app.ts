@@ -20,6 +20,10 @@ import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
+import { JobQueueRepository } from './storage/repositories/job-queue-repository';
+import { JobQueueProcessor } from './storage/job-queue-processor';
+import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
+import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -63,6 +67,10 @@ export interface DaemonAppContext {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task Agent Manager — manages Task Agent session lifecycle for space tasks */
 	taskAgentManager: TaskAgentManager;
+	/** Persistent job queue repository */
+	jobQueue: JobQueueRepository;
+	/** Persistent job queue processor */
+	jobProcessor: JobQueueProcessor;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -96,9 +104,40 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize database
 	const db = new Database(config.dbPath);
-	await db.initialize();
+	// Create reactiveDb before initialize() so GoalRepository can receive it
 	const reactiveDb = createReactiveDatabase(db);
+	await db.initialize(reactiveDb);
 	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
+
+	// Initialize job queue
+	const jobQueue = new JobQueueRepository(db.getDatabase());
+	const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
+	const jobProcessor = new JobQueueProcessor(jobQueue, {
+		pollIntervalMs: 1000,
+		maxConcurrent,
+		staleThresholdMs: 5 * 60 * 1000,
+	});
+	// --- setInterval inventory (out-of-scope for job-queue migration) ---
+	// The following subsystems intentionally retain their own setInterval timers.
+	// They were audited as part of the background-task migration (milestone 6) and
+	// determined to be out-of-scope because they are not "business tasks" that
+	// belong in the job queue:
+	//
+	//   • JobQueueProcessor.pollTimer (job-queue-processor.ts)
+	//       IS the job-queue infrastructure itself — migrating it is circular.
+	//   • JobQueueProcessor drain-check in stop() (job-queue-processor.ts)
+	//       Short-lived shutdown poll (50 ms); not a recurring business task.
+	//   • WebSocketServerTransport.staleCheckTimer (websocket-server-transport.ts)
+	//       Transport-layer health check; no business logic, not schedulable.
+	//   • SpaceRuntime.tickTimer (space/runtime/space-runtime.ts)
+	//       Drives the SpaceRuntime workflow engine; migrate in a dedicated follow-up.
+	//   • TaskAgentManager concurrent-spawn poll (space/runtime/task-agent-manager.ts)
+	//       Ephemeral, within a single async call; cleaned up before the call returns.
+	//   • app.ts graceful-shutdown readiness check (this file, waitForPendingCalls)
+	//       One-shot shutdown polling with hard timeout; not a recurring task.
+	jobProcessor.setChangeNotifier((table) => {
+		reactiveDb.notifyChange(table);
+	});
 
 	// Initialize Space agent manager
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
@@ -167,8 +206,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,
 			workspaceRoot: config.workspaceRoot,
-		}
+		},
+		jobQueue,
+		jobProcessor
 	);
+
+	// Register session title generation handler before jobProcessor starts
+	sessionManager.start();
 
 	// Initialize State Manager (listens to EventBus, clean dependency graph!)
 	const stateManager = new StateManager(
@@ -199,6 +243,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				config,
 				apiKey,
 				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
+				jobQueue,
+				jobProcessor,
 			});
 
 			logInfo('[Daemon] GitHub integration enabled', {
@@ -228,6 +274,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		gitHubService: gitHubService ?? undefined,
 		spaceManager,
 		spaceAgentManager,
+		jobQueue,
+		jobProcessor,
+		reactiveDb,
+		liveQueries,
 	});
 
 	// Create WebSocket handlers
@@ -336,11 +386,32 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		},
 	});
 
-	// Start GitHub service after server is ready
+	// Start GitHub service after server is ready.
+	// GitHubService.start() registers the github.poll handler and enqueues the
+	// initial job when jobProcessor/jobQueue are provided.
 	if (gitHubService) {
 		gitHubService.start();
 		logInfo('[Daemon] GitHub service started');
 	}
+
+	// Register job handlers BEFORE starting the processor so no pending job
+	// from a previous run is dequeued without a handler available.
+	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
+
+	// Enqueue the initial cleanup job if none is already pending.
+	const pendingCleanup = jobQueue.listJobs({
+		queue: JOB_QUEUE_CLEANUP,
+		status: 'pending',
+		limit: 1,
+	});
+	if (pendingCleanup.length === 0) {
+		jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() });
+		logInfo('[Daemon] Enqueued initial job_queue.cleanup job');
+	}
+
+	// Start job queue processor last (after all handler registrations)
+	jobProcessor.start();
+	logInfo('[Daemon] Job queue processor started');
 
 	// Cleanup function for graceful shutdown
 	let isCleanedUp = false;
@@ -391,14 +462,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				}
 			}
 
+			// Stop job queue processor before MessageHub cleanup
+			await jobProcessor.stop();
+			logInfo('[Daemon] Job queue processor stopped');
+
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
 
-			// Dispose live query engine
-			liveQueries.dispose();
-
-			// Cleanup RPC handlers
+			// Cleanup RPC handlers (disposes live query subscriptions) before
+			// tearing down the engine so handles are disposed against a live engine.
 			rpcHandlerCleanup();
+
+			// Dispose live query engine after all subscriptions are cleared
+			liveQueries.dispose();
 
 			// Stop GitHub service
 			if (gitHubService) {
@@ -451,6 +527,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		spaceManager,
 		spaceRuntimeService,
 		taskAgentManager,
+		jobQueue,
+		jobProcessor,
 		cleanup,
 	};
 }

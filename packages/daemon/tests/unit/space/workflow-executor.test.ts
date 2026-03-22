@@ -1059,4 +1059,1247 @@ describe('WorkflowExecutor', () => {
 			expect(tasks).toHaveLength(0);
 		});
 	});
+
+	// =========================================================================
+	// goalId propagation through task creation
+	// =========================================================================
+
+	describe('goalId propagation', () => {
+		test('task created by advance() inherits goalId from run', async () => {
+			const { workflow } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+			]);
+
+			// Create run separately to set goalId
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Run with goalId',
+				currentStepId: workflow.startStepId,
+				goalId: 'goal-123',
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const { tasks } = await executor.advance();
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].goalId).toBe('goal-123');
+		});
+
+		test('task created by advance() has undefined goalId when run has no goalId', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+			]);
+
+			// Run created by createLinearWorkflow has no goalId
+			expect(run.goalId).toBeUndefined();
+
+			const executor = makeExecutor(workflow, run);
+			const { tasks } = await executor.advance();
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].goalId).toBeUndefined();
+		});
+
+		test('goalId propagates through multiple advance() calls in a three-step workflow', async () => {
+			const stepsData = [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Code', agentId: AGENT_B },
+				{ id: STEP_C, name: 'Review', agentId: AGENT_C },
+			];
+
+			const transitions = [
+				{ from: STEP_A, to: STEP_B, order: 0 },
+				{ from: STEP_B, to: STEP_C, order: 0 },
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF-goalId-multi',
+				steps: stepsData,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi-step goalId run',
+				currentStepId: workflow.startStepId,
+				goalId: 'goal-multi',
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// Advance A → B
+			const r1 = await executor.advance();
+			expect(r1.tasks[0].goalId).toBe('goal-multi');
+
+			// Advance B → C
+			const r2 = await executor.advance();
+			expect(r2.tasks[0].goalId).toBe('goal-multi');
+		});
+
+		test('goalId is undefined for all tasks when run has no goalId in multi-step workflow', async () => {
+			const stepsData = [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Code', agentId: AGENT_B },
+				{ id: STEP_C, name: 'Review', agentId: AGENT_C },
+			];
+
+			const transitions = [
+				{ from: STEP_A, to: STEP_B, order: 0 },
+				{ from: STEP_B, to: STEP_C, order: 0 },
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF-no-goalId',
+				steps: stepsData,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'No goalId run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			const r1 = await executor.advance();
+			expect(r1.tasks[0].goalId).toBeUndefined();
+
+			const r2 = await executor.advance();
+			expect(r2.tasks[0].goalId).toBeUndefined();
+		});
+
+		test('goalId propagates correctly through cyclic transitions', async () => {
+			// Create a workflow with a cycle: A → B → A
+			const stepsData = [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Verify', agentId: AGENT_B },
+			];
+
+			const transitions = [
+				{ from: STEP_A, to: STEP_B, order: 0 },
+				{ from: STEP_B, to: STEP_A, order: 0 }, // cycle back
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'WF-cyclic-goalId',
+				steps: stepsData,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic goalId run',
+				currentStepId: workflow.startStepId,
+				goalId: 'goal-cycle',
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B
+			const r1 = await executor.advance();
+			expect(r1.tasks[0].goalId).toBe('goal-cycle');
+
+			// B → A (cycle back)
+			const r2 = await executor.advance();
+			expect(r2.tasks[0].goalId).toBe('goal-cycle');
+
+			// A → B again
+			const r3 = await executor.advance();
+			expect(r3.tasks[0].goalId).toBe('goal-cycle');
+		});
+	});
+
+	// =========================================================================
+	// Condition type: task_result
+	// =========================================================================
+
+	describe('condition type: task_result', () => {
+		test('evaluateCondition: passes when taskResult starts with expression', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'passed',
+			};
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'passed' },
+				ctx
+			);
+			expect(result.passed).toBe(true);
+		});
+
+		test('evaluateCondition: passes with prefix match (failed: tests broken)', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'failed: tests broken',
+			};
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'failed' },
+				ctx
+			);
+			expect(result.passed).toBe(true);
+		});
+
+		test('evaluateCondition: fails when taskResult does not match expression', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'failed: tests broken',
+			};
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'passed' },
+				ctx
+			);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('does not match');
+			expect(result.reason).toContain('failed: tests broken');
+			expect(result.reason).toContain('passed');
+		});
+
+		test('evaluateCondition: fails when expression is empty', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'passed',
+			};
+			const result = await executor.evaluateCondition({ type: 'task_result', expression: '' }, ctx);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('non-empty expression');
+		});
+
+		test('evaluateCondition: fails when expression is undefined', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = {
+				workspacePath: WORKSPACE,
+				taskResult: 'passed',
+			};
+			const result = await executor.evaluateCondition({ type: 'task_result' }, ctx);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('non-empty expression');
+		});
+
+		test('task_result retries are short-circuited (maxRetries has no effect)', async () => {
+			// task_result context doesn't change between retries, so maxRetries should be ignored.
+			// Verify that advance() only evaluates the condition once even with maxRetries set.
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+						maxRetries: 5,
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-retry-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Retry Test',
+				currentStepId: workflow.startStepId,
+			});
+
+			// Complete a task with 'failed' — won't match 'passed'
+			const verifyStepId = workflow.steps.find((s) => s.name === 'Verify')!.id;
+			const task = await taskManager.createTask({
+				title: 'Verify',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task.id, 'in_progress');
+			await taskManager.completeTask(task.id, 'failed');
+
+			const executor = makeExecutor(workflow, run);
+			// Should fail immediately (not retry 5 times) since taskResult won't change
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+		});
+
+		test('evaluateCondition: fails when taskResult is undefined', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+			]);
+			const executor = makeExecutor(workflow, run);
+			const ctx: ConditionContext = { workspacePath: WORKSPACE };
+			const result = await executor.evaluateCondition(
+				{ type: 'task_result', expression: 'passed' },
+				ctx
+			);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('No task result available');
+		});
+	});
+
+	// =========================================================================
+	// advance() with task_result — DB and fallback resolution
+	// =========================================================================
+
+	describe('advance() with task_result conditions', () => {
+		/**
+		 * Helper: creates a workflow with A → B where A→B has a task_result condition,
+		 * creates a completed task on step A with the given result, then returns the executor.
+		 */
+		async function setupTaskResultWorkflow(opts: {
+			taskResultOnStep?: string;
+			conditionExpression: string;
+		}) {
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: opts.conditionExpression,
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-task-result-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Task Result Test Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			// Create a task on step A and complete it with a result
+			if (opts.taskResultOnStep !== undefined) {
+				const task = await taskManager.createTask({
+					title: 'Verify Task',
+					description: 'Verify work',
+					workflowRunId: run.id,
+					workflowStepId: workflow.steps.find((s) => s.name === 'Verify')!.id,
+					status: 'pending',
+				});
+				await taskManager.setTaskStatus(task.id, 'in_progress');
+				await taskManager.completeTask(task.id, opts.taskResultOnStep);
+			}
+
+			const executor = makeExecutor(workflow, run);
+			return { workflow, run, executor };
+		}
+
+		test('advance() resolves taskResult from DB and follows matching transition', async () => {
+			const { executor } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'passed',
+				conditionExpression: 'passed',
+			});
+
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Next');
+			expect(result.tasks).toHaveLength(1);
+		});
+
+		test('advance() resolves taskResult from DB with prefix match', async () => {
+			const { executor } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'failed: linting errors found',
+				conditionExpression: 'failed',
+			});
+
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('advance() uses stepResult fallback when no DB result', async () => {
+			// No completed task on the step — taskResult comes from options.stepResult
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-fallback-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Fallback Test Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance({ stepResult: 'passed' });
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('advance() DB result takes priority over stepResult fallback', async () => {
+			const { executor } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'failed: real DB result',
+				conditionExpression: 'failed',
+			});
+
+			// Even though stepResult says 'passed', the DB result 'failed: ...' is used
+			const result = await executor.advance({ stepResult: 'passed' });
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('advance() sets needs_attention when task_result does not match', async () => {
+			const { executor, run } = await setupTaskResultWorkflow({
+				taskResultOnStep: 'failed: tests broken',
+				conditionExpression: 'passed',
+			});
+
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
+		});
+
+		test('advance() sets needs_attention when no task result and no fallback', async () => {
+			// No completed task on step, no stepResult fallback
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-no-result-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'No Result Test Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
+		});
+
+		test('advance() picks most recently completed task when multiple exist', async () => {
+			const steps = [
+				{ id: STEP_A, name: 'Verify', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Next', agentId: AGENT_B },
+			];
+			const transitions = [
+				{
+					from: STEP_A,
+					to: STEP_B,
+					condition: {
+						type: 'task_result' as const,
+						expression: 'passed',
+					},
+					order: 0,
+				},
+			];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-multi-tasks-${Date.now()}`,
+				steps,
+				transitions,
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi Tasks Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const verifyStepId = workflow.steps.find((s) => s.name === 'Verify')!.id;
+
+			// Create first task, complete with 'failed'
+			const task1 = await taskManager.createTask({
+				title: 'Verify 1',
+				description: 'First try',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task1.id, 'in_progress');
+			await taskManager.completeTask(task1.id, 'failed: first attempt');
+			// Force a deterministic earlier completedAt via direct DB update
+			db.prepare('UPDATE space_tasks SET completed_at = ? WHERE id = ?').run(1000, task1.id);
+
+			// Create second task, complete with 'passed'
+			const task2 = await taskManager.createTask({
+				title: 'Verify 2',
+				description: 'Second try',
+				workflowRunId: run.id,
+				workflowStepId: verifyStepId,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(task2.id, 'in_progress');
+			await taskManager.completeTask(task2.id, 'passed');
+			// Force a deterministic later completedAt via direct DB update
+			db.prepare('UPDATE space_tasks SET completed_at = ? WHERE id = ?').run(2000, task2.id);
+
+			const executor = makeExecutor(workflow, run);
+			// Should use 'passed' from the most recently completed task
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Next');
+		});
+
+		test('existing condition types continue to work unchanged', async () => {
+			// Verify that 'always', 'human', and 'condition' still work
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{
+					id: STEP_B,
+					name: 'Step B',
+					agentId: AGENT_B,
+					incomingCondition: { type: 'always' },
+				},
+			]);
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Step B');
+		});
+	});
+
+	// =========================================================================
+	// isCyclic transition — iteration counting and maxIterations cap
+	// =========================================================================
+
+	describe('isCyclic transition — iteration counting', () => {
+		test('iterationCount is incremented when following isCyclic transition', async () => {
+			// A→B→A cycle where both transitions are marked isCyclic
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-iter-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: true, order: 0 },
+					{ from: STEP_B, to: STEP_A, condition: { type: 'always' }, isCyclic: true, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Iteration Test',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B (isCyclic, iterationCount becomes 1)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
+
+			// B → A (isCyclic, iterationCount becomes 2)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(2);
+
+			// A → B again (isCyclic, iterationCount becomes 3)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(3);
+		});
+
+		test('non-cyclic transition does not increment iterationCount', async () => {
+			// A→B→C linear workflow with no cyclic transitions
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-linear-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 },
+					{ from: STEP_B, to: STEP_C, condition: { type: 'always' }, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Linear No Iteration',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			await executor.advance(); // A → B
+			await executor.advance(); // B → C
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(0);
+		});
+
+		test('transition with isCyclic: false does not increment iterationCount', async () => {
+			// A→B where the transition explicitly sets isCyclic: false
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-explicit-false-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: false, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Explicit isCyclic False',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			await executor.advance(); // A → B
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(0);
+		});
+
+		test('iterationCount reaches maxIterations and sets needs_attention', async () => {
+			// A→B→A cycle where both transitions are cyclic, maxIterations=2
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cap-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: true, order: 0 },
+					{ from: STEP_B, to: STEP_A, condition: { type: 'always' }, isCyclic: true, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Iteration Cap Test',
+				currentStepId: workflow.startStepId,
+				maxIterations: 2,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B (isCyclic, iterationCount = 1)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
+
+			// B → A (isCyclic, iterationCount = 2 which equals maxIterations)
+			// Should throw WorkflowTransitionError and set needs_attention
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(2);
+			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
+		});
+
+		test('no task is created when iteration cap is hit', async () => {
+			// Verify that no new task is created when the iteration cap is reached
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-no-task-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: true, order: 0 },
+					{ from: STEP_B, to: STEP_A, condition: { type: 'always' }, isCyclic: true, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'No Task On Cap',
+				currentStepId: workflow.startStepId,
+				maxIterations: 1,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B (isCyclic, iterationCount = 1 which equals maxIterations=1)
+			// Should throw before creating any task
+			await expect(executor.advance()).rejects.toThrow(WorkflowTransitionError);
+
+			// Count tasks - should be 0 because no task was created when cap was hit
+			const tasks = await taskManager.listTasksByWorkflowRun(run.id);
+			expect(tasks).toHaveLength(0);
+		});
+
+		test('WorkflowTransitionError message includes iteration info when cap is hit', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-err-msg-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Verify', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: true, order: 0 },
+					{ from: STEP_B, to: STEP_A, condition: { type: 'always' }, isCyclic: true, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Error Message Test',
+				currentStepId: workflow.startStepId,
+				maxIterations: 1,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B (isCyclic, cap hit since maxIterations=1)
+			let caughtError: WorkflowTransitionError | undefined;
+			try {
+				await executor.advance();
+			} catch (err) {
+				if (err instanceof WorkflowTransitionError) {
+					caughtError = err;
+				}
+			}
+
+			expect(caughtError).toBeDefined();
+			expect(caughtError!.message).toContain('Iteration cap reached');
+			expect(caughtError!.message).toContain('1/1');
+			expect(caughtError!.message).toContain('cyclic transition');
+		});
+
+		test('advance() re-reads maxIterations from DB on each call', async () => {
+			// Create a workflow with a cycle where both transitions are cyclic
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-reload-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: true, order: 0 },
+					{ from: STEP_B, to: STEP_A, condition: { type: 'always' }, isCyclic: true, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Reload maxIterations Test',
+				currentStepId: workflow.startStepId,
+				maxIterations: 3,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B (isCyclic, iterationCount = 1)
+			await executor.advance();
+
+			// B → A (isCyclic, iterationCount = 2)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(2);
+
+			// Simulate human increasing maxIterations to 5 via direct DB update
+			runRepo.updateRun(run.id, { maxIterations: 5 });
+
+			// A → B again (isCyclic, iterationCount = 3 which equals original maxIterations=3)
+			// But advance() re-reads from DB, so maxIterations is now 5 and this should succeed
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(3);
+
+			// B → A again (isCyclic, iterationCount = 4)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(4);
+		});
+
+		test('iterationCount is NOT reset when run is reset to in_progress', async () => {
+			// Verify iterationCount persists across status resets
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-persist-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, isCyclic: true, order: 0 },
+					{ from: STEP_B, to: STEP_A, condition: { type: 'always' }, isCyclic: true, order: 0 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Iteration Count Persist Test',
+				currentStepId: workflow.startStepId,
+				maxIterations: 5,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// A → B (isCyclic, iterationCount = 1)
+			await executor.advance();
+
+			// B → A (isCyclic, iterationCount = 2)
+			await executor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(2);
+
+			// Human resets run to in_progress (iterationCount should NOT reset)
+			runRepo.updateStatus(run.id, 'in_progress');
+
+			// Simulate new executor being created (re-reads from DB)
+			const freshExecutor = makeExecutor(workflow, runRepo.getRun(run.id)!);
+
+			// A → B again (isCyclic, iterationCount = 3)
+			await freshExecutor.advance();
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(3);
+		});
+
+		test('cyclic transition condition fails, non-cyclic always passes — no iterationCount increment', async () => {
+			// Step A has two outgoing transitions:
+			//   order 0: isCyclic=true with task_result condition 'loop' (will not match)
+			//   order 1: isCyclic=false with always condition (will match)
+			// When the cyclic branch is skipped due to its condition failing, iterationCount
+			// must remain 0 because followTransition() is never called for that branch.
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-skip-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					// Cyclic back-edge: only followed when task result starts with 'loop'
+					{
+						from: STEP_A,
+						to: STEP_B,
+						condition: { type: 'task_result', expression: 'loop' },
+						isCyclic: true,
+						order: 0,
+					},
+					// Forward edge: always followed when cyclic branch is skipped
+					{
+						from: STEP_A,
+						to: STEP_C,
+						condition: { type: 'always' },
+						isCyclic: false,
+						order: 1,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Skip No Increment',
+				currentStepId: workflow.startStepId,
+				maxIterations: 5,
+			});
+
+			// Create a completed task on STEP_A whose result does NOT start with 'loop'
+			const stepATask = await taskManager.createTask({
+				title: 'Step A task',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: STEP_A,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(stepATask.id, 'in_progress');
+			await taskManager.setTaskStatus(stepATask.id, 'completed', { result: 'done' });
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Should have followed the non-cyclic transition (A → C)
+			expect(result.tasks[0].workflowStepId).toBe(STEP_C);
+			// iterationCount must still be 0 — cyclic branch was never followed
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(0);
+		});
+
+		test('isCyclic transition with task_result condition increments iterationCount when condition passes', async () => {
+			// Verify that the cyclic path correctly increments when its condition DOES match.
+			// Step A: cyclic back to B when task result starts with 'retry', else forward to C.
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-match-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					{
+						from: STEP_A,
+						to: STEP_B,
+						condition: { type: 'task_result', expression: 'retry' },
+						isCyclic: true,
+						order: 0,
+					},
+					{
+						from: STEP_A,
+						to: STEP_C,
+						condition: { type: 'always' },
+						isCyclic: false,
+						order: 1,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Match Increment',
+				currentStepId: workflow.startStepId,
+				maxIterations: 5,
+			});
+
+			// Create a completed task on STEP_A whose result DOES start with 'retry'
+			const stepATask = await taskManager.createTask({
+				title: 'Step A task',
+				description: '',
+				workflowRunId: run.id,
+				workflowStepId: STEP_A,
+				status: 'pending',
+			});
+			await taskManager.setTaskStatus(stepATask.id, 'in_progress');
+			await taskManager.setTaskStatus(stepATask.id, 'completed', {
+				result: 'retry: validation failed',
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Should have followed the cyclic transition (A → B)
+			expect(result.tasks[0].workflowStepId).toBe(STEP_B);
+			// iterationCount must be 1 — cyclic branch was followed
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
+		});
+	});
+
+	// =========================================================================
+	// Multi-agent steps
+	// =========================================================================
+
+	describe('multi-agent steps', () => {
+		test('advance() creates one task per agent when step uses agents[] array', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-multi-agent-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Parallel Work',
+						agents: [
+							{ agentId: AGENT_A, instructions: 'Do thing A' },
+							{ agentId: AGENT_B, instructions: 'Do thing B' },
+						],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi Agent Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Two agents → two tasks
+			expect(result.tasks).toHaveLength(2);
+			expect(result.step.id).toBe(STEP_B);
+
+			// Both tasks share the same workflowRunId and workflowStepId
+			for (const task of result.tasks) {
+				expect(task.workflowRunId).toBe(run.id);
+				expect(task.workflowStepId).toBe(STEP_B);
+				expect(task.status).toBe('pending');
+			}
+		});
+
+		test('advance() creates tasks with per-agent instructions', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-per-agent-instructions-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Parallel',
+						instructions: 'Shared instructions',
+						agents: [
+							{ agentId: AGENT_A, instructions: 'Agent A override' },
+							{ agentId: AGENT_B }, // no per-agent instructions → falls back to step
+						],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Per-Agent Instructions Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			expect(result.tasks).toHaveLength(2);
+
+			// Task for AGENT_A: per-agent instructions override
+			const allTasks = await taskManager.listTasksByWorkflowRun(run.id);
+			const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
+
+			// Sort by description to make assertions deterministic
+			stepBTasks.sort((a, b) => a.description.localeCompare(b.description));
+			expect(stepBTasks[0].description).toBe('Agent A override');
+			expect(stepBTasks[1].description).toBe('Shared instructions');
+		});
+
+		test('advance() with agentId shorthand still creates exactly one task (backward compat)', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-single-agent-compat-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Backward Compat Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Single agentId → single task
+			expect(result.tasks).toHaveLength(1);
+			expect(result.tasks[0].workflowStepId).toBe(STEP_B);
+		});
+
+		test('advance() uses TaskTypeResolver per-agent for each agent entry', async () => {
+			const resolverCalls: Array<{ agentId: string }> = [];
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-resolver-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Parallel',
+						agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Resolver Run',
+				currentStepId: STEP_A,
+			});
+
+			// Inject a TaskTypeResolver that records calls and assigns custom agent IDs
+			const executor = new WorkflowExecutor(
+				workflow,
+				run,
+				taskManager,
+				runRepo,
+				WORKSPACE,
+				makeOkRunner(),
+				(_step, agentEntry) => {
+					resolverCalls.push({ agentId: agentEntry.agentId });
+					return { taskType: 'coding', customAgentId: agentEntry.agentId };
+				}
+			);
+
+			const result = await executor.advance();
+
+			// Resolver called once per agent
+			expect(resolverCalls).toHaveLength(2);
+			expect(resolverCalls.map((c) => c.agentId).sort()).toEqual([AGENT_A, AGENT_B].sort());
+
+			// Tasks have correct customAgentId set by resolver
+			const agentIds = result.tasks.map((t) => t.customAgentId).sort();
+			expect(agentIds).toEqual([AGENT_A, AGENT_B].sort());
+		});
+
+		test('three-agent step creates three tasks', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-three-agents-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Start', agentId: AGENT_A },
+					{
+						id: STEP_B,
+						name: 'Triple Parallel',
+						agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }, { agentId: AGENT_C }],
+					},
+				],
+				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Triple Run',
+				currentStepId: STEP_A,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			expect(result.tasks).toHaveLength(3);
+			for (const task of result.tasks) {
+				expect(task.workflowStepId).toBe(STEP_B);
+				expect(task.workflowRunId).toBe(run.id);
+			}
+		});
+
+		test('advance() on multi-agent step with cyclic transition increments iterationCount once', async () => {
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF-cyclic-multi-${Date.now()}`,
+				steps: [
+					{
+						id: STEP_A,
+						name: 'Parallel A',
+						agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					},
+				],
+				transitions: [
+					{
+						from: STEP_A,
+						to: STEP_A,
+						condition: { type: 'always' },
+						isCyclic: true,
+						order: 0,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cyclic Multi Run',
+				currentStepId: STEP_A,
+				maxIterations: 5,
+			});
+
+			const executor = makeExecutor(workflow, run);
+			const result = await executor.advance();
+
+			// Creates two tasks (one per agent) even on cyclic transition
+			expect(result.tasks).toHaveLength(2);
+			// Only one iteration increment per advance() call, not per task
+			expect(runRepo.getRun(run.id)?.iterationCount).toBe(1);
+		});
+	});
 });

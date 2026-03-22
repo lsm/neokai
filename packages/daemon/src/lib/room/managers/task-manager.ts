@@ -4,12 +4,13 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review -> archived)
  * - Task assignment to sessions
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	NeoTask,
 	TaskStatus,
@@ -28,9 +29,10 @@ export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 	pending: ['in_progress', 'cancelled'],
 	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
 	review: ['completed', 'needs_attention', 'in_progress'],
-	completed: [], // Terminal state
-	needs_attention: ['pending', 'in_progress', 'review'], // Restart allowed + revive to review via message
-	cancelled: ['pending', 'in_progress'], // Restart only — worktree is cleaned up on cancel
+	completed: ['in_progress', 'archived'], // Reactivate or archive
+	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
+	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
+	archived: [], // True terminal state — no going back
 };
 
 /**
@@ -54,7 +56,8 @@ export class TaskManager {
 
 	constructor(
 		private db: BunDatabase,
-		private roomId: string
+		private roomId: string,
+		private reactiveDb: ReactiveDatabase
 	) {
 		this.taskRepo = new TaskRepository(db);
 	}
@@ -85,6 +88,7 @@ export class TaskManager {
 			createdByTaskId: params.createdByTaskId,
 		});
 
+		this.reactiveDb.notifyChange('tasks');
 		return task;
 	}
 
@@ -128,6 +132,7 @@ export class TaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -153,6 +158,7 @@ export class TaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -182,15 +188,15 @@ export class TaskManager {
 	async setTaskStatus(
 		taskId: string,
 		newStatus: TaskStatus,
-		options?: { result?: string; error?: string }
+		options?: { result?: string; error?: string; mode?: 'runtime' | 'manual' }
 	): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		// Validate transition
-		if (!isValidStatusTransition(task.status, newStatus)) {
+		// Validate transition (skipped in manual mode — UI allows any transition)
+		if (options?.mode !== 'manual' && !isValidStatusTransition(task.status, newStatus)) {
 			throw new Error(
 				`Invalid status transition from '${task.status}' to '${newStatus}'. ` +
 					`Allowed transitions: ${VALID_STATUS_TRANSITIONS[task.status].join(', ') || 'none'}`
@@ -213,17 +219,32 @@ export class TaskManager {
 			}
 		}
 
-		// Clear error/result when restarting from needs_attention/cancelled, or when reviving
-		// a needs_attention task to review. The 'review' case only applies to 'needs_attention' since
-		// 'cancelled → review' is not a valid transition (worktree is cleaned up).
+		// Clear error/result/progress when restarting from a terminal/failed state.
+		// Covers needs_attention, cancelled, completed → reactivation transitions.
+		// In manual mode, also covers archived → active and completed → pending transitions.
 		if (
-			(task.status === 'needs_attention' || task.status === 'cancelled') &&
-			(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')
+			((task.status === 'needs_attention' || task.status === 'cancelled') &&
+				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
+			(task.status === 'completed' && newStatus === 'in_progress') ||
+			(options?.mode === 'manual' &&
+				(task.status === 'archived' ||
+					task.status === 'completed' ||
+					task.status === 'cancelled' ||
+					task.status === 'needs_attention') &&
+				(newStatus === 'pending' ||
+					newStatus === 'in_progress' ||
+					newStatus === 'review' ||
+					newStatus === 'completed'))
 		) {
 			// Use null to explicitly clear these fields in the database
 			updates.error = null;
 			updates.result = null;
 			updates.progress = null;
+		}
+
+		// When transitioning FROM archived (unarchiving), clear the archived_at timestamp
+		if (task.status === 'archived') {
+			updates.archivedAt = null;
 		}
 
 		return this.updateTaskStatus(taskId, newStatus, updates);
@@ -296,7 +317,11 @@ export class TaskManager {
 	 * Called when a planning task completes so its children enter the execution queue.
 	 */
 	async promoteDraftTasks(creatorTaskId: string): Promise<number> {
-		return this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+		const count = this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+		if (count > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
+		return count;
 	}
 
 	/**
@@ -337,9 +362,11 @@ export class TaskManager {
 			this.db
 				.prepare(`UPDATE tasks SET assigned_agent = ? WHERE id = ?`)
 				.run(updates.assignedAgent, taskId);
+			this.reactiveDb.notifyChange('tasks');
 			return (await this.getTask(taskId))!;
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -359,6 +386,7 @@ export class TaskManager {
 		}
 
 		this.taskRepo.deleteTask(taskId);
+		this.reactiveDb.notifyChange('tasks');
 		return true;
 	}
 
@@ -405,18 +433,25 @@ export class TaskManager {
 		}
 
 		this.taskRepo.deleteTask(taskId);
+		this.reactiveDb.notifyChange('tasks');
 		return true;
 	}
 
 	/**
-	 * Archive task - sets archivedAt timestamp.
-	 * Archived tasks are hidden from UI by default.
-	 * This is orthogonal to task status - any task can be archived.
+	 * Archive task - transitions to 'archived' status and sets archivedAt timestamp.
+	 * Validates that the current status allows transitioning to 'archived'.
 	 */
-	async archiveTask(taskId: string): Promise<NeoTask> {
+	async archiveTask(taskId: string, options?: { mode?: 'runtime' | 'manual' }): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		if (options?.mode !== 'manual' && !isValidStatusTransition(task.status, 'archived')) {
+			throw new Error(
+				`Cannot archive task in '${task.status}' status. ` +
+					`Allowed transitions: ${VALID_STATUS_TRANSITIONS[task.status].join(', ') || 'none'}`
+			);
 		}
 
 		const updatedTask = this.taskRepo.archiveTask(taskId);
@@ -424,6 +459,7 @@ export class TaskManager {
 			throw new Error(`Failed to archive task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -460,6 +496,7 @@ export class TaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 

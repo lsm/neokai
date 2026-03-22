@@ -19,6 +19,7 @@ import {
 } from './room-runtime-test-helpers';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // ─── Schema helper ────────────────────────────────────────────────────────────
 
@@ -222,7 +223,7 @@ describe('Metrics: dual-write derivation', () => {
 		db.exec(
 			`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${now}, ${now})`
 		);
-		goalManager = new GoalManager(db as never, roomId);
+		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
 	});
 
 	afterEach(() => {
@@ -509,7 +510,7 @@ describe('Migration: legacy goals default to one_shot / supervised', () => {
 		db.exec(
 			`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Legacy Room', ${now}, ${now})`
 		);
-		goalRepo = new GoalRepository(db as never);
+		goalRepo = new GoalRepository(db as never, noOpReactiveDb);
 	});
 
 	afterEach(() => {

@@ -127,10 +127,12 @@ jobs:
           - convo
           - features-1
           - features-2
+          - features-3
           - git
           - lifecycle
           - mcp
-          - providers-anthropic-to-codex-bridge
+          # Codex bridge tests disabled — requires OPENAI_API_KEY (real API, not mocked)
+          # - providers-anthropic-to-codex-bridge
           - providers-anthropic-copilot
           - rewind
           # Room tests temporarily disabled during refactoring
@@ -142,6 +144,7 @@ jobs:
           - rpc-1
           - rpc-2
           - rpc-3
+          - rpc-4
           - sdk
           - websocket
         include:
@@ -177,7 +180,12 @@ jobs:
               tests/online/features/message-delivery-mode-queue.test.ts
             mock_sdk: true
           - module: features-2
-            test_path: tests/online/features/message-persistence.test.ts
+            test_path: >-
+              tests/online/features/github-poll-job.test.ts
+              tests/online/features/message-persistence.test.ts
+            mock_sdk: true
+          - module: features-3
+            test_path: tests/online/features/job-queue-crash-recovery.test.ts
             mock_sdk: true
           - module: git
             test_path: tests/online/git
@@ -189,8 +197,8 @@ jobs:
           - module: mcp
             test_path: tests/online/mcp
             mock_sdk: true
-          - module: providers-anthropic-to-codex-bridge
-            test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
+          # - module: providers-anthropic-to-codex-bridge
+          #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
           - module: providers-anthropic-copilot
             test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
             timeout: 15
@@ -216,30 +224,39 @@ jobs:
           # - module: room-reviewer
           #   test_path: tests/online/room/room-reviewer-flow.test.ts
           #   timeout: 10
+          # rpc-1: heaviest files (task-lifecycle ~647 + config-handlers ~573 lines ≈ 1 220)
           - module: rpc-1
             test_path: >-
-              tests/online/rpc/rpc-agent-handlers.test.ts
               tests/online/rpc/rpc-config-handlers.test.ts
+              tests/online/rpc/rpc-task-lifecycle.test.ts
+            mock_sdk: true
+          # rpc-2: settings + remove-output + message + agent (≈ 1 241 lines)
+          - module: rpc-2
+            test_path: >-
+              tests/online/rpc/rpc-agent-handlers.test.ts
+              tests/online/rpc/rpc-message-handlers.test.ts
+              tests/online/rpc/rpc-remove-output.test.ts
+              tests/online/rpc/rpc-settings-handlers.test.ts
+            mock_sdk: true
+          # rpc-3: session-extended + live-query + mcp + task-draft + rewind (≈ 1 356 lines)
+          - module: rpc-3
+            test_path: >-
+              tests/online/rpc/rpc-live-query.test.ts
+              tests/online/rpc/rpc-mcp-toggle.test.ts
+              tests/online/rpc/rpc-rewind-handlers.test.ts
+              tests/online/rpc/rpc-session-handlers-extended.test.ts
+              tests/online/rpc/rpc-task-draft-handlers.test.ts
+            mock_sdk: true
+          # rpc-4: remaining smaller files (≈ 1 382 lines)
+          - module: rpc-4
+            test_path: >-
               tests/online/rpc/rpc-draft-handlers.test.ts
               tests/online/rpc/rpc-file-handlers.test.ts
               tests/online/rpc/rpc-interrupt-handlers.test.ts
-              tests/online/rpc/rpc-mcp-toggle.test.ts
-              tests/online/rpc/rpc-task-draft-handlers.test.ts
-            mock_sdk: true
-          - module: rpc-2
-            test_path: >-
-              tests/online/rpc/rpc-message-handlers.test.ts
               tests/online/rpc/rpc-model-handlers.test.ts
               tests/online/rpc/rpc-model-switching.test.ts
-              tests/online/rpc/rpc-remove-output.test.ts
-              tests/online/rpc/rpc-rewind-handlers.test.ts
               tests/online/rpc/rpc-session-filtering.test.ts
-            mock_sdk: true
-          - module: rpc-3
-            test_path: >-
-              tests/online/rpc/rpc-session-handlers-extended.test.ts
               tests/online/rpc/rpc-session-workflow.test.ts
-              tests/online/rpc/rpc-settings-handlers.test.ts
               tests/online/rpc/rpc-state-sync.test.ts
               tests/online/rpc/session-handlers.test.ts
             mock_sdk: true
@@ -280,10 +297,6 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Install Codex CLI (providers-anthropic-to-codex-bridge shard)
-        if: matrix.module == 'providers-anthropic-to-codex-bridge'
-        run: npm install -g @openai/codex
-
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
@@ -298,7 +311,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          OPENAI_API_KEY: ${{ matrix.module == 'providers-anthropic-to-codex-bridge' && secrets.OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ""
           # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
           # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
           # If the secret is absent the env var is empty and the test FAILS (hard-fail, not skip — by design).

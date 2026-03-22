@@ -27,6 +27,7 @@ import type {
 	WorkflowTransition,
 	WorkflowConditionType,
 } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
@@ -239,7 +240,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function addStep() {
-		const newLocalId = crypto.randomUUID();
+		const newLocalId = generateUUID();
 		const newStep: StepDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
 		// Capture emptiness before the setNodes call so we can call setStartStepId
@@ -248,8 +249,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// updaters to catch exactly this pattern).
 		const isFirstNode = nodes.length === 0;
 		setNodes((prev) => {
-			// Stagger new nodes so they don't stack exactly
-			const position: Point = { x: 120 + prev.length * 20, y: 80 + prev.length * 20 };
+			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px)
+			const position: Point = { x: 120, y: 80 + prev.length * 100 };
 			return [...prev, { step: newStep, position }];
 		});
 		if (isFirstNode) setStartStepId(newLocalId);
@@ -426,7 +427,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const localIds = template.stepRoles.map(() => crypto.randomUUID());
+		const localIds = template.stepRoles.map(() => generateUUID());
 		const firstLocalId = localIds[0];
 
 		const newNodes: VisualNode[] = template.stepRoles.map((role, i) => {
@@ -514,9 +515,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			return;
 		}
 
-		// Validate each step has an agent assigned
+		// Validate each step has an agent assigned (single or multi-agent)
 		for (let i = 0; i < nodes.length; i++) {
-			if (!nodes[i].step.agentId) {
+			const step = nodes[i].step;
+			const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
+			if (!hasMultiAgent && !step.agentId) {
 				setError(`Step ${i + 1} requires an agent.`);
 				return;
 			}

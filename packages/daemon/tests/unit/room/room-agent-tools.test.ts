@@ -1,8 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import {
 	createRoomAgentToolHandlers,
 	createRoomAgentMcpServer,
@@ -103,6 +105,15 @@ describe('Room Agent Tools', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 			CREATE TABLE mission_metric_history (
 				id TEXT PRIMARY KEY,
 				goal_id TEXT NOT NULL,
@@ -116,9 +127,9 @@ describe('Room Agent Tools', () => {
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
-		goalManager = new GoalManager(db as never, roomId);
-		taskManager = new TaskManager(db as never, roomId);
-		groupRepo = new SessionGroupRepository(db as never);
+		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
+		taskManager = new TaskManager(db as never, roomId, noOpReactiveDb);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});
 
@@ -1023,7 +1034,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should return error for cancelled task (worktree is gone, restart required)', async () => {
+		it('should auto-reactivate cancelled task and deliver message (preserving group history)', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
@@ -1039,21 +1050,70 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to cancelled state
+			// Move to cancelled state with a group that has completedAt set
 			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.cancelTask(taskId);
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
+			);
+			// Cancelled task should be auto-reactivated and message delivered
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('cancelled');
+			expect(result.message).toContain('in_progress');
+
+			// Task should now be in_progress
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+
+			// Group history is PRESERVED — no resetGroupForRestart, reviveTaskForMessage keeps context
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
+		});
+
+		it('should roll back cancelled task when reviveTaskForMessage fails (group state preserved)', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to cancelled state with a group that has completedAt set
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
 			await taskManager.cancelTask(taskId);
 
 			const result = parseResult(
 				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
 			);
-			// Cancelled tasks cannot receive messages — workspace is cleaned up
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('cancelled');
-			expect(result.error).toContain('set_task_status');
 
-			// Task should remain cancelled (no revive attempted)
+			// Task status should be rolled back to cancelled
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('cancelled');
+
+			// Group state should be untouched — no metadata was wiped during the failed attempt
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
 		});
 
 		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {
@@ -1272,6 +1332,39 @@ describe('Room Agent Tools', () => {
 			expect(groupAfter).not.toBeNull();
 			expect(groupAfter!.completedAt).toBeNull();
 			expect(groupAfter!.submittedForReview).toBe(false);
+		});
+
+		it('should reset old completed group when restarting task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress, insert a group, and mark it completed via the repo
+			// so that completedAt is non-null before reactivation
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			expect(groupInserted).not.toBeNull();
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.completeTask(taskId, 'Done');
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			// Reactivate the completed task
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+
+			// resetGroupForRestart should have cleared completedAt and reset metadata
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
+			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
 		it('should succeed when group is already gone', async () => {
@@ -1506,7 +1599,7 @@ describe('Room Agent Tools', () => {
 			expect(result.error).toContain('Invalid status transition');
 		});
 
-		it('should return error when group cancellation fails due to version conflict', async () => {
+		it('should return error when terminateTaskGroup fails for completed transition', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1516,11 +1609,9 @@ describe('Room Agent Tools', () => {
 			// Create an active group
 			insertGroup(taskId, 'awaiting_human');
 
-			// Create handler with mock runtime that returns null from cancel (simulating version conflict)
+			// Create handler with mock runtime where terminateTaskGroup returns false (version conflict)
 			const mockRuntime = {
-				taskGroupManager: {
-					cancel: async () => null, // Returns null to simulate version conflict
-				},
+				terminateTaskGroup: async () => false, // Returns false to simulate version conflict
 			};
 			const h = createRoomAgentToolHandlers({
 				roomId,
@@ -1530,14 +1621,14 @@ describe('Room Agent Tools', () => {
 				runtimeService: { getRuntime: () => mockRuntime as never },
 			});
 
-			// Try to complete the task - should fail because group cancellation failed
+			// Try to complete the task - should fail because group termination failed
 			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to cancel active group');
+			expect(result.error).toContain('Failed to terminate active group');
 			expect(result.error).toContain('group may have been modified concurrently');
 		});
 
-		it('should succeed when group cancellation succeeds', async () => {
+		it('should succeed when terminateTaskGroup succeeds for completed transition', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1545,15 +1636,13 @@ describe('Room Agent Tools', () => {
 			await taskManager.startTask(taskId);
 
 			// Create an active group
-			const groupId = insertGroup(taskId, 'awaiting_human');
+			insertGroup(taskId, 'awaiting_human');
 
-			// Create handler with mock runtime that successfully cancels
+			// Create handler with mock runtime that successfully terminates
 			const mockRuntime = {
-				taskGroupManager: {
-					cancel: async (gId: string) => {
-						expect(gId).toBe(groupId);
-						return { id: gId, state: 'cancelled' };
-					},
+				terminateTaskGroup: async (_taskId: string) => {
+					expect(_taskId).toBe(taskId);
+					return true;
 				},
 			};
 			const h = createRoomAgentToolHandlers({
@@ -1564,7 +1653,8 @@ describe('Room Agent Tools', () => {
 				runtimeService: { getRuntime: () => mockRuntime as never },
 			});
 
-			// Complete the task - should succeed because group cancellation succeeded
+			// Complete the task — should succeed because group termination succeeded
+			// NOTE: completing a task does NOT cascade-cancel dependent tasks (bug fix)
 			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('completed');

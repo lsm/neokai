@@ -66,13 +66,21 @@ export type CheckStepStatusInput = z.infer<typeof CheckStepStatusSchema>;
 /**
  * Schema for `advance_workflow` input.
  * Advances the workflow to the next step after the current step completes.
+ * When a `task_result` transition condition is present on the outgoing transitions,
+ * supply `step_result` to evaluate it — e.g. `'passed'` or `'failed: <reason>'`.
  */
 export const AdvanceWorkflowSchema = z.object({
-	/** Optional result summary from the completed step, used for transition condition evaluation. */
+	/**
+	 * Result from the completed step, used for `task_result` transition condition evaluation.
+	 * Example values: `'passed'`, `'failed: tests failed'`, `'approved'`.
+	 * When evaluating a `task_result` condition, the executor matches this value
+	 * (prefix match) against the condition's `expression` field.
+	 */
 	step_result: z
 		.string()
 		.describe(
-			'Optional result or output summary from the completed step, used when evaluating transition conditions'
+			"Result of the completed step — used for 'task_result' condition evaluation. " +
+				"Example: 'passed' or 'failed: <reason>'. Prefix-match against the condition's expression."
 		)
 		.optional(),
 });
@@ -131,6 +139,39 @@ export const RequestHumanInputSchema = z.object({
 export type RequestHumanInputInput = z.infer<typeof RequestHumanInputSchema>;
 
 // ---------------------------------------------------------------------------
+// list_group_members
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_group_members` input.
+ * Lists all members of the current task's session group with their permitted channels.
+ * No arguments — the group is inferred from the task context.
+ */
+export const ListGroupMembersSchema = z.object({});
+
+export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
+
+// ---------------------------------------------------------------------------
+// relay_message
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `relay_message` input.
+ * Injects a user-turn message into a target sub-session in the same group.
+ * The Task Agent is not constrained by channel topology — it can relay to any member.
+ */
+export const RelayMessageSchema = z.object({
+	/** Session ID of the target sub-session to relay the message to. */
+	target_session_id: z
+		.string()
+		.describe('Session ID of the target sub-session to send the message to'),
+	/** The message to inject as a user turn in the target session. */
+	message: z.string().describe('The message content to inject into the target session'),
+});
+
+export type RelayMessageInput = z.infer<typeof RelayMessageSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export for MCP server factory (Milestone 3)
 // ---------------------------------------------------------------------------
 
@@ -144,6 +185,8 @@ export const TASK_AGENT_TOOL_SCHEMAS = {
 	advance_workflow: AdvanceWorkflowSchema,
 	report_result: ReportResultSchema,
 	request_human_input: RequestHumanInputSchema,
+	list_group_members: ListGroupMembersSchema,
+	relay_message: RelayMessageSchema,
 } as const;
 
 export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;

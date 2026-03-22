@@ -249,7 +249,8 @@ export type TaskStatus =
 	| 'review'
 	| 'completed'
 	| 'needs_attention'
-	| 'cancelled';
+	| 'cancelled'
+	| 'archived';
 
 /**
  * Task priority
@@ -306,7 +307,7 @@ export interface NeoTask {
 	startedAt?: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
-	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
+	/** Archive timestamp (milliseconds since epoch) - derived from status='archived' */
 	archivedAt?: number | null;
 	/**
 	 * Which agent session is currently active (generating output).
@@ -372,6 +373,8 @@ export interface UpdateTaskParams {
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
 	inputDraft?: string | null;
+	/** Timestamp when the task was archived. Set to null to clear when unarchiving. */
+	archivedAt?: number | null;
 }
 
 // ============================================================================
@@ -434,6 +437,8 @@ export interface TaskSummary {
 	status: TaskStatus;
 	priority: TaskPriority;
 	progress?: number | null;
+	/** Description of current step (for worker summary in review cards) */
+	currentStep?: string | null;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
 	/** Error message for failed tasks */

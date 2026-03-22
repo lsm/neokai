@@ -14,11 +14,14 @@
  * - task.getGroupMessages - Get messages for a session group
  * - task.sendHumanMessage - Send a human message to the active agent in a task group
  * - task.updateDraft - Persist human input draft for a task (server-side, debounced by client)
+ * - task.group.create - (non-production) Create a synthetic session group for a task
+ * - task.group.addMessage - (non-production) Insert a raw row into session_group_messages
  */
 
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
+import type { ReactiveDatabase } from '../../storage/reactive-database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
@@ -44,22 +47,18 @@ export type TaskManagerLike = Pick<
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
 
-/**
- * Create a TaskManager instance for a room
- */
-function createTaskManager(db: Database, roomId: string): TaskManagerLike {
-	const rawDb = db.getDatabase();
-	return new TaskManager(rawDb, roomId);
-}
-
 export function setupTaskHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	db: Database,
-	taskManagerFactory: TaskManagerFactory = createTaskManager,
+	reactiveDb: ReactiveDatabase,
+	taskManagerFactory: TaskManagerFactory = (d, roomId) =>
+		new TaskManager(d.getDatabase(), roomId, reactiveDb),
 	runtimeService?: RoomRuntimeService
 ): void {
+	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);
+
 	/**
 	 * Emit room.task.update event to notify UI clients
 	 */
@@ -132,6 +131,7 @@ export function setupTaskHandlers(
 			roomId: string;
 			status?: TaskStatus;
 			priority?: TaskPriority;
+			includeArchived?: boolean;
 		};
 
 		if (!params.roomId) {
@@ -142,6 +142,7 @@ export function setupTaskHandlers(
 		const tasks = await taskManager.listTasks({
 			status: params.status,
 			priority: params.priority,
+			includeArchived: params.includeArchived,
 		});
 
 		return { tasks };
@@ -197,6 +198,7 @@ export function setupTaskHandlers(
 		// Update input_draft directly via repository (lightweight, no status side effects)
 		const taskRepo = new TaskRepository(db.getDatabase());
 		taskRepo.updateTask(params.taskId, { inputDraft: draft });
+		reactiveDb.notifyChange('tasks');
 
 		return { success: true };
 	});
@@ -215,7 +217,6 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.failTask(params.taskId, params.error ?? '');
 
-		emitTaskUpdate(params.roomId, task);
 		emitRoomOverview(params.roomId);
 
 		return { task };
@@ -367,6 +368,7 @@ export function setupTaskHandlers(
 			status: TaskStatus;
 			result?: string;
 			error?: string;
+			mode?: 'manual' | 'runtime';
 		};
 
 		if (!params.roomId) {
@@ -385,13 +387,37 @@ export function setupTaskHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
-		// Validate status transition
-		const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-		if (!allowedTransitions.includes(params.status)) {
-			throw new Error(
-				`Invalid status transition from '${task.status}' to '${params.status}'. ` +
-					`Allowed: ${allowedTransitions.join(', ') || 'none'}`
-			);
+		// Validate status transition for runtime mode. This must happen here (not just in the
+		// manager) because the cancel and archive paths below use early returns that bypass
+		// setTaskStatus/archiveTask validation. Manual mode bypasses this check.
+		if (params.mode !== 'manual') {
+			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
+			if (!allowedTransitions.includes(params.status)) {
+				throw new Error(
+					`Invalid status transition from '${task.status}' to '${params.status}'. ` +
+						`Allowed: ${allowedTransitions.join(', ') || 'none'}`
+				);
+			}
+		}
+
+		// Archiving: delegate entirely to archiveTaskGroup (terminates sessions + cleans worktree)
+		// or archiveTask (no runtime — sets archivedAt directly). Early return skips generic path.
+		// Only applies to transitioning TO 'archived' (unarchiving is handled by the generic path below).
+		if (params.status === 'archived') {
+			const runtime = runtimeService?.getRuntime(params.roomId);
+			const modeOpts = params.mode ? { mode: params.mode } : undefined;
+			if (runtime) {
+				await runtime.archiveTaskGroup(params.taskId, modeOpts);
+			} else {
+				await taskManager.archiveTask(params.taskId, modeOpts);
+			}
+
+			const archivedTask = await taskManager.getTask(params.taskId);
+			if (archivedTask) {
+				emitTaskUpdate(params.roomId, archivedTask);
+				emitRoomOverview(params.roomId);
+			}
+			return { task: archivedTask };
 		}
 
 		// If there's an active group with runtime, terminate it on terminal transitions.
@@ -429,10 +455,15 @@ export function setupTaskHandlers(
 			}
 		}
 
-		// Handle restart: reset needs_attention/cancelled group so runtime picks it up fresh
-		if (task.status === 'needs_attention' || task.status === 'cancelled') {
+		// Handle restart: reset cancelled/needs_attention group so runtime picks it up fresh.
+		// completed → in_progress uses lightweight revival (group preserved, no full wipe).
+		if (
+			task.status === 'needs_attention' ||
+			task.status === 'cancelled' ||
+			(params.mode === 'manual' && task.status === 'archived')
+		) {
 			if (params.status === 'pending' || params.status === 'in_progress') {
-				const groupRepo = new SessionGroupRepository(db.getDatabase());
+				const groupRepo = makeGroupRepo();
 				const group = groupRepo.getGroupByTaskId(params.taskId);
 				if (group) {
 					const reset = groupRepo.resetGroupForRestart(group.id);
@@ -449,6 +480,7 @@ export function setupTaskHandlers(
 		const updatedTask = await taskManager.setTaskStatus(params.taskId, params.status, {
 			result: params.result,
 			error: params.error,
+			mode: params.mode,
 		});
 
 		emitTaskUpdate(params.roomId, updatedTask);
@@ -491,7 +523,7 @@ export function setupTaskHandlers(
 			throw new Error(`No runtime found for room: ${params.roomId}`);
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroupByTaskId(params.taskId);
 		if (!group) {
 			throw new Error('No active session group for this task');
@@ -521,7 +553,7 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroupByTaskId(params.taskId);
 
 		if (!group) {
@@ -564,7 +596,7 @@ export function setupTaskHandlers(
 			throw new Error('Group ID is required');
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const group = groupRepo.getGroup(params.groupId);
 		if (!group) {
 			return {
@@ -753,6 +785,106 @@ export function setupTaskHandlers(
 		return { messages, hasMore: false, nextCursor, hasOlder, oldestCursor };
 	});
 
+	// task.group.addMessage and task.group.create are non-production test/admin RPCs.
+	// They are only registered when NODE_ENV is not 'production' to prevent exposure
+	// of raw DB write access to production clients.
+	if (process.env.NODE_ENV !== 'production') {
+		// task.group.addMessage - insert a row into session_group_messages and notify LiveQuery.
+		// Bypasses all business logic; intended only for E2E test infrastructure.
+		messageHub.onRequest('task.group.addMessage', async (data) => {
+			const params = data as {
+				groupId: string;
+				role: string;
+				messageType: string;
+				content: string;
+				sessionId?: string;
+			};
+
+			if (!params.groupId) throw new Error('Group ID is required');
+			if (!params.role) throw new Error('Role is required');
+			if (!params.content) throw new Error('Content is required');
+
+			const dbInstance = db.getDatabase();
+			const result = dbInstance
+				.prepare(
+					`INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         RETURNING id`
+				)
+				.get(
+					params.groupId,
+					params.sessionId ?? null,
+					params.role,
+					params.messageType ?? 'assistant',
+					params.content,
+					Date.now()
+				) as { id: number };
+
+			// Notify LiveQuery engine so subscribed clients receive a delta event
+			reactiveDb.notifyChange('session_group_messages');
+
+			return { id: result.id };
+		});
+
+		// task.group.create - create a synthetic session group for a task.
+		// Intended only for E2E test infrastructure to set up message streaming scenarios
+		// without running real agents.
+		messageHub.onRequest('task.group.create', async (data) => {
+			const params = data as {
+				taskId: string;
+				roomId: string;
+				workerSessionId?: string;
+				leaderSessionId?: string;
+			};
+
+			if (!params.taskId) throw new Error('Task ID is required');
+			if (!params.roomId) throw new Error('Room ID is required');
+
+			const { generateUUID } = await import('@neokai/shared');
+			const groupId = generateUUID();
+			const now = Date.now();
+			const workerSessionId = params.workerSessionId ?? `e2e-worker-${groupId.slice(0, 8)}`;
+			const leaderSessionId = params.leaderSessionId ?? `e2e-leader-${groupId.slice(0, 8)}`;
+
+			const dbInstance = db.getDatabase();
+			dbInstance.run(
+				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+         VALUES (?, 'task', ?, 0, ?, ?)`,
+				[
+					groupId,
+					params.taskId,
+					JSON.stringify({
+						feedbackIteration: 0,
+						workerRole: 'coder',
+						leaderContractViolations: 0,
+						leaderCalledTool: false,
+						lastProcessedLeaderTurnId: null,
+						lastForwardedMessageId: null,
+						activeWorkStartedAt: null,
+						activeWorkElapsed: 0,
+						hibernatedAt: null,
+						tokensUsed: 0,
+					}),
+					now,
+				]
+			);
+			dbInstance.run(
+				`INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, 'worker', ?)`,
+				[groupId, workerSessionId, now]
+			);
+			dbInstance.run(
+				`INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, 'leader', ?)`,
+				[groupId, leaderSessionId, now]
+			);
+
+			// Notify reactive listeners that session_groups changed (e.g. LiveQuery subscriptions
+			// that watch this table will re-evaluate).
+			reactiveDb.notifyChange('session_groups');
+
+			return { groupId, workerSessionId, leaderSessionId };
+		});
+	}
+
 	// task.sendHumanMessage - Send a human message to the worker or leader in a task group
 	messageHub.onRequest('task.sendHumanMessage', async (data) => {
 		const params = data as {
@@ -781,6 +913,22 @@ export function setupTaskHandlers(
 		if (target !== 'worker' && target !== 'leader') {
 			throw new Error(`Invalid target: ${target}`);
 		}
+		// Cross-room ownership check: verify the task belongs to this room.
+		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
+		}
+
+		// Archived tasks are truly terminal — no messaging allowed. Check this before the runtime
+		// lookup so the error is consistent regardless of whether a runtime is active.
+		if (task.status === 'archived') {
+			throw new Error(
+				`Task ${params.taskId} is archived and cannot receive messages. Archive is a terminal state.`
+			);
+		}
+
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.sendHumanMessage');
 		}
@@ -790,47 +938,41 @@ export function setupTaskHandlers(
 			throw new Error(`No runtime found for room: ${params.roomId}`);
 		}
 
-		// Cross-room ownership check: verify the task belongs to this room.
-		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
-		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
-		if (!task) {
-			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
-		}
-
-		// Cancelled tasks have their workspace cleaned up on cancellation.
-		// Restarting via session injection would point at a gone workspace.
-		// Direct the caller to use set_task_status to restart from scratch.
-		if (task.status === 'cancelled') {
-			throw new Error(
-				`Task ${params.taskId} is cancelled. Cancelled tasks cannot receive messages ` +
-					'because their workspace has been cleaned up. Use set_task_status to restart it ' +
-					'(e.g. status: "pending" or "in_progress").'
-			);
-		}
-
-		// needs_attention tasks: revive sessions and inject the message.
-		// Uses reviveTaskForMessage (lightweight revive via reviveGroup) which preserves
-		// metadata, conversation history, and uses the established session-restore path.
-		// This mirrors the agent-tool path in room-agent-tools.ts send_message_to_task.
-		if (task.status === 'needs_attention') {
+		// needs_attention, completed, and cancelled tasks: auto-reactivate via reviveTaskForMessage.
+		// reviveTaskForMessage is a lightweight revive that restores sessions and injects the
+		// message WITHOUT wiping the group metadata or conversation history.
+		//
+		// Note — deliberate asymmetry with task.setStatus:
+		//   task.setStatus(cancelled → in_progress)  → resetGroupForRestart (clean slate)
+		//   task.sendHumanMessage(cancelled task)     → reviveTaskForMessage  (keep history)
+		// Sending a message to a cancelled task is a "continue this conversation" action, so
+		// we preserve context. Explicitly restarting via setStatus is a "start over" action.
+		if (
+			task.status === 'needs_attention' ||
+			task.status === 'completed' ||
+			task.status === 'cancelled'
+		) {
+			// needs_attention transitions through 'review' (its prior working state);
+			// completed/cancelled transition directly to 'in_progress' as the pre-revival
+			// intermediate status before reviveTaskForMessage restores sessions.
+			const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 			try {
-				await taskManager.setTaskStatus(params.taskId, 'review');
+				await taskManager.setTaskStatus(params.taskId, intermediateStatus);
 			} catch (err) {
 				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
 			}
 
 			const revived = await runtime.reviveTaskForMessage(params.taskId, params.message.trim());
 			if (!revived) {
-				// Rollback: restore task to needs_attention (review → needs_attention is a valid transition)
+				// Rollback: restore task to original status
 				try {
-					await taskManager.setTaskStatus(params.taskId, 'needs_attention');
+					await taskManager.setTaskStatus(params.taskId, task.status);
 				} catch {
 					// Best-effort rollback; swallow to avoid masking the revive error
 				}
 				throw new Error(
 					`Failed to revive task ${params.taskId}: agent sessions could not be restored. ` +
-						'Task status has been reset to needs_attention.'
+						`Task status has been reset to ${task.status}.`
 				);
 			}
 
@@ -838,7 +980,7 @@ export function setupTaskHandlers(
 			return { success: true };
 		}
 
-		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
@@ -858,6 +1000,38 @@ export function setupTaskHandlers(
 			emitTaskUpdate(params.roomId, updatedTask);
 		}
 
+		return { success: true };
+	});
+
+	// session_group.stop - Force-stop a session group by ID.
+	// Kills worker and leader agent sessions and removes the group record from the DB.
+	// Frees the concurrency slot so the runtime can pick up new tasks.
+	// Task status is NOT changed; call task.cancel separately if needed.
+	messageHub.onRequest('session_group.stop', async (data) => {
+		const params = data as { roomId: string; groupId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.groupId) {
+			throw new Error('Group ID is required');
+		}
+
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for session_group.stop');
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const result = await runtime.forceStopSessionGroup(params.groupId);
+		if (!result.success) {
+			throw new Error(result.error ?? `Failed to stop session group ${params.groupId}`);
+		}
+
+		emitRoomOverview(params.roomId);
 		return { success: true };
 	});
 }

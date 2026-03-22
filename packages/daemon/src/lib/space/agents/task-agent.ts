@@ -19,6 +19,8 @@
  *   - advance_workflow      — Evaluate transitions from the current step and move to next
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
+ *   - list_group_members    — List all group members with session IDs and permitted channels
+ *   - relay_message         — Inject a user-turn message into any group member (unrestricted)
  *
  * ## Content interpolation
  * All operator-supplied content (space.backgroundContext, space.instructions,
@@ -46,6 +48,7 @@ import type {
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
+import { resolveStepAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { inferProviderForModel } from '../../providers/registry';
 
@@ -82,8 +85,18 @@ export interface TaskAgentContext {
 // ---------------------------------------------------------------------------
 
 function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
-	const agent = agents.find((a) => a.id === step.agentId);
-	const agentLabel = agent ? `${agent.name} (role: ${agent.role})` : `agent id: ${step.agentId}`;
+	const stepAgents = resolveStepAgents(step);
+	let agentLabel: string;
+	if (stepAgents.length === 1) {
+		const a = agents.find((ag) => ag.id === stepAgents[0].agentId);
+		agentLabel = a ? `${a.name} (role: ${a.role})` : `agent id: ${stepAgents[0].agentId}`;
+	} else {
+		const labels = stepAgents.map((sa) => {
+			const a = agents.find((ag) => ag.id === sa.agentId);
+			return a ? `${a.name} (role: ${a.role})` : `agent id: ${sa.agentId}`;
+		});
+		agentLabel = labels.join(', ');
+	}
 	const instructions = step.instructions ? `\n    Instructions: ${step.instructions}` : '';
 	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
 }
@@ -95,6 +108,8 @@ function formatTransition(t: WorkflowTransition): string {
 			conditionLabel = ' [HUMAN GATE]';
 		} else if (t.condition.type === 'condition') {
 			conditionLabel = ` [condition: ${t.condition.expression ?? '?'}]`;
+		} else if (t.condition.type === 'task_result') {
+			conditionLabel = ` [result matches "${t.condition.expression ?? '?'}"]`;
 		}
 		// 'always' transitions produce no label — they are unconditional, semantically
 		// identical to a transition with no condition object. Any future WorkflowConditionType
@@ -172,20 +187,48 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`- **advance_workflow** — Evaluate transitions from the current workflow step and move ` +
-			`to the next step. Pass the \`result\` of the completed step. ` +
+			`to the next step. Pass the \`step_result\` of the completed step. ` +
 			`Returns the next step ID (or indicates terminal state / human gate). ` +
-			`Call this after a step agent completes successfully.`
+			`Call this after a step agent completes successfully. ` +
+			`When a verify, review, or test step completes, set \`step_result\` to 'passed' ` +
+			`if the work is acceptable, or 'failed: <reason>' if issues were found.`
 	);
 	sections.push(
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
-			`Pass \`status\` (\`completed\` or \`failed\`) and a \`summary\` string. ` +
+			`Pass \`status\` (\`completed\`, \`needs_attention\`, or \`cancelled\`) and a \`summary\` string. ` +
 			`Call this when the workflow reaches a terminal step or an unrecoverable error occurs.`
 	);
 	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
-			`Pass a \`prompt\` describing what decision or approval is needed. ` +
+			`Pass a \`question\` describing what decision or approval is needed. ` +
 			`Returns the human's response. ` +
 			`Call this when \`advance_workflow\` returns a \`human\` gate condition.`
+	);
+	sections.push(
+		`- **list_group_members** — List all members of the current task's session group. ` +
+			`Returns each member's \`sessionId\`, \`role\`, \`agentId\`, \`status\`, and ` +
+			`\`permittedTargets\` (which roles they can message per the declared channel topology). ` +
+			`Use this to discover active sub-sessions before calling \`relay_message\`.`
+	);
+	sections.push(
+		`- **relay_message** — Inject a user-turn message into any group member's session. ` +
+			`Pass \`target_session_id\` (from \`list_group_members\`) and the \`message\` string. ` +
+			`You are NOT constrained by channel topology — you can relay to any member. ` +
+			`Cross-group messaging is rejected. Use this to route feedback, questions, or context ` +
+			`between step agents that cannot communicate directly.`
+	);
+
+	// ---- step_result vs report_result status ---------------------------------
+	sections.push(`\n## Result Fields: \`step_result\` vs \`report_result.status\`\n`);
+	sections.push(`These are two different fields with different purposes:\n`);
+	sections.push(
+		`- **\`step_result\`** (in \`advance_workflow\`): A free-form string ` +
+			`(e.g. 'passed', 'failed: tests failed') used to evaluate ` +
+			`\`task_result\` transition conditions. It controls which path the workflow takes next.\n`
+	);
+	sections.push(
+		`- **\`report_result.status\`**: A named task status (completed/needs_attention/cancelled) ` +
+			`that marks the overall task outcome. Set via \`report_result\` when the workflow ends.\n`
 	);
 
 	// ---- Workflow execution instructions ------------------------------------
@@ -202,7 +245,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`   - If it returns **terminal** (no outgoing transitions), call \`report_result\` to ` +
 			`complete the task.\n` +
 			`4. **Handle errors** — If a step agent errors, call \`report_result\` with ` +
-			`\`status: "failed"\` and the error details.`
+			`\`status: "cancelled"\` and the error details.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
@@ -245,6 +288,34 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(
 		`5. **One step at a time.** Do not spawn multiple step agents concurrently unless the ` +
 			`workflow explicitly defines parallel steps. Follow the linear execution loop above.`
+	);
+
+	// ---- Channel topology and relay capabilities ----------------------------
+	sections.push(`\n## Channel Topology and Message Relay\n`);
+	sections.push(
+		`Workflow steps may declare a channel topology that governs which agent roles can communicate ` +
+			`with each other. Use \`list_group_members\` to see the active members and their ` +
+			`\`permittedTargets\` — roles they are allowed to message per the declared topology.\n`
+	);
+	sections.push(
+		`**You are NOT constrained by the channel topology.** As the Task Agent coordinator, ` +
+			`you can relay messages to any group member using \`relay_message\`, regardless of which ` +
+			`channels are declared. This allows you to:\n` +
+			`- Route feedback from a reviewer agent to a coder agent\n` +
+			`- Forward context or questions between parallel sub-sessions\n` +
+			`- Intervene when the declared topology does not cover a needed communication path\n`
+	);
+	sections.push(
+		`**Cross-group messaging is always rejected.** You can only relay to sessions that are ` +
+			`members of the same group as this task. Attempting to relay to a session in a different ` +
+			`group will return an error.\n`
+	);
+	sections.push(
+		`**When to use relay_message:**\n` +
+			`- A step agent produces output that another step agent needs as input\n` +
+			`- A reviewer step identifies issues that should be sent back to the coder step\n` +
+			`- You need to inject context or instructions mid-execution into a running sub-session\n` +
+			`- The channel topology does not permit direct communication between two agents\n`
 	);
 
 	// ---- Task context -------------------------------------------------------
@@ -397,7 +468,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 		parts.push(
 			`**Warning:** The assigned workflow "${context.workflow.name}" has no steps defined. ` +
 				`There is nothing to execute. Call \`report_result\` immediately with ` +
-				`\`status: "failed"\` and a summary explaining that the workflow has no steps.`
+				`\`status: "cancelled"\` and a summary explaining that the workflow has no steps.`
 		);
 	} else {
 		// No workflow assigned — spawn the most appropriate agent directly.

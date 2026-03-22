@@ -6,10 +6,12 @@ import {
 } from '../../../src/lib/room/runtime/runtime-recovery';
 import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
@@ -160,14 +162,23 @@ describe('Runtime Recovery', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		const mockHub = createMockDaemonHub();
-		groupRepo = new SessionGroupRepository(db as never);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
-		taskManager = new TaskManager(db as never, 'room-1');
-		goalManager = new GoalManager(db as never, 'room-1');
+		taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+		goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 		sessionFactory = createMockSessionFactory();
 
 		runtime = new RoomRuntime({
@@ -178,7 +189,6 @@ describe('Runtime Recovery', () => {
 			goalManager,
 			sessionFactory,
 			workspacePath: '/workspace',
-			tickInterval: 60_000,
 		});
 	});
 

@@ -1,10 +1,12 @@
 import { Database } from 'bun:sqlite';
 import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
-import type { Room } from '@neokai/shared';
+import type { Room, GlobalSettings } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks';
@@ -179,6 +181,15 @@ const DB_SCHEMA = `
 		payload_json TEXT,
 		created_at INTEGER NOT NULL
 	);
+	CREATE TABLE session_group_messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+		session_id TEXT,
+		role TEXT NOT NULL DEFAULT 'system',
+		message_type TEXT NOT NULL DEFAULT 'status',
+		content TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL
+	);
 	CREATE TABLE mission_metric_history (
 		id TEXT PRIMARY KEY,
 		goal_id TEXT NOT NULL,
@@ -227,6 +238,8 @@ export interface RuntimeTestContextOptions {
 		sessionId: string,
 		afterMessageId: string | null
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
+	/** Get global settings for testing fallback model logic */
+	getGlobalSettings?: () => GlobalSettings;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -238,10 +251,10 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	);
 
 	const mockHub = createMockDaemonHub();
-	const groupRepo = new SessionGroupRepository(db as never);
+	const groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 	const observer = new SessionObserver(mockHub as unknown as DaemonHub);
-	const taskManager = new TaskManager(db as never, 'room-1');
-	const goalManager = new GoalManager(db as never, 'room-1');
+	const taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+	const goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 	const sessionFactory = createMockSessionFactory();
 	const room = makeRoom(opts?.room);
 
@@ -255,7 +268,6 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		workspacePath: '/workspace',
 		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
-		tickInterval: 60_000,
 		hookOptions:
 			opts?.hookOptions ??
 			({
@@ -266,6 +278,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),
 		getGoal: (goalId) => goalManager.getGoal(goalId),
+		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
 		daemonHub: mockHub as unknown as DaemonHub,
 	});
 

@@ -27,6 +27,7 @@ const GATE_COLORS: Record<WorkflowConditionType, string> = {
 	always: 'bg-blue-500',
 	human: 'bg-yellow-400',
 	condition: 'bg-purple-400',
+	task_result: 'bg-orange-500',
 };
 
 function MiniStepDot({ isStart }: { isStart: boolean }) {

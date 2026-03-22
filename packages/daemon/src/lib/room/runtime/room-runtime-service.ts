@@ -8,7 +8,12 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
+import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { ROOM_TICK } from '../../job-queue-constants';
+import { createRoomTickHandler } from '../../job-handlers/room-tick.handler';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -43,6 +48,20 @@ export interface RoomRuntimeServiceConfig {
 	sessionManager: SessionManager;
 	defaultWorkspacePath: string;
 	defaultModel: string;
+	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
+	getGlobalSettings: () => GlobalSettings;
+	/** Reactive database wrapper for change event emission */
+	reactiveDb: ReactiveDatabase;
+	/**
+	 * Job queue passed to each RoomRuntime so scheduleTick() enqueues room.tick jobs
+	 * instead of using in-process timers.
+	 */
+	jobQueue?: JobQueueRepository;
+	/**
+	 * Job processor used to register the room.tick handler.
+	 * Must be provided for the job-queue-based tick loop to function.
+	 */
+	jobProcessor?: JobQueueProcessor;
 }
 
 export class RoomRuntimeService {
@@ -54,6 +73,14 @@ export class RoomRuntimeService {
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
 
 	async start(): Promise<void> {
+		// Register the room.tick handler synchronously before any async work so that
+		// no pending tick job is dequeued without a handler when jobProcessor starts.
+		if (this.ctx.jobProcessor && this.ctx.jobQueue) {
+			this.ctx.jobProcessor.register(
+				ROOM_TICK,
+				createRoomTickHandler((roomId) => this.runtimes.get(roomId) ?? null, this.ctx.jobQueue)
+			);
+		}
 		this.subscribeToEvents();
 		await this.initializeExistingRooms();
 		log.info('RoomRuntimeService started');
@@ -123,6 +150,7 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.stop();
+		this.runtimes.delete(roomId);
 		return true;
 	}
 
@@ -364,9 +392,9 @@ export class RoomRuntimeService {
 		if (existing) return existing;
 
 		const rawDb = this.ctx.db.getDatabase();
-		const groupRepo = new SessionGroupRepository(rawDb);
-		const taskManager = new TaskManager(rawDb, room.id);
-		const goalManager = new GoalManager(rawDb, room.id);
+		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
+		const taskManager = new TaskManager(rawDb, room.id, this.ctx.reactiveDb);
+		const goalManager = new GoalManager(rawDb, room.id, this.ctx.reactiveDb);
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
@@ -417,6 +445,8 @@ export class RoomRuntimeService {
 			getRoom: (roomId) => this.ctx.roomManager.getRoom(roomId),
 			getTask: (taskId) => taskManager.getTask(taskId),
 			getGoal: (goalId) => goalManager.getGoal(goalId),
+			getGlobalSettings: this.ctx.getGlobalSettings,
+			jobQueue: this.ctx.jobQueue,
 		});
 
 		this.runtimes.set(room.id, runtime);
@@ -579,8 +609,8 @@ export class RoomRuntimeService {
 		observer: SessionObserver
 	): Promise<void> {
 		const rawDb = this.ctx.db.getDatabase();
-		const groupRepo = new SessionGroupRepository(rawDb);
-		const taskManager = new TaskManager(rawDb, roomId);
+		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
+		const taskManager = new TaskManager(rawDb, roomId, this.ctx.reactiveDb);
 		const sessionFactory = this.createSessionFactory();
 
 		const checker: SessionStateChecker = {

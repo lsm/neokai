@@ -4,8 +4,12 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with runMigration33 in packages/daemon/src/storage/schema/migrations.ts
+ * Keep in sync with runMigration40 in packages/daemon/src/storage/schema/migrations.ts
  * and space-agent-schema.ts.
+ *
+ * IMPORTANT: The schema defined here must exactly match the fully-migrated production
+ * schema (i.e. after all migrations have run). Never add columns or constraints here
+ * that do not yet exist in a production migration — that masks schema divergence.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -61,6 +65,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			start_step_id TEXT,
 			config TEXT,
 			layout TEXT,
+			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -90,6 +95,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			to_step_id TEXT NOT NULL,
 			condition TEXT,
 			order_index INTEGER NOT NULL DEFAULT 0,
+			is_cyclic INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
@@ -110,6 +116,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			status TEXT NOT NULL DEFAULT 'pending'
 				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
 			config TEXT,
+			iteration_count INTEGER NOT NULL DEFAULT 0,
+			max_iterations INTEGER NOT NULL DEFAULT 5,
+			goal_id TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
@@ -125,7 +134,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			task_type TEXT
@@ -136,6 +145,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			workflow_run_id TEXT,
 			workflow_step_id TEXT,
 			created_by_task_id TEXT,
+			goal_id TEXT,
 			progress INTEGER,
 			current_step TEXT,
 			result TEXT,
@@ -167,23 +177,42 @@ export function createSpaceTables(db: BunDatabase): void {
 			description TEXT,
 			workflow_run_id TEXT,
 			current_step_id TEXT,
+			task_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'completed', 'failed')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
 
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
+	);
+
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_session_group_members (
 			id TEXT PRIMARY KEY,
 			group_id TEXT NOT NULL,
 			session_id TEXT NOT NULL,
-			role TEXT NOT NULL
-				CHECK(role IN ('worker', 'leader')),
+			role TEXT NOT NULL,
+			agent_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'completed', 'failed')),
 			order_index INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
 			UNIQUE(group_id, session_id)
 		)
 	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_group_id ON space_session_group_members(group_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
+	);
 }

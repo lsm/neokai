@@ -26,6 +26,7 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
@@ -44,6 +45,8 @@ type EventHandler = (data: Record<string, unknown>) => void;
 
 class TestDaemonHub {
 	private listeners = new Map<string, Map<string, EventHandler>>();
+	/** Tracks all emitted events for assertion in tests */
+	readonly emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
 
 	on(event: string, handler: EventHandler, opts?: { sessionId?: string }): () => void {
 		const key = opts?.sessionId ? `${event}:${opts.sessionId}` : `${event}:*`;
@@ -57,7 +60,8 @@ class TestDaemonHub {
 		};
 	}
 
-	emit(event: string, data: Record<string, unknown>): void {
+	emit(event: string, data: Record<string, unknown>): Promise<void> {
+		this.emitted.push({ event, data });
 		const sessionId = (data as { sessionId?: string }).sessionId;
 		// Emit to session-specific listeners
 		if (sessionId) {
@@ -70,6 +74,7 @@ class TestDaemonHub {
 		for (const handler of this.listeners.get(`${event}:*`)?.values() ?? []) {
 			handler(data);
 		}
+		return Promise.resolve();
 	}
 }
 
@@ -228,6 +233,7 @@ interface TestCtx {
 		updateSession: () => void;
 		getDatabase: () => BunDatabase;
 	};
+	sessionGroupRepo: SpaceSessionGroupRepository;
 	manager: TaskAgentManager;
 	createdSessions: Map<string, MockAgentSession>;
 	fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
@@ -245,6 +251,7 @@ function makeCtx(): TestCtx {
 
 	const agentRepo = new SpaceAgentRepository(bunDb);
 	const agentManager = new SpaceAgentManager(agentRepo);
+	const sessionGroupRepo = new SpaceSessionGroupRepository(bunDb);
 	const workflowRepo = new SpaceWorkflowRepository(bunDb);
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
@@ -329,6 +336,7 @@ function makeCtx(): TestCtx {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
+		sessionGroupRepo,
 	});
 
 	return {
@@ -347,6 +355,7 @@ function makeCtx(): TestCtx {
 		daemonHub,
 		sessionManagerDeleteCalls,
 		mockDb,
+		sessionGroupRepo,
 		manager,
 		createdSessions,
 		fromInitSpy,
@@ -417,6 +426,98 @@ describe('TaskAgentManager', () => {
 			const session = ctx.createdSessions.get(sessionId)!;
 			// Session should have had a message enqueued
 			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
+		});
+
+		test('creates a SpaceSessionGroup in DB with taskId set', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groups = ctx.sessionGroupRepo.getGroupsByTask(ctx.spaceId, task.id);
+			expect(groups).toHaveLength(1);
+			expect(groups[0].name).toBe(`task:${task.id}`);
+			expect(groups[0].taskId).toBe(task.id);
+			expect(groups[0].spaceId).toBe(ctx.spaceId);
+			expect(groups[0].status).toBe('active');
+
+			// The Task Agent session should be a member with role 'task-agent'
+			expect(groups[0].members).toHaveLength(1);
+			expect(groups[0].members[0].sessionId).toBe(sessionId);
+			expect(groups[0].members[0].role).toBe('task-agent');
+			expect(groups[0].members[0].status).toBe('active');
+		});
+
+		test('getTaskGroupId returns the group ID after spawn', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			expect(groupId).toBeDefined();
+
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			expect(group).not.toBeNull();
+			expect(group!.taskId).toBe(task.id);
+		});
+
+		test('cleanup removes taskGroupId from in-memory map and marks group completed', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id)!;
+			expect(groupId).toBeDefined();
+
+			await ctx.manager.cleanup(task.id);
+
+			// In-memory map cleared
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+
+			// DB group marked completed
+			const group = ctx.sessionGroupRepo.getGroup(groupId);
+			expect(group?.status).toBe('completed');
+		});
+
+		test('spawn still succeeds when createGroup throws (non-fatal)', async () => {
+			// Patch createGroup to throw
+			const origCreate = ctx.sessionGroupRepo.createGroup.bind(ctx.sessionGroupRepo);
+			let callCount = 0;
+			ctx.sessionGroupRepo.createGroup = () => {
+				callCount++;
+				throw new Error('DB error');
+			};
+
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			// Task agent session created normally
+			expect(sessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
+			expect(ctx.createdSessions.has(sessionId)).toBe(true);
+			// Group not recorded since createGroup threw
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+			// createGroup was called
+			expect(callCount).toBe(1);
+
+			// Restore
+			ctx.sessionGroupRepo.createGroup = origCreate;
+		});
+
+		test('no orphaned group when addMember throws after createGroup succeeds', async () => {
+			// Patch addMember to throw
+			const origAdd = ctx.sessionGroupRepo.addMember.bind(ctx.sessionGroupRepo);
+			ctx.sessionGroupRepo.addMember = () => {
+				throw new Error('addMember error');
+			};
+
+			const task = await makeTask(ctx.taskManager);
+			// Spawn still succeeds (non-fatal)
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+			expect(sessionId).toBeDefined();
+
+			// No group persisted (orphan was deleted)
+			const groups = ctx.sessionGroupRepo.getGroupsByTask(ctx.spaceId, task.id);
+			expect(groups).toHaveLength(0);
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+
+			// Restore
+			ctx.sessionGroupRepo.addMember = origAdd;
 		});
 	});
 
@@ -931,6 +1032,238 @@ describe('TaskAgentManager', () => {
 			await expect(
 				callHandleSubSessionComplete(ctx.manager, parentTask.id, 'nonexistent-step', 'session-xyz')
 			).resolves.toBeUndefined();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Sub-session group membership
+	// -----------------------------------------------------------------------
+
+	describe('sub-session group membership', () => {
+		/** Helper: get the SubSessionFactory bound to a taskId via the private method */
+		function getFactory(
+			manager: TaskAgentManager,
+			taskId: string
+		): import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory {
+			return (
+				manager as unknown as {
+					createSubSessionFactory: (
+						taskId: string
+					) => import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
+				}
+			).createSubSessionFactory(taskId);
+		}
+
+		test('sub-session is added as group member with correct role and agentId', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			expect(groupId).toBeDefined();
+
+			const subSessionId = `sub-session-member-test-${task.id}`;
+			const factory = getFactory(ctx.manager, task.id);
+			const actualId = await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// The factory returns the session ID unchanged
+			expect(actualId).toBe(subSessionId);
+
+			// The group should now contain the sub-session as a member
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			const member = group?.members.find((m) => m.sessionId === subSessionId);
+			expect(member).toBeDefined();
+			expect(member?.agentId).toBe(ctx.agentId);
+			expect(member?.role).toBe('coder');
+			expect(member?.status).toBe('active');
+		});
+
+		test('multiple sub-sessions for same task all appear in the same group', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			expect(groupId).toBeDefined();
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subId1 = `sub-multi-1-${task.id}`;
+			const subId2 = `sub-multi-2-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subId1,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+			await factory.create(
+				{
+					sessionId: subId2,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'reviewer' }
+			);
+
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			const subMembers = group?.members.filter((m) => [subId1, subId2].includes(m.sessionId));
+			expect(subMembers?.length).toBe(2);
+
+			// orderIndex should be incremental
+			const indices = subMembers!.map((m) => m.orderIndex).sort((a, b) => a - b);
+			expect(indices[0]).toBeLessThan(indices[1]);
+		});
+
+		test('member status transitions to completed when handleSubSessionComplete fires', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-complete-test-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Verify initial status is 'active'
+			const beforeGroup = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberBefore = beforeGroup?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberBefore?.status).toBe('active');
+
+			// Call handleSubSessionComplete to trigger the status update
+			await (
+				ctx.manager as unknown as {
+					handleSubSessionComplete: (
+						taskId: string,
+						stepId: string,
+						subSessionId: string
+					) => Promise<void>;
+				}
+			).handleSubSessionComplete(task.id, 'step-1', subSessionId);
+
+			// Member status should now be 'completed'
+			const afterGroup = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfter = afterGroup?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfter?.status).toBe('completed');
+		});
+
+		test('member status transitions to failed on session.error event', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-test-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Register a completion callback so the error listener is set up
+			factory.onComplete(subSessionId, async () => {});
+
+			// Emit a session.error event
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'Fatal API error',
+			});
+
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Member status should now be 'failed'
+			const group = ctx.sessionGroupRepo.getGroup(groupId!);
+			const member = group?.members.find((m) => m.sessionId === subSessionId);
+			expect(member?.status).toBe('failed');
+		});
+
+		test('idle event after session.error does not overwrite failed status with completed', async () => {
+			// If session.error fires first (setting fired=true), a subsequent
+			// session.updated → idle must NOT call handleSubSessionComplete.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupId = ctx.manager.getTaskGroupId(task.id);
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-then-idle-${task.id}`;
+
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Simulate that the sub-session has processed messages
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			subSession._sdkMessageCount = 2;
+
+			// Register a completion callback so listeners are set up
+			let completionCallbackFired = false;
+			factory.onComplete(subSessionId, async () => {
+				completionCallbackFired = true;
+			});
+
+			// Emit session.error — sets fired=true and marks member as 'failed'
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'Fatal API error',
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Member should be 'failed'
+			const groupAfterError = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfterError = groupAfterError?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfterError?.status).toBe('failed');
+
+			// Now emit idle — should NOT fire the completion callback or change the status
+			ctx.daemonHub.emit('session.updated', {
+				sessionId: subSessionId,
+				processingState: { status: 'idle' },
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// Completion callback must not have fired (fired guard blocked it)
+			expect(completionCallbackFired).toBe(false);
+
+			// Status must remain 'failed', not overwritten with 'completed'
+			const groupAfterIdle = ctx.sessionGroupRepo.getGroup(groupId!);
+			const memberAfterIdle = groupAfterIdle?.members.find((m) => m.sessionId === subSessionId);
+			expect(memberAfterIdle?.status).toBe('failed');
+		});
+
+		test('addMember is non-fatal — sub-session is still created when group not found', async () => {
+			// Create a task but do NOT spawn its Task Agent (so no group is created).
+			const task = await makeTask(ctx.taskManager);
+
+			// The factory is created directly without spawning the task agent,
+			// meaning taskGroupIds will not have an entry for this task.
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-no-group-${task.id}`;
+
+			// Should succeed without throwing even though there is no group
+			await expect(
+				factory.create(
+					{
+						sessionId: subSessionId,
+						workspacePath: '/tmp/ws',
+					} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+					{ agentId: ctx.agentId, role: 'coder' }
+				)
+			).resolves.toBe(subSessionId);
 		});
 	});
 
@@ -1644,6 +1977,474 @@ describe('TaskAgentManager', () => {
 			}
 
 			restoreSpy.mockRestore();
+		});
+
+		test('step-agent MCP server is re-attached on rehydrated sub-sessions', async () => {
+			// Seed a workflow run so sub-sessions are rebuilt
+			const wfId = 'wf-rehydrate-step-mcp';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Step MCP', now, now);
+			const wfRunId = 'run-rehydrate-step-mcp';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_step_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const mainTask = await ctx.taskManager.createTask({
+				title: 'Main task step-mcp',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const mainSessionId = `space:${ctx.spaceId}:task:${mainTask.id}`;
+			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
+			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
+
+			// Create a sub-session task
+			const subSessionId = '550e8400-e29b-41d4-a716-step-mcp-sub01';
+			await ctx.taskManager.createTask({
+				title: 'Sub task step-mcp',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				taskAgentSessionId: subSessionId,
+			});
+			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+			// Create a group and add the sub-session as a member with role 'coder'
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${mainTask.id}`,
+				taskId: mainTask.id,
+			});
+			ctx.sessionGroupRepo.addMember(group.id, mainSessionId, {
+				role: 'task-agent',
+				status: 'active',
+				orderIndex: 0,
+			});
+			ctx.sessionGroupRepo.addMember(group.id, subSessionId, {
+				role: 'coder',
+				status: 'active',
+				orderIndex: 1,
+			});
+
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				const session = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, session);
+				return session as unknown as AgentSession;
+			});
+
+			await ctx.manager.rehydrate();
+
+			// The rehydrated sub-session should have the step-agent MCP server attached
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			expect(subSession).toBeDefined();
+			expect(Object.keys(subSession._mcpServers)).toContain('step-agent');
+
+			restoreSpy.mockRestore();
+		});
+
+		test('taskGroupIds is restored from DB after rehydration', async () => {
+			const { task } = await seedInProgressTask(ctx);
+
+			// Seed a session group in the DB as if it was created during the original spawn
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+			});
+
+			await ctx.manager.rehydrate();
+
+			// getTaskGroupId should return the persisted group ID
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// rehydrateGroupMaps — dedicated group map rebuild
+	// -----------------------------------------------------------------------
+
+	describe('rehydrateGroupMaps (via rehydrate)', () => {
+		// Uses the scoped restore spy from the outer rehydrate describe so that
+		// rehydrateTaskAgent() does not fail when restoring sessions. We reset
+		// it here independently to keep tests self-contained.
+		let restoreSpyScoped: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
+
+		beforeEach(() => {
+			restoreSpyScoped = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				if (!ctx.mockDb.getSession(sessionId)) return null;
+				const existing = ctx.createdSessions.get(sessionId);
+				if (existing) return existing as unknown as AgentSession;
+				const mockSession = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, mockSession);
+				return mockSession as unknown as AgentSession;
+			});
+		});
+
+		afterEach(() => {
+			restoreSpyScoped.mockRestore();
+		});
+
+		test('rebuilds taskGroupIds map for multiple active groups on restart', async () => {
+			// Simulate two tasks that each had a group created during a previous daemon run.
+			// The in-memory map is empty (fresh manager, simulating daemon restart).
+			const task1 = await ctx.taskManager.createTask({
+				title: 'Task 1',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const task2 = await ctx.taskManager.createTask({
+				title: 'Task 2',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+
+			const group1 = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task1.id}`,
+				taskId: task1.id,
+			});
+			const group2 = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task2.id}`,
+				taskId: task2.id,
+			});
+
+			// Before rehydrate: map is empty
+			expect(ctx.manager.getTaskGroupId(task1.id)).toBeUndefined();
+			expect(ctx.manager.getTaskGroupId(task2.id)).toBeUndefined();
+
+			// rehydrate() calls rehydrateGroupMaps() internally
+			await ctx.manager.rehydrate();
+
+			// After rehydrate: both groups should be in the map
+			expect(ctx.manager.getTaskGroupId(task1.id)).toBe(group1.id);
+			expect(ctx.manager.getTaskGroupId(task2.id)).toBe(group2.id);
+		});
+
+		test('standalone groups (no taskId) are skipped without error', async () => {
+			// A group with no task_id is a standalone group — nothing to map
+			ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: 'standalone-group',
+				// No taskId
+			});
+
+			// Should not throw
+			await expect(ctx.manager.rehydrate()).resolves.toBeUndefined();
+		});
+
+		test('groups with no active members are still rehydrated', async () => {
+			// A group that exists but has no members is still a valid group with a taskId
+			const task = await ctx.taskManager.createTask({
+				title: 'Empty group task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+			});
+			// group has zero members (no addMember call)
+
+			await ctx.manager.rehydrate();
+
+			// Map should still be populated
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+
+		test('completed groups are not included in the map', async () => {
+			// A group marked 'completed' should NOT be rehydrated into the active map
+			const task = await ctx.taskManager.createTask({
+				title: 'Completed group task',
+				description: '',
+				taskType: 'coding',
+				status: 'completed',
+			});
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+				status: 'completed',
+			});
+			void group;
+
+			await ctx.manager.rehydrate();
+
+			// Completed group should NOT appear in the map
+			expect(ctx.manager.getTaskGroupId(task.id)).toBeUndefined();
+		});
+
+		test('existing map entries are not overwritten by rehydrateGroupMaps', async () => {
+			// If spawnTaskAgent() already populated taskGroupIds before rehydrate() runs,
+			// the in-memory value takes precedence over the DB row.
+			const task = await ctx.taskManager.createTask({
+				title: 'Pre-spawned task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+
+			// Spawn first — this creates the group and sets taskGroupIds
+			const agentSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: agentSessionId });
+			ctx.mockDb.createSession({ id: agentSessionId, type: 'space_task_agent' });
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const groupIdAfterSpawn = ctx.manager.getTaskGroupId(task.id);
+			expect(groupIdAfterSpawn).toBeDefined();
+
+			// Create a second group for the same task (simulates stale DB row from old run)
+			const staleGroup = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}:old`,
+				taskId: task.id,
+			});
+			void staleGroup;
+
+			// rehydrate() should not overwrite the already-set entry
+			await ctx.manager.rehydrate();
+
+			// Value should remain the one set by spawnTaskAgent, not the stale group
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(groupIdAfterSpawn);
+		});
+
+		test('rehydrateGroupMaps is called even when no tasks need session rehydration', async () => {
+			// All tasks are completed — no Task Agent sessions to restore.
+			// But if there are active groups, the map should still be populated.
+			const task = await ctx.taskManager.createTask({
+				title: 'Active group, no session rehydration',
+				description: '',
+				taskType: 'coding',
+				status: 'completed', // completed = not rehydrated as session
+			});
+			const group = ctx.sessionGroupRepo.createGroup({
+				spaceId: ctx.spaceId,
+				name: `task:${task.id}`,
+				taskId: task.id,
+				status: 'active', // group is still active (cleanup may have missed it)
+			});
+
+			await ctx.manager.rehydrate();
+
+			// Group map should be populated even though the task session was not rehydrated
+			expect(ctx.manager.getTaskGroupId(task.id)).toBe(group.id);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Event emission (Task 2.3)
+	// -----------------------------------------------------------------------
+
+	describe('event emission', () => {
+		/** Helper: get the SubSessionFactory bound to a taskId via the private method */
+		function getFactory(
+			manager: TaskAgentManager,
+			taskId: string
+		): import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory {
+			return (
+				manager as unknown as {
+					createSubSessionFactory: (
+						taskId: string,
+						spaceId: string
+					) => import('../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
+				}
+			).createSubSessionFactory(taskId, ctx.spaceId);
+		}
+
+		test('spaceSessionGroup.created emitted after spawnTaskAgent', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const events = ctx.daemonHub.emitted.filter((e) => e.event === 'spaceSessionGroup.created');
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				taskId: string;
+				group: { id: string; members: unknown[] };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.spaceId).toBe(ctx.spaceId);
+			expect(payload.taskId).toBe(task.id);
+			expect(payload.group).toBeDefined();
+			// Group should include the task-agent member
+			expect(Array.isArray(payload.group.members)).toBe(true);
+			expect(payload.group.members.length).toBeGreaterThan(0);
+		});
+
+		test('spaceSessionGroup.created uses space-specific channel', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const evt = ctx.daemonHub.emitted.find((e) => e.event === 'spaceSessionGroup.created');
+			expect(evt?.data.sessionId).toBe(`space:${ctx.spaceId}`);
+		});
+
+		test('spaceSessionGroup.memberAdded emitted when sub-session is created', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-event-test-${task.id}`;
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			const events = ctx.daemonHub.emitted.filter(
+				(e) => e.event === 'spaceSessionGroup.memberAdded'
+			);
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				groupId: string;
+				member: { sessionId: string; role: string; agentId?: string; status: string };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.spaceId).toBe(ctx.spaceId);
+			expect(payload.groupId).toBe(ctx.manager.getTaskGroupId(task.id));
+			expect(payload.member.sessionId).toBe(subSessionId);
+			expect(payload.member.role).toBe('coder');
+			expect(payload.member.agentId).toBe(ctx.agentId);
+			expect(payload.member.status).toBe('active');
+		});
+
+		test('spaceSessionGroup.memberUpdated emitted when sub-session completes', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-complete-event-${task.id}`;
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Simulate completion via handleSubSessionComplete (private method)
+			const handleComplete = (
+				ctx.manager as unknown as {
+					handleSubSessionComplete: (
+						taskId: string,
+						stepId: string,
+						subSessionId: string
+					) => Promise<void>;
+				}
+			).handleSubSessionComplete;
+			await handleComplete.call(ctx.manager, task.id, 'step-1', subSessionId);
+
+			const events = ctx.daemonHub.emitted.filter(
+				(e) => e.event === 'spaceSessionGroup.memberUpdated'
+			);
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				groupId: string;
+				memberId: string;
+				member: { status: string };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.spaceId).toBe(ctx.spaceId);
+			expect(payload.member.status).toBe('completed');
+		});
+
+		test('spaceSessionGroup.memberUpdated emitted when sub-session errors', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			const subSessionId = `sub-error-event-${task.id}`;
+			await factory.create(
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			// Register a completion callback to activate the session.error listener
+			factory.onComplete(subSessionId, async () => {});
+
+			// Simulate session error via DaemonHub event
+			ctx.daemonHub.emit('session.error', {
+				sessionId: subSessionId,
+				error: 'test error',
+			});
+
+			// Wait a tick for the async handler to fire
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const events = ctx.daemonHub.emitted.filter(
+				(e) => e.event === 'spaceSessionGroup.memberUpdated'
+			);
+			expect(events.length).toBe(1);
+
+			const payload = events[0].data as {
+				sessionId: string;
+				spaceId: string;
+				member: { status: string };
+			};
+			expect(payload.sessionId).toBe(`space:${ctx.spaceId}`);
+			expect(payload.member.status).toBe('failed');
+		});
+
+		test('spaceSessionGroup.memberAdded uses space-specific channel', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const factory = getFactory(ctx.manager, task.id);
+			await factory.create(
+				{
+					sessionId: `sub-channel-test-${task.id}`,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, role: 'coder' }
+			);
+
+			const evt = ctx.daemonHub.emitted.find((e) => e.event === 'spaceSessionGroup.memberAdded');
+			expect(evt?.data.sessionId).toBe(`space:${ctx.spaceId}`);
+		});
+
+		test('no spaceSessionGroup.created event when group creation fails', async () => {
+			// Sabotage sessionGroupRepo.createGroup to throw
+			let callCount = 0;
+			ctx.sessionGroupRepo.createGroup = (..._args) => {
+				callCount++;
+				throw new Error('forced failure');
+			};
+
+			const task = await makeTask(ctx.taskManager);
+			// Should not throw — group creation is non-fatal
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			expect(callCount).toBe(1);
+			const events = ctx.daemonHub.emitted.filter((e) => e.event === 'spaceSessionGroup.created');
+			expect(events.length).toBe(0);
 		});
 	});
 });

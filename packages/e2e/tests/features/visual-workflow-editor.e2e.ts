@@ -19,91 +19,25 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import {
+	createSpace,
+	deleteSpace,
+	navigateToSpace,
+	resetEditorModeStorage,
+	openNewWorkflowEditor,
+	switchToVisualMode,
+} from '../helpers/workflow-editor-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 // ─── RPC helpers (infrastructure only) ────────────────────────────────────────
 
 async function createTestSpace(page: Page): Promise<string> {
-	await waitForWebSocketConnected(page);
-	const workspaceRoot = await getWorkspaceRoot(page);
-	const spaceName = `E2E Visual Editor Test ${Date.now()}`;
-	return page.evaluate(
-		async ({ wsPath, name }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-
-			// Clean up any leftover space at this workspace path
-			try {
-				const list = (await hub.request('space.list', {})) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const existing = list.find((s) => s.workspacePath === wsPath);
-				if (existing) {
-					await hub.request('space.delete', { id: existing.id });
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
-
-			const res = await hub.request('space.create', { name, workspacePath: wsPath });
-			return (res as { id: string }).id;
-		},
-		{ wsPath: workspaceRoot, name: spaceName }
-	);
+	return createSpace(page, `E2E Visual Editor Test ${Date.now()}`);
 }
 
 async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup
-	}
-}
-
-async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
-	await page.goto(`/space/${spaceId}`);
-	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
-}
-
-/**
- * Reset the workflow editor mode stored in localStorage to prevent test-ordering
- * flakiness. SpaceIsland reads 'workflow-editor-mode' on mount; if a prior test
- * left it at 'visual', subsequent tests start in visual mode unexpectedly.
- */
-async function resetEditorModeStorage(page: Page): Promise<void> {
-	await page.evaluate(() => {
-		localStorage.removeItem('workflow-editor-mode');
-	});
-}
-
-/** Navigate to Workflows tab and open the workflow editor for a new workflow. */
-async function openNewWorkflowEditor(page: Page): Promise<void> {
-	// Click Workflows tab
-	await page.locator('text=Workflows').first().click();
-
-	// Wait for the "Create Workflow" button (the only label used in WorkflowList.tsx)
-	const createBtn = page.getByRole('button', { name: 'Create Workflow' });
-	await expect(createBtn).toBeVisible({ timeout: 5000 });
-	await createBtn.click();
-
-	// Wait for editor mode toggle strip to appear
-	await expect(page.getByTestId('editor-mode-toggle')).toBeVisible({ timeout: 5000 });
-}
-
-/** Switch to Visual editor mode, accepting any confirmation dialogs. */
-async function switchToVisualMode(page: Page): Promise<void> {
-	// Register dialog handler before clicking — native confirm() fires synchronously
-	page.once('dialog', (d) => d.accept());
-	await page.getByTestId('editor-mode-visual').click();
-	await expect(page.getByTestId('visual-workflow-editor')).toBeVisible({ timeout: 5000 });
+	return deleteSpace(page, spaceId);
 }
 
 /** Get the default agent ID for the active space (infrastructure only). */
@@ -123,6 +57,8 @@ async function getDefaultAgentId(page: Page, spaceId: string): Promise<string> {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Visual Workflow Editor', () => {
+	// All tests share the same workspace path (one space at a time) — must run serially
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
@@ -281,8 +217,8 @@ test.describe('Visual Workflow Editor', () => {
 			if (actions) actions.style.opacity = '1';
 		});
 
-		// Click the Edit button
-		const editBtn = page.getByRole('button', { name: 'Edit' }).first();
+		// Click the Edit button scoped to the target workflow card
+		const editBtn = workflowCard.getByRole('button', { name: 'Edit' });
 		await expect(editBtn).toBeVisible({ timeout: 3000 });
 		await editBtn.click();
 

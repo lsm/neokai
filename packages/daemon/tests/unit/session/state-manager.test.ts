@@ -618,7 +618,8 @@ describe('StateManager', () => {
 				expect(eventHandlers.has('room.overview')).toBe(true);
 				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
 				expect(eventHandlers.has('goal.created')).toBe(true);
-				expect(eventHandlers.has('goal.updated')).toBe(true);
+				// goal.updated was removed in PR #695 (emitGoalUpdated dropped from goal handlers)
+				expect(eventHandlers.has('goal.updated')).toBe(false);
 				expect(eventHandlers.has('goal.completed')).toBe(true);
 				expect(eventHandlers.has('goal.progressUpdated')).toBe(true);
 			});
@@ -719,22 +720,11 @@ describe('StateManager', () => {
 			});
 
 			describe('goal.updated', () => {
-				it('should forward goal updates to room channel', () => {
-					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
-
-					const handler = eventHandlers.get('goal.updated');
-					const data = {
-						sessionId: 'room:room-123',
-						roomId: 'room-123',
-						goalId: 'goal-1',
-						goal: { title: 'Updated Goal 1' },
-					};
-
-					handler!(data);
-
-					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.updated', data, {
-						channel: 'room:room-123',
-					});
+				it('is not forwarded via eventBus (removed in PR #695 — goal.updated is no longer emitted by goal RPC handlers)', () => {
+					// goal.updated was removed when emitGoalUpdated was dropped from goal handlers.
+					// Verify no handler is registered for this event so CI fails loudly if it
+					// is re-introduced without a corresponding test update.
+					expect(eventHandlers.has('goal.updated')).toBe(false);
 				});
 			});
 
@@ -978,6 +968,11 @@ describe('StateManager', () => {
 			expect(eventHandlers.has('spaceAgent.created')).toBe(true);
 			expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
 			expect(eventHandlers.has('spaceAgent.deleted')).toBe(true);
+			// Space session group events (space-scoped channel)
+			expect(eventHandlers.has('spaceSessionGroup.created')).toBe(true);
+			expect(eventHandlers.has('spaceSessionGroup.memberAdded')).toBe(true);
+			expect(eventHandlers.has('spaceSessionGroup.memberUpdated')).toBe(true);
+			expect(eventHandlers.has('spaceSessionGroup.deleted')).toBe(true);
 			// Space workflow definition events
 			expect(eventHandlers.has('spaceWorkflow.created')).toBe(true);
 			expect(eventHandlers.has('spaceWorkflow.updated')).toBe(true);
@@ -1118,6 +1113,74 @@ describe('StateManager', () => {
 				const data = { sessionId: 'space:s-1', spaceId: 's-1', agentId: 'a-1' };
 				eventHandlers.get('spaceAgent.deleted')!(data);
 				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceAgent.deleted', data, {
+					channel: 'space:s-1',
+				});
+			});
+		});
+
+		describe('spaceSessionGroup events (space-scoped channel)', () => {
+			it('should forward spaceSessionGroup.created to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					taskId: 't-1',
+					group: { id: 'g-1', name: 'task:t-1' },
+				};
+				eventHandlers.get('spaceSessionGroup.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.created', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceSessionGroup.memberAdded to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					groupId: 'g-1',
+					member: {
+						id: 'm-1',
+						groupId: 'g-1',
+						sessionId: 'sess-1',
+						role: 'coder',
+						status: 'active',
+						orderIndex: 0,
+					},
+				};
+				eventHandlers.get('spaceSessionGroup.memberAdded')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.memberAdded', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceSessionGroup.memberUpdated to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					groupId: 'g-1',
+					memberId: 'm-1',
+					member: {
+						id: 'm-1',
+						groupId: 'g-1',
+						sessionId: 'sess-1',
+						role: 'coder',
+						status: 'completed',
+						orderIndex: 0,
+					},
+				};
+				eventHandlers.get('spaceSessionGroup.memberUpdated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.memberUpdated', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceSessionGroup.deleted to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'space:s-1', spaceId: 's-1', groupId: 'g-1' };
+				eventHandlers.get('spaceSessionGroup.deleted')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.deleted', data, {
 					channel: 'space:s-1',
 				});
 			});

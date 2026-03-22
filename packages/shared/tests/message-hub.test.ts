@@ -1112,3 +1112,107 @@ describe('Multi-Transport Support', () => {
 		await neoServer.close();
 	});
 });
+
+// ========================================
+// onClientDisconnect forwarding
+// ========================================
+
+/**
+ * Creates a mock transport with onClientDisconnect support.
+ * Returns both the transport and a simulate function to trigger disconnects.
+ */
+function createMockTransportWithDisconnect(): {
+	transport: IMessageTransport;
+	simulateDisconnect: (clientId: string) => void;
+} {
+	const handlers: Set<(clientId: string) => void> = new Set();
+	const transport: IMessageTransport = {
+		name: 'mock-with-disconnect',
+		initialize: async () => {},
+		close: async () => {},
+		send: async () => {},
+		isReady: () => true,
+		getState: () => 'connected' as ConnectionState,
+		onMessage: () => () => {},
+		onConnectionChange: () => () => {},
+		onClientDisconnect(handler) {
+			handlers.add(handler);
+			return () => {
+				handlers.delete(handler);
+			};
+		},
+	};
+	return {
+		transport,
+		simulateDisconnect: (clientId) => {
+			for (const h of handlers) h(clientId);
+		},
+	};
+}
+
+describe('MessageHub.onClientDisconnect', () => {
+	test('forwards handler to primary transport and fires on disconnect', () => {
+		const hub = new MessageHub();
+		const { transport, simulateDisconnect } = createMockTransportWithDisconnect();
+		hub.registerTransport(transport);
+
+		const received: string[] = [];
+		hub.onClientDisconnect((clientId) => {
+			received.push(clientId);
+		});
+
+		simulateDisconnect('client-abc');
+
+		expect(received).toEqual(['client-abc']);
+	});
+
+	test('unsubscribe prevents further callbacks', () => {
+		const hub = new MessageHub();
+		const { transport, simulateDisconnect } = createMockTransportWithDisconnect();
+		hub.registerTransport(transport);
+
+		const received: string[] = [];
+		const unsubscribe = hub.onClientDisconnect((clientId) => {
+			received.push(clientId);
+		});
+
+		// First disconnect fires
+		simulateDisconnect('client-1');
+		expect(received).toEqual(['client-1']);
+
+		// Unsubscribe and fire again — handler should not be called
+		unsubscribe();
+		simulateDisconnect('client-2');
+		expect(received).toEqual(['client-1']);
+	});
+
+	test('returns no-op unsubscribe when transport has no onClientDisconnect', () => {
+		const hub = new MessageHub();
+
+		// Transport without onClientDisconnect
+		const mockTransport: IMessageTransport = {
+			name: 'mock-no-disconnect',
+			initialize: async () => {},
+			close: async () => {},
+			send: async () => {},
+			isReady: () => true,
+			getState: () => 'connected' as ConnectionState,
+			onMessage: () => () => {},
+			onConnectionChange: () => () => {},
+			// onClientDisconnect is intentionally omitted
+		};
+
+		hub.registerTransport(mockTransport);
+
+		// Should not throw; returns a no-op function
+		const unsubscribe = hub.onClientDisconnect(() => {});
+		expect(() => unsubscribe()).not.toThrow();
+	});
+
+	test('returns no-op unsubscribe when no transport is registered', () => {
+		const hub = new MessageHub();
+
+		const unsubscribe = hub.onClientDisconnect(() => {});
+		expect(() => unsubscribe()).not.toThrow();
+	});
+});

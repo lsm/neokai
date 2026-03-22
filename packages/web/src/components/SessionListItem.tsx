@@ -4,6 +4,7 @@ import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
 import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
+import { getModelLabel } from '../lib/session-utils.ts';
 
 interface SessionListItemProps {
 	session: Session;
@@ -76,6 +77,14 @@ export default function SessionListItem({ session, onSessionClick }: SessionList
 						>
 							{session.title || 'New Session'}
 						</h3>
+						{session.config?.model && (
+							<span
+								class="text-[10px] px-1 py-0.5 rounded bg-dark-700 text-blue-400 font-medium flex-shrink-0"
+								title={session.config.model}
+							>
+								{getModelLabel(session.config.model)}
+							</span>
+						)}
 					</div>
 					<div class="flex items-center gap-1 flex-shrink-0">
 						{session.worktree && (

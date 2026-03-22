@@ -142,7 +142,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -303,6 +303,21 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// session_group_messages: append-only table for persisted group conversation
+	// messages (SDK + status entries). Replaces the legacy mirrored table dropped
+	// in migration 19. Populated by the LiveQuery message streaming path (Milestone 4).
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS session_group_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+        session_id TEXT,
+        role TEXT NOT NULL DEFAULT 'system',
+        message_type TEXT NOT NULL DEFAULT 'status',
+        content TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )
+    `);
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
@@ -363,8 +378,18 @@ function createIndexes(db: BunDatabase): void {
 	);
 	// Room Runtime indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
+	// Partial unique index: at most one active group per task ref_id at the DB level.
+	// Scoped to task/task_pair group types only — other future group types may share
+	// ref_id values without violating this constraint.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
+	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_sgm_group ON session_group_messages(group_id, created_at, id)`
+	);
 	// Job queue indexes
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`

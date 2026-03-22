@@ -161,31 +161,51 @@ export function setupSessionHandlers(
 			sessionId: string;
 		};
 
+		// Get roomId before updating to include in event payload
+		const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
+		const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;
+
 		// Convert UpdateSessionRequest to Partial<Session>
 		// config in UpdateSessionRequest is Partial<SessionConfig>, which is handled by
 		// database.updateSession merging with existing config
 		await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
-		// Broadcast update event to all clients
-		messageHub.event('session.updated', updates, {
+		const updatedPayload = { ...updates, sessionId: targetSessionId, roomId: roomIdForUpdate };
+
+		// Broadcast update event on session channel for per-session subscribers
+		messageHub.event('session.updated', updatedPayload, {
 			channel: `session:${targetSessionId}`,
 		});
+
+		// Also broadcast on room channel so RoomStore can react
+		if (roomIdForUpdate) {
+			messageHub.event('session.updated', updatedPayload, {
+				channel: `room:${roomIdForUpdate}`,
+			});
+		}
 
 		return { success: true };
 	});
 
 	messageHub.onRequest('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Get roomId before deleting so we can include it in the event payload
+		const agentSessionForDelete = sessionManager.getSession(targetSessionId);
+		const roomIdForDelete = agentSessionForDelete?.getSessionData().context?.roomId;
+
 		await sessionManager.deleteSession(targetSessionId);
 
-		// Broadcast deletion event to all clients
-		messageHub.event(
-			'session.deleted',
-			{ sessionId: targetSessionId },
-			{
-				channel: 'global',
-			}
-		);
+		// Broadcast on room channel so RoomStore reacts immediately.
+		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
+		// to avoid triple-firing the event. We only add the room-scoped broadcast here.
+		if (roomIdForDelete) {
+			messageHub.event(
+				'session.deleted',
+				{ sessionId: targetSessionId, roomId: roomIdForDelete },
+				{ channel: `room:${roomIdForDelete}` }
+			);
+		}
 
 		return { success: true };
 	});
@@ -227,6 +247,21 @@ export function setupSessionHandlers(
 				archivedAt: new Date().toISOString(),
 				metadata: updatedMetadata,
 			} as Partial<Session>);
+
+			// Broadcast session.updated so RoomStore and session subscribers stay in sync
+			const archivedPayloadNoWorktree = {
+				sessionId: targetSessionId,
+				status: 'archived',
+				roomId: session.context?.roomId,
+			};
+			messageHub.event('session.updated', archivedPayloadNoWorktree, {
+				channel: `session:${targetSessionId}`,
+			});
+			if (session.context?.roomId) {
+				messageHub.event('session.updated', archivedPayloadNoWorktree, {
+					channel: `room:${session.context.roomId}`,
+				});
+			}
 
 			return { success: true, requiresConfirmation: false };
 		}
@@ -272,6 +307,21 @@ export function setupSessionHandlers(
 				worktree: undefined,
 				metadata: updatedMetadata,
 			} as Partial<Session>);
+
+			// Broadcast session.updated so RoomStore and session subscribers stay in sync
+			const archivedPayloadWithWorktree = {
+				sessionId: targetSessionId,
+				status: 'archived',
+				roomId: session.context?.roomId,
+			};
+			messageHub.event('session.updated', archivedPayloadWithWorktree, {
+				channel: `session:${targetSessionId}`,
+			});
+			if (session.context?.roomId) {
+				messageHub.event('session.updated', archivedPayloadWithWorktree, {
+					channel: `room:${session.context.roomId}`,
+				});
+			}
 
 			return {
 				success: true,
@@ -709,6 +759,39 @@ export function setupSessionHandlers(
 		});
 
 		return result;
+	});
+
+	// Handle restarting the query while preserving the SDK session.
+	// Unlike resetQuery which clears pending messages and resets state,
+	// this method preserves pending messages and attempts to resume
+	// the same SDK session for conversation continuity.
+	// Use case: Manual restart from UI to refresh the agent without losing context
+	messageHub.onRequest('session.restart', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Verify session exists
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		try {
+			// Call restart directly - preserves SDK session and pending messages
+			await agentSession.restart();
+
+			// Emit event so StateManager and UI can react to the restart
+			await daemonHub.emit('agent.restart', { sessionId: targetSessionId, success: true });
+
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			await daemonHub.emit('agent.restart', {
+				sessionId: targetSessionId,
+				success: false,
+				error: errorMessage,
+			});
+			return { success: false, error: errorMessage };
+		}
 	});
 
 	// Handle triggering saved messages to be sent (Manual query mode)

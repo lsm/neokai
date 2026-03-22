@@ -140,6 +140,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	// Reset events
 	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
 	'agent.reset': { sessionId: string; success: boolean; error?: string };
+	'agent.restart': { sessionId: string; success: boolean; error?: string };
 
 	// Message sending events
 	'message.sendRequest': {
@@ -487,6 +488,34 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		spaceId: string;
 		agentId: string;
+	};
+
+	// Space session group events (channel: 'space:${spaceId}')
+	// sessionId is set to 'space:${spaceId}' for channel routing — only clients subscribed
+	// to that space receive these events.
+	'spaceSessionGroup.created': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		taskId: string;
+		group: import('@neokai/shared').SpaceSessionGroup;
+	};
+	'spaceSessionGroup.memberAdded': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
+		member: import('@neokai/shared').SpaceSessionGroupMember;
+	};
+	'spaceSessionGroup.memberUpdated': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
+		memberId: string;
+		member: import('@neokai/shared').SpaceSessionGroupMember;
+	};
+	'spaceSessionGroup.deleted': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
 	};
 
 	// Space workflow definition events (global events - use 'global' as sessionId)

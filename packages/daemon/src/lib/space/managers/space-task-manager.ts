@@ -3,7 +3,7 @@
  *
  * Handles:
  * - Creating space tasks with dependency validation
- * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review -> archived)
  * - Task assignment and progress tracking
  */
 
@@ -25,9 +25,10 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
 	pending: ['in_progress', 'cancelled'],
 	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
 	review: ['completed', 'needs_attention', 'in_progress'],
-	completed: [],
-	needs_attention: ['pending', 'in_progress', 'review'],
-	cancelled: ['pending', 'in_progress'],
+	completed: ['in_progress', 'archived'], // Reactivate or archive
+	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
+	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
+	archived: [], // True terminal state — no going back
 };
 
 /**
@@ -127,13 +128,13 @@ export class SpaceTaskManager {
 			updates.error = options.error;
 		}
 
-		// Clear error/result/progress when restarting from a failed/cancelled state.
-		// For needs_attention: allowed targets are pending, in_progress, review.
-		// For cancelled: allowed targets are pending, in_progress (review is not valid from cancelled).
+		// Clear error/result/progress when restarting from a terminal/failed state.
+		// Covers needs_attention, cancelled, and completed → reactivation transitions.
 		if (
 			(task.status === 'needs_attention' &&
 				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
-			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress'))
+			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress')) ||
+			(task.status === 'completed' && newStatus === 'in_progress')
 		) {
 			updates.error = null;
 			updates.result = null;
@@ -260,12 +261,20 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Archive a task
+	 * Archive a task - transitions to 'archived' status and sets archivedAt timestamp.
+	 * Validates that the current status allows transitioning to 'archived'.
 	 */
 	async archiveTask(taskId: string): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		if (!isValidSpaceTaskTransition(task.status, 'archived')) {
+			throw new Error(
+				`Cannot archive task in '${task.status}' status. ` +
+					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
+			);
 		}
 
 		const updated = this.taskRepo.archiveTask(taskId);
@@ -314,7 +323,8 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Retry a failed or cancelled task by resetting it to pending.
+	 * Retry a failed, cancelled, or completed task.
+	 * Completed/cancelled tasks are reactivated to in_progress; needs_attention tasks reset to pending.
 	 * Optionally updates the description on retry.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
@@ -325,15 +335,18 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		if (task.status !== 'needs_attention' && task.status !== 'cancelled') {
+		const retryableStatuses: SpaceTaskStatus[] = ['needs_attention', 'cancelled', 'completed'];
+		if (!retryableStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention' or 'cancelled' status.`
+				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention', 'cancelled', or 'completed' status.`
 			);
 		}
 
+		// Transition to in_progress for completed/cancelled (reactivation), pending for needs_attention
+		const targetStatus: SpaceTaskStatus =
+			task.status === 'completed' || task.status === 'cancelled' ? 'in_progress' : 'pending';
 		// Transition first — if this fails, the description is untouched (no partial state)
-		// setTaskStatus handles clearing error/result/progress on transition from needs_attention/cancelled -> pending
-		const retried = await this.setTaskStatus(taskId, 'pending');
+		const retried = await this.setTaskStatus(taskId, targetStatus);
 
 		// Apply optional description update after successful status transition
 		if (options?.description !== undefined) {
@@ -345,8 +358,8 @@ export class SpaceTaskManager {
 
 	/**
 	 * Reassign a task to a different agent.
-	 * Only allowed for tasks in 'pending', 'needs_attention', or 'cancelled' status.
-	 * Tasks in 'in_progress', 'review', 'completed', or 'draft' cannot be reassigned.
+	 * Only allowed for tasks in 'pending', 'needs_attention', 'cancelled', or 'completed' status.
+	 * Tasks in 'in_progress', 'review', or 'draft' cannot be reassigned.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
 	 */
@@ -360,10 +373,15 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const allowedStatuses: SpaceTaskStatus[] = ['pending', 'needs_attention', 'cancelled'];
+		const allowedStatuses: SpaceTaskStatus[] = [
+			'pending',
+			'needs_attention',
+			'cancelled',
+			'completed',
+		];
 		if (!allowedStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', or 'cancelled' status.`
+				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', 'cancelled', or 'completed' status.`
 			);
 		}
 

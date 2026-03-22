@@ -5,6 +5,9 @@
  */
 
 // @public - Library export
+export { CollapsibleSection } from './CollapsibleSection';
+export type { CollapsibleSectionProps } from './CollapsibleSection';
+// @public - Library export
 export { GoalsEditor } from './GoalsEditor';
 // @public - Library export
 export { RoomContext } from './RoomContext';

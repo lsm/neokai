@@ -25,8 +25,8 @@ export class SpaceTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -42,6 +42,7 @@ export class SpaceTaskRepository {
 			params.workflowRunId ?? null,
 			params.workflowStepId ?? null,
 			params.createdByTaskId ?? null,
+			params.goalId ?? null,
 			JSON.stringify(params.dependsOn ?? []),
 			params.taskAgentSessionId ?? null,
 			now,
@@ -68,7 +69,7 @@ export class SpaceTaskRepository {
 	listBySpace(spaceId: string, includeArchived = false): SpaceTask[] {
 		let query = `SELECT * FROM space_tasks WHERE space_id = ?`;
 		if (!includeArchived) {
-			query += ` AND archived_at IS NULL`;
+			query += ` AND status != 'archived'`;
 		}
 		query += ` ORDER BY updated_at DESC`;
 
@@ -82,9 +83,20 @@ export class SpaceTaskRepository {
 	 */
 	listByWorkflowRun(workflowRunId: string): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE workflow_run_id = ? AND archived_at IS NULL ORDER BY created_at ASC`
+			`SELECT * FROM space_tasks WHERE workflow_run_id = ? AND status != 'archived' ORDER BY created_at ASC`
 		);
 		const rows = stmt.all(workflowRunId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
+	 * List all non-archived tasks associated with a goal/mission.
+	 */
+	findByGoalId(goalId: string): SpaceTask[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_tasks WHERE goal_id = ? AND archived_at IS NULL ORDER BY created_at ASC`
+		);
+		const rows = stmt.all(goalId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
 	}
 
@@ -95,7 +107,7 @@ export class SpaceTaskRepository {
 	listStandaloneBySpace(spaceId: string, includeArchived = false): SpaceTask[] {
 		let query = `SELECT * FROM space_tasks WHERE space_id = ? AND workflow_run_id IS NULL`;
 		if (!includeArchived) {
-			query += ` AND archived_at IS NULL`;
+			query += ` AND status != 'archived'`;
 		}
 		query += ` ORDER BY updated_at DESC`;
 
@@ -109,7 +121,7 @@ export class SpaceTaskRepository {
 	 */
 	listByStatus(spaceId: string, status: SpaceTaskStatus): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? AND archived_at IS NULL ORDER BY updated_at DESC`
+			`SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC`
 		);
 		const rows = stmt.all(spaceId, status) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -146,6 +158,9 @@ export class SpaceTaskRepository {
 				params.status === 'cancelled'
 			) {
 				fields.push('completed_at = ?');
+				values.push(Date.now());
+			} else if (params.status === 'archived') {
+				fields.push('archived_at = ?');
 				values.push(Date.now());
 			}
 		}
@@ -202,7 +217,8 @@ export class SpaceTaskRepository {
 			params.activeSession === undefined &&
 			(params.status === 'completed' ||
 				params.status === 'needs_attention' ||
-				params.status === 'cancelled')
+				params.status === 'cancelled' ||
+				params.status === 'archived')
 		) {
 			fields.push('active_session = ?');
 			values.push(null);
@@ -227,6 +243,10 @@ export class SpaceTaskRepository {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
 		}
+		if (params.goalId !== undefined) {
+			fields.push('goal_id = ?');
+			values.push(params.goalId ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -240,12 +260,13 @@ export class SpaceTaskRepository {
 	}
 
 	/**
-	 * Archive a task by setting archived_at timestamp
+	 * Archive a task by setting status to 'archived' and archived_at timestamp.
+	 * status = 'archived' is the canonical source of truth; archived_at is a derived timestamp.
 	 */
 	archiveTask(id: string): SpaceTask | null {
 		const now = Date.now();
 		const stmt = this.db.prepare(
-			`UPDATE space_tasks SET archived_at = ?, updated_at = ? WHERE id = ?`
+			`UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
 		);
 		stmt.run(now, now, id);
 		return this.getTask(id);
@@ -288,7 +309,7 @@ export class SpaceTaskRepository {
 	 */
 	listActiveWithTaskAgentSession(): SpaceTask[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'needs_attention') AND task_agent_session_id IS NOT NULL AND archived_at IS NULL`
+			`SELECT * FROM space_tasks WHERE status IN ('in_progress', 'needs_attention') AND task_agent_session_id IS NOT NULL`
 		);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToSpaceTask(r));
@@ -335,6 +356,7 @@ export class SpaceTaskRepository {
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
 			workflowStepId: (row.workflow_step_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
+			goalId: (row.goal_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,
 			result: (row.result as string | null) ?? undefined,

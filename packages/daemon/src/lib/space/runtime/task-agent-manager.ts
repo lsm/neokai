@@ -18,6 +18,7 @@
  * - `taskAgentSessions`  — taskId → Task Agent AgentSession
  * - `subSessions`        — taskId → (stepId → AgentSession)
  * - `spawningTasks`      — set of taskIds currently being spawned (concurrency guard)
+ * - `taskGroupIds`       — taskId → SpaceSessionGroup.id (fast lookup for sub-session wiring)
  *
  * The maps are fast-lookup caches; session data is the source of truth in the DB.
  * On daemon restart, maps must be rebuilt via rehydration (Task 5.3).
@@ -58,8 +59,14 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { SubSessionFactory, SubSessionState } from '../tools/task-agent-tools';
+import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
+import type {
+	SubSessionFactory,
+	SubSessionMemberInfo,
+	SubSessionState,
+} from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
+import { createStepAgentMcpServer } from '../tools/step-agent-tools';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -95,6 +102,8 @@ export interface TaskAgentManagerConfig {
 	getApiKey: () => Promise<string | null>;
 	/** Default model ID for sessions that don't specify one */
 	defaultModel: string;
+	/** Session group repository — used to persist SpaceSessionGroup records per task */
+	sessionGroupRepo: SpaceSessionGroupRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +136,18 @@ export class TaskAgentManager {
 	 * spawnTaskAgent() calls from creating duplicate Task Agent sessions.
 	 */
 	private spawningTasks = new Set<string>();
+
+	/**
+	 * Maps taskId → groupId for SpaceSessionGroups created when spawning Task Agents.
+	 * Allows fast lookup when adding sub-session members to an existing group.
+	 */
+	private taskGroupIds = new Map<string, string>();
+
+	/**
+	 * Maps sub-session ID → SpaceSessionGroupMember.id for sessions that were
+	 * successfully added to a group. Used to update member status on completion.
+	 */
+	private subSessionMemberIds = new Map<string, string>();
 
 	/**
 	 * Completion callbacks registered via onComplete().
@@ -248,12 +269,14 @@ export class TaskAgentManager {
 
 			// --- Build and attach MCP server with live runtime dependencies
 			const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
-			const subSessionFactory = this.createSubSessionFactory(taskId);
+			const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
+
+			const workflowRunId = workflowRun?.id ?? '';
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
 				space,
-				workflowRunId: workflowRun?.id ?? '',
+				workflowRunId,
 				workspacePath: space.workspacePath,
 				runtime,
 				workflowManager: this.config.spaceWorkflowManager,
@@ -266,7 +289,17 @@ export class TaskAgentManager {
 					this.injectSubSessionMessage(subSessionId, message),
 				onSubSessionComplete: (stepId, subSessionId) =>
 					this.handleSubSessionComplete(taskId, stepId, subSessionId),
+				sessionGroupRepo: this.config.sessionGroupRepo,
+				getGroupId: () => this.taskGroupIds.get(taskId),
 				daemonHub: this.config.daemonHub,
+				buildStepAgentMcpServer: (subSessionId, role) =>
+					this.buildStepAgentMcpServerForSession(
+						taskId,
+						subSessionId,
+						role,
+						spaceId,
+						workflowRunId
+					) as unknown as McpServerConfig,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -283,6 +316,52 @@ export class TaskAgentManager {
 
 			// --- Store in map before streaming start to allow getTaskAgent() calls
 			this.taskAgentSessions.set(taskId, agentSession);
+
+			// --- Create a SpaceSessionGroup for this task and add the Task Agent as member.
+			// Group creation is non-fatal: if either step fails, the task agent still runs.
+			// When createGroup succeeds but addMember throws, delete the orphaned group row
+			// before falling through to the warn log, preventing stale memberless records.
+			try {
+				const group = this.config.sessionGroupRepo.createGroup({
+					spaceId,
+					name: `task:${taskId}`,
+					taskId,
+				});
+				try {
+					this.config.sessionGroupRepo.addMember(group.id, sessionId, {
+						role: 'task-agent',
+						status: 'active',
+					});
+					this.taskGroupIds.set(taskId, group.id);
+					log.info(`TaskAgentManager: created session group ${group.id} for task ${taskId}`);
+					// Fetch the group with members populated for the event payload
+					const groupWithMembers = this.config.sessionGroupRepo.getGroup(group.id) ?? group;
+					this.config.daemonHub
+						.emit('spaceSessionGroup.created', {
+							sessionId: `space:${spaceId}`,
+							spaceId,
+							taskId,
+							group: groupWithMembers,
+						})
+						.catch((err) => {
+							log.warn(
+								`TaskAgentManager: failed to emit spaceSessionGroup.created for group ${group.id}:`,
+								err
+							);
+						});
+				} catch (addErr) {
+					// addMember failed — remove the orphaned group row before propagating
+					try {
+						this.config.sessionGroupRepo.deleteGroup(group.id);
+					} catch {
+						// best-effort cleanup; ignore secondary failure
+					}
+					throw addErr;
+				}
+			} catch (err) {
+				// Group creation failure is non-fatal — task agent still runs; log and continue
+				log.warn(`TaskAgentManager: failed to create session group for task ${taskId}:`, err);
+			}
 
 			// --- Register in SessionManager cache so getSessionAsync() returns the live
 			// instance with MCP tools attached rather than creating a duplicate from DB.
@@ -423,6 +502,11 @@ export class TaskAgentManager {
 		return this.taskAgentSessions.get(taskId);
 	}
 
+	/** Returns the session group ID for a task, or undefined if no group was created. */
+	getTaskGroupId(taskId: string): string | undefined {
+		return this.taskGroupIds.get(taskId);
+	}
+
 	/** Returns a sub-session by its session ID, or undefined if not found. */
 	getSubSession(subSessionId: string): AgentSession | undefined {
 		for (const [, stepMap] of this.subSessions) {
@@ -459,6 +543,12 @@ export class TaskAgentManager {
 	 * WorkflowExecutors are loaded, so executors are ready when Task Agents run.
 	 */
 	async rehydrate(): Promise<void> {
+		// Rebuild the taskId → groupId map from all active groups before rehydrating
+		// individual Task Agent sessions. This ensures the map is fully populated even
+		// for tasks whose session rehydration fails, and covers all active groups in one
+		// indexed query rather than N per-task queries.
+		this.rehydrateGroupMaps();
+
 		const activeTasks = this.config.taskRepo.listActiveWithTaskAgentSession();
 
 		let attempted = 0;
@@ -535,11 +625,12 @@ export class TaskAgentManager {
 			this.taskAgentSessions.delete(taskId);
 		}
 
-		// 3. Remove any dangling completion callbacks for known session IDs.
+		// 3. Remove any dangling completion callbacks and member ID entries for known session IDs.
 		// We use the exact session IDs collected above (sub-sessions + task agent)
 		// rather than a substring match to avoid false positives.
 		for (const sessionId of sessionIdsToClean) {
 			this.completionCallbacks.delete(sessionId);
+			this.subSessionMemberIds.delete(sessionId);
 		}
 
 		// 4. Remove session listeners for known session IDs
@@ -550,6 +641,17 @@ export class TaskAgentManager {
 				this.sessionListeners.delete(sessionId);
 			}
 		}
+
+		// 5. Mark the session group as completed in the DB, then remove from in-memory map
+		const groupId = this.taskGroupIds.get(taskId);
+		if (groupId) {
+			try {
+				this.config.sessionGroupRepo.updateGroup(groupId, { status: 'completed' });
+			} catch (err) {
+				log.warn(`TaskAgentManager: failed to mark session group ${groupId} as completed:`, err);
+			}
+		}
+		this.taskGroupIds.delete(taskId);
 
 		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId}`);
 	}
@@ -562,10 +664,63 @@ export class TaskAgentManager {
 	 * Create a `SubSessionFactory` implementation bound to a specific taskId.
 	 * Passed to `createTaskAgentMcpServer()` for the given Task Agent session.
 	 */
-	private createSubSessionFactory(taskId: string): SubSessionFactory {
+	private createSubSessionFactory(taskId: string, spaceId: string): SubSessionFactory {
+		// Capture workflowRunId once at factory-creation time to avoid a DB round-trip
+		// on every spawn. The run ID is immutable once assigned, so this is safe.
+		// Log a warning if the task lacks a workflow run — step-agent tools will
+		// produce an empty ChannelResolver (no declared channels) in that case.
+		const taskWorkflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId ?? '';
+		if (!taskWorkflowRunId) {
+			log.warn(
+				`TaskAgentManager.createSubSessionFactory: task ${taskId} has no workflowRunId — ` +
+					`step-agent channel topology will be unavailable (request_peer_input still works)`
+			);
+		}
+
 		return {
-			create: async (init: AgentSessionInit): Promise<string> => {
-				return this.createSubSession(taskId, init.sessionId, init);
+			create: async (
+				init: AgentSessionInit,
+				memberInfo?: SubSessionMemberInfo
+			): Promise<string> => {
+				const sessionId = await this.createSubSession(taskId, init.sessionId, init);
+
+				// Add the sub-session as a member of the task's group (non-fatal).
+				const groupId = this.taskGroupIds.get(taskId);
+				if (groupId) {
+					try {
+						const orderIndex = this.config.sessionGroupRepo.getMemberCount(groupId);
+						const member = this.config.sessionGroupRepo.addMember(groupId, sessionId, {
+							role: memberInfo?.role ?? 'agent',
+							agentId: memberInfo?.agentId,
+							status: 'active',
+							orderIndex,
+						});
+						this.subSessionMemberIds.set(sessionId, member.id);
+						log.info(
+							`TaskAgentManager: added sub-session ${sessionId} as member ${member.id} to group ${groupId}`
+						);
+						this.config.daemonHub
+							.emit('spaceSessionGroup.memberAdded', {
+								sessionId: `space:${spaceId}`,
+								spaceId,
+								groupId,
+								member,
+							})
+							.catch((err) => {
+								log.warn(
+									`TaskAgentManager: failed to emit spaceSessionGroup.memberAdded for member ${member.id}:`,
+									err
+								);
+							});
+					} catch (err) {
+						log.warn(
+							`TaskAgentManager: failed to add sub-session ${sessionId} to group ${groupId}:`,
+							err
+						);
+					}
+				}
+
+				return sessionId;
 			},
 
 			getProcessingState: (subSessionId: string): SubSessionState | null => {
@@ -606,6 +761,7 @@ export class TaskAgentManager {
 	 * Register a completion callback for a sub-session.
 	 * Subscribes to DaemonHub session.updated events for the session.
 	 * The callback is called at most once when the session first goes idle.
+	 * Also subscribes to session.error to mark the group member as 'failed'.
 	 */
 	private registerCompletionCallback(subSessionId: string, callback: () => Promise<void>): void {
 		// Add to callback list
@@ -620,7 +776,7 @@ export class TaskAgentManager {
 		// Track whether we've fired (to make callback fire exactly once)
 		let fired = false;
 
-		const unsubscribe = this.config.daemonHub.on(
+		const unsubscribeUpdated = this.config.daemonHub.on(
 			'session.updated',
 			(event) => {
 				if (fired) return;
@@ -660,7 +816,63 @@ export class TaskAgentManager {
 			{ sessionId: subSessionId }
 		);
 
-		this.sessionListeners.set(subSessionId, unsubscribe);
+		// Subscribe to session.error to mark the group member as 'failed' when a
+		// fatal error occurs. Sets `fired = true` so that a subsequent idle transition
+		// (session keeps going after an error) does not overwrite 'failed' with 'completed'.
+		// Also self-unsubscribes both listeners to prevent multiple invocations.
+		const unsubscribeError = this.config.daemonHub.on(
+			'session.error',
+			(_event) => {
+				if (fired) return; // Already handled by completion path
+				fired = true;
+				// Tear down both listeners now that the error terminal state is handled.
+				const unsub = this.sessionListeners.get(subSessionId);
+				if (unsub) {
+					unsub();
+					this.sessionListeners.delete(subSessionId);
+				}
+				const memberId = this.subSessionMemberIds.get(subSessionId);
+				if (!memberId) return;
+				try {
+					const updatedMember = this.config.sessionGroupRepo.updateMemberStatus(memberId, 'failed');
+					if (updatedMember) {
+						const spaceId = this.getSpaceIdForSubSession(subSessionId);
+						if (spaceId) {
+							this.config.daemonHub
+								.emit('spaceSessionGroup.memberUpdated', {
+									sessionId: `space:${spaceId}`,
+									spaceId,
+									groupId: updatedMember.groupId,
+									memberId,
+									member: updatedMember,
+								})
+								.catch((err) => {
+									log.warn(
+										`TaskAgentManager: failed to emit spaceSessionGroup.memberUpdated for member ${memberId}:`,
+										err
+									);
+								});
+						} else {
+							log.warn(
+								`TaskAgentManager: could not resolve spaceId for sub-session ${subSessionId} — spaceSessionGroup.memberUpdated (failed) not emitted`
+							);
+						}
+					}
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: failed to mark member ${memberId} as failed for sub-session ${subSessionId}:`,
+						err
+					);
+				}
+			},
+			{ sessionId: subSessionId }
+		);
+
+		// Store a combined unsubscribe that tears down both listeners at once.
+		this.sessionListeners.set(subSessionId, () => {
+			unsubscribeUpdated();
+			unsubscribeError();
+		});
 	}
 
 	/**
@@ -699,14 +911,59 @@ export class TaskAgentManager {
 			}
 		}
 
+		// Update the group member status to 'completed'.
+		const memberId = this.subSessionMemberIds.get(subSessionId);
+		if (memberId) {
+			try {
+				const updatedMember = this.config.sessionGroupRepo.updateMemberStatus(
+					memberId,
+					'completed'
+				);
+				if (updatedMember) {
+					const spaceId = this.getSpaceIdForTask(taskId);
+					if (spaceId) {
+						this.config.daemonHub
+							.emit('spaceSessionGroup.memberUpdated', {
+								sessionId: `space:${spaceId}`,
+								spaceId,
+								groupId: updatedMember.groupId,
+								memberId,
+								member: updatedMember,
+							})
+							.catch((err) => {
+								log.warn(
+									`TaskAgentManager: failed to emit spaceSessionGroup.memberUpdated for member ${memberId}:`,
+									err
+								);
+							});
+					} else {
+						log.warn(
+							`TaskAgentManager: could not resolve spaceId for task ${taskId} — spaceSessionGroup.memberUpdated (completed) not emitted`
+						);
+					}
+				}
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager: failed to mark member ${memberId} as completed for sub-session ${subSessionId}:`,
+					err
+				);
+			}
+		}
+
 		// Notify the Task Agent that a sub-session has completed.
+		// Include the agent's result summary so the Task Agent has immediate context.
 		// This sends a next_turn message so the Task Agent can call advance_workflow.
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
 			try {
+				// Fetch the completed step task's result summary from the DB for context.
+				const completedStepTask = stepTasks.length > 0 ? stepTasks[stepTasks.length - 1] : null;
+				const resultSummary = completedStepTask?.result
+					? `\nAgent result summary: ${completedStepTask.result}`
+					: '';
 				await this.injectMessageIntoSession(
 					taskAgentSession,
-					`[STEP_COMPLETE] Step "${stepId}" has completed. Call check_step_status to verify, then call advance_workflow to proceed.`,
+					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_step_status to verify, then call advance_workflow to proceed.`,
 					'next_turn'
 				);
 			} catch (err) {
@@ -748,8 +1005,39 @@ export class TaskAgentManager {
 	}
 
 	// -------------------------------------------------------------------------
-	// Private — rehydration helper
+	// Private — rehydration helpers
 	// -------------------------------------------------------------------------
+
+	/**
+	 * Rebuild the `taskId → groupId` in-memory map from all active groups in the DB.
+	 *
+	 * Queries `space_session_groups` for every row with `status = 'active'` and a
+	 * non-null `task_id`. Groups without a `task_id`
+	 * (standalone groups) are silently skipped — there is no taskId key to map.
+	 * Groups with no active members are still valid and are included.
+	 *
+	 * Existing map entries are NOT overwritten: if a fresh `spawnTaskAgent()` call
+	 * already populated `taskGroupIds` before `rehydrate()` runs, that value takes
+	 * precedence over the DB row (the in-memory value is always the most recent).
+	 *
+	 * This method is synchronous and performs a single DB read. It is called at the
+	 * start of `rehydrate()` so the full map is available before individual Task Agent
+	 * sessions are restored.
+	 */
+	private rehydrateGroupMaps(): void {
+		const activeGroups = this.config.sessionGroupRepo.listActiveGroupsWithTaskId();
+		let restored = 0;
+		for (const { id, taskId } of activeGroups) {
+			// Don't overwrite if already populated by a concurrent spawnTaskAgent()
+			if (!this.taskGroupIds.has(taskId)) {
+				this.taskGroupIds.set(taskId, id);
+				restored++;
+			}
+		}
+		log.info(
+			`TaskAgentManager.rehydrateGroupMaps: restored ${restored}/${activeGroups.length} active group mappings`
+		);
+	}
 
 	/**
 	 * Rehydrate a single Task Agent session after daemon restart.
@@ -811,12 +1099,14 @@ export class TaskAgentManager {
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
 		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(spaceId);
-		const subSessionFactory = this.createSubSessionFactory(taskId);
+		const subSessionFactory = this.createSubSessionFactory(taskId, spaceId);
+
+		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
 			space,
-			workflowRunId: workflowRun?.id ?? '',
+			workflowRunId: rehydrateWorkflowRunId,
 			workspacePath: space.workspacePath,
 			runtime,
 			workflowManager: this.config.spaceWorkflowManager,
@@ -829,6 +1119,17 @@ export class TaskAgentManager {
 				this.injectSubSessionMessage(subSessionId, message),
 			onSubSessionComplete: (stepId, subSessionId) =>
 				this.handleSubSessionComplete(taskId, stepId, subSessionId),
+			daemonHub: this.config.daemonHub,
+			sessionGroupRepo: this.config.sessionGroupRepo,
+			getGroupId: () => this.taskGroupIds.get(taskId),
+			buildStepAgentMcpServer: (subSessionId, role) =>
+				this.buildStepAgentMcpServerForSession(
+					taskId,
+					subSessionId,
+					role,
+					spaceId,
+					rehydrateWorkflowRunId
+				) as unknown as McpServerConfig,
 		});
 
 		agentSession.setRuntimeMcpServers({
@@ -868,8 +1169,16 @@ export class TaskAgentManager {
 		// --- Rebuild subSessions map from step tasks in the same workflow run
 		// Sub-sessions are not fully rehydrated (no streaming restart) — the Task Agent
 		// will re-spawn them as needed after receiving the re-orientation message.
+		// Step-agent MCP tools are runtime-only (not persisted), so we must re-attach
+		// them here the same way createSubSessionFactory.create() does it.
 		if (task.workflowRunId) {
-			const stepTasks = this.config.taskRepo.listByWorkflowRun(task.workflowRunId);
+			const workflowRunId = task.workflowRunId;
+
+			// Load the group once; we need it to look up each sub-session's role.
+			const groupId = this.taskGroupIds.get(taskId);
+			const group = groupId ? this.config.sessionGroupRepo.getGroup(groupId) : null;
+
+			const stepTasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
 			for (const stepTask of stepTasks) {
 				const subSessionId = stepTask.taskAgentSessionId;
 				if (!subSessionId || stepTask.id === taskId) continue;
@@ -886,6 +1195,22 @@ export class TaskAgentManager {
 					this.config.getApiKey
 				);
 				if (!subSession) continue;
+
+				// Re-attach step-agent MCP tools (runtime-only, not persisted to DB).
+				// Look up the member's role from the session group; fall back to 'agent'.
+				const memberRole =
+					group?.members.find((m) => m.sessionId === subSessionId)?.role ?? 'agent';
+
+				const stepAgentMcpServer = this.buildStepAgentMcpServerForSession(
+					taskId,
+					subSessionId,
+					memberRole,
+					spaceId,
+					workflowRunId
+				);
+				subSession.setRuntimeMcpServers({
+					'step-agent': stepAgentMcpServer as unknown as McpServerConfig,
+				});
 
 				if (!this.subSessions.has(taskId)) {
 					this.subSessions.set(taskId, new Map());
@@ -1001,5 +1326,49 @@ export class TaskAgentManager {
 	/** Returns the space ID for a task by reading it from the task repository. */
 	private getSpaceIdForTask(taskId: string): string | null {
 		return this.config.taskRepo.getTask(taskId)?.spaceId ?? null;
+	}
+
+	/**
+	 * Look up the spaceId for a sub-session by searching for the parent taskId.
+	 * Used when emitting events from the error handler where only subSessionId is available.
+	 */
+	private getSpaceIdForSubSession(subSessionId: string): string | null {
+		for (const [taskId, stepMap] of this.subSessions) {
+			if (stepMap.has(subSessionId)) {
+				return this.getSpaceIdForTask(taskId);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Build a step agent MCP server for a newly spawned sub-session.
+	 * Called from the `buildStepAgentMcpServer` callback passed to createTaskAgentMcpServer().
+	 *
+	 * The server gives the step agent peer communication tools (list_peers, send_feedback,
+	 * request_peer_input) that are scoped to its group and channel topology.
+	 *
+	 * The `injectToTaskAgent` callback routes `request_peer_input` requests through the
+	 * Task Agent, which has unrestricted relay access to all group members.
+	 */
+	private buildStepAgentMcpServerForSession(
+		taskId: string,
+		subSessionId: string,
+		role: string,
+		spaceId: string,
+		workflowRunId: string
+	) {
+		return createStepAgentMcpServer({
+			mySessionId: subSessionId,
+			myRole: role,
+			taskId,
+			workflowRunId,
+			sessionGroupRepo: this.config.sessionGroupRepo,
+			getGroupId: () => this.taskGroupIds.get(taskId),
+			workflowRunRepo: this.config.workflowRunRepo,
+			messageInjector: (targetSessionId, message) =>
+				this.injectSubSessionMessage(targetSessionId, message),
+			injectToTaskAgent: (message) => this.injectTaskAgentMessage(taskId, message),
+		});
 	}
 }

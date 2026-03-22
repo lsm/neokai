@@ -6,7 +6,7 @@
  * Storage layout:
  *   space_workflows             — id, space_id, name, description, start_step_id, config (JSON), layout (JSON), created_at, updated_at
  *   space_workflow_steps        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
- *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, created_at, updated_at
+ *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, is_cyclic, created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
  * The `config` column on space_workflow_steps stores: { instructions? }
@@ -24,6 +24,8 @@ import type {
 	WorkflowStepInput,
 	WorkflowTransitionInput,
 	WorkflowRuleInput,
+	WorkflowStepAgent,
+	WorkflowChannel,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
@@ -40,6 +42,7 @@ interface WorkflowRow {
 	start_step_id: string | null;
 	config: string | null;
 	layout: string | null;
+	max_iterations: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -62,6 +65,7 @@ interface TransitionRow {
 	to_step_id: string;
 	condition: string | null;
 	order_index: number;
+	is_cyclic: number | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -76,6 +80,10 @@ interface WorkflowConfigJson {
 // JSON stored inside space_workflow_steps.config
 interface StepConfigJson {
 	instructions?: string;
+	/** Multi-agent array — present when the step uses the agents[] format */
+	agents?: WorkflowStepAgent[];
+	/** Channel topology declarations — present when channels are defined */
+	channels?: WorkflowChannel[];
 }
 
 // ---------------------------------------------------------------------------
@@ -92,16 +100,25 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function rowToStep(row: StepRow): WorkflowStep {
-	if (!row.agent_id) {
-		throw new Error(`WorkflowStep ${row.id}: agent_id is null in DB`);
-	}
 	const cfg = parseJson<StepConfigJson>(row.config, {});
-	return {
+	const step: WorkflowStep = {
 		id: row.id,
 		name: row.name,
-		agentId: row.agent_id,
-		instructions: cfg.instructions,
 	};
+	// agentId: stored as non-empty string for single-agent steps, null/empty for multi-agent steps.
+	if (row.agent_id) {
+		step.agentId = row.agent_id;
+	}
+	if (cfg.instructions) {
+		step.instructions = cfg.instructions;
+	}
+	if (cfg.agents && cfg.agents.length > 0) {
+		step.agents = cfg.agents;
+	}
+	if (cfg.channels && cfg.channels.length > 0) {
+		step.channels = cfg.channels;
+	}
+	return step;
 }
 
 function rowToTransition(row: TransitionRow): WorkflowTransition {
@@ -112,6 +129,7 @@ function rowToTransition(row: TransitionRow): WorkflowTransition {
 		to: row.to_step_id,
 		condition: condition ?? undefined,
 		order: row.order_index,
+		isCyclic: row.is_cyclic !== null ? Boolean(row.is_cyclic) : undefined,
 	};
 }
 
@@ -135,6 +153,7 @@ function rowToWorkflow(
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
 		config: cfg.extra,
+		maxIterations: row.max_iterations ?? undefined,
 		layout: layout ?? undefined,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -178,8 +197,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, max_iterations, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -189,6 +208,7 @@ export class SpaceWorkflowRepository {
 				startStepId,
 				JSON.stringify(cfg),
 				layoutJson,
+				params.maxIterations ?? null,
 				now,
 				now
 			);
@@ -279,6 +299,11 @@ export class SpaceWorkflowRepository {
 			values.push(JSON.stringify(newCfg));
 		}
 
+		if (params.maxIterations !== undefined) {
+			fields.push('max_iterations = ?');
+			values.push(params.maxIterations);
+		}
+
 		if (params.layout !== undefined) {
 			fields.push('layout = ?');
 			values.push(params.layout ? JSON.stringify(params.layout) : null);
@@ -340,11 +365,22 @@ export class SpaceWorkflowRepository {
 	/**
 	 * Find all workflows in a space whose steps reference the given custom SpaceAgent ID.
 	 * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
+	 *
+	 * Checks two storage locations:
+	 * - The `agent_id` column: used by single-agent steps (legacy agentId format).
+	 * - The `config` JSON column: used by multi-agent steps (agents[] format stores agent IDs
+	 *   in the JSON config; the agent_id column is NULL for these steps).
 	 */
 	getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
+		// Match single-agent steps (agent_id column) and multi-agent steps (config JSON contains
+		// the agent ID string). The LIKE pattern is conservative — it matches any config that
+		// contains the UUID as a substring, which is safe because UUIDs are globally unique.
 		const stepRows = this.db
-			.prepare(`SELECT DISTINCT workflow_id FROM space_workflow_steps WHERE agent_id = ?`)
-			.all(agentId) as Array<{ workflow_id: string }>;
+			.prepare(
+				`SELECT DISTINCT workflow_id FROM space_workflow_steps
+         WHERE agent_id = ? OR config LIKE '%' || ? || '%'`
+			)
+			.all(agentId, agentId) as Array<{ workflow_id: string }>;
 
 		const workflows: SpaceWorkflow[] = [];
 		for (const { workflow_id } of stepRows) {
@@ -386,6 +422,17 @@ export class SpaceWorkflowRepository {
 		const stepCfg: StepConfigJson = {
 			instructions: input.instructions,
 		};
+		// Persist agents and channels into the JSON config column so they survive round-trips.
+		if (input.agents && input.agents.length > 0) {
+			stepCfg.agents = input.agents;
+		}
+		if (input.channels && input.channels.length > 0) {
+			stepCfg.channels = input.channels;
+		}
+
+		// Store null for agent_id when using the multi-agent agents[] format.
+		// Single-agent steps store the UUID directly for fast lookups.
+		const agentIdValue = input.agentId && input.agentId.trim() ? input.agentId : null;
 
 		this.db
 			.prepare(
@@ -398,7 +445,7 @@ export class SpaceWorkflowRepository {
 				workflowId,
 				input.name,
 				'',
-				input.agentId,
+				agentIdValue,
 				index,
 				JSON.stringify(stepCfg),
 				now,
@@ -414,12 +461,13 @@ export class SpaceWorkflowRepository {
 	): void {
 		const transitionId = generateUUID();
 		const conditionJson = input.condition ? JSON.stringify(input.condition) : null;
+		const isCyclicValue = input.isCyclic !== undefined ? (input.isCyclic ? 1 : 0) : null;
 
 		this.db
 			.prepare(
 				`INSERT INTO space_workflow_transitions
-           (id, workflow_id, from_step_id, to_step_id, condition, order_index, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, workflow_id, from_step_id, to_step_id, condition, order_index, is_cyclic, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				transitionId,
@@ -428,6 +476,7 @@ export class SpaceWorkflowRepository {
 				input.to,
 				conditionJson,
 				input.order ?? index,
+				isCyclicValue,
 				now,
 				now
 			);

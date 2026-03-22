@@ -19,9 +19,10 @@ describe('MCP Toggle', () => {
 		daemon = await createDaemonServer();
 		testDir = `/tmp/mcp-toggle-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 		mkdirSync(testDir, { recursive: true });
-	});
+	}, 30_000);
 
 	afterEach(async () => {
+		if (!daemon) return;
 		await daemon.waitForExit();
 		try {
 			rmSync(testDir, { recursive: true, force: true });

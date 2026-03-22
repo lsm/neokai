@@ -20,6 +20,7 @@ import type {
 	Room,
 	TaskSummary,
 	NeoTask,
+	TaskStatus,
 	SessionSummary,
 	RoomOverview,
 	RoomGoal,
@@ -31,6 +32,8 @@ import type {
 	MissionMetric,
 	CronSchedule,
 	MissionExecution,
+	LiveQuerySnapshotEvent,
+	LiveQueryDeltaEvent,
 } from '@neokai/shared';
 
 /**
@@ -49,16 +52,10 @@ interface CreateGoalParams {
 	schedulePaused?: boolean;
 }
 
-/**
- * Event payload for goal events
- */
-interface GoalEventPayload {
-	roomId: string;
-	goal: RoomGoal;
-}
-
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
+import { navigateToRoom } from './router';
+import { currentRoomSessionIdSignal } from './signals';
 import { toast } from './toast';
 
 const logger = new Logger('kai:web:roomstore');
@@ -138,6 +135,9 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
+	/** Archived tasks */
+	readonly archivedTasks = computed(() => this.tasks.value.filter((t) => t.status === 'archived'));
+
 	/** Tasks in review status */
 	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
 
@@ -149,6 +149,70 @@ class RoomStore {
 
 	/** Active goals */
 	readonly activeGoals = computed(() => this.goals.value.filter((g) => g.status === 'active'));
+
+	/** Tasks grouped by goal ID (Map<goalId, TaskSummary[]>) */
+	readonly tasksByGoalId = computed(() => {
+		const goals = this.goals.value;
+		const tasks = this.tasks.value;
+		const taskMap = new Map<string, TaskSummary>();
+		for (const t of tasks) {
+			taskMap.set(t.id, t);
+		}
+		const result = new Map<string, TaskSummary[]>();
+		for (const goal of goals) {
+			const linked: TaskSummary[] = [];
+			for (const taskId of goal.linkedTaskIds) {
+				const task = taskMap.get(taskId);
+				if (task) linked.push(task);
+			}
+			result.set(goal.id, linked);
+		}
+		return result;
+	});
+
+	/** Reverse lookup: taskId → RoomGoal (the goal that owns this task) */
+	readonly goalByTaskId = computed(() => {
+		const result = new Map<string, RoomGoal>();
+		for (const goal of this.goals.value) {
+			for (const taskId of goal.linkedTaskIds) {
+				result.set(taskId, goal);
+			}
+		}
+		return result;
+	});
+
+	/** Tasks not linked to any goal */
+	readonly orphanTasks = computed(() => {
+		const linkedIds = new Set<string>();
+		for (const goal of this.goals.value) {
+			for (const taskId of goal.linkedTaskIds) {
+				linkedIds.add(taskId);
+			}
+		}
+		return this.tasks.value.filter((t) => !linkedIds.has(t.id));
+	});
+
+	/** Orphan tasks that are active (draft, pending, or in_progress) */
+	readonly orphanTasksActive = computed(() =>
+		this.orphanTasks.value.filter(
+			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+		)
+	);
+
+	/** Orphan tasks in review (review or needs_attention) */
+	readonly orphanTasksReview = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'review' || t.status === 'needs_attention')
+	);
+
+	/** Orphan tasks that are done (completed or cancelled) */
+	readonly orphanTasksDone = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'completed' || t.status === 'cancelled')
+	);
+
+	/** Orphan tasks that are archived */
+	readonly orphanTasksArchived = computed(() =>
+		this.orphanTasks.value.filter((t) => t.status === 'archived')
+	);
 
 	// ========================================
 	// Private State
@@ -203,6 +267,7 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goals.value = [];
+		this.goalsLoading.value = false;
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
@@ -237,94 +302,156 @@ class RoomStore {
 			// Join the room channel first
 			hub.joinChannel(`room:${roomId}`);
 
-			// 1. Room overview subscription (room + sessions + tasks)
+			// 1. Room overview subscription (room + sessions only — tasks come from LiveQuery)
 			const unsubRoomOverview = hub.onEvent<RoomOverview>('room.overview', (overview) => {
 				if (overview.room.id === roomId) {
 					this.room.value = overview.room;
 					this.sessions.value = overview.sessions;
-					this.tasks.value = overview.allTasks ?? overview.activeTasks;
 				}
 			});
 			this.cleanupFunctions.push(unsubRoomOverview);
 
-			// 2. Task updates
-			const unsubTaskUpdate = hub.onEvent<{ roomId: string; task: NeoTask }>(
-				'room.task.update',
+			// 2. Tasks via LiveQuery — replaces room.task.update event listener.
+			const tasksSubId = `tasks-byRoom-${roomId}`;
+
+			const unsubTaskSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
 				(event) => {
-					if (event.roomId === roomId) {
-						const task = event.task;
-						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
-
-						// Show toast when a known task transitions into review status.
-						// Skip when prevTask is null (task not yet in local state) to avoid
-						// spurious toasts during initial hydration / reconnection.
-						if (task.status === 'review' && idx >= 0) {
-							const prevTask = this.tasks.value[idx];
-							if (prevTask.status !== 'review') {
-								toast.info(`Task ready for review: ${task.title}`);
-							}
-						}
-
-						if (idx >= 0) {
-							this.tasks.value = [
-								...this.tasks.value.slice(0, idx),
-								task,
-								...this.tasks.value.slice(idx + 1),
-							];
-						} else {
-							this.tasks.value = [...this.tasks.value, task];
-						}
+					if (event.subscriptionId === tasksSubId) {
+						this.tasks.value = event.rows as TaskSummary[];
 					}
 				}
 			);
-			this.cleanupFunctions.push(unsubTaskUpdate);
+			this.cleanupFunctions.push(unsubTaskSnapshot);
 
-			// 3. Goal events (daemon emits goal.created, goal.updated, goal.completed)
-			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('goal.created', (event) => {
-				if (event.roomId === roomId) {
-					this.goals.value = [...this.goals.value, event.goal];
+			const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== tasksSubId) return;
+				let current = this.tasks.value;
+				if (event.removed?.length) {
+					const removedIds = new Set((event.removed as TaskSummary[]).map((r) => r.id));
+					current = current.filter((t) => !removedIds.has(t.id));
+				}
+				if (event.updated?.length) {
+					const updatedTasks = event.updated as TaskSummary[];
+					// Show toast when a known task transitions into review status.
+					// Skip when prevTask is absent to avoid spurious toasts during hydration.
+					for (const updatedTask of updatedTasks) {
+						if (updatedTask.status === 'review') {
+							const prevTask = current.find((t) => t.id === updatedTask.id);
+							if (prevTask && prevTask.status !== 'review') {
+								toast.info(`Task ready for review: ${updatedTask.title}`);
+							}
+						}
+					}
+					const updatedMap = new Map(updatedTasks.map((u) => [u.id, u]));
+					current = current.map((t) => updatedMap.get(t.id) ?? t);
+				}
+				if (event.added?.length) {
+					current = [...current, ...(event.added as TaskSummary[])];
+				}
+				this.tasks.value = current;
+			});
+			this.cleanupFunctions.push(unsubTaskDelta);
+
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'tasks.byRoom',
+				params: [roomId],
+				subscriptionId: tasksSubId,
+			});
+
+			// Re-subscribe on reconnect: the server-side subscription is per-connection.
+			const unsubTaskReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'tasks.byRoom',
+						params: [roomId],
+						subscriptionId: tasksSubId,
+					})
+					.catch((err) => {
+						logger.warn('Tasks LiveQuery re-subscribe failed:', err);
+					});
+			});
+			this.cleanupFunctions.push(unsubTaskReconnect);
+
+			// Cleanup: tell the server to dispose the subscription when leaving the room.
+			this.cleanupFunctions.push(() => {
+				const h = connectionManager.getHubIfConnected();
+				if (h) {
+					h.request('liveQuery.unsubscribe', { subscriptionId: tasksSubId }).catch(() => {});
 				}
 			});
-			this.cleanupFunctions.push(unsubGoalCreated);
 
-			const unsubGoalUpdated = hub.onEvent<GoalEventPayload & { goalId?: string }>(
-				'goal.updated',
+			// 3. Goals via LiveQuery — replaces goal.created/updated/completed event listeners.
+			// Register snapshot/delta handlers BEFORE subscribing so we never miss the
+			// initial snapshot that the server pushes synchronously before replying.
+			const goalsSubId = `goals-byRoom-${roomId}`;
+
+			const unsubGoalSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+				'liveQuery.snapshot',
 				(event) => {
-					if (event.roomId === roomId) {
-						if (event.goal) {
-							// Partial update
-							const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
-							if (idx >= 0) {
-								this.goals.value = [
-									...this.goals.value.slice(0, idx),
-									{ ...this.goals.value[idx], ...event.goal },
-									...this.goals.value.slice(idx + 1),
-								];
-							}
-						} else if (event.goalId) {
-							// goal.updated with no goal object signals deletion
-							this.goals.value = this.goals.value.filter((g) => g.id !== event.goalId);
-						} else {
-							logger.warn('goal.updated received with neither goal nor goalId', event);
-						}
+					if (event.subscriptionId === goalsSubId) {
+						this.goals.value = event.rows as RoomGoal[];
+						this.goalsLoading.value = false;
 					}
 				}
 			);
-			this.cleanupFunctions.push(unsubGoalUpdated);
+			this.cleanupFunctions.push(unsubGoalSnapshot);
 
-			const unsubGoalCompleted = hub.onEvent<GoalEventPayload>('goal.completed', (event) => {
-				if (event.roomId === roomId) {
-					const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
-					if (idx >= 0) {
-						this.goals.value = [
-							...this.goals.value.slice(0, idx),
-							event.goal,
-							...this.goals.value.slice(idx + 1),
-						];
-					}
+			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== goalsSubId) return;
+				let current = this.goals.value;
+				if (event.removed?.length) {
+					const removedIds = new Set((event.removed as RoomGoal[]).map((r) => r.id));
+					current = current.filter((g) => !removedIds.has(g.id));
+				}
+				if (event.updated?.length) {
+					const updatedMap = new Map((event.updated as RoomGoal[]).map((u) => [u.id, u]));
+					current = current.map((g) => updatedMap.get(g.id) ?? g);
+				}
+				if (event.added?.length) {
+					current = [...current, ...(event.added as RoomGoal[])];
+				}
+				this.goals.value = current;
+			});
+			this.cleanupFunctions.push(unsubGoalDelta);
+
+			// Subscribe to the goals.byRoom named query.
+			// Mark loading before subscribing; the snapshot handler clears it.
+			this.goalsLoading.value = true;
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'goals.byRoom',
+				params: [roomId],
+				subscriptionId: goalsSubId,
+			});
+
+			// Re-subscribe on reconnect: the server-side subscription is per-connection
+			// and is gone after a disconnect. Requesting liveQuery.subscribe again with
+			// the same subscriptionId delivers a fresh snapshot to the already-registered
+			// snapshot handler above.
+			const unsubReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || this.roomId.value !== roomId) return;
+				this.goalsLoading.value = true;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'goals.byRoom',
+						params: [roomId],
+						subscriptionId: goalsSubId,
+					})
+					.catch((err) => {
+						logger.warn('Goals LiveQuery re-subscribe failed:', err);
+						this.goalsLoading.value = false;
+					});
+			});
+			this.cleanupFunctions.push(unsubReconnect);
+
+			// Cleanup: tell the server to dispose the subscription when leaving the room.
+			this.cleanupFunctions.push(() => {
+				const h = connectionManager.getHubIfConnected();
+				if (h) {
+					h.request('liveQuery.unsubscribe', { subscriptionId: goalsSubId }).catch(() => {});
 				}
 			});
-			this.cleanupFunctions.push(unsubGoalCompleted);
 
 			// 3b. Auto-completed task notifications (semi-autonomous mode)
 			const unsubAutoCompleted = hub.onEvent<{
@@ -361,7 +488,47 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubRuntimeState);
 
-			// 5. Fetch initial state via RPC
+			// 5. Session lifecycle events (delete / status change)
+			// Re-fetch the authoritative session list from the server on meaningful session
+			// changes. This avoids manual array splicing and self-heals events missed during
+			// WebSocket reconnect gaps.
+			const unsubSessionDeleted = hub.onEvent<{ sessionId: string; roomId?: string }>(
+				'session.deleted',
+				(event) => {
+					if (event.roomId !== roomId) return;
+					this.refresh()
+						.then(() => {
+							// If the user is currently viewing the deleted session, navigate
+							// back to the room dashboard so they don't land on a dead view.
+							const activeSessionId = currentRoomSessionIdSignal.value;
+							if (activeSessionId && !this.sessions.value.some((s) => s.id === activeSessionId)) {
+								navigateToRoom(roomId);
+							}
+						})
+						.catch((err) => {
+							logger.error('Failed to refresh after session.deleted:', err);
+						});
+				}
+			);
+			this.cleanupFunctions.push(unsubSessionDeleted);
+
+			// session.updated: only refresh when a status field is present.
+			// Draft saves (useInputDraft, ~250 ms debounce) only carry title/inputDraft —
+			// no status — so this guard keeps RPC calls at zero during typing.
+			const unsubSessionUpdated = hub.onEvent<{
+				sessionId: string;
+				roomId?: string;
+				status?: string;
+			}>('session.updated', (event) => {
+				if (event.roomId !== roomId) return;
+				if (event.status === undefined) return;
+				this.refresh().catch((err) => {
+					logger.error('Failed to refresh after session.updated:', err);
+				});
+			});
+			this.cleanupFunctions.push(unsubSessionUpdated);
+
+			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -383,12 +550,12 @@ class RoomStore {
 			if (overview) {
 				this.room.value = overview.room;
 				this.sessions.value = overview.sessions;
-				this.tasks.value = overview.allTasks ?? overview.activeTasks;
 			} else {
 				this.error.value = 'Room not found';
 			}
 
-			await this.fetchGoals();
+			// Tasks and goals are delivered via LiveQuery snapshot pushed
+			// synchronously during liveQuery.subscribe in startSubscriptions.
 
 			// Fetch runtime state
 			try {
@@ -468,10 +635,7 @@ class RoomStore {
 			description,
 		});
 
-		if (task) {
-			this.tasks.value = [...this.tasks.value, task];
-		}
-
+		// Task appears in tasks.value via the tasks.byRoom LiveQuery delta.
 		return task;
 	}
 
@@ -495,7 +659,30 @@ class RoomStore {
 			taskId,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
+	}
+
+	/**
+	 * Set task status directly (e.g., reactivate completed/cancelled to in_progress).
+	 */
+	async setTaskStatus(taskId: string, status: TaskStatus): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ success: boolean }>('task.setStatus', {
+			roomId,
+			taskId,
+			status,
+		});
+
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -518,7 +705,7 @@ class RoomStore {
 			feedback,
 		});
 
-		// Task state updates arrive via room.task.update events
+		// Task state updates arrive via the tasks.byRoom LiveQuery delta.
 	}
 
 	// ========================================
@@ -558,31 +745,6 @@ class RoomStore {
 	// ========================================
 
 	/**
-	 * Fetch goals for the room
-	 */
-	async fetchGoals(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			this.goalsLoading.value = true;
-			const response = await hub.request<{ goals: RoomGoal[] }>('goal.list', { roomId });
-			this.goals.value = response.goals ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch goals:', err);
-		} finally {
-			this.goalsLoading.value = false;
-		}
-	}
-
-	/**
 	 * Create a new goal
 	 */
 	async createGoal(goal: CreateGoalParams): Promise<void> {
@@ -603,12 +765,7 @@ class RoomStore {
 			throw err;
 		}
 
-		// Refetch goals to ensure UI is up to date — non-fatal if it fails
-		try {
-			await this.fetchGoals();
-		} catch (err) {
-			logger.warn('Failed to refetch goals after creation:', err);
-		}
+		// goals.value is updated automatically by the goals.byRoom LiveQuery delta.
 	}
 
 	/**
@@ -627,8 +784,7 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.update', { roomId, goalId, updates });
-			// Refetch goals to ensure UI is up to date
-			await this.fetchGoals();
+			// goals.value is updated automatically by the goals.byRoom LiveQuery delta.
 		} catch (err) {
 			logger.error('Failed to update goal:', err);
 			throw err;
@@ -651,8 +807,7 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.delete', { roomId, goalId });
-			// Refetch goals to ensure UI is up to date
-			await this.fetchGoals();
+			// goals.value is updated automatically by the goals.byRoom LiveQuery delta.
 		} catch (err) {
 			logger.error('Failed to delete goal:', err);
 			throw err;

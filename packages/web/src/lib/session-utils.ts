@@ -16,3 +16,47 @@ const USER_SESSION_TYPES = new Set<string | undefined>(['worker', undefined]);
 export function isUserSession(session: Session): boolean {
 	return USER_SESSION_TYPES.has(session.type) && !session.context?.roomId;
 }
+
+/**
+ * Returns a human-readable model label from a model ID string.
+ *
+ * e.g.
+ *   "claude-sonnet-4-5-20250929" → "Sonnet 4"
+ *   "claude-opus-4-20251120"       → "Opus 4"
+ *   "claude-haiku-3-20250730"      → "Haiku 3"
+ *   "glm-4-flash"                  → "GLM 4 Flash"
+ *   "deepseek-chat"                → "Deepseek Chat"
+ */
+export function getModelLabel(modelId: string | null | undefined): string {
+	if (!modelId) return '';
+	const lower = modelId.toLowerCase();
+
+	// Anthropic models: claude-{family}-{number}(-...) → "{Family} {number}"
+	if (lower.startsWith('claude-')) {
+		const rest = modelId.slice('claude-'.length);
+		// Strip date suffix (e.g. -20250929)
+		const withoutDate = rest.replace(/-\d{8}$/, '');
+		const parts = withoutDate.split('-');
+		if (parts.length >= 2) {
+			const family = parts[0]!;
+			const number = parts[1]!;
+			return `${family.charAt(0).toUpperCase() + family.slice(1)} ${number}`;
+		}
+		return rest.charAt(0).toUpperCase() + rest.slice(1);
+	}
+
+	// GLM models: glm-4-flash → GLM 4 Flash
+	if (lower.startsWith('glm-')) {
+		const rest = modelId.slice('glm-'.length);
+		const parts = rest.split('-');
+		if (parts.length >= 2) {
+			const family = parts[0]!;
+			const suffix = parts.slice(1).join(' ');
+			return `GLM ${family.charAt(0).toUpperCase() + family.slice(1)}${suffix ? ' ' + suffix : ''}`;
+		}
+		return `GLM ${rest.charAt(0).toUpperCase() + rest.slice(1)}`;
+	}
+
+	// Unknown models: clean up dashes and camelCase for readability
+	return modelId.replace(/-/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+}

@@ -5,8 +5,7 @@
 # features) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
-# CI SECRET REQUIREMENTS for providers-anthropic-to-codex-bridge shard:
-#   OPENAI_API_KEY      — required for this shard.
+# NOTE: providers-anthropic-to-codex-bridge shard is disabled (requires OPENAI_API_KEY).
 #
 # Usage: bash scripts/validate-online-test-matrix.sh
 
@@ -27,6 +26,7 @@ RPC_FILES=(
   rpc-draft-handlers.test.ts
   rpc-file-handlers.test.ts
   rpc-interrupt-handlers.test.ts
+  rpc-live-query.test.ts
   rpc-mcp-toggle.test.ts
   rpc-message-handlers.test.ts
   rpc-model-handlers.test.ts
@@ -39,6 +39,7 @@ RPC_FILES=(
   rpc-settings-handlers.test.ts
   rpc-state-sync.test.ts
   rpc-task-draft-handlers.test.ts
+  rpc-task-lifecycle.test.ts
   session-handlers.test.ts
 )
 
@@ -54,17 +55,20 @@ ROOM_FILES=(
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
+  room-tick-job.test.ts
 )
 
 FEATURES_FILES=(
   auto-title.test.ts
+  github-poll-job.test.ts
+  job-queue-crash-recovery.test.ts
   message-delivery-mode-queue.test.ts
   message-persistence.test.ts
 )
 
 PROVIDERS_FILES=(
   anthropic-to-copilot-bridge-provider.test.ts
-  anthropic-to-codex-bridge-provider.test.ts
+  anthropic-to-codex-bridge-provider.test.ts  # CI shard disabled — kept here so validator doesn't flag it
 )
 
 check_split_module() {

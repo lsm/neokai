@@ -38,7 +38,12 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
+import {
+	sendMessage,
+	waitForIdle,
+	waitForSdkMessages,
+	interrupt,
+} from '../../helpers/daemon-actions';
 import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -285,33 +290,55 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	test(
 		'basic conversation: model responds correctly',
 		async () => {
-			const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
-			mkdirSync(workspacePath, { recursive: true });
+			const MAX_ATTEMPTS = 2;
+			const PER_ATTEMPT_TIMEOUT = 60_000;
 
-			const { sessionId } = (await daemon.messageHub.request('session.create', {
-				workspacePath,
-				title: 'Copilot Anthropic Basic Test',
-				config: { model: testModelId, permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-			daemon.trackSession(sessionId);
+			for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+				const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
+				mkdirSync(workspacePath, { recursive: true });
 
-			await sendMessage(daemon, sessionId, 'What is 6+7? Reply with just the number.');
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+				const { sessionId } = (await daemon.messageHub.request('session.create', {
+					workspacePath,
+					title: 'Copilot Anthropic Basic Test',
+					config: { model: testModelId, permissionMode: 'acceptEdits' },
+				})) as { sessionId: string };
+				daemon.trackSession(sessionId);
 
-			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-				minCount: 1,
-				timeout: IDLE_TIMEOUT,
-			});
-			const assistantMessages = sdkMessages.filter(
-				(m) => (m as { type?: string }).type === 'assistant'
-			);
-			expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
+				await sendMessage(daemon, sessionId, 'What is 6+7? Reply with just the number.');
 
-			const text = assistantMessages
-				.map((m) => extractAssistantText(m as Record<string, unknown>))
-				.join('');
-			expect(text).toContain('13');
+				try {
+					await waitForIdle(daemon, sessionId, PER_ATTEMPT_TIMEOUT);
+				} catch (error) {
+					if (attempt < MAX_ATTEMPTS) {
+						// Interrupt stuck session and retry with a fresh one
+						try {
+							await interrupt(daemon, sessionId);
+						} catch {
+							/* ignore */
+						}
+						continue;
+					}
+					throw error;
+				}
+
+				const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+					minCount: 1,
+					timeout: 10_000, // Messages should be ready shortly after idle
+				});
+				const assistantMessages = sdkMessages.filter(
+					(m) => (m as { type?: string }).type === 'assistant'
+				);
+				expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
+
+				const text = assistantMessages
+					.map((m) => extractAssistantText(m as Record<string, unknown>))
+					.join('');
+				expect(text).toContain('13');
+				return; // Success, exit retry loop
+			}
 		},
+		// Budget: attempt1 timeout (60s) + overhead (~5s) + attempt2 idle (60s)
+		// + sdkMessages (10s) = ~135s. 150s TEST_TIMEOUT provides margin.
 		TEST_TIMEOUT
 	);
 

@@ -249,12 +249,6 @@ export class StateManager {
 			});
 		});
 
-		this.eventBus.on('goal.updated', (data) => {
-			this.messageHub.event('goal.updated', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
 		this.eventBus.on('goal.completed', (data) => {
 			this.messageHub.event('goal.completed', data, {
 				channel: data.sessionId, // 'room:${roomId}'
@@ -349,6 +343,31 @@ export class StateManager {
 
 		this.eventBus.on('spaceAgent.deleted', (data) => {
 			this.messageHub.event('spaceAgent.deleted', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		// Space session group events (space-scoped channel: 'space:${spaceId}')
+		this.eventBus.on('spaceSessionGroup.created', (data) => {
+			this.messageHub.event('spaceSessionGroup.created', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.memberAdded', (data) => {
+			this.messageHub.event('spaceSessionGroup.memberAdded', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.memberUpdated', (data) => {
+			this.messageHub.event('spaceSessionGroup.memberUpdated', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.deleted', (data) => {
+			this.messageHub.event('spaceSessionGroup.deleted', data, {
 				channel: data.sessionId, // 'space:${spaceId}'
 			});
 		});
