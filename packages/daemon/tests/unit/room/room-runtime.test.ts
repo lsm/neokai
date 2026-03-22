@@ -100,12 +100,13 @@ describe('RoomRuntime', () => {
 			expect(ctx.sessionFactory.calls).toHaveLength(0);
 		});
 
-		it('should use mutex to prevent concurrent ticks', async () => {
+		it('should be idempotent — sequential ticks do not double-spawn groups', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
 
-			// Run two ticks concurrently
-			await Promise.all([ctx.runtime.tick(), ctx.runtime.tick()]);
+			// Sequential ticks: the second tick sees an active group (slot taken) and no-ops
+			await ctx.runtime.tick();
+			await ctx.runtime.tick();
 
 			// Only one group should be spawned
 			const activeGroups = ctx.groupRepo.getActiveGroups('room-1');

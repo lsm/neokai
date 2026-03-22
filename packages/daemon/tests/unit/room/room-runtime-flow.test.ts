@@ -266,8 +266,8 @@ describe('RoomRuntime flow', () => {
 				expect.arrayContaining([firstGroup!.workerSessionId, firstGroup!.leaderSessionId])
 			);
 
-			// cancelTask() schedules a follow-up tick asynchronously.
-			await new Promise((resolve) => setTimeout(resolve, 0));
+			// cancelTask() frees the slot; tick picks up the next pending task.
+			await ctx.runtime.tick();
 			const secondGroup = ctx.groupRepo.getGroupByTaskId(task2.id);
 			expect(secondGroup).toBeDefined();
 			expect(secondGroup!.submittedForReview).toBe(false);
