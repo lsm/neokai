@@ -38,13 +38,18 @@ describe('handleGitHubPoll', () => {
 	});
 
 	function makeDeps(
-		overrides: { intervalMs?: number; pollingService?: ReturnType<typeof mock> | undefined } = {}
+		overrides: {
+			intervalMs?: number;
+			pollingService?: ReturnType<typeof mock> | undefined;
+			isRunning?: boolean;
+		} = {}
 	) {
+		const running = overrides.isRunning ?? true;
 		return {
 			pollingService:
 				'pollingService' in overrides
 					? overrides.pollingService
-					: ({ triggerPoll: triggerPollMock } as never),
+					: ({ triggerPoll: triggerPollMock, isRunning: () => running } as never),
 			jobQueue: {
 				enqueue: enqueueMock,
 				listJobs: listJobsMock,
@@ -107,7 +112,7 @@ describe('handleGitHubPoll', () => {
 		listJobsMock = mock(() => []);
 
 		const deps = makeDeps();
-		deps.pollingService = { triggerPoll: triggerPollMock } as never;
+		deps.pollingService = { triggerPoll: triggerPollMock, isRunning: () => true } as never;
 		deps.jobQueue.listJobs = listJobsMock as never;
 		deps.jobQueue.enqueue = enqueueMock as never;
 
@@ -135,6 +140,16 @@ describe('handleGitHubPoll', () => {
 		expect(result.polled).toBe(false);
 		expect(triggerPollMock).not.toHaveBeenCalled();
 		// Still enqueues next job
+		expect(enqueueMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('skips triggerPoll and returns polled: false when pollingService.isRunning() is false', async () => {
+		const deps = makeDeps({ isRunning: false });
+		const result = await handleGitHubPoll(deps);
+
+		expect(triggerPollMock).not.toHaveBeenCalled();
+		expect(result.polled).toBe(false);
+		// Self-schedule still happens so the chain resumes when service is restarted
 		expect(enqueueMock).toHaveBeenCalledTimes(1);
 	});
 });

@@ -30,11 +30,16 @@ export async function handleGitHubPoll(deps: GitHubPollHandlerDeps): Promise<Git
 	let polled = false;
 
 	try {
-		if (pollingService) {
+		if (!pollingService) {
+			log.warn('github.poll handler called but no polling service is configured');
+		} else if (!pollingService.isRunning()) {
+			// Polling service was stopped (e.g. GitHubService.stop() was called at runtime).
+			// Skip triggerPoll for this cycle; the self-schedule below keeps the chain alive
+			// so that polling resumes automatically if the service is restarted.
+			log.debug('github.poll handler skipping triggerPoll — polling service is stopped');
+		} else {
 			await pollingService.triggerPoll();
 			polled = true;
-		} else {
-			log.warn('github.poll handler called but no polling service is configured');
 		}
 	} catch (error) {
 		log.error('triggerPoll failed', {
