@@ -7,12 +7,20 @@
  *
  * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
  *        update_task, cancel_task, stop_session, get_room_status, approve_task, reject_task,
- *        send_message_to_task, get_task_detail
+ *        send_message_to_task, get_task_detail, set_schedule, pause_schedule, resume_schedule,
+ *        record_metric, get_metrics, list_executions
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
+import type {
+	TaskStatus,
+	TaskType,
+	AgentType,
+	MissionType,
+	AutonomyLevel,
+	MissionMetric,
+} from '@neokai/shared';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
@@ -52,11 +60,32 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			title: string;
 			description?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			mission_type?: MissionType;
+			autonomy_level?: AutonomyLevel;
+			structured_metrics?: Array<{
+				name: string;
+				target: number;
+				current?: number;
+				unit?: string;
+				direction?: 'increase' | 'decrease';
+				baseline?: number;
+			}>;
 		}): Promise<ToolResult> {
+			const metrics: MissionMetric[] | undefined = args.structured_metrics?.map((m) => ({
+				name: m.name,
+				target: m.target,
+				current: m.current ?? 0,
+				...(m.unit ? { unit: m.unit } : {}),
+				...(m.direction ? { direction: m.direction } : {}),
+				...(m.baseline !== undefined ? { baseline: m.baseline } : {}),
+			}));
 			const goal = await goalManager.createGoal({
 				title: args.title,
 				description: args.description,
 				priority: args.priority,
+				missionType: args.mission_type,
+				autonomyLevel: args.autonomy_level,
+				structuredMetrics: metrics,
 			});
 			// Notify runtime so it schedules a tick immediately (instead of waiting for the timer)
 			if (daemonHub) {
@@ -77,20 +106,61 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 		async update_goal(args: {
 			goal_id: string;
+			title?: string;
+			description?: string;
 			status?: 'active' | 'needs_human' | 'completed' | 'archived';
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			mission_type?: MissionType;
+			autonomy_level?: AutonomyLevel;
+			structured_metrics?: Array<{
+				name: string;
+				target: number;
+				current?: number;
+				unit?: string;
+				direction?: 'increase' | 'decrease';
+				baseline?: number;
+			}>;
 		}): Promise<ToolResult> {
 			const goal = await goalManager.getGoal(args.goal_id);
 			if (!goal) {
 				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
 			}
 			let updated = goal;
+
+			// Collect patch fields: title, description, priority, missionType, autonomyLevel, structuredMetrics
+			const hasPatchFields =
+				args.title !== undefined ||
+				args.description !== undefined ||
+				args.priority !== undefined ||
+				args.mission_type !== undefined ||
+				args.autonomy_level !== undefined ||
+				args.structured_metrics !== undefined;
+
+			if (hasPatchFields) {
+				const patch: Record<string, unknown> = {};
+				if (args.title !== undefined) patch.title = args.title;
+				if (args.description !== undefined) patch.description = args.description;
+				if (args.priority !== undefined) patch.priority = args.priority;
+				if (args.mission_type !== undefined) patch.missionType = args.mission_type;
+				if (args.autonomy_level !== undefined) patch.autonomyLevel = args.autonomy_level;
+				if (args.structured_metrics !== undefined) {
+					patch.structuredMetrics = args.structured_metrics.map((m) => ({
+						name: m.name,
+						target: m.target,
+						current: m.current ?? 0,
+						...(m.unit ? { unit: m.unit } : {}),
+						...(m.direction ? { direction: m.direction } : {}),
+						...(m.baseline !== undefined ? { baseline: m.baseline } : {}),
+					}));
+				}
+				updated = await goalManager.patchGoal(args.goal_id, patch);
+			}
+
+			// Status update is a distinct operation from patch (changes state + timestamps)
 			if (args.status) {
 				updated = await goalManager.updateGoalStatus(args.goal_id, args.status);
 			}
-			if (args.priority) {
-				updated = await goalManager.updateGoalPriority(args.goal_id, args.priority);
-			}
+
 			return jsonResult({ success: true, goal: updated });
 		},
 
@@ -153,7 +223,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 		},
 
 		async list_tasks(args: { goal_id?: string; status?: TaskStatus }): Promise<ToolResult> {
-			let tasks = await taskManager.listTasks(args.status ? { status: args.status } : undefined);
+			// When explicitly filtering by 'archived', we must pass includeArchived:true
+			// because listTasks excludes archived tasks by default.
+			const filter = args.status
+				? { status: args.status, ...(args.status === 'archived' ? { includeArchived: true } : {}) }
+				: undefined;
+			let tasks = await taskManager.listTasks(filter);
 			if (args.goal_id) {
 				const goal = await goalManager.getGoal(args.goal_id);
 				if (goal) {
@@ -440,10 +515,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			// Apply status change
 			let updatedTask: typeof task;
 			try {
-				updatedTask = await taskManager.setTaskStatus(args.task_id, args.status, {
-					result: args.result,
-					error: args.error,
-				});
+				if (args.status === 'archived') {
+					// archiveTask() sets archivedAt timestamp; setTaskStatus('archived') does not
+					updatedTask = await taskManager.archiveTask(args.task_id);
+				} else {
+					updatedTask = await taskManager.setTaskStatus(args.task_id, args.status, {
+						result: args.result,
+						error: args.error,
+					});
+				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return jsonResult({ success: false, error: message });
@@ -742,6 +822,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					},
 					tasks: {
 						total: tasks.length,
+						draft: tasks.filter((t) => t.status === 'draft').length,
 						pending: tasks.filter((t) => t.status === 'pending').length,
 						inProgress: tasks.filter((t) => t.status === 'in_progress').length,
 						review: tasks.filter((t) => t.status === 'review').length,
@@ -834,6 +915,20 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}),
 			});
 		},
+
+		async list_executions(args: { goal_id: string; limit?: number }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			const executions = goalManager.listExecutions(args.goal_id, args.limit ?? 20);
+			return jsonResult({
+				success: true,
+				goalId: args.goal_id,
+				missionType: goal.missionType ?? 'one_shot',
+				executions,
+			});
+		},
 	};
 }
 
@@ -852,20 +947,74 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.default('normal')
 					.describe('Goal priority'),
+				mission_type: z
+					.enum(['one_shot', 'measurable', 'recurring'])
+					.optional()
+					.describe(
+						'Mission type: one_shot (default, single-run), measurable (tracks numeric KPIs), recurring (runs on a cron schedule)'
+					),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe(
+						'Autonomy level: supervised (default, PRs require human review), semi_autonomous (can merge approved PRs automatically)'
+					),
+				structured_metrics: z
+					.array(
+						z.object({
+							name: z.string().describe('Metric name (e.g. "test_coverage")'),
+							target: z.number().describe('Target value to reach'),
+							current: z.number().optional().describe('Current value (defaults to 0)'),
+							unit: z.string().optional().describe('Unit label (e.g. "%" or "ms")'),
+							direction: z
+								.enum(['increase', 'decrease'])
+								.optional()
+								.describe('Direction of improvement (default: increase)'),
+							baseline: z
+								.number()
+								.optional()
+								.describe('Baseline value (required when direction is decrease)'),
+						})
+					)
+					.optional()
+					.describe('Structured metrics for measurable missions'),
 			},
 			(args) => handlers.create_goal(args)
 		),
 		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
 		tool(
 			'update_goal',
-			'Update an existing goal',
+			'Update an existing goal. Provide only the fields you want to change; omitted fields keep their current values.',
 			{
 				goal_id: z.string().describe('ID of the goal to update'),
+				title: z.string().trim().min(1).optional().describe('New title for the goal'),
+				description: z.string().optional().describe('New description for the goal'),
 				status: z
 					.enum(['active', 'needs_human', 'completed', 'archived'])
 					.optional()
 					.describe('New status'),
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
+				mission_type: z
+					.enum(['one_shot', 'measurable', 'recurring'])
+					.optional()
+					.describe('Change mission type'),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe('Change autonomy level'),
+				structured_metrics: z
+					.array(
+						z.object({
+							name: z.string().describe('Metric name'),
+							target: z.number().describe('Target value'),
+							current: z.number().optional().describe('Current value (defaults to 0)'),
+							unit: z.string().optional().describe('Unit label'),
+							direction: z.enum(['increase', 'decrease']).optional(),
+							baseline: z.number().optional(),
+						})
+					)
+					.optional()
+					.describe('Replace structured metrics for measurable missions'),
 			},
 			(args) => handlers.update_goal(args)
 		),
@@ -912,6 +1061,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 						'completed',
 						'needs_attention',
 						'cancelled',
+						'archived',
 					])
 					.optional()
 					.describe('Filter by status'),
@@ -947,7 +1097,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'set_task_status',
-			'Set task status to any valid status. Use this to complete, fail, restart, or change status of any task. Validates that the status transition is allowed.',
+			'Set task status to any valid status. Use this to complete, fail, restart, archive, or change status of any task. Validates that the status transition is allowed.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
 				status: z
@@ -959,8 +1109,11 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 						'completed',
 						'needs_attention',
 						'cancelled',
+						'archived',
 					])
-					.describe('New status for the task'),
+					.describe(
+						'New status for the task. Use archived to permanently archive completed/cancelled/needs_attention tasks.'
+					),
 				result: z.string().optional().describe('Result description (for completed status)'),
 				error: z.string().optional().describe('Error message (for needs_attention status)'),
 			},
@@ -1051,6 +1204,21 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			},
 			(args) => handlers.get_metrics(args)
 		),
+		tool(
+			'list_executions',
+			'List execution history for a recurring mission. Returns the most recent executions with their status, timestamps, and result summaries.',
+			{
+				goal_id: z.string().describe('ID of the recurring mission goal'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(20)
+					.describe('Maximum number of executions to return (default: 20)'),
+			},
+			(args) => handlers.list_executions(args)
+		),
 	];
 
 	return createSdkMcpServer({ name: 'room-agent', tools });
@@ -1106,6 +1274,7 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 						'completed',
 						'needs_attention',
 						'cancelled',
+						'archived',
 					])
 					.optional()
 					.describe('Filter by status'),
@@ -1152,14 +1321,24 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 		),
 		tool(
 			'update_task_status',
-			'Change a task status with transition validation. Use to retry failed tasks (needs_attention → pending), revive to review, or move between valid states.',
+			'Change a task status with transition validation. Use to retry failed tasks (needs_attention → pending), revive to review, archive completed tasks, or move between valid states.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
 				// 'draft' is intentionally excluded: tasks reach draft status only via the planning
 				// phase (planner agent creates them). The leader must not put tasks back to draft.
 				status: z
-					.enum(['pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled'])
-					.describe('New status for the task'),
+					.enum([
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+						'archived',
+					])
+					.describe(
+						'New status for the task. Use archived to permanently archive completed/cancelled/needs_attention tasks.'
+					),
 				result: z.string().optional().describe('Result summary (for completed status)'),
 				error: z.string().optional().describe('Error message (for needs_attention status)'),
 			},
