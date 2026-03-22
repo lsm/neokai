@@ -109,11 +109,20 @@ function HumanInputArea({
 	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const isTouchDeviceRef = useRef(false);
+	const isMountedRef = useRef(true);
+	const queueRequestVersionRef = useRef(0);
 
 	useEffect(() => {
 		isTouchDeviceRef.current =
 			window.matchMedia('(pointer: coarse)').matches ||
 			('ontouchstart' in window && window.innerWidth < 768);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			isMountedRef.current = false;
+			queueRequestVersionRef.current += 1;
+		};
 	}, []);
 
 	useEffect(() => {
@@ -134,7 +143,11 @@ function HumanInputArea({
 	const targetSessionId = target === 'leader' ? leaderSessionId : workerSessionId;
 
 	const refreshQueuedMessages = useCallback(async () => {
+		const requestVersion = ++queueRequestVersionRef.current;
 		if (!hasGroup || !targetSessionId) {
+			if (!isMountedRef.current || requestVersion !== queueRequestVersionRef.current) {
+				return;
+			}
 			setQueuedForCurrentTurn([]);
 			setQueuedForNextTurn([]);
 			return;
@@ -153,6 +166,11 @@ function HumanInputArea({
 					limit: 20,
 				}),
 			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
+
+			if (!isMountedRef.current || requestVersion !== queueRequestVersionRef.current) {
+				return;
+			}
+
 			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
 			setQueuedForNextTurn(deferredResponse.messages ?? []);
 		} catch {

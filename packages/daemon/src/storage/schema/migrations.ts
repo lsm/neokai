@@ -2547,9 +2547,16 @@ function runMigration44(db: BunDatabase): void {
 	db.exec(`PRAGMA foreign_keys = OFF`);
 	try {
 		db.exec(`PRAGMA ignore_check_constraints = 1`);
-		db.exec(`UPDATE sdk_messages SET send_status = 'deferred' WHERE send_status = 'saved'`);
-		db.exec(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE send_status = 'queued'`);
-		db.exec(`UPDATE sdk_messages SET send_status = 'consumed' WHERE send_status = 'sent'`);
+		db.exec(`
+			UPDATE sdk_messages
+			SET send_status = CASE
+				WHEN send_status = 'saved' THEN 'deferred'
+				WHEN send_status = 'queued' THEN 'enqueued'
+				WHEN send_status = 'sent' THEN 'consumed'
+				WHEN send_status IS NULL THEN 'consumed'
+				ELSE send_status
+			END
+		`);
 		db.exec(`PRAGMA ignore_check_constraints = 0`);
 
 		db.exec(`

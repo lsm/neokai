@@ -99,6 +99,7 @@ describe('Migration 44: rename sdk_messages send_status values', () => {
 		insert.run('m-queued', 'session-1', '{"type":"user"}', now, 'queued');
 		insert.run('m-sent', 'session-1', '{"type":"user"}', now, 'sent');
 		insert.run('m-failed', 'session-1', '{"type":"user"}', now, 'failed');
+		insert.run('m-null', 'session-1', '{"type":"user"}', now, null);
 
 		runMigrations(db, () => {});
 
@@ -110,6 +111,7 @@ describe('Migration 44: rename sdk_messages send_status values', () => {
 		expect(byId.get('m-queued')).toBe('enqueued');
 		expect(byId.get('m-sent')).toBe('consumed');
 		expect(byId.get('m-failed')).toBe('failed');
+		expect(byId.get('m-null')).toBe('consumed');
 
 		const sql = getSdkMessagesTableSql(db);
 		expect(sql).toContain("'deferred'");
