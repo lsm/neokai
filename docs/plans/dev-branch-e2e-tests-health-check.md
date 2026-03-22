@@ -26,24 +26,23 @@ Check the latest CI run on the dev branch and identify any failing e2e test jobs
 1. Query the latest CI run on dev branch and capture the run ID:
    ```bash
    gh run list --repo lsm/neokai --branch dev --limit 1 --json databaseId,name,status,conclusion
-   ```
-2. If the run is still in progress (`status: "in_progress"`), report "CI still running" and stop.
-3. If the run completed, check if build and discover jobs succeeded first:
-   ```bash
-   gh run view --repo lsm/neokai --branch dev --json jobs --jq '.jobs[] | select(.name == "build" or .name == "discover") | "\(.name): \(.conclusion)"'
-   ```
-   - If `build` or `discover` failed, report "Build failure — e2e tests did not run" and stop. Note the build failure for reporting but do not investigate it (outside scope).
-4. If build succeeded, check for failing e2e jobs (note: `gh api jobs` returns `databaseId`, not `id`):
-   ```bash
-   gh run view --repo lsm/neokai --branch dev --json jobs --jq '.jobs[] | select(.conclusion == "failure") | "\(.name): \(.conclusion)"'
-   ```
-5. Filter to only `e2e-no-llm` and `e2e-llm` job failures. If none, report success and skip to Task 5.
-6. For each failing e2e job, extract the run ID and job details for artifact download:
-   ```bash
    RUN_ID=$(gh run list --repo lsm/neokai --branch dev --limit 1 --json databaseId --jq '.[0].databaseId')
    echo "Run ID: $RUN_ID"
-   # Then get job details (using databaseId and url, not id/html_url)
-   gh run view --repo lsm/neokai --branch dev --json jobs --jq '.jobs[] | select(.conclusion == "failure") | select(.name | startswith("e2e-")) | {name, databaseId, url}'
+   ```
+2. If the run is still in progress (`status: "in_progress"`), report "CI still running" and stop.
+3. If the run completed, check if build and discover jobs succeeded first (note: `gh run view` takes a run ID, not `--branch`):
+   ```bash
+   gh run view --repo lsm/neokai $RUN_ID --json jobs --jq '.jobs[] | select(.name == "build" or .name == "discover") | "\(.name): \(.conclusion)"'
+   ```
+   - If `build` or `discover` failed, report "Build failure — e2e tests did not run" and stop. Note the build failure for reporting but do not investigate it (outside scope).
+4. If build succeeded, check for failing e2e jobs (note: `gh run view --json jobs` returns `databaseId`, not `id`):
+   ```bash
+   gh run view --repo lsm/neokai $RUN_ID --json jobs --jq '.jobs[] | select(.conclusion == "failure") | "\(.name): \(.conclusion)"'
+   ```
+5. Filter to only `e2e-no-llm` and `e2e-llm` job failures. If none, report success and skip to Task 5.
+6. For each failing e2e job, extract job details for artifact download:
+   ```bash
+   gh run view --repo lsm/neokai $RUN_ID --json jobs --jq '.jobs[] | select(.conclusion == "failure") | select(.name | startswith("e2e-")) | {name, databaseId, url}'
    ```
 7. Check the mission log from the previous run for known flaky tests:
    ```bash
@@ -71,7 +70,7 @@ Check the latest CI run on the dev branch and identify any failing e2e test jobs
 Download test artifacts from failed e2e jobs and analyze failure patterns. Compare with previous run findings to identify known flaky tests quickly.
 
 **Subtasks:**
-1. Download test results using the run ID from Task 1 (note: `gh run download` takes a **run ID**, not a job ID, and uses `--pattern` not `--name`):
+1. Download test results using the run ID from Task 1 (note: `gh run download` takes a **run ID**, not a job ID. Use `--pattern` for glob matching (e.g., `e2e-no-llm-results-*`) or `--name` for exact artifact names):
    ```bash
    RUN_ID=$(gh run list --repo lsm/neokai --branch dev --limit 1 --json databaseId --jq '.[0].databaseId')
    # Download all e2e artifacts using glob patterns
@@ -250,7 +249,10 @@ Document all findings from this run for future reference and cross-run pattern t
 ## Key CI Context
 
 ### CI Dependency Chain
-CI runs: `check/online tests` → `build` → `discover` → `e2e`. If build or discover fails, e2e tests never run — handle this in Task 1.
+- **On push to dev**: `build` + `discover` (run in parallel) → `e2e`. Note: check/unit/online tests are skipped on push to dev.
+- **On PR to main**: `check/online tests` → `build` + `discover` (parallel) → `e2e`.
+
+If `build` or `discover` fails, e2e tests never run — handle this in Task 1.
 
 ### E2E Test Jobs
 - **e2e-no-llm**: UI-only tests that run in parallel
