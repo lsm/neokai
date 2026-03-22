@@ -326,7 +326,7 @@ describe('step-agent-tools: send_feedback', () => {
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
 		expect(data.delivered[0].role).toBe('reviewer');
 		expect(injected).toHaveLength(1);
-		expect(injected[0].message).toBe('LGTM!');
+		expect(injected[0].message).toBe('[Feedback from coder]: LGTM!');
 	});
 
 	test('point-to-point fails when channel not declared', async () => {
@@ -344,18 +344,17 @@ describe('step-agent-tools: send_feedback', () => {
 		expect(data.suggestion).toContain('request_peer_input');
 	});
 
-	test('returns error when no channels declared at all', async () => {
+	test('returns error when no channels declared at all (empty topology blocks send_feedback)', async () => {
 		const config = makeConfig(ctx); // no workflowRunId, no channels
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.send_feedback({ target: 'reviewer', message: 'test' });
-		// When topology is empty, canSend returns false but we don't validate — we just skip
-		// validation and try to inject. Let's verify the actual behavior:
 		const data = JSON.parse(result.content[0].text);
 
-		// With empty topology, no validation happens (isEmpty=true), so it should succeed
-		// if the target exists in the group
-		expect(data.success).toBe(true);
-		expect(data.delivered[0].role).toBe('reviewer');
+		// With no declared channels, send_feedback is unavailable — all communication
+		// must go through request_peer_input (Task Agent mediated).
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('No channel topology declared');
+		expect(data.suggestion).toBe('request_peer_input');
 	});
 
 	test('broadcast (*) succeeds and delivers to all permitted targets', async () => {

@@ -26,7 +26,8 @@
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
  * - Dependencies are injected via `StepAgentToolsConfig`.
- * - The `messageInjector` serializes writes per-session for safe concurrency.
+ * - `messageInjector` is backed by `injectSubSessionMessage` → `injectMessageIntoSession`
+ *   → `session.messageQueue.enqueueWithId()`, which provides per-session write ordering.
  * - The `injectToTaskAgent` callback is used by `request_peer_input` for routing.
  */
 
@@ -106,22 +107,23 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		injectToTaskAgent,
 	} = config;
 
-	/**
-	 * Helper: load the group and build a ChannelResolver from the current run config.
-	 * Returns null with an error ToolResult if the group cannot be found.
-	 */
-	function loadGroupAndResolver(): {
-		group: ReturnType<typeof sessionGroupRepo.getGroup>;
+	type GroupLoaded = {
+		ok: true;
+		group: NonNullable<ReturnType<typeof sessionGroupRepo.getGroup>>;
 		resolver: ChannelResolver;
 		groupId: string;
-		error?: ToolResult;
-	} {
+	};
+	type GroupError = { ok: false; error: ToolResult };
+
+	/**
+	 * Helper: load the group and build a ChannelResolver from the current run config.
+	 * Returns a discriminated union — callers check `result.ok` before accessing `group`.
+	 */
+	function loadGroupAndResolver(): GroupLoaded | GroupError {
 		const groupId = getGroupId();
 		if (!groupId) {
 			return {
-				group: null,
-				resolver: new ChannelResolver([]),
-				groupId: '',
+				ok: false,
 				error: jsonResult({
 					success: false,
 					error:
@@ -134,9 +136,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		const group = sessionGroupRepo.getGroup(groupId);
 		if (!group) {
 			return {
-				group: null,
-				resolver: new ChannelResolver([]),
-				groupId,
+				ok: false,
 				error: jsonResult({
 					success: false,
 					error: `Session group ${groupId} not found in the database.`,
@@ -150,7 +150,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 			run?.config as Record<string, unknown> | undefined
 		);
 
-		return { group, resolver, groupId };
+		return { ok: true, group, resolver, groupId };
 	}
 
 	return {
@@ -164,11 +164,12 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		 * Returns permittedTargets: roles this agent can directly send to via send_feedback.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
-			const { group, resolver, error } = loadGroupAndResolver();
-			if (error) return error;
+			const loaded = loadGroupAndResolver();
+			if (!loaded.ok) return loaded.error;
+			const { group, resolver } = loaded;
 
 			// Filter out self and task-agent (coordinator)
-			const peers = group!.members
+			const peers = group.members
 				.filter((m) => m.sessionId !== mySessionId && m.role !== 'task-agent')
 				.map((m) => ({
 					sessionId: m.sessionId,
@@ -214,8 +215,23 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		async send_feedback(args: SendFeedbackInput): Promise<ToolResult> {
 			const { target, message } = args;
 
-			const { group, resolver, error } = loadGroupAndResolver();
-			if (error) return error;
+			const loaded = loadGroupAndResolver();
+			if (!loaded.ok) return loaded.error;
+			const { group, resolver } = loaded;
+
+			// When no channel topology is declared for this step, all send_feedback calls
+			// fail. Agents in a step with no declared channels must use request_peer_input
+			// so that all inter-agent communication is mediated by the Task Agent.
+			if (resolver.isEmpty()) {
+				return jsonResult({
+					success: false,
+					error:
+						`No channel topology declared for this step. ` +
+						`Direct messaging via send_feedback is not available. ` +
+						`Use request_peer_input to communicate with peers through the Task Agent.`,
+					suggestion: 'request_peer_input',
+				});
+			}
 
 			// Resolve target roles from the target argument
 			let targetRoles: string[];
@@ -224,16 +240,6 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 				// Broadcast: expand to all permitted targets
 				const permitted = resolver.getPermittedTargets(myRole);
 				if (permitted.length === 0) {
-					if (resolver.isEmpty()) {
-						return jsonResult({
-							success: false,
-							error:
-								`No channel topology declared for this step. ` +
-								`Direct messaging via send_feedback is not available. ` +
-								`Use request_peer_input to communicate with peers through the Task Agent.`,
-							suggestion: 'request_peer_input',
-						});
-					}
 					return jsonResult({
 						success: false,
 						error:
@@ -253,26 +259,24 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 			}
 
 			// Validate all requested target roles against channel topology
-			if (!resolver.isEmpty()) {
-				const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend(myRole, role));
-				if (unauthorizedRoles.length > 0) {
-					const permittedTargets = resolver.getPermittedTargets(myRole);
-					return jsonResult({
-						success: false,
-						error:
-							`Channel topology does not permit '${myRole}' to send to: ${unauthorizedRoles.join(', ')}. ` +
-							`Permitted targets: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`,
-						unauthorizedRoles,
-						permittedTargets,
-						suggestion:
-							'Use request_peer_input to route through the Task Agent for undeclared channels.',
-					});
-				}
+			const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend(myRole, role));
+			if (unauthorizedRoles.length > 0) {
+				const permittedTargets = resolver.getPermittedTargets(myRole);
+				return jsonResult({
+					success: false,
+					error:
+						`Channel topology does not permit '${myRole}' to send to: ${unauthorizedRoles.join(', ')}. ` +
+						`Permitted targets: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`,
+					unauthorizedRoles,
+					permittedTargets,
+					suggestion:
+						'Use request_peer_input to route through the Task Agent for undeclared channels.',
+				});
 			}
 
 			// Resolve target roles to session IDs from group members
 			// Multiple members can share the same role (parallel instances)
-			const targetMembers = group!.members.filter(
+			const targetMembers = group.members.filter(
 				(m) =>
 					targetRoles.includes(m.role) && m.sessionId !== mySessionId && m.role !== 'task-agent'
 			);
@@ -287,13 +291,17 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 				});
 			}
 
+			// Prefix message with sender identity so the receiver can attribute it.
+			// Without this, agents in multi-peer groups cannot tell who sent the message.
+			const attributedMessage = `[Feedback from ${myRole}]: ${message}`;
+
 			// Inject message into each target session
 			const injected: Array<{ sessionId: string; role: string }> = [];
 			const failed: Array<{ sessionId: string; role: string; error: string }> = [];
 
 			for (const member of targetMembers) {
 				try {
-					await messageInjector(member.sessionId, message);
+					await messageInjector(member.sessionId, attributedMessage);
 					injected.push({ sessionId: member.sessionId, role: member.role });
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);
@@ -400,6 +408,7 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 			'request_peer_input',
 			'Route a question or request to a peer through the Task Agent. ' +
 				'Use this when no direct channel is declared or as a fallback when send_feedback fails. ' +
+				'Call list_peers first to verify the target_role exists in the group. ' +
 				'ASYNC: returns immediately. The peer response arrives later as a user turn prefixed with [Peer response from {role}]: ...',
 			RequestPeerInputSchema.shape,
 			(args) => handlers.request_peer_input(args)
