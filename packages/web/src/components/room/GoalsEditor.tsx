@@ -1622,7 +1622,7 @@ function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 			</div>
 			<h3 class="text-lg font-semibold text-gray-200 mb-2">No missions yet</h3>
 			<p class="text-sm text-gray-400 max-w-xs mb-6 leading-relaxed">
-				Set clear goals to give your agent team direction and purpose.
+				Set clear missions to give your agent team direction and purpose.
 			</p>
 			<Button onClick={onCreateClick}>+ Create your first mission</Button>
 		</div>

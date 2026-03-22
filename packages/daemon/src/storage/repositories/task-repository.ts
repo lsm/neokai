@@ -215,8 +215,10 @@ export class TaskRepository {
 	 */
 	deleteTask(id: string): void {
 		const stmt = this.db.prepare(`DELETE FROM tasks WHERE id = ?`);
-		stmt.run(id);
-		this.reactiveDb.notifyChange('tasks');
+		const result = stmt.run(id);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 	}
 
 	/**
@@ -230,8 +232,10 @@ export class TaskRepository {
 		const stmt = this.db.prepare(
 			`UPDATE tasks SET status = 'archived', archived_at = ?, active_session = NULL, updated_at = ? WHERE id = ?`
 		);
-		stmt.run(now, now, id);
-		this.reactiveDb.notifyChange('tasks');
+		const result = stmt.run(now, now, id);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 		return this.getTask(id);
 	}
 
@@ -240,7 +244,10 @@ export class TaskRepository {
 	 */
 	deleteTasksForRoom(roomId: string): void {
 		const stmt = this.db.prepare(`DELETE FROM tasks WHERE room_id = ?`);
-		stmt.run(roomId);
+		const result = stmt.run(roomId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 	}
 
 	/**

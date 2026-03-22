@@ -298,7 +298,7 @@ describe('RoomContextPanel', () => {
 			makeGoal('g3', 'Archived Goal', [], 'archived'),
 		];
 		render(<RoomContextPanel roomId="room-1" />);
-		expect(screen.getByText('Goals')).toBeTruthy();
+		expect(screen.getByText('Missions')).toBeTruthy();
 		// Count matches active goals (excludes archived)
 		expect(screen.getByText('(2)')).toBeTruthy();
 	});
