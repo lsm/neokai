@@ -470,4 +470,203 @@ test.describe('Room Sidebar Sections', () => {
 			timeout: 10000,
 		});
 	});
+
+	// ── Goals: completed tasks toggle ─────────────────────────────────────────
+
+	test('Goals section: completed tasks are hidden by default under expanded goals', async ({
+		page,
+	}) => {
+		// Create an additional goal with a completed linked task
+		const completedTaskRoomId = await page.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+
+			const roomRes = await hub.request('room.create', {
+				name: 'E2E Completed Tasks Toggle Room',
+			});
+			const roomId = (roomRes as { room: { id: string } }).room.id;
+
+			// Stop runtime
+			for (let i = 0; i < 20; i++) {
+				try {
+					await hub.request('room.runtime.stop', { roomId });
+				} catch {}
+				const stateRes = await hub
+					.request('room.runtime.state', { roomId })
+					.catch(() => null as unknown);
+				const state = (stateRes as { state?: string } | null)?.state;
+				if (!state || state === 'stopped') break;
+				await new Promise((r) => setTimeout(r, 100));
+			}
+
+			// Create a goal
+			const goalRes = await hub.request('goal.create', {
+				roomId,
+				title: 'Completed Tasks Test Goal',
+			});
+			const goalId = (goalRes as { goal: { id: string } }).goal.id;
+
+			// Create a completed task and link it to the goal
+			const taskRes = await hub.request('task.create', {
+				roomId,
+				title: 'Completed Linked Task',
+			});
+			const taskId = (taskRes as { task: { id: string } }).task.id;
+
+			await hub.request('goal.linkTask', { roomId, goalId, taskId });
+
+			// Transition task to completed
+			await hub.request('task.setStatus', {
+				roomId,
+				taskId,
+				status: 'in_progress',
+			});
+			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
+
+			return roomId;
+		});
+
+		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
+
+		const goalsSection = getSidebarSection(page, 'Goals');
+		await expect(goalsSection.getByText('Completed Tasks Test Goal')).toBeVisible({
+			timeout: 15000,
+		});
+
+		// Expand the goal
+		await goalsSection.locator('button').filter({ hasText: 'Completed Tasks Test Goal' }).click();
+
+		// Completed task should NOT be visible by default
+		await expect(goalsSection.getByText('Completed Linked Task')).not.toBeVisible();
+
+		// Clean up
+		await deleteRoom(page, completedTaskRoomId);
+	});
+
+	test('Goals section: toggle button shows completed tasks when clicked', async ({ page }) => {
+		// Create a goal with completed task
+		const completedTaskRoomId = await page.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+
+			const roomRes = await hub.request('room.create', {
+				name: 'E2E Show Completed Toggle Room',
+			});
+			const roomId = (roomRes as { room: { id: string } }).room.id;
+
+			// Stop runtime
+			for (let i = 0; i < 20; i++) {
+				try {
+					await hub.request('room.runtime.stop', { roomId });
+				} catch {}
+				const stateRes = await hub
+					.request('room.runtime.state', { roomId })
+					.catch(() => null as unknown);
+				const state = (stateRes as { state?: string } | null)?.state;
+				if (!state || state === 'stopped') break;
+				await new Promise((r) => setTimeout(r, 100));
+			}
+
+			const goalRes = await hub.request('goal.create', {
+				roomId,
+				title: 'Toggle Show Goal',
+			});
+			const goalId = (goalRes as { goal: { id: string } }).goal.id;
+
+			const taskRes = await hub.request('task.create', {
+				roomId,
+				title: 'Done Task',
+			});
+			const taskId = (taskRes as { task: { id: string } }).task.id;
+
+			await hub.request('goal.linkTask', { roomId, goalId, taskId });
+
+			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
+
+			return roomId;
+		});
+
+		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
+
+		const goalsSection = getSidebarSection(page, 'Goals');
+		await expect(goalsSection.getByText('Toggle Show Goal')).toBeVisible({ timeout: 15000 });
+
+		// Expand the goal
+		await goalsSection.locator('button').filter({ hasText: 'Toggle Show Goal' }).click();
+
+		// Task should not be visible initially
+		await expect(goalsSection.getByText('Done Task')).not.toBeVisible();
+
+		// Click the show completed tasks toggle button
+		await goalsSection.locator('button[aria-label="Show completed tasks"]').click();
+
+		// Now completed task should be visible
+		await expect(goalsSection.getByText('Done Task')).toBeVisible({ timeout: 5000 });
+
+		// Clean up
+		await deleteRoom(page, completedTaskRoomId);
+	});
+
+	test('Goals section: completed tasks toggle is persisted in localStorage', async ({ page }) => {
+		// Create a goal with completed task
+		const completedTaskRoomId = await page.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+
+			const roomRes = await hub.request('room.create', {
+				name: 'E2E Persistence Room',
+			});
+			const roomId = (roomRes as { room: { id: string } }).room.id;
+
+			for (let i = 0; i < 20; i++) {
+				try {
+					await hub.request('room.runtime.stop', { roomId });
+				} catch {}
+				const stateRes = await hub
+					.request('room.runtime.state', { roomId })
+					.catch(() => null as unknown);
+				const state = (stateRes as { state?: string } | null)?.state;
+				if (!state || state === 'stopped') break;
+				await new Promise((r) => setTimeout(r, 100));
+			}
+
+			const goalRes = await hub.request('goal.create', { roomId, title: 'Persist Toggle Goal' });
+			const goalId = (goalRes as { goal: { id: string } }).goal.id;
+
+			const taskRes = await hub.request('task.create', {
+				roomId,
+				title: 'Finished Task',
+			});
+			const taskId = (taskRes as { task: { id: string } }).task.id;
+
+			await hub.request('goal.linkTask', { roomId, goalId, taskId });
+			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
+
+			return roomId;
+		});
+
+		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
+
+		const goalsSection = getSidebarSection(page, 'Goals');
+		await expect(goalsSection.getByText('Persist Toggle Goal')).toBeVisible({ timeout: 15000 });
+
+		// Expand goal and toggle to show completed
+		await goalsSection.locator('button').filter({ hasText: 'Persist Toggle Goal' }).click();
+		await goalsSection.locator('button[aria-label="Show completed tasks"]').click();
+		await expect(goalsSection.getByText('Finished Task')).toBeVisible({ timeout: 5000 });
+
+		// Reload the page to verify persistence
+		await page.reload();
+		await waitForWebSocketConnected(page);
+		await expect(goalsSection.getByText('Persist Toggle Goal')).toBeVisible({ timeout: 15000 });
+
+		// Expand the goal again - the toggle state should be remembered
+		await goalsSection.locator('button').filter({ hasText: 'Persist Toggle Goal' }).click();
+
+		// Task should still be visible (persisted)
+		await expect(goalsSection.getByText('Finished Task')).toBeVisible({ timeout: 5000 });
+
+		// Clean up
+		await deleteRoom(page, completedTaskRoomId);
+	});
 });
