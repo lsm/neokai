@@ -22,6 +22,8 @@ import { useMessageHub } from '../../hooks/useMessageHub';
 import { useModal } from '../../hooks/useModal';
 import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { roomStore } from '../../lib/room-store';
+import { currentRoomTabSignal } from '../../lib/signals';
 import { getModelLabel } from '../../lib/session-utils';
 import { toast } from '../../lib/toast.ts';
 import { copyToClipboard } from '../../lib/utils';
@@ -597,6 +599,9 @@ function ArchiveTaskDialog({ task, isOpen, onClose, onConfirm }: ArchiveTaskDial
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
+
+	// Look up the goal associated with this task (reverse lookup from roomStore)
+	const associatedGoal = roomStore.goalByTaskId.value.get(taskId) ?? null;
 	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -952,6 +957,28 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 								</svg>
 								<span>PR #{task.prNumber ?? '?'}</span>
 							</a>
+						)}
+						{/* Mission link — shown when task is linked to a goal */}
+						{associatedGoal && (
+							<button
+								data-testid="task-view-goal-badge"
+								onClick={() => {
+									currentRoomTabSignal.value = 'goals';
+									navigateToRoom(roomId);
+								}}
+								class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 hover:bg-emerald-900/40 rounded transition-colors"
+								title={`Mission: ${associatedGoal.title}`}
+							>
+								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M13 10V3L4 14h7v7l9-11h-7z"
+									/>
+								</svg>
+								<span class="max-w-[160px] truncate">{associatedGoal.title}</span>
+							</button>
 						)}
 					</div>
 					{group && (

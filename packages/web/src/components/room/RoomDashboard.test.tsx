@@ -15,6 +15,7 @@ import type { TaskSummary, RuntimeState } from '@neokai/shared';
 
 // Define signals for store mock
 let mockTasks: ReturnType<typeof signal<TaskSummary[]>>;
+let mockGoals: ReturnType<typeof signal<{ id: string; title: string; linkedTaskIds: string[] }[]>>;
 let mockSessions: ReturnType<typeof signal<{ id: string; title: string; status: string }[]>>;
 let mockRoomId: ReturnType<typeof signal<string | null>>;
 let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
@@ -30,6 +31,7 @@ vi.mock('../../lib/room-store.ts', () => ({
 	get roomStore() {
 		return {
 			tasks: mockTasks,
+			goals: mockGoals,
 			sessions: mockSessions,
 			roomId: mockRoomId,
 			runtimeState: mockRuntimeState,
@@ -41,6 +43,10 @@ vi.mock('../../lib/room-store.ts', () => ({
 			archiveRoom: vi.fn().mockResolvedValue(undefined),
 		};
 	},
+}));
+
+vi.mock('../../lib/signals.ts', () => ({
+	currentRoomTabSignal: { value: null },
 }));
 
 const mockNavigateToRoomTask = vi.fn();
@@ -57,6 +63,7 @@ vi.mock('../../lib/utils.ts', () => ({
 
 // Initialize signals after mocks
 mockTasks = signal<TaskSummary[]>([]);
+mockGoals = signal([]);
 mockSessions = signal([]);
 mockRoomId = signal<string | null>('room-1');
 mockRuntimeState = signal<RuntimeState | null>(null);
@@ -71,6 +78,7 @@ describe('RoomDashboard', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
+		mockGoals.value = [];
 		mockSessions.value = [];
 		mockRoomId.value = 'room-1';
 		mockRuntimeState.value = null;

@@ -46,6 +46,10 @@ export const contextPanelOpenSignal = signal<boolean>(false);
 // Create Room modal open state - shared between ContextPanel and Lobby
 export const createRoomModalSignal = signal<boolean>(false);
 
+// Room tab navigation signal - set this to navigate to a specific room tab
+// Room.tsx watches this and switches activeTab accordingly, then clears it
+export const currentRoomTabSignal = signal<string | null>(null);
+
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'

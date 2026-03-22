@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
-import type { TaskSummary } from '@neokai/shared';
+import type { TaskSummary, RoomGoal } from '@neokai/shared';
 import { RoomTasks, selectedTabSignal, getInitialTab } from './RoomTasks';
 
 // Mock toast to prevent side effects from toast.rejected() calls
@@ -1227,6 +1227,129 @@ describe('RoomTasks', () => {
 
 			expect(onReactivate).toHaveBeenCalledWith('task-42');
 			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Goal Badge', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
+		const createGoal = (id: string, title: string, linkedTaskIds: string[]): RoomGoal => ({
+			id,
+			roomId: 'room-1',
+			title,
+			description: '',
+			status: 'active',
+			priority: 'normal',
+			progress: 0,
+			linkedTaskIds,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		});
+
+		it('should show goal badge on task linked to a goal', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('My Mission');
+		});
+
+		it('should NOT show goal badge on task not linked to any goal', () => {
+			const task = createTask('task-2', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']); // links to task-1 only
+
+			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-2"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should NOT show goal badge when goals prop is not provided', () => {
+			const task = createTask('task-1', 'in_progress');
+
+			const { container } = render(<RoomTasks tasks={[task]} />);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should call onGoalClick with goalId when badge is clicked', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+			const onGoalClick = vi.fn();
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goals={[goal]} onGoalClick={onGoalClick} />
+			);
+
+			const badge = container.querySelector(
+				'[data-testid="task-goal-badge-task-1"]'
+			) as HTMLButtonElement;
+			fireEvent.click(badge);
+
+			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
+		});
+
+		it('should NOT call onTaskClick when goal badge is clicked (stopPropagation)', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+			const onGoalClick = vi.fn();
+			const onTaskClick = vi.fn();
+
+			const { container } = render(
+				<RoomTasks
+					tasks={[task]}
+					goals={[goal]}
+					onGoalClick={onGoalClick}
+					onTaskClick={onTaskClick}
+				/>
+			);
+
+			const badge = container.querySelector(
+				'[data-testid="task-goal-badge-task-1"]'
+			) as HTMLButtonElement;
+			fireEvent.click(badge);
+
+			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should show goal badge on tasks in review tab', () => {
+			selectedTabSignal.value = 'review';
+			const task = createTask('task-r', 'review');
+			const goal = createGoal('goal-1', 'Review Mission', ['task-r']);
+
+			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-r"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('Review Mission');
+		});
+
+		it('should show goal badge on tasks in done tab', () => {
+			selectedTabSignal.value = 'done';
+			const task = createTask('task-d', 'completed');
+			const goal = createGoal('goal-1', 'Done Mission', ['task-d']);
+
+			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-d"]');
+			expect(badge).toBeTruthy();
+		});
+
+		it('should show correct goal title as tooltip on badge', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'Specific Goal Name', ['task-1']);
+
+			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			expect(badge?.getAttribute('title')).toBe('Mission: Specific Goal Name');
 		});
 	});
 });

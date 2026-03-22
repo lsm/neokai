@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
+import { currentRoomTabSignal } from '../lib/signals';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
@@ -40,6 +41,18 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			roomStore.select(null);
 		};
 	}, [roomId]);
+
+	// Watch for pending tab navigation from goal badges in task list / task view
+	const pendingTab = currentRoomTabSignal.value;
+	useEffect(() => {
+		if (pendingTab && !taskViewId) {
+			const validTabs: RoomTab[] = ['overview', 'context', 'agents', 'goals', 'settings'];
+			if (validTabs.includes(pendingTab as RoomTab)) {
+				setActiveTab(pendingTab as RoomTab);
+			}
+			currentRoomTabSignal.value = null;
+		}
+	}, [pendingTab, taskViewId]);
 
 	// Update URL when tab changes
 	const handleTabChange = (tab: RoomTab) => {
