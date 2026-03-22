@@ -973,6 +973,97 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect(wf.transitions[0].to).toBe(step2.id);
 		});
 
+		it('imports workflow with isCyclic transition preserved through buildWorkflowCreateParams', async () => {
+			const bundle = {
+				version: 1,
+				type: 'bundle',
+				name: 'Cyclic Bundle',
+				agents: [
+					{ version: 1, type: 'agent', name: 'Planner', role: 'planner' },
+					{ version: 1, type: 'agent', name: 'Coder', role: 'coder' },
+					{ version: 1, type: 'agent', name: 'Verifier', role: 'general' },
+				],
+				workflows: [
+					{
+						version: 1,
+						type: 'workflow',
+						name: 'CyclicWorkflow',
+						steps: [
+							{ agentRef: 'Planner', name: 'Plan' },
+							{ agentRef: 'Coder', name: 'Code' },
+							{ agentRef: 'Verifier', name: 'Verify' },
+						],
+						transitions: [
+							{
+								fromStep: 'Plan',
+								toStep: 'Code',
+								condition: { type: 'human', description: 'Approve plan' },
+								order: 0,
+							},
+							{
+								fromStep: 'Code',
+								toStep: 'Verify',
+								condition: { type: 'always' },
+								order: 0,
+							},
+							{
+								fromStep: 'Verify',
+								toStep: 'Plan',
+								condition: {
+									type: 'task_result',
+									expression: 'failed',
+									description: 'Loop back on failure',
+								},
+								order: 0,
+								isCyclic: true,
+							},
+							{
+								fromStep: 'Verify',
+								toStep: 'Code',
+								condition: {
+									type: 'task_result',
+									expression: 'passed',
+									description: 'Done on success',
+								},
+								order: 1,
+							},
+						],
+						startStep: 'Plan',
+						rules: [],
+						tags: ['cyclic'],
+					},
+				],
+				exportedAt: Date.now(),
+			};
+
+			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			expect(result.workflows).toHaveLength(1);
+			const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+			expect(wf.transitions).toHaveLength(4);
+
+			// Find the cyclic Verify→Plan transition
+			const planStep = wf.steps.find((s) => s.name === 'Plan')!;
+			const verifyStep = wf.steps.find((s) => s.name === 'Verify')!;
+			const cyclicTransition = wf.transitions.find(
+				(t) => t.from === verifyStep.id && t.to === planStep.id
+			)!;
+			expect(cyclicTransition.isCyclic).toBe(true);
+			expect(cyclicTransition.condition?.type).toBe('task_result');
+			expect(cyclicTransition.condition?.expression).toBe('failed');
+
+			// Non-cyclic transitions should not have isCyclic set
+			const nonCyclicTransitions = wf.transitions.filter(
+				(t) => !(t.from === verifyStep.id && t.to === planStep.id)
+			);
+			for (const t of nonCyclicTransitions) {
+				expect(t.isCyclic).toBeUndefined();
+			}
+		});
+
 		it('returns empty warnings array on clean import', async () => {
 			const bundle = makeBundle(
 				[{ name: 'A', role: 'coder' }],

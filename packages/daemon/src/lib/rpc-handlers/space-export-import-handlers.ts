@@ -216,6 +216,7 @@ function buildWorkflowCreateParams(
 		};
 		if (t.condition !== undefined) tr.condition = t.condition;
 		if (t.order !== undefined) tr.order = t.order;
+		if (t.isCyclic !== undefined) tr.isCyclic = t.isCyclic;
 		return tr;
 	});
 

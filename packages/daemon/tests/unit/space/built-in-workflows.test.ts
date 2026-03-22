@@ -7,6 +7,7 @@
  * - getBuiltInWorkflows() returns all three templates
  * - seedBuiltInWorkflows(): seeds all three templates with real agent IDs
  * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
+ * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -23,7 +24,8 @@ import {
 	getBuiltInWorkflows,
 	seedBuiltInWorkflows,
 } from '../../../src/lib/space/workflows/built-in-workflows.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import { exportWorkflow, validateExportedWorkflow } from '../../../src/lib/space/export-format.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -480,5 +482,271 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 		// Pre-validation catches the missing role before any workflow is persisted
 		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Export/import round-trip
+// ---------------------------------------------------------------------------
+
+describe('Coding Workflow export/import round-trip', () => {
+	let db: BunDatabase;
+	let dir: string;
+	let manager: SpaceWorkflowManager;
+	const SPACE_ID = 'roundtrip-test-space';
+
+	const PLANNER_ID = 'agent-planner-uuid';
+	const CODER_ID = 'agent-coder-uuid';
+	const GENERAL_ID = 'agent-general-uuid';
+
+	const roleMap: Record<string, string> = {
+		planner: PLANNER_ID,
+		coder: CODER_ID,
+		general: GENERAL_ID,
+		reviewer: 'agent-reviewer-uuid',
+	};
+	const resolveAgentId = (role: string): string | undefined => roleMap[role];
+
+	/** Mock SpaceAgent records for exportWorkflow's agent name resolution. */
+	const mockAgents: SpaceAgent[] = [
+		{
+			id: PLANNER_ID,
+			spaceId: SPACE_ID,
+			name: 'Planner',
+			role: 'planner',
+			description: '',
+			model: null,
+			tools: [],
+			systemPrompt: '',
+			config: null,
+			createdAt: 0,
+			updatedAt: 0,
+		},
+		{
+			id: CODER_ID,
+			spaceId: SPACE_ID,
+			name: 'Coder',
+			role: 'coder',
+			description: '',
+			model: null,
+			tools: [],
+			systemPrompt: '',
+			config: null,
+			createdAt: 0,
+			updatedAt: 0,
+		},
+		{
+			id: GENERAL_ID,
+			spaceId: SPACE_ID,
+			name: 'General',
+			role: 'general',
+			description: '',
+			model: null,
+			tools: [],
+			systemPrompt: '',
+			config: null,
+			createdAt: 0,
+			updatedAt: 0,
+		},
+	];
+
+	beforeEach(() => {
+		({ db, dir } = makeDb());
+		seedSpace(db, SPACE_ID);
+		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner', 'planner');
+		seedAgent(db, CODER_ID, SPACE_ID, 'Coder', 'coder');
+		seedAgent(db, GENERAL_ID, SPACE_ID, 'General', 'general');
+
+		const repo = new SpaceWorkflowRepository(db);
+		manager = new SpaceWorkflowManager(repo);
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			/* ignore */
+		}
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	});
+
+	test('exported Coding Workflow passes Zod validation', () => {
+		// Seed and retrieve the persisted workflow (with real UUIDs)
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		const exported = exportWorkflow(wf, mockAgents);
+		const result = validateExportedWorkflow(exported);
+		expect(result.ok).toBe(true);
+	});
+
+	test('exported Coding Workflow preserves isCyclic on Verify→Plan transition', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		const exported = exportWorkflow(wf, mockAgents);
+
+		const verifyToPlan = exported.transitions.find(
+			(t) => t.fromStep === 'Verify & Test' && t.toStep === 'Plan'
+		);
+		expect(verifyToPlan).toBeDefined();
+		expect(verifyToPlan!.isCyclic).toBe(true);
+
+		// Non-cyclic transitions should not have isCyclic
+		const verifyToDone = exported.transitions.find(
+			(t) => t.fromStep === 'Verify & Test' && t.toStep === 'Done'
+		);
+		expect(verifyToDone).toBeDefined();
+		expect(verifyToDone!.isCyclic).toBeUndefined();
+	});
+
+	test('exported Coding Workflow preserves task_result conditions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		const exported = exportWorkflow(wf, mockAgents);
+
+		const taskResultTransitions = exported.transitions.filter(
+			(t) => t.condition?.type === 'task_result'
+		);
+		expect(taskResultTransitions).toHaveLength(2);
+
+		const failedTransition = taskResultTransitions.find(
+			(t) => t.condition?.expression === 'failed'
+		);
+		expect(failedTransition).toBeDefined();
+
+		const passedTransition = taskResultTransitions.find(
+			(t) => t.condition?.expression === 'passed'
+		);
+		expect(passedTransition).toBeDefined();
+	});
+
+	test('re-imported Coding Workflow preserves isCyclic and task_result conditions', () => {
+		// Seed → export → re-import → verify round-trip fidelity
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const exported = exportWorkflow(wf, mockAgents);
+
+		// Delete all workflows so we can re-import
+		for (const w of manager.listWorkflows(SPACE_ID)) {
+			manager.deleteWorkflow(w.id);
+		}
+		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
+
+		// Re-import using the same mechanism as seedBuiltInWorkflows but from the exported format
+		const stepNameToId = new Map<string, string>();
+		for (const step of exported.steps) {
+			stepNameToId.set(step.name, `reimport-${step.name}`);
+		}
+
+		// Build agent name → ID map for resolving agentRef
+		const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.name, a.id]));
+
+		manager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: exported.name,
+			description: exported.description,
+			steps: exported.steps.map((s) => ({
+				id: stepNameToId.get(s.name)!,
+				name: s.name,
+				agentId: agentNameToId.get(s.agentRef) ?? s.agentRef,
+				instructions: s.instructions,
+			})),
+			transitions: exported.transitions.map((t) => ({
+				from: stepNameToId.get(t.fromStep)!,
+				to: stepNameToId.get(t.toStep)!,
+				condition: t.condition,
+				order: t.order,
+				isCyclic: t.isCyclic,
+			})),
+			startStepId: stepNameToId.get(exported.startStep),
+			rules: [],
+			tags: exported.tags,
+		});
+
+		// Verify the re-imported workflow
+		const reimported = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === CODING_WORKFLOW.name)!;
+		expect(reimported).toBeDefined();
+		expect(reimported.steps).toHaveLength(4);
+		expect(reimported.transitions).toHaveLength(4);
+
+		// isCyclic preserved on Verify→Plan
+		const verifyToPlan = reimported.transitions.find(
+			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'failed'
+		);
+		expect(verifyToPlan).toBeDefined();
+		expect(verifyToPlan!.isCyclic).toBe(true);
+
+		// Non-cyclic transition should not have isCyclic
+		const verifyToDone = reimported.transitions.find(
+			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'passed'
+		);
+		expect(verifyToDone).toBeDefined();
+		expect(verifyToDone!.isCyclic).toBeUndefined();
+
+		// task_result conditions preserved
+		expect(verifyToPlan!.condition?.type).toBe('task_result');
+		expect(verifyToPlan!.condition?.expression).toBe('failed');
+		expect(verifyToDone!.condition?.type).toBe('task_result');
+		expect(verifyToDone!.condition?.expression).toBe('passed');
+	});
+
+	test('Zod schema accepts task_result condition type with expression', () => {
+		// Construct a minimal exported workflow with task_result and validate
+		const minimal = {
+			version: 1,
+			type: 'workflow',
+			name: 'Test Workflow',
+			steps: [
+				{ agentRef: 'Planner', name: 'Plan' },
+				{ agentRef: 'General', name: 'Verify' },
+			],
+			transitions: [
+				{
+					fromStep: 'Verify',
+					toStep: 'Plan',
+					condition: { type: 'task_result', expression: 'failed' },
+					order: 0,
+					isCyclic: true,
+				},
+			],
+			startStep: 'Plan',
+			rules: [],
+			tags: ['test'],
+		};
+		const result = validateExportedWorkflow(minimal);
+		expect(result.ok).toBe(true);
+	});
+
+	test('Zod schema rejects task_result condition without expression', () => {
+		const invalid = {
+			version: 1,
+			type: 'workflow',
+			name: 'Test Workflow',
+			steps: [
+				{ agentRef: 'Planner', name: 'Plan' },
+				{ agentRef: 'General', name: 'Verify' },
+			],
+			transitions: [
+				{
+					fromStep: 'Verify',
+					toStep: 'Plan',
+					condition: { type: 'task_result' },
+					order: 0,
+				},
+			],
+			startStep: 'Plan',
+			rules: [],
+			tags: ['test'],
+		};
+		const result = validateExportedWorkflow(invalid);
+		expect(result.ok).toBe(false);
 	});
 });
