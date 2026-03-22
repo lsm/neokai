@@ -12,6 +12,23 @@ import { signal, computed, type Signal, type ReadonlySignal } from '@preact/sign
 import type { NeoTask, RoomGoal, SessionSummary } from '@neokai/shared';
 
 // -------------------------------------------------------
+// localStorage mock
+// -------------------------------------------------------
+
+const storage = new Map<string, string>();
+const mockLocalStorage = {
+	getItem: (key: string) => storage.get(key) ?? null,
+	setItem: (key: string, value: string) => storage.set(key, value),
+	removeItem: (key: string) => storage.delete(key),
+	clear: () => storage.clear(),
+};
+
+Object.defineProperty(globalThis, 'localStorage', {
+	value: mockLocalStorage,
+	writable: true,
+});
+
+// -------------------------------------------------------
 // Hoisted mocks
 // -------------------------------------------------------
 
@@ -180,6 +197,7 @@ describe('RoomContextPanel', () => {
 	beforeEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		storage.clear();
 		initSignals();
 		// Restore default resolved value after clearAllMocks (which clears call history
 		// but not implementations). Required so reordering tests doesn't break the
@@ -354,6 +372,116 @@ describe('RoomContextPanel', () => {
 	it('shows "No goals" when goal list is empty', () => {
 		render(<RoomContextPanel roomId="room-1" />);
 		expect(screen.getByText('No goals')).toBeTruthy();
+	});
+
+	// -- Goals section: completed tasks toggle --
+
+	it('hides completed and cancelled tasks under goals by default', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Completed Task', 'completed'),
+			makeTask('t3', 'Cancelled Task', 'cancelled'),
+		];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1', 't2', 't3'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand the goal
+		fireEvent.click(screen.getByText('My Goal'));
+
+		// Active task should be visible
+		expect(screen.getByText('Active Task')).toBeTruthy();
+		// Completed and cancelled tasks should NOT be visible by default
+		expect(screen.queryByText('Completed Task')).toBeNull();
+		expect(screen.queryByText('Cancelled Task')).toBeNull();
+	});
+
+	it('shows completed tasks when toggle is clicked', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Completed Task', 'completed'),
+		];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1', 't2'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand the goal first
+		fireEvent.click(screen.getByText('My Goal'));
+		expect(screen.queryByText('Completed Task')).toBeNull();
+
+		// Click the show/hide completed tasks toggle button
+		const toggleBtn = screen.getByLabelText('Show completed tasks');
+		fireEvent.click(toggleBtn);
+
+		// Now completed task should be visible
+		expect(screen.getByText('Completed Task')).toBeTruthy();
+	});
+
+	it('hides completed tasks again when toggle is clicked a second time', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Completed Task', 'completed'),
+		];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1', 't2'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand the goal
+		fireEvent.click(screen.getByText('My Goal'));
+
+		// Toggle to show
+		const toggleBtn = screen.getByLabelText('Show completed tasks');
+		fireEvent.click(toggleBtn);
+		expect(screen.getByText('Completed Task')).toBeTruthy();
+
+		// Toggle to hide again
+		fireEvent.click(screen.getByLabelText('Hide completed tasks'));
+		expect(screen.queryByText('Completed Task')).toBeNull();
+	});
+
+	it('completed tasks shown with muted styling (strikethrough and gray text)', () => {
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Done Task', 'completed'),
+		];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1', 't2'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand goal and toggle to show completed
+		fireEvent.click(screen.getByText('My Goal'));
+		fireEvent.click(screen.getByLabelText('Show completed tasks'));
+
+		// The completed task should have strikethrough styling
+		const doneTaskBtn = screen.getByText('Done Task').closest('button');
+		const span = doneTaskBtn?.querySelector('span');
+		expect(span?.className).toContain('line-through');
+		expect(span?.className).toContain('text-gray-600');
+	});
+
+	it('toggle button is always visible in Goals header even without completed tasks', () => {
+		mockTasksSignal.value = [makeTask('t1', 'Active Task', 'in_progress')];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand the goal
+		fireEvent.click(screen.getByText('My Goal'));
+
+		// Toggle button should still be present in header
+		expect(screen.getByLabelText('Show completed tasks')).toBeTruthy();
+	});
+
+	it('reads persisted show-completed state from localStorage on mount', () => {
+		// Pre-set localStorage to show completed tasks
+		storage.set('neokai:goals:showCompletedTasks', 'true');
+		mockTasksSignal.value = [
+			makeTask('t1', 'Active Task', 'in_progress'),
+			makeTask('t2', 'Completed Task', 'completed'),
+		];
+		mockGoalsSignal.value = [makeGoal('g1', 'My Goal', ['t1', 't2'])];
+		render(<RoomContextPanel roomId="room-1" />);
+
+		// Expand the goal
+		fireEvent.click(screen.getByText('My Goal'));
+
+		// Completed task should be visible immediately because localStorage says so
+		expect(screen.getByText('Completed Task')).toBeTruthy();
 	});
 
 	// -- Tasks section (orphan tasks) --

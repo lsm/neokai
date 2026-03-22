@@ -22,6 +22,25 @@ import { currentRoomSessionIdSignal, currentRoomTaskIdSignal } from '../lib/sign
 import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
+const GOALS_SHOW_COMPLETED_KEY = 'neokai:goals:showCompletedTasks';
+
+function getShowCompletedTasksInitial(): boolean {
+	try {
+		const stored = localStorage.getItem(GOALS_SHOW_COMPLETED_KEY);
+		return stored === 'true';
+	} catch {
+		return false;
+	}
+}
+
+function persistShowCompletedTasks(value: boolean): void {
+	try {
+		localStorage.setItem(GOALS_SHOW_COMPLETED_KEY, String(value));
+	} catch {
+		// Silently fail if localStorage is unavailable
+	}
+}
+
 function formatRelativeTime(timestamp: number): string {
 	const seconds = Math.floor((Date.now() - timestamp) / 1000);
 	if (seconds < 60) return 'now';
@@ -80,6 +99,13 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	const [showArchived, setShowArchived] = useState(false);
 	const [expandedGoals, setExpandedGoals] = useState<Set<string>>(() => new Set());
 	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
+	const [showCompletedTasks, setShowCompletedTasks] = useState(getShowCompletedTasksInitial);
+
+	const toggleShowCompletedTasks = () => {
+		const next = !showCompletedTasks;
+		setShowCompletedTasks(next);
+		persistShowCompletedTasks(next);
+	};
 
 	const activeCount = useMemo(
 		() =>
@@ -256,13 +282,60 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			{/* Scrollable sections */}
 			<div class="flex-1 overflow-y-auto">
 				{/* Goals section */}
-				<CollapsibleSection title="Goals" count={activeGoals.length}>
+				<CollapsibleSection
+					title="Goals"
+					count={activeGoals.length}
+					headerRight={
+						<button
+							onClick={toggleShowCompletedTasks}
+							class={cn(
+								'p-0.5 rounded transition-colors',
+								showCompletedTasks
+									? 'text-gray-400 hover:text-gray-200'
+									: 'text-gray-600 hover:text-gray-400'
+							)}
+							title={showCompletedTasks ? 'Hide completed tasks' : 'Show completed tasks'}
+							aria-label={showCompletedTasks ? 'Hide completed tasks' : 'Show completed tasks'}
+						>
+							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								{showCompletedTasks ? (
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+									/>
+								) : (
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+									/>
+								)}
+							</svg>
+						</button>
+					}
+				>
 					{activeGoals.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No goals</div>
 					) : (
 						activeGoals.map((goal) => {
 							const isExpanded = expandedGoals.has(goal.id);
 							const linkedTasks = tasksByGoalId.get(goal.id) ?? [];
+							const activeLinkedTasks = linkedTasks.filter(
+								(t) =>
+									t.status === 'draft' ||
+									t.status === 'pending' ||
+									t.status === 'in_progress' ||
+									t.status === 'review' ||
+									t.status === 'needs_attention'
+							);
+							const completedLinkedTasks = linkedTasks.filter(
+								(t) =>
+									t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
+							);
+							const hasCompletedTasks = completedLinkedTasks.length > 0;
 							return (
 								<div key={goal.id}>
 									<button
@@ -282,20 +355,40 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 											●
 										</span>
 									</button>
-									{isExpanded &&
-										linkedTasks.map((task) => (
-											<button
-												key={task.id}
-												onClick={() => handleTaskClick(task.id)}
-												class={cn(
-													'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
-													selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
-												)}
-											>
-												<TaskStatusDot status={task.status} />
-												<span class="flex-1 text-sm text-gray-400 truncate">{task.title}</span>
-											</button>
-										))}
+									{isExpanded && (
+										<>
+											{activeLinkedTasks.map((task) => (
+												<button
+													key={task.id}
+													onClick={() => handleTaskClick(task.id)}
+													class={cn(
+														'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
+														selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
+													)}
+												>
+													<TaskStatusDot status={task.status} />
+													<span class="flex-1 text-sm text-gray-400 truncate">{task.title}</span>
+												</button>
+											))}
+											{showCompletedTasks &&
+												hasCompletedTasks &&
+												completedLinkedTasks.map((task) => (
+													<button
+														key={task.id}
+														onClick={() => handleTaskClick(task.id)}
+														class={cn(
+															'w-full pl-8 pr-3 py-1.5 flex items-center gap-2 transition-colors text-left',
+															selectedTaskId === task.id ? 'bg-dark-700' : 'hover:bg-dark-800'
+														)}
+													>
+														<TaskStatusDot status={task.status} />
+														<span class="flex-1 text-sm text-gray-600 truncate line-through">
+															{task.title}
+														</span>
+													</button>
+												))}
+										</>
+									)}
 								</div>
 							);
 						})
