@@ -35,7 +35,6 @@ function RuntimeStateIndicator({ state }: { state: RuntimeState }) {
 
 export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
-	const goals = roomStore.goals.value;
 	const sessions = roomStore.sessions.value;
 	const roomId = roomStore.roomId.value;
 	const runtimeState = roomStore.runtimeState.value;
@@ -203,7 +202,7 @@ export function RoomDashboard() {
 				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
 				<RoomTasks
 					tasks={tasks}
-					goals={goals}
+					goalByTaskId={roomStore.goalByTaskId.value}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onGoalClick={() => {

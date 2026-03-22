@@ -1252,7 +1252,9 @@ describe('RoomTasks', () => {
 			const task = createTask('task-1', 'in_progress');
 			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
 
-			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
 			expect(badge).toBeTruthy();
@@ -1263,13 +1265,15 @@ describe('RoomTasks', () => {
 			const task = createTask('task-2', 'in_progress');
 			const goal = createGoal('goal-1', 'My Mission', ['task-1']); // links to task-1 only
 
-			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-2"]');
 			expect(badge).toBeNull();
 		});
 
-		it('should NOT show goal badge when goals prop is not provided', () => {
+		it('should NOT show goal badge when goalByTaskId prop is not provided', () => {
 			const task = createTask('task-1', 'in_progress');
 
 			const { container } = render(<RoomTasks tasks={[task]} />);
@@ -1278,13 +1282,17 @@ describe('RoomTasks', () => {
 			expect(badge).toBeNull();
 		});
 
-		it('should call onGoalClick with goalId when badge is clicked', () => {
+		it('should call onGoalClick when badge is clicked', () => {
 			const task = createTask('task-1', 'in_progress');
 			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
 			const onGoalClick = vi.fn();
 
 			const { container } = render(
-				<RoomTasks tasks={[task]} goals={[goal]} onGoalClick={onGoalClick} />
+				<RoomTasks
+					tasks={[task]}
+					goalByTaskId={new Map([['task-1', goal]])}
+					onGoalClick={onGoalClick}
+				/>
 			);
 
 			const badge = container.querySelector(
@@ -1292,7 +1300,7 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(badge);
 
-			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
+			expect(onGoalClick).toHaveBeenCalled();
 		});
 
 		it('should NOT call onTaskClick when goal badge is clicked (stopPropagation)', () => {
@@ -1304,7 +1312,7 @@ describe('RoomTasks', () => {
 			const { container } = render(
 				<RoomTasks
 					tasks={[task]}
-					goals={[goal]}
+					goalByTaskId={new Map([['task-1', goal]])}
 					onGoalClick={onGoalClick}
 					onTaskClick={onTaskClick}
 				/>
@@ -1315,7 +1323,7 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(badge);
 
-			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
+			expect(onGoalClick).toHaveBeenCalled();
 			expect(onTaskClick).not.toHaveBeenCalled();
 		});
 
@@ -1324,7 +1332,9 @@ describe('RoomTasks', () => {
 			const task = createTask('task-r', 'review');
 			const goal = createGoal('goal-1', 'Review Mission', ['task-r']);
 
-			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-r', goal]])} />
+			);
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-r"]');
 			expect(badge).toBeTruthy();
@@ -1336,7 +1346,9 @@ describe('RoomTasks', () => {
 			const task = createTask('task-d', 'completed');
 			const goal = createGoal('goal-1', 'Done Mission', ['task-d']);
 
-			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-d', goal]])} />
+			);
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-d"]');
 			expect(badge).toBeTruthy();
@@ -1346,7 +1358,9 @@ describe('RoomTasks', () => {
 			const task = createTask('task-1', 'in_progress');
 			const goal = createGoal('goal-1', 'Specific Goal Name', ['task-1']);
 
-			const { container } = render(<RoomTasks tasks={[task]} goals={[goal]} />);
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
 
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
 			expect(badge?.getAttribute('title')).toBe('Mission: Specific Goal Name');
