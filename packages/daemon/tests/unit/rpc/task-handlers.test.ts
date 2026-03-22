@@ -247,6 +247,7 @@ describe('Task RPC Handlers', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager
 		);
 	});
@@ -465,6 +466,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -490,6 +492,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -509,6 +512,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -528,6 +532,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -547,6 +552,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -566,6 +572,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -584,6 +591,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager
 			// no runtimeService
 		);
@@ -604,6 +612,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -623,6 +632,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -646,6 +656,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -669,6 +680,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);
@@ -689,6 +701,7 @@ describe('task.sendHumanMessage handler', () => {
 			roomManagerData.roomManager,
 			daemonHubData.daemonHub,
 			db,
+			{ notifyChange: () => {} } as never,
 			createMockTaskManager,
 			runtimeService
 		);

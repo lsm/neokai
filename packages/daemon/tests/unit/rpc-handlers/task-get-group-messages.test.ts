@@ -134,7 +134,9 @@ const mockRoomManager = { getRoomOverview: mock(() => null) } as unknown as Room
 describe('task.getGroupMessages RPC handler', () => {
 	it('returns empty result when group does not exist', async () => {
 		const { hub, handlers } = createMockMessageHub();
-		setupTaskHandlers(hub, mockRoomManager, createMockDaemonHub(), makeDb({ groupRow: null }));
+		setupTaskHandlers(hub, mockRoomManager, createMockDaemonHub(), makeDb({ groupRow: null }), {
+			notifyChange: () => {},
+		} as never);
 
 		const handler = handlers.get('task.getGroupMessages');
 		expect(handler).toBeDefined();
@@ -192,7 +194,8 @@ describe('task.getGroupMessages RPC handler', () => {
 						created_at: 2000,
 					},
 				],
-			})
+			}),
+			{ notifyChange: () => {} } as never
 		);
 
 		const handler = handlers.get('task.getGroupMessages');
@@ -244,7 +247,8 @@ describe('task.getGroupMessages RPC handler', () => {
 					})),
 					'leader-session': [],
 				},
-			})
+			}),
+			{ notifyChange: () => {} } as never
 		);
 
 		const handler = handlers.get('task.getGroupMessages');
@@ -293,7 +297,8 @@ describe('task.getGroupMessages RPC handler', () => {
 					})),
 					'leader-session': [],
 				},
-			})
+			}),
+			{ notifyChange: () => {} } as never
 		);
 
 		const handler = handlers.get('task.getGroupMessages');
@@ -359,7 +364,8 @@ describe('task.getGroupMessages RPC handler', () => {
 						},
 					],
 				},
-			})
+			}),
+			{ notifyChange: () => {} } as never
 		);
 
 		const handler = handlers.get('task.getGroupMessages');

@@ -10,6 +10,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	NeoTask,
 	TaskStatus,
@@ -55,7 +56,8 @@ export class TaskManager {
 
 	constructor(
 		private db: BunDatabase,
-		private roomId: string
+		private roomId: string,
+		private reactiveDb: ReactiveDatabase
 	) {
 		this.taskRepo = new TaskRepository(db);
 	}
@@ -86,6 +88,7 @@ export class TaskManager {
 			createdByTaskId: params.createdByTaskId,
 		});
 
+		this.reactiveDb.notifyChange('tasks');
 		return task;
 	}
 
@@ -129,6 +132,7 @@ export class TaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -154,6 +158,7 @@ export class TaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -297,7 +302,11 @@ export class TaskManager {
 	 * Called when a planning task completes so its children enter the execution queue.
 	 */
 	async promoteDraftTasks(creatorTaskId: string): Promise<number> {
-		return this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+		const count = this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+		if (count > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
+		return count;
 	}
 
 	/**
@@ -338,9 +347,11 @@ export class TaskManager {
 			this.db
 				.prepare(`UPDATE tasks SET assigned_agent = ? WHERE id = ?`)
 				.run(updates.assignedAgent, taskId);
+			this.reactiveDb.notifyChange('tasks');
 			return (await this.getTask(taskId))!;
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -360,6 +371,7 @@ export class TaskManager {
 		}
 
 		this.taskRepo.deleteTask(taskId);
+		this.reactiveDb.notifyChange('tasks');
 		return true;
 	}
 
@@ -406,6 +418,7 @@ export class TaskManager {
 		}
 
 		this.taskRepo.deleteTask(taskId);
+		this.reactiveDb.notifyChange('tasks');
 		return true;
 	}
 
@@ -431,6 +444,7 @@ export class TaskManager {
 			throw new Error(`Failed to archive task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 
@@ -467,6 +481,7 @@ export class TaskManager {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
 
+		this.reactiveDb.notifyChange('tasks');
 		return updatedTask;
 	}
 

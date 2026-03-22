@@ -19,6 +19,7 @@
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
+import type { ReactiveDatabase } from '../../storage/reactive-database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
@@ -44,20 +45,14 @@ export type TaskManagerLike = Pick<
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
 
-/**
- * Create a TaskManager instance for a room
- */
-function createTaskManager(db: Database, roomId: string): TaskManagerLike {
-	const rawDb = db.getDatabase();
-	return new TaskManager(rawDb, roomId);
-}
-
 export function setupTaskHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	db: Database,
-	taskManagerFactory: TaskManagerFactory = createTaskManager,
+	reactiveDb: ReactiveDatabase,
+	taskManagerFactory: TaskManagerFactory = (d, roomId) =>
+		new TaskManager(d.getDatabase(), roomId, reactiveDb),
 	runtimeService?: RoomRuntimeService
 ): void {
 	/**
@@ -199,6 +194,7 @@ export function setupTaskHandlers(
 		// Update input_draft directly via repository (lightweight, no status side effects)
 		const taskRepo = new TaskRepository(db.getDatabase());
 		taskRepo.updateTask(params.taskId, { inputDraft: draft });
+		reactiveDb.notifyChange('tasks');
 
 		return { success: true };
 	});

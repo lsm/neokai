@@ -17,7 +17,39 @@
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import type { StepDraft } from '../WorkflowStepCard';
+import { isMultiAgentStep } from '../WorkflowStepCard';
 import type { Point } from './types';
+
+// ============================================================================
+// Channel topology visualization helpers
+// ============================================================================
+
+/** Renders a compact text representation of channel topology. */
+function ChannelTopologyBadge({ step }: { step: StepDraft }) {
+	const channels = step.channels;
+	if (!channels || channels.length === 0) return null;
+
+	/** Truncate a role string for compact display. Channels already use role strings as identifiers. */
+	const roleLabel = (role: string) => (role.length > 8 ? role.slice(0, 8) + '…' : role);
+
+	const formatTo = (to: string | string[]) => {
+		if (Array.isArray(to)) return `[${to.map(roleLabel).join(',')}]`;
+		return roleLabel(to);
+	};
+
+	return (
+		<div class="mt-1.5 space-y-0.5">
+			{channels.map((ch, i) => (
+				<div key={i} class="flex items-center gap-0.5 text-xs text-gray-500">
+					<span class="font-mono">{roleLabel(ch.from)}</span>
+					<span class="text-gray-600">{ch.direction === 'bidirectional' ? '↔' : '→'}</span>
+					<span class="font-mono">{formatTo(ch.to)}</span>
+					{ch.label && <span class="text-gray-700 ml-0.5">"{ch.label}"</span>}
+				</div>
+			))}
+		</div>
+	);
+}
 
 // ============================================================================
 // Props
@@ -73,6 +105,7 @@ export function WorkflowNode({
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 
+	const multi = isMultiAgentStep(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
 
 	// ---- Drag state ----
@@ -223,7 +256,7 @@ export function WorkflowNode({
 				position: 'absolute',
 				left: position.x,
 				top: position.y,
-				minWidth: 160,
+				minWidth: multi ? 200 : 160,
 				cursor: 'grab',
 				userSelect: 'none',
 			}}
@@ -280,15 +313,34 @@ export function WorkflowNode({
 				<p
 					data-testid="step-name"
 					class="text-sm font-medium text-white truncate"
-					style={{ maxWidth: 160 }}
+					style={{ maxWidth: 180 }}
 				>
 					{step.name || '(unnamed)'}
 				</p>
 
-				{/* Agent name */}
-				<p data-testid="agent-name" class="text-xs text-gray-400 truncate mt-0.5">
-					{agentName}
-				</p>
+				{/* Agent(s) */}
+				{multi ? (
+					<div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
+						{step.agents!.map((sa) => {
+							const name = agents.find((a) => a.id === sa.agentId)?.name ?? sa.agentId;
+							return (
+								<span
+									key={sa.agentId}
+									class="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"
+								>
+									{name}
+								</span>
+							);
+						})}
+					</div>
+				) : (
+					<p data-testid="agent-name" class="text-xs text-gray-400 truncate mt-0.5">
+						{agentName}
+					</p>
+				)}
+
+				{/* Channel topology */}
+				<ChannelTopologyBadge step={step} />
 			</div>
 
 			{/* Bottom port */}
