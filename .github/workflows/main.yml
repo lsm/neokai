@@ -183,6 +183,7 @@ jobs:
               tests/online/features/job-queue-crash-recovery.test.ts
               tests/online/features/message-persistence.test.ts
             mock_sdk: true
+            timeout: 8
           - module: git
             test_path: tests/online/git
             timeout: 10

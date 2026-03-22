@@ -13,8 +13,12 @@
  * 1. daemon1 starts with a **file-backed** SQLite database (shared `dbPath`)
  * 2. A job is inserted directly into the DB with status='processing' and
  *    started_at set ~6 minutes ago (exceeding the 5-minute stale threshold)
- * 3. daemon1 is cleanly shut down (`cleanup()`) — simulating a process that
- *    crashed before the job could finish
+ * 3. daemon1 is cleanly shut down via `cleanup()`.  Note: we use a clean
+ *    shutdown (not a SIGKILL) because the correctness property being tested is
+ *    SQLite persistence + `reclaimStale()`, not WAL crash recovery.  The
+ *    manually-inserted stale job simulates what the DB looks like after an
+ *    unclean crash; `cleanup()` merely releases the file lock so daemon2 can
+ *    open the same file.
  * 4. daemon2 is started against the **same database file**
  * 5. `JobQueueProcessor.start()` eagerly calls `reclaimStale()` before the
  *    first poll tick — the stale job moves from 'processing' back to 'pending'
@@ -112,6 +116,10 @@ beforeAll(async () => {
 	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
 		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
 	}
+
+	// Save and set TEST_WORKTREE_BASE_DIR so afterAll can restore it and delete
+	// the directory.  Only override if not already set by the test runner.
+	savedEnv['TEST_WORKTREE_BASE_DIR'] = process.env.TEST_WORKTREE_BASE_DIR;
 	if (!process.env.TEST_WORKTREE_BASE_DIR) {
 		process.env.TEST_WORKTREE_BASE_DIR = `/tmp/crash-recovery-worktrees-${Date.now()}`;
 	}
@@ -119,6 +127,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await Bun.$`rm -rf ${suiteWorkspace}`.quiet();
+
+	// Clean up the worktree base dir if we created it (i.e. it was not set before).
+	if (savedEnv['TEST_WORKTREE_BASE_DIR'] === undefined && process.env.TEST_WORKTREE_BASE_DIR) {
+		await Bun.$`rm -rf ${process.env.TEST_WORKTREE_BASE_DIR}`.quiet();
+	}
 
 	for (const [key, original] of Object.entries(savedEnv)) {
 		if (original === undefined) {
@@ -284,8 +297,8 @@ describe('Job queue crash recovery (online)', () => {
 		// periodic stale-check would have fired.
 		const elapsed = Date.now() - daemon2StartTs;
 		expect(elapsed).toBeLessThan(TERMINAL_WAIT_MS);
-		// 3 retries with exponential back-off (1 s + 2 s = 3 s) plus processing
-		// overhead — 25 s is generous but still well below 60 s.
+		// maxRetries=3 means 4 attempts with back-off delays of 1 s + 2 s + 4 s = 7 s.
+		// 25 s is generous but still well below the 60-second periodic stale check.
 	}, 25_000);
 
 	// -----------------------------------------------------------------------
@@ -339,11 +352,12 @@ describe('Job queue crash recovery (online)', () => {
 		});
 		expect(nextPending.length).toBeGreaterThanOrEqual(1);
 
-		// The next job should be scheduled ~300 s from now (GITHUB_POLLING_INTERVAL).
-		// Verify it is at least 200 s in the future to confirm it's the self-scheduled
-		// job and not an immediate re-run.
+		// At least one pending job must be scheduled ~300 s from now
+		// (GITHUB_POLLING_INTERVAL).  Use some() rather than [0] to be robust
+		// against ordering — daemon2 startup may have enqueued an extra immediate
+		// job depending on timing.
 		const minFutureRunAt = Date.now() + 200_000;
-		expect(nextPending[0].runAt).toBeGreaterThan(minFutureRunAt);
+		expect(nextPending.some((j) => j.runAt > minFutureRunAt)).toBe(true);
 	}, 20_000);
 
 	// -----------------------------------------------------------------------
