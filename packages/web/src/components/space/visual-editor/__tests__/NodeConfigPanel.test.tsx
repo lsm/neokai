@@ -428,16 +428,22 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.agents[0].agentId).toBe('agent-2');
 		});
 
-		it('removing last agent switches back to single-agent mode', () => {
+		it('removing last agent switches back to single-agent mode, restores agentId and clears channels', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1' }],
+				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.click(getByTestId('remove-agent-button'));
 			const updatedStep = onUpdate.mock.calls[0][0];
+			// agents cleared
 			expect(updatedStep.agents).toBeUndefined();
+			// agentId restored from the removed agent
+			expect(updatedStep.agentId).toBe('agent-1');
+			// channels cleared (orphaned channels on single-agent step are invalid)
+			expect(updatedStep.channels).toBeUndefined();
 		});
 
 		it('shows add-agent-select dropdown for agents not yet in step', () => {

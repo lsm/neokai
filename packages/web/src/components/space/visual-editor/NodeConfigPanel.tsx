@@ -67,11 +67,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const stepAgents = step.agents ?? [];
 
 	function updateAgents(next: WorkflowStepAgent[]) {
-		onUpdate({
-			...step,
-			agents: next.length > 0 ? next : undefined,
-			agentId: next.length > 0 ? '' : step.agentId,
-		});
+		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function addAgent(agentId: string) {
@@ -83,8 +79,9 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	function removeAgent(agentId: string) {
 		const next = stepAgents.filter((a) => a.agentId !== agentId);
 		if (next.length === 0) {
-			// Switch back to single-agent mode, clearing agents array
-			onUpdate({ ...step, agents: undefined });
+			// Switch back to single-agent mode: restore agentId from the removed agent and
+			// clear channels (orphaned channels on a single-agent step are semantically invalid)
+			onUpdate({ ...step, agents: undefined, agentId, channels: undefined });
 		} else {
 			updateAgents(next);
 		}
@@ -147,11 +144,16 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				<label class="text-xs font-medium text-gray-400">
 					Agents <span class="text-gray-600">({stepAgents.length})</span>
 				</label>
-				{stepAgents.length <= 1 && (
+				{stepAgents.length === 1 && (
 					<button
 						type="button"
 						onClick={() =>
-							onUpdate({ ...step, agents: undefined, agentId: stepAgents[0]?.agentId ?? '' })
+							onUpdate({
+								...step,
+								agents: undefined,
+								agentId: stepAgents[0]?.agentId ?? '',
+								channels: undefined,
+							})
 						}
 						class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
 					>
@@ -252,6 +254,15 @@ function ChannelsPanelSection({ step, agents, onUpdate }: ChannelsPanelSectionPr
 	const [newTo, setNewTo] = useState('');
 	const [newDirection, setNewDirection] = useState<'one-way' | 'bidirectional'>('one-way');
 	const [newLabel, setNewLabel] = useState('');
+
+	// Reset add-channel form fields when the selected node changes, so stale values
+	// from one node don't bleed into the form for the next selected node.
+	useEffect(() => {
+		setNewFrom('');
+		setNewTo('');
+		setNewDirection('one-way');
+		setNewLabel('');
+	}, [step.localId]);
 
 	function updateChannels(next: WorkflowChannel[]) {
 		onUpdate({ ...step, channels: next.length > 0 ? next : undefined });

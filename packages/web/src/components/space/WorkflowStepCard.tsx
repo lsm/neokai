@@ -129,15 +129,7 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 	const stepAgents = step.agents ?? [];
 
 	function updateAgents(next: WorkflowStepAgent[]) {
-		if (next.length === 0) {
-			// Switch back to single-agent mode
-			onUpdate({ ...step, agents: undefined, agentId: '' });
-		} else if (next.length === 1) {
-			// Keep multi-agent mode with 1 entry so user can add more
-			onUpdate({ ...step, agents: next, agentId: '' });
-		} else {
-			onUpdate({ ...step, agents: next, agentId: '' });
-		}
+		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function addAgent(agentId: string) {
@@ -148,7 +140,13 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 
 	function removeAgent(agentId: string) {
 		const next = stepAgents.filter((a) => a.agentId !== agentId);
-		updateAgents(next);
+		if (next.length === 0) {
+			// Switch back to single-agent mode: restore agentId from the removed agent and
+			// clear channels (orphaned channels on a single-agent step are semantically invalid)
+			onUpdate({ ...step, agents: undefined, agentId, channels: undefined });
+		} else {
+			updateAgents(next);
+		}
 	}
 
 	function updateAgentInstructions(agentId: string, instructions: string) {
@@ -172,7 +170,12 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 					<button
 						type="button"
 						onClick={() =>
-							onUpdate({ ...step, agents: undefined, agentId: stepAgents[0]?.agentId ?? '' })
+							onUpdate({
+								...step,
+								agents: undefined,
+								agentId: stepAgents[0]?.agentId ?? '',
+								channels: undefined,
+							})
 						}
 						class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
 					>

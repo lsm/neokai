@@ -25,24 +25,12 @@ import type { Point } from './types';
 // ============================================================================
 
 /** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({ step, agents }: { step: StepDraft; agents: SpaceAgent[] }) {
+function ChannelTopologyBadge({ step }: { step: StepDraft; agents: SpaceAgent[] }) {
 	const channels = step.channels;
 	if (!channels || channels.length === 0) return null;
 
-	/** Resolve a role to a display label (first 8 chars to keep compact). */
-	const roleLabel = (role: string) => {
-		if (role === '*') return '*';
-		// Try to find a matching agent name
-		const sa = (step.agents ?? []).find((a) => {
-			const agentInfo = agents.find((ag) => ag.id === a.agentId);
-			return agentInfo?.role === role;
-		});
-		if (sa) {
-			const name = agents.find((ag) => ag.id === sa.agentId)?.name ?? role;
-			return name.length > 6 ? name.slice(0, 6) + '…' : name;
-		}
-		return role.length > 6 ? role.slice(0, 6) + '…' : role;
-	};
+	/** Truncate a role string for compact display. Channels already use role strings as identifiers. */
+	const roleLabel = (role: string) => (role.length > 8 ? role.slice(0, 8) + '…' : role);
 
 	const formatTo = (to: string | string[]) => {
 		if (Array.isArray(to)) return `[${to.map(roleLabel).join(',')}]`;

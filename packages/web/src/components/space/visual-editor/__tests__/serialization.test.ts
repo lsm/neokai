@@ -904,4 +904,41 @@ describe('multi-agent step serialization', () => {
 		expect(params.steps![0].agentId).toBe('agent-coder');
 		expect(params.steps![0].agents).toBeUndefined();
 	});
+
+	it('full round-trip workflowToVisualState → visualStateToUpdateParams preserves multi-agent data', () => {
+		const workflow = makeWorkflow({
+			steps: [
+				{
+					id: 's1',
+					name: 'Parallel',
+					agents: [{ agentId: 'a1', instructions: 'focus on tests' }, { agentId: 'a2' }],
+					channels: [
+						{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
+						{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' as const },
+					],
+				},
+			],
+			layout: { s1: { x: 0, y: 0 } },
+		});
+		const state = workflowToVisualState(workflow);
+		const params = visualStateToUpdateParams(state);
+
+		const step = params.steps![0];
+		// agents array preserved through update round-trip
+		expect(step.agents).toHaveLength(2);
+		expect(step.agents![0].agentId).toBe('a1');
+		expect(step.agents![0].instructions).toBe('focus on tests');
+		expect(step.agents![1].agentId).toBe('a2');
+		expect(step.agents![1].instructions).toBeUndefined();
+		// agentId should be absent for multi-agent steps
+		expect(step.agentId).toBeUndefined();
+		// channels preserved
+		expect(step.channels).toHaveLength(2);
+		expect(step.channels![0]).toEqual({ from: 'coder', to: 'reviewer', direction: 'one-way' });
+		expect(step.channels![1]).toEqual({
+			from: 'reviewer',
+			to: ['coder', 'qa'],
+			direction: 'bidirectional',
+		});
+	});
 });
