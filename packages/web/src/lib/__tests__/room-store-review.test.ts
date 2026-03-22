@@ -192,6 +192,37 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 
 		expect(toastsSignal.value.length).toBe(0);
 	});
+
+	it('does NOT fire a toast during reconnect resync (snapshot re-hydrates to review, delta keeps same status)', async () => {
+		await roomStore.select(ROOM_ID);
+
+		// Initial snapshot: task is in_progress
+		fireEvent('liveQuery.snapshot', {
+			subscriptionId: TASKS_SUB_ID,
+			rows: [makeTask('t6', 'in_progress', 'Reconnect Task')],
+			version: 1,
+		});
+
+		// Simulate reconnect: server sends a fresh snapshot where task is already in review
+		// (it transitioned while we were disconnected — the snapshot is the resync)
+		fireEvent('liveQuery.snapshot', {
+			subscriptionId: TASKS_SUB_ID,
+			rows: [makeTask('t6', 'review', 'Reconnect Task')],
+			version: 3,
+		});
+
+		// No toast from snapshot — snapshot is pure data hydration
+		expect(toastsSignal.value.length).toBe(0);
+
+		// A subsequent delta that keeps the task in review also fires no toast
+		fireEvent('liveQuery.delta', {
+			subscriptionId: TASKS_SUB_ID,
+			updated: [makeTask('t6', 'review', 'Reconnect Task')],
+			version: 4,
+		});
+
+		expect(toastsSignal.value.length).toBe(0);
+	});
 });
 
 describe('RoomStore — reviewTaskCount computed signal', () => {
