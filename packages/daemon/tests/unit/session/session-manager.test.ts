@@ -163,25 +163,21 @@ describe('SessionManager', () => {
 
 	describe('start', () => {
 		it('should register session.title_generation handler on jobProcessor', () => {
+			expect(mockJobProcessor.register).not.toHaveBeenCalled();
+
 			sessionManager.start();
 
+			expect(mockJobProcessor.register).toHaveBeenCalledTimes(1);
 			expect(mockJobProcessor.register).toHaveBeenCalledWith(
 				'session.title_generation',
 				expect.any(Function)
 			);
 		});
 
-		it('should not enqueue a job before start is called', async () => {
-			const handler = eventHandlers.get('message.persisted');
+		it('should throw if called more than once', () => {
+			sessionManager.start();
 
-			await handler?.({
-				sessionId: 'test-id',
-				userMessageText: 'test message',
-				needsWorkspaceInit: false,
-				hasDraftToClear: false,
-			});
-
-			expect(mockJobQueue.enqueue).not.toHaveBeenCalled();
+			expect(() => sessionManager.start()).toThrow('SessionManager.start() called more than once');
 		});
 	});
 

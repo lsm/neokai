@@ -38,12 +38,11 @@ import { MessagePersistence } from './message-persistence';
 /**
  * Cleanup state machine for SessionManager
  *
- * Prevents race conditions during cleanup by tracking state and
- * preventing new background tasks from starting during cleanup.
+ * Prevents concurrent or redundant cleanup calls.
  *
  * States:
  * - IDLE: Normal operation, cleanup not started
- * - CLEANING: Cleanup in progress, barrier active for new background tasks
+ * - CLEANING: Cleanup in progress
  * - CLEANED: Cleanup complete, no further operations allowed
  */
 export enum CleanupState {
@@ -56,6 +55,7 @@ export class SessionManager {
 	private logger: Logger;
 	private worktreeManager: WorktreeManager;
 	private eventBusUnsubscribers: Array<() => void> = [];
+	private started = false;
 
 	// Cleanup state machine - prevents race conditions during shutdown
 	private cleanupState: CleanupState = CleanupState.IDLE;
@@ -116,8 +116,13 @@ export class SessionManager {
 	/**
 	 * Register job handlers and start background processing.
 	 * Must be called after construction but before jobProcessor.start().
+	 * Throws if called more than once to catch accidental double-registration.
 	 */
 	start(): void {
+		if (this.started) {
+			throw new Error('SessionManager.start() called more than once');
+		}
+		this.started = true;
 		this.jobProcessor.register(SESSION_TITLE_GENERATION, (job) =>
 			handleSessionTitleGeneration(job, this.sessionLifecycle)
 		);
