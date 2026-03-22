@@ -306,3 +306,47 @@ describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 		expect(roomStore.tasks.value).toEqual([]);
 	});
 });
+
+describe('RoomStore — subscribeRoom error path', () => {
+	let hub: MockHub;
+
+	beforeEach(async () => {
+		hub = createMockHub();
+		setupHubRequests(hub);
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(hub as never);
+		// Ensure clean state before each test
+		roomStore.unsubscribeRoom(ROOM_ID);
+		if (roomStore.roomId.value !== null) {
+			await roomStore.select(null);
+		}
+	});
+
+	afterEach(async () => {
+		roomStore.unsubscribeRoom(ROOM_ID);
+		await roomStore.select(null);
+		vi.clearAllMocks();
+	});
+
+	it('clears liveQueryActive on getHub() rejection so re-subscribe is possible', async () => {
+		await roomStore.select(ROOM_ID);
+
+		// Make getHub reject for the next call (which will be subscribeRoom)
+		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('connection failed'));
+
+		// First subscribeRoom — hub rejects, should clean up liveQueryActive
+		await roomStore.subscribeRoom(ROOM_ID);
+
+		// No snapshot/delta handlers should have been registered (hub was unavailable)
+		expect(hub._handlers.get('liveQuery.snapshot') ?? []).toHaveLength(0);
+
+		// Restore hub for the second call
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+
+		// Second subscribeRoom should succeed (liveQueryActive was cleared by error path)
+		await roomStore.subscribeRoom(ROOM_ID);
+
+		// Handlers should now be registered
+		expect((hub._handlers.get('liveQuery.snapshot') ?? []).length).toBeGreaterThan(0);
+	});
+});

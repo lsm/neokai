@@ -34,7 +34,10 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
 
-	// Manage LiveQuery subscriptions for tasks and goals
+	// Manage LiveQuery subscriptions for tasks and goals.
+	// Intentionally declared before the select() effect so that LiveQuery
+	// handlers are registered before the hub request fires — both share
+	// [roomId] as their dependency and run in declaration order.
 	useRoomLiveQuery(roomId);
 
 	useEffect(() => {
