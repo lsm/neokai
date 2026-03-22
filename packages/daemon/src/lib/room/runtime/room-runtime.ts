@@ -2326,6 +2326,9 @@ export class RoomRuntime {
 	 */
 	async tick(): Promise<void> {
 		if (this.state !== 'running') return;
+		// Run stale group cleanup at the tick level — not gated by any tick lock so it
+		// always fires even if the tick body is skipped due to a lock in the future.
+		await this.cleanStaleGroups();
 		await this.executeTick();
 	}
 
@@ -2664,10 +2667,47 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Clean zombie groups for a specific task before spawning a new group.
+	 * Called from spawnGroupForTask() to free the unique constraint slot for this task.
+	 *
+	 * Identifies active groups (completedAt IS NULL) whose both sessions are missing
+	 * from cache — these are fully abandoned and cannot progress. Terminates them so
+	 * the unique index slot is freed before createGroup() inserts the new row.
+	 *
+	 * Unlike cleanStaleGroups() which checks task terminal status, this checks session
+	 * liveness directly and terminates the group without changing task status.
+	 */
+	private async cleanStaleGroupsForTask(task: NeoTask): Promise<void> {
+		const activeGroups = this.groupRepo.getActiveGroupsForTask(task.id);
+		for (const group of activeGroups) {
+			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
+			const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
+			// Only terminate if both sessions are gone — a group with one live session
+			// may still be in progress or submitted for review.
+			if (!workerMissing || !leaderMissing) continue;
+
+			log.warn(
+				`[cleanStaleGroupsForTask] Group ${group.id} for task ${task.id} ` +
+					`has no live sessions — auto-cleaning before spawn`
+			);
+
+			// Stop any live sessions (best-effort — both are missing here but defensive).
+			await this.terminateGroupSessions(group);
+
+			// Mark group as terminal without failing the task.
+			// The task remains pending so spawnGroupForTask can create a fresh group.
+			if (group.completedAt === null) {
+				await this.taskGroupManager.terminateGroup(group.id);
+			}
+
+			this.cleanupMirroring(group.id, 'Zombie group auto-cleaned before spawn.');
+		}
+	}
+
 	private async executeTick(): Promise<void> {
-		// Safety net: clean up stale groups whose tasks have already reached a
-		// terminal state. This frees concurrency slots blocked by orphaned groups.
-		await this.cleanStaleGroups();
+		// Note: cleanStaleGroups() is called in tick() before executeTick(), so it runs
+		// independently of any future tick-body lock.
 
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
 		// Ordering: zombie recovery runs BEFORE tickRecurringMissions so that any
@@ -3294,6 +3334,12 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
+		// Clean zombie groups for this task before the active-group dedup check.
+		// Handles the case where a previous crashed session left an active group with
+		// missing sessions. Without this, getActiveGroupsForTask() would detect the
+		// zombie and return early, keeping the task stuck indefinitely.
+		await this.cleanStaleGroupsForTask(task);
+
 		// Defense-in-depth: verify no active group exists for this task right before spawning.
 		// Catches races that slip past the executeTick() filter (e.g., concurrent ticks).
 		// Check ALL active groups, not just the most recent — a stale older group with
@@ -3412,11 +3458,22 @@ export class RoomRuntime {
 				'code_review'
 			);
 		} catch (err) {
-			// spawn() calls failTask() only for worktree-creation failures (line ~241).
-			// If session init throws after startTask(), the task stays in_progress.
-			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
-			// next tick once the process stabilises.
-			log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			// UNIQUE constraint violation means a concurrent tick already spawned a group
+			// for this task (race between two ticks that both passed the active-group check).
+			// This is expected under high concurrency — log at warn, not error.
+			const errStr = String(err);
+			if (errStr.includes('UNIQUE constraint failed')) {
+				log.warn(
+					`[spawnGroupForTask] Task ${task.id} ("${task.title}"): UNIQUE constraint — ` +
+						`concurrent tick already spawned a group. Skipping.`
+				);
+			} else {
+				// spawn() calls failTask() only for worktree-creation failures (line ~241).
+				// If session init throws after startTask(), the task stays in_progress.
+				// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+				// next tick once the process stabilises.
+				log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			}
 			await this.emitTaskUpdateById(task.id);
 			return;
 		}
