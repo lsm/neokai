@@ -5,11 +5,10 @@
  * This ensures that jobs stuck in `processing` due to a crash are reclaimed IMMEDIATELY
  * on restart — not after the 60-second STALE_CHECK_INTERVAL delay.
  *
- * The "restart" is simulated by:
- *   1. Using one processor instance to dequeue a job (marking it `processing`).
- *   2. Abandoning that processor without calling stop() — simulating a crash.
- *   3. Creating a SECOND processor on the same DB and calling start() on it.
- *   4. Asserting the stale job is reclaimed and re-processed within the first tick.
+ * The "crash" is simulated by directly manipulating the DB to leave a row in `processing`
+ * state with a backdated `started_at`, then creating a fresh processor and calling start().
+ * This covers the restart scenario more clearly than the general processor tests in
+ * job-queue-processor.test.ts (which test the same processor before and after start()).
  */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
@@ -62,24 +61,16 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
 	});
 
 	it('reclaims a stale processing job immediately on start() without waiting 60 s', async () => {
-		// --- Phase 1: simulate a "crashed" processor that left a job in processing ---
-		const crashedProcessor = new JobQueueProcessor(repo, {
-			staleThresholdMs: 1_000,
-			pollIntervalMs: 60_000, // large — won't tick during test
-		});
-		crashedProcessor.register('work-queue', async () => {});
-
+		// Simulate a crash: enqueue a job, dequeue it (marks it processing), then backdate
+		// started_at to beyond the stale threshold — as if the previous process died mid-job.
 		const job = repo.enqueue({ queue: 'work-queue', payload: { task: 'doSomething' } });
-		// Dequeue manually to mark it processing (simulates the crashed processor picking it up)
 		repo.dequeue('work-queue', 1);
 		expect(repo.getJob(job.id)?.status).toBe('processing');
 
 		// Backdate started_at so the job is beyond the stale threshold (started 10 s ago)
 		db.prepare('UPDATE job_queue SET started_at = ? WHERE id = ?').run(Date.now() - 10_000, job.id);
 
-		// "Crash" — we simply do NOT call crashedProcessor.stop() and discard it.
-
-		// --- Phase 2: daemon restarts, creates a fresh processor on the same DB ---
+		// Daemon restarts — creates a fresh processor on the same DB
 		const processed: string[] = [];
 		restartedProcessor = new JobQueueProcessor(repo, {
 			staleThresholdMs: 1_000,
