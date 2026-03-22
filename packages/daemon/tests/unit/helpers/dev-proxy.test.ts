@@ -247,34 +247,48 @@ describe('Dev Proxy Helper', () => {
 			expect(controller.isExternal).toBe(false);
 		});
 
-		it('adopts an existing proxy on the port without starting a new process', async () => {
-			// Bind a real TCP server to simulate an already-running proxy
-			const { server, port } = await bindTcpServer();
+		// All tests below need a live TCP server to simulate a pre-existing proxy.
+		// A shared server + controller are set up in beforeEach and torn down in
+		// afterEach so the framework guarantees cleanup even when assertions throw.
+		describe('with a simulated pre-existing proxy', () => {
+			let tcpServer: net.Server;
+			let tcpPort: number;
+			let controller: ReturnType<typeof createDevProxyController>;
+			let originalBaseUrl: string | undefined;
 
-			try {
-				const controller = createDevProxyController({
-					port,
-					setEnvVars: false, // avoid mutating process.env in unit tests
-				});
+			beforeEach(async () => {
+				const bound = await bindTcpServer();
+				tcpServer = bound.server;
+				tcpPort = bound.port;
+				controller = createDevProxyController({ port: tcpPort, setEnvVars: false });
+				originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+			});
 
+			afterEach(async () => {
+				// Stop controller first (no-op for external, but keeps state consistent).
+				if (controller.isRunning()) {
+					await controller.stop();
+				}
+				controller.restoreEnv();
+				// Restore env regardless of what each test did.
+				if (originalBaseUrl === undefined) {
+					delete process.env.ANTHROPIC_BASE_URL;
+				} else {
+					process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+				}
+				// Close the TCP server last so the controller stop() check above
+				// (which probes the port) still sees it open.
+				await closeTcpServer(tcpServer);
+			});
+
+			it('adopts an existing proxy on the port without starting a new process', async () => {
 				await controller.start();
 
 				expect(controller.isRunning()).toBe(true);
 				expect(controller.isExternal).toBe(true);
-			} finally {
-				await closeTcpServer(server);
-			}
-		});
+			});
 
-		it('stop() does not close the external proxy port', async () => {
-			const { server, port } = await bindTcpServer();
-
-			try {
-				const controller = createDevProxyController({
-					port,
-					setEnvVars: false,
-				});
-
+			it('stop() does not close the external proxy port', async () => {
 				await controller.start();
 				expect(controller.isRunning()).toBe(true);
 				expect(controller.isExternal).toBe(true);
@@ -286,7 +300,7 @@ describe('Dev Proxy Helper', () => {
 				// The TCP server (external proxy) must still be accepting connections
 				await expect(
 					new Promise<void>((resolve, reject) => {
-						const socket = net.createConnection({ port, host: '127.0.0.1' });
+						const socket = net.createConnection({ port: tcpPort, host: '127.0.0.1' });
 						socket.once('connect', () => {
 							socket.destroy();
 							resolve();
@@ -294,69 +308,28 @@ describe('Dev Proxy Helper', () => {
 						socket.once('error', reject);
 					})
 				).resolves.toBeUndefined();
-			} finally {
-				await closeTcpServer(server);
-			}
-		});
+			});
 
-		it('isExternal resets to false after stop()', async () => {
-			const { server, port } = await bindTcpServer();
-
-			try {
-				const controller = createDevProxyController({
-					port,
-					setEnvVars: false,
-				});
-
+			it('isExternal resets to false after stop()', async () => {
 				await controller.start();
 				expect(controller.isExternal).toBe(true);
 
 				await controller.stop();
 				expect(controller.isExternal).toBe(false);
-			} finally {
-				await closeTcpServer(server);
-			}
-		});
+			});
 
-		it('sets env vars when setEnvVars=true and adopting external proxy', async () => {
-			const { server, port } = await bindTcpServer();
-			const originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
-
-			try {
-				const controller = createDevProxyController({
-					port,
-					setEnvVars: true,
-				});
+			it('sets env vars when setEnvVars=true and adopting external proxy', async () => {
+				// Re-create controller with setEnvVars=true for this specific test.
+				controller = createDevProxyController({ port: tcpPort, setEnvVars: true });
 
 				await controller.start();
 
-				try {
-					expect(controller.isExternal).toBe(true);
-					expect(process.env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${port}`);
-				} finally {
-					controller.restoreEnv();
-					await controller.stop();
-				}
-			} finally {
-				await closeTcpServer(server);
-				// Ensure env is restored regardless
-				if (originalBaseUrl === undefined) {
-					delete process.env.ANTHROPIC_BASE_URL;
-				} else {
-					process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
-				}
-			}
-		});
+				expect(controller.isExternal).toBe(true);
+				expect(process.env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${tcpPort}`);
+				// afterEach will call restoreEnv() and reset ANTHROPIC_BASE_URL.
+			});
 
-		it('can be restarted after stopping an external proxy', async () => {
-			const { server, port } = await bindTcpServer();
-
-			try {
-				const controller = createDevProxyController({
-					port,
-					setEnvVars: false,
-				});
-
+			it('can be restarted after stopping an external proxy', async () => {
 				// First adoption
 				await controller.start();
 				expect(controller.isExternal).toBe(true);
@@ -366,10 +339,7 @@ describe('Dev Proxy Helper', () => {
 				await controller.start();
 				expect(controller.isExternal).toBe(true);
 				expect(controller.isRunning()).toBe(true);
-				await controller.stop();
-			} finally {
-				await closeTcpServer(server);
-			}
+			});
 		});
 	});
 
