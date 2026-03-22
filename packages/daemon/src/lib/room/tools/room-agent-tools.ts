@@ -125,6 +125,19 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!goal) {
 				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
 			}
+			// Guard: require at least one field to update
+			if (
+				args.title === undefined &&
+				args.description === undefined &&
+				args.status === undefined &&
+				args.priority === undefined &&
+				args.mission_type === undefined &&
+				args.autonomy_level === undefined &&
+				args.structured_metrics === undefined
+			) {
+				return jsonResult({ success: false, error: 'No update fields provided.' });
+			}
+
 			let updated = goal;
 
 			// Collect patch fields: title, description, priority, missionType, autonomyLevel, structuredMetrics

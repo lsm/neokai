@@ -1298,6 +1298,13 @@ describe('Goal RPC Handlers', () => {
 				'Room ID is required'
 			);
 		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.recordMetric');
+			await expect(handler!({ roomId: 'room-123', metricName: 'x', value: 1 }, {})).rejects.toThrow(
+				'Goal ID is required'
+			);
+		});
 	});
 
 	describe('goal.getMetrics', () => {
@@ -1369,6 +1376,115 @@ describe('Goal RPC Handlers', () => {
 			await expect(handler!({ roomId: 'room-123', goalId: 'no-such' }, {})).rejects.toThrow(
 				'Goal not found'
 			);
+		});
+
+		it('throws when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.getMetrics');
+			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.getMetrics');
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
+		});
+	});
+
+	describe('goal.listExecutions', () => {
+		it('is registered as a handler', () => {
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			expect(handler).toBeDefined();
+		});
+
+		it('throws when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
+		});
+
+		it('throws when goal not found', async () => {
+			mockGoalManager.getGoal.mockImplementation(async () => null);
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			await expect(handler!({ roomId: 'room-123', goalId: 'no-such' }, {})).rejects.toThrow(
+				'Goal not found'
+			);
+		});
+
+		it('returns empty executions list for goal with no executions', async () => {
+			// Some tests leave getGoal returning null — restore the default goal here
+			mockGoalManager.getGoal.mockImplementation(async () => ({
+				id: 'goal-123',
+				roomId: 'room-123',
+				title: 'Test Goal',
+				description: '',
+				status: 'active' as GoalStatus,
+				priority: 'normal' as GoalPriority,
+				progress: 0,
+				linkedTaskIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}));
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			const result = (await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})) as {
+				executions: MissionExecution[];
+			};
+			expect(mockGoalManager.getGoal).toHaveBeenCalledWith('goal-123');
+			expect(mockGoalManager.listExecutions).toHaveBeenCalledWith('goal-123', 20);
+			expect(result.executions).toEqual([]);
+		});
+
+		it('passes custom limit to listExecutions', async () => {
+			mockGoalManager.getGoal.mockImplementation(async () => ({
+				id: 'goal-123',
+				roomId: 'room-123',
+				title: 'Test Goal',
+				description: '',
+				status: 'active' as GoalStatus,
+				priority: 'normal' as GoalPriority,
+				progress: 0,
+				linkedTaskIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}));
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			await handler!({ roomId: 'room-123', goalId: 'goal-123', limit: 5 }, {});
+			expect(mockGoalManager.listExecutions).toHaveBeenCalledWith('goal-123', 5);
+		});
+
+		it('returns executions when present', async () => {
+			mockGoalManager.getGoal.mockImplementation(async () => ({
+				id: 'goal-123',
+				roomId: 'room-123',
+				title: 'Test Goal',
+				description: '',
+				status: 'active' as GoalStatus,
+				priority: 'normal' as GoalPriority,
+				progress: 0,
+				linkedTaskIds: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}));
+			const fakeExecution: MissionExecution = {
+				id: 'exec-1',
+				goalId: 'goal-123',
+				executionNumber: 1,
+				status: 'completed',
+				startedAt: Date.now() - 1000,
+				completedAt: Date.now(),
+				resultSummary: 'done',
+				taskIds: [],
+				planningAttempts: 0,
+			};
+			mockGoalManager.listExecutions.mockImplementation(() => [fakeExecution]);
+			const handler = messageHubData.handlers.get('goal.listExecutions');
+			const result = (await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})) as {
+				executions: MissionExecution[];
+			};
+			expect(result.executions).toHaveLength(1);
+			expect(result.executions[0].id).toBe('exec-1');
 		});
 	});
 });

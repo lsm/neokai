@@ -226,6 +226,14 @@ describe('Room Agent Tools', () => {
 			);
 			expect(result.success).toBe(false);
 		});
+
+		it('should return error when no update fields provided', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(await handlers.update_goal({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/No update fields provided/);
+		});
 	});
 
 	describe('create_task', () => {
@@ -2375,14 +2383,14 @@ describe('Room Agent Tools', () => {
 		it('should include draft task count', async () => {
 			// Create a regular (pending) task
 			await taskManager.createTask({ title: 'Pending', description: 'D' });
-			// Create a draft task
-			await taskManager.createTask({ title: 'Draft', description: 'D', status: 'draft' as never });
+			// Create a draft task (status param supported by CreateTaskParams)
+			await taskManager.createTask({ title: 'Draft', description: 'D', status: 'draft' });
 			const result = parseResult(await handlers.get_room_status());
 			expect(result.success).toBe(true);
 			const status = result.status as Record<string, unknown>;
 			const tasks = status.tasks as Record<string, number>;
-			expect(tasks.draft).toBeGreaterThanOrEqual(0);
-			expect(typeof tasks.draft).toBe('number');
+			expect(tasks.draft).toBe(1);
+			expect(tasks.pending).toBe(1);
 		});
 	});
 
