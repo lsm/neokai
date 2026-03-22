@@ -335,6 +335,11 @@ export function setupRoomRuntimeHandlers(
 				state: 'running',
 			})
 			.catch(() => {});
+		// Re-seed the tick loop — it self-terminated when the runtime was paused.
+		// enqueueRoomTick dedup ensures this is safe even if a pending tick still exists.
+		if (jobQueue) {
+			enqueueRoomTick(params.roomId, jobQueue);
+		}
 		return { success: true, state: 'running' };
 	});
 
