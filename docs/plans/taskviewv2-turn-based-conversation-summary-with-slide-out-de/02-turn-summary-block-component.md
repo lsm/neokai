@@ -19,14 +19,15 @@ Build the `TurnSummaryBlock` component that renders a single turn block as a com
 2. Create `packages/web/src/components/room/TurnSummaryBlock.tsx` with the following structure:
    - **Props**: `{ turn: TurnBlock; onClick: (turn: TurnBlock) => void; isSelected?: boolean }`
    - **Title bar** (top row):
-     - Agent name with role color (reuse `ROLE_COLORS` mapping from `TaskConversationRenderer.tsx` -- import the colors as a shared constant or duplicate minimally)
-     - Last action badge (e.g., "Read", "Edit", "Bash") -- extracted from `turn.lastAction`
+     - Agent name with role color — import `ROLE_COLORS` from `packages/web/src/lib/task-constants.ts` (extracted in Task 1.1). The label is a plain role name (e.g., "Leader", "Coder", "Human") without model info — model name display is out of scope for V2 turn cards.
+     - Last action badge (e.g., "Read", "Edit", "Bash") — extracted from `turn.lastAction`
      - Turn duration: format as `startTime - endTime` using relative time (e.g., "2m 30s") or "running..." if `endTime` is null
    - **Stats badges** (second row):
      - Tool calls count with wrench icon
      - Thinking blocks count with brain/thought icon
      - Assistant messages count with chat icon
      - Use small pill-shaped badges with muted colors
+     - Zero counts: hide the badge entirely (don't show "0")
    - **Fixed-height preview area** (bottom):
      - Max height ~80px with `overflow-y-auto`
      - Render `turn.previewMessage` using `SDKMessageRenderer` with `taskContext` prop
@@ -39,6 +40,12 @@ Build the `TurnSummaryBlock` component that renders a single turn block as a com
    - **Selected state**:
      - When `isSelected` is true, highlight the card (e.g., blue border) to indicate its slide-out panel is open
    - **Click handler**: Call `onClick(turn)` when the card is clicked
+   - **`data-testid` attributes** (required for E2E):
+     - `data-testid="turn-block"` on the root card element
+     - `data-testid="turn-block-agent-name"` on the agent name span
+     - `data-testid="turn-block-stats"` on the stats badge row
+     - `data-testid="turn-block-preview"` on the preview area
+     - `data-testid="turn-block-active"` on the active indicator (only rendered when active)
 3. Style the component with the dark theme (bg-dark-800, border-dark-700, etc.) matching existing room components.
 4. Create a feature branch, commit, and create a PR via `gh pr create` targeting `dev`.
 
@@ -49,10 +56,11 @@ Build the `TurnSummaryBlock` component that renders a single turn block as a com
 - Preview area has fixed max-height with overflow scroll.
 - Error turns display the error message with appropriate styling.
 - Click events fire correctly.
+- Zero-count stats badges are hidden.
+- All `data-testid` attributes are present for E2E targeting.
+- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
-**Dependencies:** Task 1.1 (needs TurnBlock type)
-
-Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+**Dependencies:** Task 1.1 (needs `ROLE_COLORS` from shared constants), Task 1.2 (needs `TurnBlock` type)
 
 ---
 
@@ -77,7 +85,9 @@ Write unit tests for the TurnSummaryBlock component covering rendering and inter
    - **Click handler**: Verify `onClick` is called with the turn data when card is clicked.
    - **Last action badge**: Verify last action text is displayed.
    - **Stats display**: Verify correct counts for tool calls, thinking, and assistant messages.
-   - **Zero stats**: Verify badges handle zero counts gracefully (hidden or show "0").
+   - **Zero stats**: Verify badges with zero counts are hidden (not rendered).
+   - **data-testid attributes**: Verify all required `data-testid` attributes are present.
+   - **Human turn**: Verify rendering of a turn with `agentRole: 'human'` and label "Human".
 5. Run tests and verify all pass.
 6. Commit and push to the same feature branch, update PR.
 
@@ -85,7 +95,6 @@ Write unit tests for the TurnSummaryBlock component covering rendering and inter
 - All test cases pass.
 - Tests verify both visual states (active, error, selected) and user interaction (click).
 - SDKMessageRenderer is properly mocked.
+- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Dependencies:** Task 2.1
-
-Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
