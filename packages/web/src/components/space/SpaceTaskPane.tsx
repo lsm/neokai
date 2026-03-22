@@ -8,7 +8,13 @@
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
-import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceTaskStatus,
+	SpaceTaskPriority,
+	SpaceSessionGroup,
+	SpaceSessionGroupMember,
+} from '@neokai/shared';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -124,8 +130,115 @@ function HumanInputArea({ task }: HumanInputAreaProps) {
 	);
 }
 
+function MemberStatusBadge({ status }: { status: SpaceSessionGroupMember['status'] }) {
+	if (status === 'active') {
+		return (
+			<span class="inline-flex items-center gap-1 text-xs text-blue-300">
+				<span class="relative flex h-2 w-2">
+					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+					<span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+				</span>
+				Active
+			</span>
+		);
+	}
+	if (status === 'completed') {
+		return (
+			<span class="inline-flex items-center gap-1 text-xs text-green-400">
+				<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2.5}
+						d="M5 13l4 4L19 7"
+					/>
+				</svg>
+				Done
+			</span>
+		);
+	}
+	// failed
+	return (
+		<span class="inline-flex items-center gap-1 text-xs text-red-400">
+			<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width={2.5}
+					d="M6 18L18 6M6 6l12 12"
+				/>
+			</svg>
+			Failed
+		</span>
+	);
+}
+
+interface WorkingAgentsProps {
+	groups: SpaceSessionGroup[];
+}
+
+function WorkingAgents({ groups }: WorkingAgentsProps) {
+	const agents = spaceStore.agents.value;
+
+	// Sort groups newest first so most recent work shows on top
+	const sortedGroups = [...groups].sort((a, b) => b.createdAt - a.createdAt);
+
+	return (
+		<div>
+			<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+				Working Agents
+			</h3>
+			<div class="space-y-2">
+				{sortedGroups.map((group) => (
+					<div
+						key={group.id}
+						class="rounded-lg border border-dark-600 bg-dark-800/50 overflow-hidden"
+					>
+						{/* Group header */}
+						<div class="flex items-center justify-between px-3 py-2 border-b border-dark-700">
+							<span class="text-xs font-medium text-gray-300 truncate">{group.name}</span>
+							<span class="text-xs text-gray-600 flex-shrink-0 ml-2">
+								{new Date(group.createdAt).toLocaleTimeString([], {
+									hour: '2-digit',
+									minute: '2-digit',
+								})}
+							</span>
+						</div>
+
+						{/* Members */}
+						<div class="divide-y divide-dark-700">
+							{group.members.map((member) => {
+								const agent = member.agentId ? agents.find((a) => a.id === member.agentId) : null;
+								return (
+									<div key={member.id} class="flex items-center gap-2 px-3 py-2">
+										<div class="flex-1 min-w-0">
+											<div class="flex items-center gap-1.5">
+												<span class="text-xs font-medium text-gray-300 capitalize truncate">
+													{agent?.name ?? member.role}
+												</span>
+												{agent && (
+													<span class="text-xs text-gray-600 truncate">({member.role})</span>
+												)}
+											</div>
+										</div>
+										<MemberStatusBadge status={member.status} />
+									</div>
+								);
+							})}
+							{group.members.length === 0 && (
+								<div class="px-3 py-2 text-xs text-gray-600">No members yet</div>
+							)}
+						</div>
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
 export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
+	const sessionGroupsByTask = spaceStore.sessionGroupsByTask.value;
 
 	if (!taskId) {
 		return (
@@ -136,6 +249,7 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 	}
 
 	const task = tasks.find((t) => t.id === taskId);
+	const taskGroups = taskId ? (sessionGroupsByTask.get(taskId) ?? []) : [];
 
 	if (!task) {
 		return (
@@ -275,6 +389,9 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 						</a>
 					</div>
 				)}
+
+				{/* Working agents */}
+				{taskGroups.length > 0 && <WorkingAgents groups={taskGroups} />}
 
 				{/* Human input area */}
 				{task.status === 'needs_attention' && <HumanInputArea task={task} />}
