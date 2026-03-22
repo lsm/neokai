@@ -230,6 +230,14 @@ class RoomStore {
 	/** Set of room IDs that currently have an active LiveQuery subscription intent */
 	private liveQueryActive = new Set<string>();
 
+	/**
+	 * Stale-event guard: set of currently active subscriptionIds.
+	 * Cleared immediately in unsubscribeRoom before handler teardown so that
+	 * any in-flight events (queued in the JS event loop between room switch and
+	 * handler removal) are discarded rather than applied to the wrong room's state.
+	 */
+	private activeSubscriptionIds = new Set<string>();
+
 	// ========================================
 	// Room Selection (with Promise-Chain Lock)
 	// ========================================
@@ -329,18 +337,25 @@ class RoomStore {
 			// --- Tasks via LiveQuery ---
 			const tasksSubId = `tasks-byRoom-${roomId}`;
 
+			// Stale-event guard: mark this subscriptionId as active before registering
+			// handlers. unsubscribeRoom clears it immediately so any event queued in the
+			// JS event loop after the room switch is discarded.
+			this.activeSubscriptionIds.add(tasksSubId);
+			cleanups.push(() => this.activeSubscriptionIds.delete(tasksSubId));
+
 			const unsubTaskSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
 				'liveQuery.snapshot',
 				(event) => {
-					if (event.subscriptionId === tasksSubId) {
-						this.tasks.value = event.rows as TaskSummary[];
-					}
+					if (event.subscriptionId !== tasksSubId) return;
+					if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
+					this.tasks.value = event.rows as TaskSummary[];
 				}
 			);
 			cleanups.push(unsubTaskSnapshot);
 
 			const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== tasksSubId) return;
+				if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
 				let current = this.tasks.value;
 				if (event.removed?.length) {
 					const removedIds = new Set((event.removed as TaskSummary[]).map((r) => r.id));
@@ -415,19 +430,24 @@ class RoomStore {
 			// initial snapshot that the server pushes synchronously before replying.
 			const goalsSubId = `goals-byRoom-${roomId}`;
 
+			// Stale-event guard for goals (same semantics as tasks above).
+			this.activeSubscriptionIds.add(goalsSubId);
+			cleanups.push(() => this.activeSubscriptionIds.delete(goalsSubId));
+
 			const unsubGoalSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
 				'liveQuery.snapshot',
 				(event) => {
-					if (event.subscriptionId === goalsSubId) {
-						this.goals.value = event.rows as RoomGoal[];
-						this.goalsLoading.value = false;
-					}
+					if (event.subscriptionId !== goalsSubId) return;
+					if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
+					this.goals.value = event.rows as RoomGoal[];
+					this.goalsLoading.value = false;
 				}
 			);
 			cleanups.push(unsubGoalSnapshot);
 
 			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== goalsSubId) return;
+				if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
 				let current = this.goals.value;
 				if (event.removed?.length) {
 					const removedIds = new Set((event.removed as RoomGoal[]).map((r) => r.id));
@@ -463,6 +483,9 @@ class RoomStore {
 					}
 				}
 				this.liveQueryCleanups.delete(roomId);
+				// Reset goalsLoading: it was set to true above but the snapshot
+				// handler (which normally clears it) will never fire.
+				this.goalsLoading.value = false;
 				return;
 			}
 
@@ -495,7 +518,22 @@ class RoomStore {
 			});
 		} catch (err) {
 			this.liveQueryActive.delete(roomId);
+			// Run any cleanups that were registered before the error, so that
+			// event handlers registered up to the point of failure are removed
+			// and activeSubscriptionIds entries are cleared.
+			const failedCleanups = this.liveQueryCleanups.get(roomId);
+			if (failedCleanups) {
+				for (const fn of failedCleanups) {
+					try {
+						fn();
+					} catch {
+						/* ignore */
+					}
+				}
+			}
 			this.liveQueryCleanups.delete(roomId);
+			// Reset goalsLoading in case the error occurred after it was set to true.
+			this.goalsLoading.value = false;
 			logger.error('Failed to subscribe room LiveQuery:', err);
 		}
 	}
@@ -508,6 +546,10 @@ class RoomStore {
 	 */
 	unsubscribeRoom(roomId: string): void {
 		this.liveQueryActive.delete(roomId);
+		// Stale-event guard: clear subscriptionIds immediately so any events already
+		// queued in the JS event loop are discarded before the handlers are removed.
+		this.activeSubscriptionIds.delete(`tasks-byRoom-${roomId}`);
+		this.activeSubscriptionIds.delete(`goals-byRoom-${roomId}`);
 		const cleanups = this.liveQueryCleanups.get(roomId);
 		if (cleanups) {
 			for (const fn of cleanups) {
