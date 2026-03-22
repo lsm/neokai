@@ -262,6 +262,7 @@ describe('SpaceStore — space selection', () => {
 		expect(spaceStore.workflowRuns.value).toEqual([]);
 		expect(spaceStore.agents.value).toEqual([]);
 		expect(spaceStore.workflows.value).toEqual([]);
+		expect(spaceStore.sessionGroups.value).toEqual([]);
 	});
 
 	it('is a no-op when selecting the same space', async () => {
@@ -366,6 +367,10 @@ describe('SpaceStore — event subscriptions auto-cleanup', () => {
 		expect(mockEventHandlers.has('spaceWorkflow.created')).toBe(true);
 		expect(mockEventHandlers.has('spaceWorkflow.updated')).toBe(true);
 		expect(mockEventHandlers.has('spaceWorkflow.deleted')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.created')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.memberAdded')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.memberUpdated')).toBe(true);
+		expect(mockEventHandlers.has('spaceSessionGroup.deleted')).toBe(true);
 	});
 
 	it('removes event handlers on clearSpace()', async () => {
@@ -1334,5 +1339,36 @@ describe('SpaceStore — spaceSessionGroup events', () => {
 		});
 
 		expect(spaceStore.sessionGroups.value[0].members[0].status).toBe('active');
+	});
+
+	it('removes group on spaceSessionGroup.deleted', () => {
+		const g1 = makeSessionGroup('g1', 'task-1');
+		const g2 = makeSessionGroup('g2', 'task-2');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group: g1 });
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-2', group: g2 });
+		expect(spaceStore.sessionGroups.value).toHaveLength(2);
+
+		fireMockEvent('spaceSessionGroup.deleted', { spaceId: 'space-1', groupId: 'g1' });
+
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+		expect(spaceStore.sessionGroups.value[0].id).toBe('g2');
+	});
+
+	it('ignores spaceSessionGroup.deleted from other spaces', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		fireMockEvent('spaceSessionGroup.deleted', { spaceId: 'space-other', groupId: 'g1' });
+
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
+	});
+
+	it('is a no-op when spaceSessionGroup.deleted targets unknown groupId', () => {
+		const group = makeSessionGroup('g1', 'task-1');
+		fireMockEvent('spaceSessionGroup.created', { spaceId: 'space-1', taskId: 'task-1', group });
+
+		fireMockEvent('spaceSessionGroup.deleted', { spaceId: 'space-1', groupId: 'unknown-group' });
+
+		expect(spaceStore.sessionGroups.value).toHaveLength(1);
 	});
 });

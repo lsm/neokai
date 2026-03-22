@@ -268,6 +268,17 @@ describe('space.sessionGroup.updateMember', () => {
 		).rejects.toThrow('status is required');
 	});
 
+	it('throws if status is not a valid enum value', async () => {
+		await expect(
+			handlers.get('space.sessionGroup.updateMember')!({
+				spaceId: 'space-1',
+				groupId: 'group-1',
+				sessionId: 'session-1',
+				status: 'bogus',
+			})
+		).rejects.toThrow('Invalid status: must be one of active, completed, failed');
+	});
+
 	it('throws if space not found', async () => {
 		spaceManager = createMockSpaceManager(null);
 		const { hub, handlers: h } = createMockMessageHub();
@@ -401,5 +412,26 @@ describe('space.sessionGroup.delete', () => {
 		await expect(
 			h.get('space.sessionGroup.delete')!({ spaceId: 'space-1', groupId: 'group-1' })
 		).rejects.toThrow('does not belong to space space-1');
+	});
+
+	it('emits spaceSessionGroup.deleted event on successful delete', async () => {
+		await handlers.get('space.sessionGroup.delete')!({
+			spaceId: 'space-1',
+			groupId: 'group-1',
+		});
+		expect(daemonHub.emit).toHaveBeenCalledWith('spaceSessionGroup.deleted', {
+			sessionId: 'space:space-1',
+			spaceId: 'space-1',
+			groupId: 'group-1',
+		});
+	});
+
+	it('does not emit spaceSessionGroup.deleted when repo returns false', async () => {
+		repo = createMockRepo({ deleteGroup: mock(() => false) });
+		const { hub, handlers: h } = createMockMessageHub();
+		const localDaemonHub = createMockDaemonHub();
+		setupSpaceSessionGroupHandlers(hub, localDaemonHub, spaceManager, repo);
+		await h.get('space.sessionGroup.delete')!({ spaceId: 'space-1', groupId: 'group-1' });
+		expect(localDaemonHub.emit).not.toHaveBeenCalled();
 	});
 });

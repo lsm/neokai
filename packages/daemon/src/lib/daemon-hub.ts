@@ -511,6 +511,11 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		memberId: string;
 		member: import('@neokai/shared').SpaceSessionGroupMember;
 	};
+	'spaceSessionGroup.deleted': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
+	};
 
 	// Space workflow definition events (global events - use 'global' as sessionId)
 	// NOTE: namespace is 'spaceWorkflow.*' (not 'space.workflow.*') — matches SpaceStore subscriptions in M5

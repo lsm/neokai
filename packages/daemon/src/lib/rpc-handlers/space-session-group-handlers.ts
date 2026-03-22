@@ -53,6 +53,9 @@ export function setupSpaceSessionGroupHandlers(
 		if (!params.groupId) throw new Error('groupId is required');
 		if (!params.sessionId) throw new Error('sessionId is required');
 		if (!params.status) throw new Error('status is required');
+		if (!(['active', 'completed', 'failed'] as const).includes(params.status)) {
+			throw new Error('Invalid status: must be one of active, completed, failed');
+		}
 
 		const space = await spaceManager.getSpace(params.spaceId);
 		if (!space) {
@@ -79,7 +82,7 @@ export function setupSpaceSessionGroupHandlers(
 			throw new Error(`Member session ${params.sessionId} not found in group ${params.groupId}`);
 		}
 
-		daemonHub
+		await daemonHub
 			.emit('spaceSessionGroup.memberUpdated', {
 				sessionId: `space:${params.spaceId}`,
 				spaceId: params.spaceId,
@@ -116,6 +119,19 @@ export function setupSpaceSessionGroupHandlers(
 		}
 
 		const deleted = sessionGroupRepo.deleteGroup(params.groupId);
+
+		if (deleted) {
+			await daemonHub
+				.emit('spaceSessionGroup.deleted', {
+					sessionId: `space:${params.spaceId}`,
+					spaceId: params.spaceId,
+					groupId: params.groupId,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit spaceSessionGroup.deleted:', err);
+				});
+		}
+
 		return { deleted };
 	});
 }

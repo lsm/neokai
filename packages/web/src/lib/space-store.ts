@@ -694,6 +694,18 @@ class SpaceStore {
 		});
 		this.cleanupFunctions.push(unsubMemberUpdated);
 
+		// --- spaceSessionGroup.deleted ---
+		const unsubGroupDeleted = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+			groupId: string;
+		}>('spaceSessionGroup.deleted', (event) => {
+			if (event.spaceId === spaceId) {
+				this.sessionGroups.value = this.sessionGroups.value.filter((g) => g.id !== event.groupId);
+			}
+		});
+		this.cleanupFunctions.push(unsubGroupDeleted);
+
 		// Fetch initial state via RPC
 		await this.fetchInitialState(hub, spaceId);
 	}
