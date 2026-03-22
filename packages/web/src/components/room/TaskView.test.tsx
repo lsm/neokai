@@ -2687,3 +2687,118 @@ describe('TaskView — task.getGroup retry on failure', () => {
 		expect(container.textContent).not.toContain('No active agent group');
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug regression: TaskConversationRenderer must NOT remount when a message is sent
+//
+// Sending a message used to call onMessageSentWithReload() which bumped conversationKey,
+// remounting TaskConversationRenderer and causing a full re-fetch / loading flash.
+// After the fix, the conversationKey is never bumped on message send —
+// the LiveQuery delta event appends the new message instead.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('TaskView — no reload on message send (bug regression)', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('TaskConversationRenderer DOM node is NOT replaced after a successful message send', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait for TaskConversationRenderer to mount
+		await waitFor(() => {
+			expect(getByTestId('conversation')).toBeTruthy();
+		});
+
+		// Capture the exact DOM node before the send
+		const conversationNodeBefore = getByTestId('conversation');
+
+		// Type a message and send it
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Hello, please continue' } });
+		fireEvent.click(getByTestId('input-textarea-send'));
+
+		// Wait for the RPC to complete
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', expect.any(Object));
+		});
+
+		// The DOM node must be the same object — no remount, no reload flash
+		const conversationNodeAfter = getByTestId('conversation');
+		expect(conversationNodeAfter).toBe(conversationNodeBefore);
+	});
+
+	it('conversationKey bumps only for approve (not for normal message send)', async () => {
+		// This test verifies that approve still causes a remount (intentional),
+		// while a normal message send does not.
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			if (method === 'task.approve') return {};
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId, container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait for TaskConversationRenderer to mount
+		await waitFor(() => {
+			expect(getByTestId('conversation')).toBeTruthy();
+		});
+
+		const nodeBeforeSend = getByTestId('conversation');
+
+		// Send a normal human message — should NOT remount
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Keep going' } });
+		fireEvent.click(getByTestId('input-textarea-send'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', expect.any(Object));
+		});
+
+		// Still the same node
+		expect(getByTestId('conversation')).toBe(nodeBeforeSend);
+
+		const nodeBeforeApprove = getByTestId('conversation');
+
+		// Approve — should remount (intentional key bump)
+		const approveBtn = container.querySelector(
+			'[data-testid="action-bar-primary"]'
+		) as HTMLButtonElement;
+		expect(approveBtn).not.toBeNull();
+		fireEvent.click(approveBtn);
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.approve', expect.any(Object));
+		});
+
+		// After approve, the node is replaced (conversationKey bumped)
+		// This is intentional — approve triggers a full conversation refresh
+		await waitFor(() => {
+			const nodeAfterApprove = getByTestId('conversation');
+			expect(nodeAfterApprove).not.toBe(nodeBeforeApprove);
+		});
+	});
+});
