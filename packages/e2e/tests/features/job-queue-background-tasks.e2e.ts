@@ -21,9 +21,10 @@ import {
 
 const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
-// The ChatHeader h2 uses these classes — scope to them so we never match
-// the sidebar's "<h2>Sessions</h2>" or any modal h2 elements.
-const CHAT_HEADER_TITLE = 'h2.text-lg.font-semibold.text-gray-100.truncate';
+// Use the data-testid on the ChatHeader h2 for an unambiguous selector.
+// A plain class-based selector would also match ContextPanel.tsx's h2
+// (which has the same classes plus `mr-2`), causing false positives.
+const CHAT_HEADER_TITLE = '[data-testid="chat-header-title"]';
 
 test.describe('Background Job Queue Tasks', () => {
 	let sessionId: string | null = null;
