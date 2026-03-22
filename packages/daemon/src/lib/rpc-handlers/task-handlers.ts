@@ -15,7 +15,7 @@
  * - task.sendHumanMessage - Send a human message to the active agent in a task group
  * - task.updateDraft - Persist human input draft for a task (server-side, debounced by client)
  * - task.group.create - (non-production) Create a synthetic session group for a task
- * - task.group.addMessage - (non-production) Insert a raw row into session_group_messages
+ * - task.group.addMessage - (non-production) Insert a synthetic canonical timeline row
  */
 
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
@@ -789,8 +789,8 @@ export function setupTaskHandlers(
 	// They are only registered when NODE_ENV is not 'production' to prevent exposure
 	// of raw DB write access to production clients.
 	if (process.env.NODE_ENV !== 'production') {
-		// task.group.addMessage - insert a row into session_group_messages and notify LiveQuery.
-		// Bypasses all business logic; intended only for E2E test infrastructure.
+		// task.group.addMessage - insert a synthetic canonical timeline row for E2E.
+		// Writes to task_group_events (system/status-like rows) or sdk_messages (agent rows).
 		messageHub.onRequest('task.group.addMessage', async (data) => {
 			const params = data as {
 				groupId: string;
@@ -804,26 +804,89 @@ export function setupTaskHandlers(
 			if (!params.role) throw new Error('Role is required');
 			if (!params.content) throw new Error('Content is required');
 
+			const groupRepo = makeGroupRepo();
+			const group = groupRepo.getGroup(params.groupId);
+			if (!group) throw new Error(`Group not found: ${params.groupId}`);
+
+			const messageType = params.messageType ?? 'assistant';
+			const isSystemLike =
+				params.role === 'system' ||
+				messageType === 'status' ||
+				messageType === 'leader_summary' ||
+				messageType === 'rate_limited' ||
+				messageType === 'model_fallback';
+
+			if (isSystemLike) {
+				const kind =
+					messageType === 'leader_summary'
+						? 'leader_summary'
+						: messageType === 'rate_limited'
+							? 'rate_limited'
+							: messageType === 'model_fallback'
+								? 'model_fallback'
+								: 'status';
+
+				let payloadJson: string;
+				if (kind === 'rate_limited' || kind === 'model_fallback') {
+					try {
+						JSON.parse(params.content);
+						payloadJson = params.content;
+					} catch {
+						payloadJson = JSON.stringify({ text: params.content });
+					}
+				} else {
+					payloadJson = JSON.stringify({ text: params.content });
+				}
+
+				const id = groupRepo.appendEvent({
+					groupId: params.groupId,
+					kind,
+					payloadJson,
+				});
+				return { id };
+			}
+
 			const dbInstance = db.getDatabase();
-			const result = dbInstance
+			const { generateUUID } = await import('@neokai/shared');
+			const rowId = generateUUID();
+			const sessionId =
+				params.sessionId ??
+				(params.role === 'leader' || params.role === 'lead'
+					? group.leaderSessionId
+					: group.workerSessionId);
+
+			let sdkPayload: Record<string, unknown>;
+			try {
+				sdkPayload = JSON.parse(params.content) as Record<string, unknown>;
+			} catch {
+				sdkPayload = {
+					type: messageType,
+					uuid: generateUUID(),
+					session_id: sessionId,
+					parent_tool_use_id: null,
+					message: {
+						role: 'assistant',
+						content: [{ type: 'text', text: params.content }],
+					},
+				};
+			}
+
+			dbInstance
 				.prepare(
-					`INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         RETURNING id`
+					`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
 				)
-				.get(
-					params.groupId,
-					params.sessionId ?? null,
-					params.role,
-					params.messageType ?? 'assistant',
-					params.content,
-					Date.now()
-				) as { id: number };
-
-			// Notify LiveQuery engine so subscribed clients receive a delta event
-			reactiveDb.notifyChange('session_group_messages');
-
-			return { id: result.id };
+				.run(
+					rowId,
+					sessionId,
+					typeof sdkPayload.type === 'string' ? sdkPayload.type : messageType,
+					null,
+					JSON.stringify(sdkPayload),
+					new Date().toISOString(),
+					'sent'
+				);
+			reactiveDb.notifyChange('sdk_messages');
+			return { id: rowId };
 		});
 
 		// task.group.create - create a synthetic session group for a task.

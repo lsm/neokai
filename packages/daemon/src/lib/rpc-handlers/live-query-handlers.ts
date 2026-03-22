@@ -87,6 +87,56 @@ function mapGoalRow(row: Record<string, unknown>): Record<string, unknown> {
 	};
 }
 
+/**
+ * Map canonical task timeline rows into the SessionGroupMessage shape expected by the web client.
+ * For SDK rows, inject `_taskMeta` directly into JSON content so TaskConversationRenderer can
+ * render role/session context without relying on runtime mirroring.
+ */
+function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+	const sourceType = row.sourceType;
+	const groupId = String(row.groupId ?? '');
+	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+	const role = String(row.role ?? 'system');
+	const messageType = String(row.messageType ?? 'status');
+	const createdAt = Number(row.createdAt ?? Date.now());
+	const iteration = Number(row.iteration ?? 0);
+	const rawId = row.id;
+	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
+
+	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
+
+	if (sourceType === 'sdk') {
+		try {
+			const parsed = JSON.parse(content) as Record<string, unknown>;
+			const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : String(id);
+			const shortSessionId = (sessionId ?? '').slice(0, 8);
+			const turnId = `turn_${groupId}_${iteration}_${shortSessionId}_${uuid}`;
+			const enriched = {
+				...parsed,
+				_taskMeta: {
+					authorRole: role,
+					authorSessionId: sessionId ?? '',
+					turnId,
+					iteration,
+				},
+			};
+			content = JSON.stringify(enriched);
+		} catch {
+			// Keep original content if parsing fails.
+		}
+	}
+
+	return {
+		id,
+		groupId,
+		sessionId,
+		role,
+		messageType,
+		content,
+		createdAt,
+	};
+}
+
 // ============================================================================
 // SQL definitions
 // ============================================================================
@@ -154,22 +204,61 @@ ORDER BY priority DESC, created_at ASC, id ASC
 `.trim();
 
 /**
- * session_group_messages is an append-only table populated in Milestone 4.
- * The registry entry is defined here so the liveQuery.subscribe handler can
- * validate query names at subscription time without coupling to that milestone.
+ * Canonical task timeline query (no projection table):
+ * - SDK messages are read directly from sdk_messages joined through session_group_members.
+ * - Group/system events are read from task_group_events.
+ *
+ * A single groupId parameter is threaded via `target_group` CTE and consumed by both branches.
  */
 const SESSION_GROUP_MESSAGES_BY_GROUP_SQL = `
+WITH target_group AS (
+  SELECT id
+  FROM session_groups
+  WHERE id = ?
+)
 SELECT
-  id,
-  group_id    AS groupId,
-  session_id  AS sessionId,
-  role,
-  message_type AS messageType,
-  content,
-  created_at  AS createdAt
-FROM session_group_messages
-WHERE group_id = ?
-ORDER BY created_at ASC, id ASC
+  'sdk'                         AS sourceType,
+  sm.id                         AS id,
+  tg.id                         AS groupId,
+  sm.session_id                 AS sessionId,
+  CASE
+    WHEN gm.role = 'leader' THEN 'leader'
+    WHEN gm.role = 'worker' AND sm.session_id LIKE 'general:%' THEN 'general'
+    WHEN gm.role = 'worker' AND sm.session_id LIKE 'planner:%' THEN 'planner'
+    WHEN gm.role = 'worker' AND sm.session_id LIKE 'coder:%' THEN 'coder'
+    WHEN gm.role = 'worker' THEN 'coder'
+    ELSE gm.role
+  END                           AS role,
+  sm.message_type               AS messageType,
+  sm.sdk_message                AS content,
+  CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration
+FROM target_group tg
+JOIN session_group_members gm ON gm.group_id = tg.id
+JOIN sdk_messages sm ON sm.session_id = gm.session_id
+WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'sent') IN ('sent', 'failed'))
+UNION ALL
+SELECT
+  'event'                       AS sourceType,
+  'event:' || e.id              AS id,
+  tg.id                         AS groupId,
+  NULL                          AS sessionId,
+  'system'                      AS role,
+  CASE
+    WHEN e.kind = 'leader_summary' THEN 'leader_summary'
+    WHEN e.kind = 'rate_limited' THEN 'rate_limited'
+    WHEN e.kind = 'model_fallback' THEN 'model_fallback'
+    ELSE 'status'
+  END                           AS messageType,
+  CASE
+    WHEN e.kind IN ('rate_limited', 'model_fallback') THEN COALESCE(e.payload_json, e.kind)
+    ELSE COALESCE(json_extract(e.payload_json, '$.text'), e.kind)
+  END                           AS content,
+  e.created_at                  AS createdAt,
+  0                             AS iteration
+FROM target_group tg
+JOIN task_group_events e ON e.group_id = tg.id
+ORDER BY createdAt ASC, id ASC
 `.trim();
 
 // ============================================================================
@@ -208,7 +297,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
 			paramCount: 1,
-			// No JSON blobs; all columns are scalar.
+			mapRow: mapSessionGroupMessageRow,
 		},
 	],
 ]);

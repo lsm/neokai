@@ -152,14 +152,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// drop role CHECK constraint and add agent_id + status to space_session_group_members.
 	runMigration40(db);
 
-	// Migration 41: Create session_group_messages table for LiveQuery-based message streaming.
-	// This table was dropped in migration 19 (legacy mirror table). It is recreated here
-	// as an append-only store for the LiveQuery protocol (Milestone 4).
+	// Migration 41: Historical no-op. Kept for migration-number continuity.
 	runMigration41(db);
 
 	// Migration 42: Clean up stale/zombie session groups and add partial unique index
 	// on session_groups(ref_id) WHERE completed_at IS NULL to prevent future duplicates.
 	runMigration42(db);
+
+	// Migration 43: Drop legacy session_group_messages projection table.
+	runMigration43(db);
 }
 
 /**
@@ -2431,35 +2432,14 @@ function runMigration40(db: BunDatabase): void {
 }
 
 /**
- * Migration 41: Create session_group_messages table.
+ * Migration 41: Historical no-op.
  *
- * The original session_group_messages table was a mirror of SDK messages and was
- * dropped in migration 19 because it was redundant at the time.  This new table
- * is an append-only store for the LiveQuery message streaming path introduced in
- * Milestone 4.  Fresh databases already get the table from createTables(); this
- * migration creates it for existing (migrated) databases.
- *
- * Idempotency: guarded by `CREATE TABLE IF NOT EXISTS` and a table-existence
- * check so the migration is safe to run multiple times.
+ * Kept for migration-number continuity. The former session_group_messages
+ * projection table path was removed; canonical timeline data now comes from
+ * sdk_messages + task_group_events.
  */
-function runMigration41(db: BunDatabase): void {
-	if (tableExists(db, 'session_group_messages')) {
-		return; // Already created (fresh DB or re-run)
-	}
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS session_group_messages (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-			session_id TEXT,
-			role TEXT NOT NULL DEFAULT 'system',
-			message_type TEXT NOT NULL DEFAULT 'status',
-			content TEXT NOT NULL DEFAULT '',
-			created_at INTEGER NOT NULL
-		)
-	`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_sgm_group ON session_group_messages(group_id, created_at, id)`
-	);
+function runMigration41(_db: BunDatabase): void {
+	// No-op.
 }
 
 /**
@@ -2524,4 +2504,15 @@ function runMigration42(db: BunDatabase): void {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
 		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
 	);
+}
+
+/**
+ * Migration 43: Drop legacy session_group_messages projection table.
+ *
+ * The canonical group timeline now comes from sdk_messages + task_group_events.
+ * Keeping this mirror table risks drift and confusion after daemon restarts.
+ */
+function runMigration43(db: BunDatabase): void {
+	db.exec(`DROP INDEX IF EXISTS idx_sgm_group`);
+	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
 }

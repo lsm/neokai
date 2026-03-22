@@ -587,6 +587,24 @@ describe('TaskConversationRenderer — isReconnecting state', () => {
 		expect(container.textContent).not.toContain('Reconnecting');
 	});
 
+	it('shows a direct empty-history reason when snapshot arrives with zero messages', async () => {
+		mockIsConnected.value = true;
+
+		const { container } = render(<TaskConversationRenderer groupId="group-1" />);
+
+		await act(async () => {
+			fireSnapshot([]);
+		});
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('No conversation history found for this task group');
+		});
+		expect(container.textContent).toContain(
+			'No persisted timeline rows were found for this task group'
+		);
+		expect(container.textContent).not.toContain('Waiting for agent activity');
+	});
+
 	it('renders messages normally once snapshot arrives after reconnect', async () => {
 		// Start disconnected.
 		mockIsConnected.value = false;

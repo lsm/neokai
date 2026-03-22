@@ -655,8 +655,8 @@ export class RoomRuntimeService {
 				const activeGroups = groupRepo.getActiveGroups(roomId);
 				for (const group of activeGroups) {
 					try {
-						// Re-attach runtime-only sdk.message mirroring before any continuation
-						// message is injected so recovered TaskView timelines keep streaming.
+						// Re-attach runtime-only sdk.message listeners before any continuation
+						// message is injected (rate-limit detection and compatibility hooks).
 						runtime.restoreRecoveredGroupMirroring(group);
 
 						// Restore MCP servers (planner-tools, leader-agent-tools)

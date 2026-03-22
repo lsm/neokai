@@ -276,7 +276,12 @@ export function TaskConversationRenderer({
 	if (messages.length === 0) {
 		return (
 			<div class="flex-1 flex items-center justify-center">
-				<p class="text-gray-500 text-sm">Waiting for agent activity…</p>
+				<div class="text-center px-6">
+					<p class="text-gray-300 text-sm">No conversation history found for this task group.</p>
+					<p class="text-gray-500 text-xs mt-1">
+						No persisted timeline rows were found for this task group.
+					</p>
+				</div>
 			</div>
 		);
 	}

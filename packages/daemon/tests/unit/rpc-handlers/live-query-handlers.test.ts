@@ -245,99 +245,127 @@ describe('NAMED_QUERY_REGISTRY', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// sessionGroupMessages.byGroup — registry presence and structure
+	// sessionGroupMessages.byGroup — canonical timeline from sdk_messages + events
 	// -------------------------------------------------------------------------
 
 	describe('sessionGroupMessages.byGroup', () => {
 		const groupId = 'group-contract-test';
+		const taskId = 'task-contract-test';
+		const workerSessionId = 'worker-session-contract';
+		const leaderSessionId = 'leader-session-contract';
+
+		function insertTask(): void {
+			db.exec(
+				`INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, updated_at)
+				 VALUES ('${taskId}', '${roomId}', 'Task', 'Desc', 'in_progress', 'normal', '[]', ${Date.now()}, ${Date.now()})`
+			);
+		}
 
 		function insertGroup(): void {
 			db.exec(
 				`INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
-				 VALUES ('${groupId}', 'task', 'task-ref', 0, '{}', ${Date.now()})`
+				 VALUES ('${groupId}', 'task', '${taskId}', 0,
+				 '${JSON.stringify({ workerRole: 'coder', feedbackIteration: 2, submittedForReview: false })}',
+				 ${Date.now()})`
+			);
+			db.exec(
+				`INSERT OR IGNORE INTO session_group_members (group_id, session_id, role, joined_at)
+				 VALUES ('${groupId}', '${workerSessionId}', 'worker', ${Date.now()}),
+						('${groupId}', '${leaderSessionId}', 'leader', ${Date.now()})`
 			);
 		}
 
-		function insertMessage(
-			overrides: { sessionId?: string; role?: string; content?: string } = {}
-		): void {
-			db.exec(`
-				INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
-				VALUES (
-					'${groupId}',
-					${overrides.sessionId ? `'${overrides.sessionId}'` : 'NULL'},
-					'${overrides.role ?? 'system'}',
-					'status',
-					'${overrides.content ?? 'hello'}',
-					${Date.now()}
-				)
-			`);
+		function insertSdkMessage(sessionId: string, id: string, timestampMs: number): void {
+			db.exec(
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+				 VALUES ('${id}', '${sessionId}', 'assistant', NULL,
+				 '${JSON.stringify({ type: 'assistant', uuid: id, message: { content: [] } })}',
+				 '${new Date(timestampMs).toISOString()}', 'sent')`
+			);
 		}
 
-		function executeSQL(): Record<string, unknown>[] {
+		function insertEvent(kind: string, payload: Record<string, unknown>, createdAt: number): void {
+			db.exec(
+				`INSERT INTO task_group_events (group_id, kind, payload_json, created_at)
+				 VALUES ('${groupId}', '${kind}', '${JSON.stringify(payload)}', ${createdAt})`
+			);
+		}
+
+		function executeSQLAndMap(): Record<string, unknown>[] {
 			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
-			return db.prepare(entry.sql).all(groupId) as Record<string, unknown>[];
+			const rows = db.prepare(entry.sql).all(groupId) as Record<string, unknown>[];
+			return entry.mapRow ? rows.map(entry.mapRow) : rows;
 		}
 
-		test('SQL executes without error against the real schema (table exists)', () => {
+		test('SQL executes without error against the real schema', () => {
+			insertTask();
 			insertGroup();
-			// Must not throw — if session_group_messages doesn't exist, SQLite throws
-			expect(() => executeSQL()).not.toThrow();
+			expect(() => executeSQLAndMap()).not.toThrow();
 		});
 
-		test('returns empty array when no messages exist for the group', () => {
+		test('returns empty array when no sdk/event rows exist for the group', () => {
+			insertTask();
 			insertGroup();
-			const rows = executeSQL();
+			const rows = executeSQLAndMap();
 			expect(rows).toEqual([]);
 		});
 
-		test('returns camelCase column aliases in result rows', () => {
+		test('returns camelCase row shape and injects _taskMeta for sdk messages', () => {
+			insertTask();
 			insertGroup();
-			insertMessage({ sessionId: 'sess-1', role: 'coder', content: 'test' });
-			const [row] = executeSQL();
-			expect(row).toHaveProperty('groupId', groupId);
-			expect(row).toHaveProperty('sessionId', 'sess-1');
-			expect(row).toHaveProperty('messageType', 'status');
-			expect(row).toHaveProperty('createdAt');
-			expect(row).not.toHaveProperty('group_id');
-			expect(row).not.toHaveProperty('session_id');
-			expect(row).not.toHaveProperty('message_type');
-			expect(row).not.toHaveProperty('created_at');
+			insertSdkMessage(workerSessionId, 'worker-msg-1', 1000);
+			insertSdkMessage(leaderSessionId, 'leader-msg-1', 2000);
+
+			const rows = executeSQLAndMap();
+			expect(rows.length).toBe(2);
+
+			const workerRow = rows[0];
+			expect(workerRow).toHaveProperty('groupId', groupId);
+			expect(workerRow).toHaveProperty('sessionId', workerSessionId);
+			expect(workerRow).toHaveProperty('messageType', 'assistant');
+			expect(workerRow).toHaveProperty('createdAt');
+
+			const parsed = JSON.parse(workerRow.content as string) as Record<string, unknown>;
+			const meta = parsed._taskMeta as Record<string, unknown>;
+			expect(meta.authorRole).toBe('coder');
+			expect(meta.authorSessionId).toBe(workerSessionId);
+			expect(meta.iteration).toBe(0);
+			expect(typeof meta.turnId).toBe('string');
+			expect(parsed.uuid).toBe('worker-msg-1');
 		});
 
-		test('null sessionId is preserved as null', () => {
+		test('event rows keep null sessionId and status text extraction', () => {
+			insertTask();
 			insertGroup();
-			insertMessage(); // sessionId defaults to NULL
-			const [row] = executeSQL();
+			insertEvent('status', { text: 'Mid status marker' }, 1500);
+
+			const [row] = executeSQLAndMap();
 			expect(row.sessionId).toBeNull();
+			expect(row.messageType).toBe('status');
+			expect(row.content).toBe('Mid status marker');
 		});
 
-		test('has no mapRow (all columns are scalar)', () => {
+		test('has mapRow to enrich sdk content payloads', () => {
 			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
-			expect(entry.mapRow).toBeUndefined();
+			expect(typeof entry.mapRow).toBe('function');
 		});
 
-		test('SQL targets session_group_messages table', () => {
+		test('SQL targets canonical sdk_messages + task_group_events sources', () => {
 			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
-			expect(entry.sql).toContain('FROM session_group_messages');
+			expect(entry.sql).toContain('FROM session_groups');
+			expect(entry.sql).toContain('JOIN session_group_members');
+			expect(entry.sql).toContain('JOIN sdk_messages');
+			expect(entry.sql).toContain('JOIN task_group_events');
 		});
 
-		test('SQL filters by group_id parameter', () => {
+		test('SQL filters by group id via target_group CTE', () => {
 			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
-			expect(entry.sql).toContain('WHERE group_id = ?');
+			expect(entry.sql).toContain('WHERE id = ?');
 		});
 
-		test('ORDER BY is created_at ASC, id ASC (deterministic tiebreaker)', () => {
+		test('ORDER BY is createdAt ASC, id ASC (deterministic tiebreaker)', () => {
 			const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
-			expect(sql).toContain('ORDER BY created_at ASC, id ASC');
-		});
-
-		test('SQL selects camelCase aliases for snake_case columns', () => {
-			const entry = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!;
-			expect(entry.sql).toContain('group_id    AS groupId');
-			expect(entry.sql).toContain('session_id  AS sessionId');
-			expect(entry.sql).toContain('message_type AS messageType');
-			expect(entry.sql).toContain('created_at  AS createdAt');
+			expect(sql).toContain('ORDER BY createdAt ASC, id ASC');
 		});
 	});
 
