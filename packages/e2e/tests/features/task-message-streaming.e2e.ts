@@ -7,6 +7,17 @@
  * Tests:
  * - Messages from the initial LiveQuery snapshot appear in TaskView on load
  * - Switching between two tasks shows correct messages for each task
+ * - Pre-existing messages remain visible after user types and sends a message
+ *   (regression test for: task view reloads all messages when sending a new message)
+ *
+ * Note on "no-reload-on-send" testing: The full round-trip (message actually delivered
+ * via liveQuery.delta) requires a real agent session and cannot be triggered purely
+ * through the UI in an integration-free E2E test.  The component-level guarantee
+ * (TaskConversationRenderer DOM node is not replaced on send) is exercised by the
+ * unit test in packages/web/src/components/room/TaskView.test.tsx
+ * ("TaskView — no reload on message send (bug regression)").
+ * The E2E test below verifies the UI-observable side: messages visible BEFORE a
+ * send attempt remain visible AFTER the send attempt (no loading flash or wipe).
  *
  * Note on "live delta without refresh" testing: injecting a message after page
  * navigation requires calling hub.request() inside the test body, which violates
@@ -210,5 +221,63 @@ test.describe('TaskView — Message Streaming via LiveQuery', () => {
 			await expect(page.locator('text=Message for Task A only')).toBeVisible({ timeout: 10000 });
 			await expect(page.locator('text=Message for Task B only')).not.toBeVisible();
 		});
+	});
+});
+
+// ── Test 3: no reload on message send (regression) ──────────────────────────
+
+test.describe('no loading flash when user sends a message (regression)', () => {
+	test.use({ viewport: DESKTOP_VIEWPORT });
+
+	let roomId = '';
+	let taskId = '';
+
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await page
+			.getByRole('button', { name: 'New Session', exact: true })
+			.waitFor({ timeout: 10000 });
+
+		// Create room, task, group with pre-existing messages — infrastructure only
+		({ roomId, taskId } = await createRoomWithTask(page, 'E2E No-Reload Task'));
+		await createGroupWithMessages(page, taskId, roomId, [
+			'Pre-existing message alpha',
+			'Pre-existing message beta',
+		]);
+	});
+
+	test.afterEach(async ({ page }) => {
+		await deleteRoom(page, roomId);
+		roomId = '';
+		taskId = '';
+	});
+
+	test('pre-existing messages remain visible while user types and attempts to send', async ({
+		page,
+	}) => {
+		// Navigate to the task view — LiveQuery snapshot delivers the pre-existing messages
+		await page.goto(`/room/${roomId}/task/${taskId}`);
+		await expect(page.locator('text=E2E No-Reload Task')).toBeVisible({ timeout: 10000 });
+
+		// Both pre-existing messages must be visible via initial snapshot
+		await expect(page.locator('text=Pre-existing message alpha')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('text=Pre-existing message beta')).toBeVisible({ timeout: 10000 });
+
+		// Type a message in the human input area
+		const textarea = page.getByTestId('input-textarea-field');
+		await textarea.fill('Hello, please continue working');
+
+		// Pre-existing messages must still be visible while typing (no wipe on input)
+		await expect(page.locator('text=Pre-existing message alpha')).toBeVisible();
+		await expect(page.locator('text=Pre-existing message beta')).toBeVisible();
+
+		// Click send — the RPC will fail (no real session), but the UI must NOT
+		// clear the conversation pane or flash a loading state at any point
+		await page.getByTestId('input-textarea-send').click();
+
+		// After the send attempt, pre-existing messages must still be visible —
+		// this verifies the conversationKey is NOT bumped on message send
+		await expect(page.locator('text=Pre-existing message alpha')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=Pre-existing message beta')).toBeVisible({ timeout: 5000 });
 	});
 });

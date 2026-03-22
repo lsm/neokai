@@ -69,8 +69,8 @@ interface HumanInputAreaProps {
 	taskStatus: string;
 	roomId: string;
 	taskId: string;
-	/** Called after a successful action that requires a full conversation re-fetch */
-	onMessageSentWithReload: () => void;
+	/** Called after a message is successfully sent (no reload — LiveQuery appends it). */
+	onMessageSent: () => void;
 }
 
 const TARGET_LABELS: Record<HumanMessageTarget, string> = {
@@ -83,7 +83,7 @@ function HumanInputArea({
 	taskStatus,
 	roomId,
 	taskId,
-	onMessageSentWithReload,
+	onMessageSent,
 }: HumanInputAreaProps) {
 	const { request } = useMessageHub();
 	const {
@@ -133,7 +133,7 @@ function HumanInputArea({
 				target,
 			});
 			clearDraft();
-			onMessageSentWithReload();
+			onMessageSent();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
 		} finally {
@@ -1406,7 +1406,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				taskStatus={task.status}
 				roomId={roomId}
 				taskId={taskId}
-				onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
+				onMessageSent={() => {}}
 			/>
 
 			{/* Task action dialogs */}
