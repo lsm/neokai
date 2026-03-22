@@ -14,6 +14,7 @@ import {
 	useCommandAutocomplete,
 	useInterrupt,
 	useFileAttachments,
+	useGroupMessages,
 } from '../index.ts';
 
 describe('Hooks Index', () => {
@@ -56,6 +57,11 @@ describe('Hooks Index', () => {
 		it('should export useFileAttachments', () => {
 			expect(useFileAttachments).toBeDefined();
 			expect(typeof useFileAttachments).toBe('function');
+		});
+
+		it('should export useGroupMessages', () => {
+			expect(useGroupMessages).toBeDefined();
+			expect(typeof useGroupMessages).toBe('function');
 		});
 	});
 });
