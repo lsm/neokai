@@ -200,6 +200,12 @@ jobs:
           - module: rewind
             test_path: tests/online/rewind
             mock_sdk: true
+          # room-tick-job uses Dev Proxy only (no real API calls) — enabled independently
+          # of the broader room test cohort which requires real credentials.
+          - module: room-tick-job
+            test_path: tests/online/room/room-tick-job.test.ts
+            mock_sdk: true
+            timeout: 10
           # Room tests temporarily disabled during refactoring
           # - module: room-1
           #   test_path: >-
