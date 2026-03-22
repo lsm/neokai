@@ -31,7 +31,7 @@
  *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/features/job-queue-crash-recovery.test.ts
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createDaemonApp, type DaemonAppContext } from '../../../src/app';
@@ -67,24 +67,47 @@ const GITHUB_TEST_ENV: Record<string, string> = {
 // Lifecycle helpers
 // ---------------------------------------------------------------------------
 
-/** Track contexts created during a test so afterEach can clean them up. */
-let openContexts: DaemonAppContext[] = [];
+/**
+ * Per-daemon env snapshot captured by startDaemon.  Restored by stopDaemon
+ * so env vars do not leak between tests (and between daemon-1 / daemon-2
+ * within the same test).
+ */
+interface DaemonHandle {
+	ctx: DaemonAppContext;
+	/** DB file path — deleted per-test in afterEach. */
+	dbPath: string;
+	/** Keys whose original values were saved before mutation. */
+	savedEnv: Record<string, string | undefined>;
+}
+
+/** All handles created during the current test. */
+let openHandles: DaemonHandle[] = [];
 
 /**
  * Create a daemon with a file-backed SQLite DB.
  *
- * Each call re-uses the provided `dbPath` so the second daemon instance
- * inherits all rows written by the first one.
+ * Captures and saves all env vars before mutating them.  Call stopDaemon()
+ * (or rely on afterEach) to restore them.
  */
 async function startDaemon(
 	dbPath: string,
 	extraEnv: Record<string, string> = {}
-): Promise<DaemonAppContext> {
-	// Derive a temporary workspace from the DB path (each run gets its own dir
-	// so concurrent tests do not collide on the workspace root).
+): Promise<DaemonHandle> {
 	const workspace = path.dirname(dbPath);
 
-	// Apply env vars — reset after the test in afterEach.
+	// Keys that startDaemon will mutate — capture originals before any change.
+	const envKeys = [
+		'NEOKAI_WORKSPACE_PATH',
+		'NODE_ENV',
+		'NEOKAI_SDK_STARTUP_TIMEOUT_MS',
+		...Object.keys(extraEnv),
+	];
+	const savedEnv: Record<string, string | undefined> = {};
+	for (const k of envKeys) {
+		savedEnv[k] = process.env[k];
+	}
+
+	// Apply env vars.  Restored in stopDaemon / afterEach via restoreEnv().
 	process.env.NEOKAI_WORKSPACE_PATH = workspace;
 	process.env.NODE_ENV = 'test';
 	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
@@ -100,22 +123,36 @@ async function startDaemon(
 	config.dbPath = dbPath;
 
 	const ctx = await createDaemonApp({ config, verbose: false, standalone: false });
-	openContexts.push(ctx);
-	return ctx;
+	const handle: DaemonHandle = { ctx, dbPath, savedEnv };
+	openHandles.push(handle);
+	return handle;
 }
 
-/** Gracefully stop a daemon and remove it from the tracked list. */
-async function stopDaemon(ctx: DaemonAppContext): Promise<void> {
-	openContexts = openContexts.filter((c) => c !== ctx);
+/** Restore env vars that were saved when the daemon was started. */
+function restoreEnv(handle: DaemonHandle): void {
+	for (const [k, original] of Object.entries(handle.savedEnv)) {
+		if (original === undefined) {
+			delete process.env[k];
+		} else {
+			process.env[k] = original;
+		}
+	}
+}
+
+/** Gracefully stop a daemon and restore its env snapshot. */
+async function stopDaemon(handle: DaemonHandle): Promise<void> {
+	openHandles = openHandles.filter((h) => h !== handle);
 	try {
 		await Promise.race([
-			ctx.cleanup(),
+			handle.ctx.cleanup(),
 			new Promise<void>((_, reject) =>
 				setTimeout(() => reject(new Error('daemon cleanup timeout')), 8_000)
 			),
 		]);
 	} catch {
 		// Best-effort — the point is to let the DB flush and close.
+	} finally {
+		restoreEnv(handle);
 	}
 }
 
@@ -166,7 +203,6 @@ async function waitForJobById(
  * Return the current job row for a specific id, regardless of status.
  */
 function getJobById(ctx: DaemonAppContext, jobId: string): Job | undefined {
-	// listJobs doesn't filter by id directly — search across all terminal + active statuses.
 	const all = ctx.jobQueue.listJobs({
 		status: ['pending', 'processing', 'completed', 'failed', 'dead'],
 		limit: 1000,
@@ -180,13 +216,13 @@ function getJobById(ctx: DaemonAppContext, jobId: string): Job | undefined {
  * 6 minutes ago so it exceeds the processor's 5-minute stale threshold.
  */
 function insertStaleProcessingJob(
-	ctx: DaemonAppContext,
+	handle: DaemonHandle,
 	queue: string,
 	payload: Record<string, unknown> = {},
 	startedAtMs = Date.now() - 6 * 60 * 1000
 ): string {
 	const jobId = crypto.randomUUID();
-	ctx.db
+	handle.ctx.db
 		.getDatabase()
 		.prepare(
 			`INSERT INTO job_queue
@@ -206,27 +242,34 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	// Stop any daemon contexts that were not explicitly stopped inside the test.
-	const remaining = [...openContexts];
-	openContexts = [];
+	// Stop any daemon handles that were not explicitly stopped inside the test
+	// and restore their env snapshots.
+	const remaining = [...openHandles];
+	openHandles = [];
 	await Promise.allSettled(
-		remaining.map((ctx) =>
+		remaining.map((handle) =>
 			Promise.race([
-				ctx.cleanup(),
+				handle.ctx.cleanup(),
 				new Promise<void>((_, reject) =>
 					setTimeout(() => reject(new Error('cleanup timeout')), 8_000)
 				),
-			]).catch(() => {})
+			])
+				.catch(() => {})
+				.finally(() => restoreEnv(handle))
 		)
 	);
-});
 
-afterAll(async () => {
-	// Remove all file-backed DB files created during this test run.
+	// Clean up DB files created during this test.  Each test uses its own
+	// timestamped DB path, so deleting all *.db files under TEST_DB_DIR is safe.
+	// Per-test cleanup bounds disk usage even if the process crashes mid-run.
 	try {
-		fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
+		for (const file of fs.readdirSync(TEST_DB_DIR)) {
+			if (file.endsWith('.db') || file.endsWith('.db-wal') || file.endsWith('.db-shm')) {
+				fs.rmSync(path.join(TEST_DB_DIR, file), { force: true });
+			}
+		}
 	} catch {
-		// Best-effort cleanup — a leftover directory is not a test failure.
+		// Directory may not exist yet or already deleted — not a failure.
 	}
 });
 
@@ -243,41 +286,46 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		const dbPath = path.join(TEST_DB_DIR, `session-title-${Date.now()}.db`);
 
 		// --- Daemon-1: simulate a crash mid-title-generation ---
-		const daemon1 = await startDaemon(dbPath);
+		const h1 = await startDaemon(dbPath);
 
 		// Insert a stale processing job (simulates crash while generating title).
-		const staleJobId = insertStaleProcessingJob(daemon1, SESSION_TITLE_GENERATION, {
+		const staleJobId = insertStaleProcessingJob(h1, SESSION_TITLE_GENERATION, {
 			sessionId: 'test-session-crash-recovery',
 			userMessageText: 'Hello, trigger title generation',
 		});
 
-		// Verify the stale job is visible.
-		const before = daemon1.jobQueue.listJobs({
+		// Verify the stale job is visible as 'processing' before stopping.
+		const before = h1.ctx.jobQueue.listJobs({
 			queue: SESSION_TITLE_GENERATION,
 			status: ['processing'],
 		});
 		expect(before.some((j) => j.id === staleJobId)).toBe(true);
 
 		// Gracefully stop daemon-1 (rows persist in the file-backed DB).
-		await stopDaemon(daemon1);
+		await stopDaemon(h1);
 
 		// --- Daemon-2: restart against the same DB ---
-		const daemon2 = await startDaemon(dbPath);
+		const h2 = await startDaemon(dbPath);
 
-		// JobQueueProcessor.start() calls reclaimStale() eagerly — the
-		// stale job should immediately be back to 'pending'.
-		const reclaimed = daemon2.jobQueue.listJobs({
-			queue: SESSION_TITLE_GENERATION,
-			status: ['pending'],
-		});
-		expect(reclaimed.some((j) => j.id === staleJobId)).toBe(true);
+		// JobQueueProcessor.start() calls reclaimStale() synchronously before
+		// start() returns, so the stale job is no longer stuck.  tick() is also
+		// fired (async) so by the time this check runs the job may already be
+		// in fresh 'processing' (dequeued with a new startedAt) or terminal.
+		// Assert "not stuck as stale" rather than checking for a specific status.
+		const reclaimedJob = getJobById(h2.ctx, staleJobId);
+		expect(reclaimedJob).toBeDefined();
+		const isStillStale =
+			reclaimedJob!.status === 'processing' &&
+			reclaimedJob!.startedAt !== null &&
+			reclaimedJob!.startedAt < Date.now() - 5 * 60 * 1000;
+		expect(isStillStale).toBe(false);
 
 		// The processor picks up the pending job and attempts to execute it.
 		// The title handler will fail (no real session) but the important
 		// assertion is that the job was reclaimed and transitioned out of
-		// 'processing' — i.e., no job is lost.
+		// the stale 'processing' state — i.e., no job is permanently lost.
 		const processed = await waitForJobById(
-			daemon2,
+			h2.ctx,
 			SESSION_TITLE_GENERATION,
 			staleJobId,
 			['completed', 'failed', 'dead'],
@@ -286,7 +334,7 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		expect(processed).toBeDefined();
 		expect(['completed', 'failed', 'dead']).toContain(processed!.status);
 
-		await stopDaemon(daemon2);
+		await stopDaemon(h2);
 	}, 30_000);
 
 	// -------------------------------------------------------------------------
@@ -297,59 +345,67 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		const dbPath = path.join(TEST_DB_DIR, `github-poll-${Date.now()}.db`);
 
 		// --- Daemon-1: start with GitHub polling enabled ---
-		const daemon1 = await startDaemon(dbPath, GITHUB_TEST_ENV);
+		const h1 = await startDaemon(dbPath, GITHUB_TEST_ENV);
 
-		// Stub triggerPoll so no real GitHub calls are made.
+		// Stub triggerPoll so no real GitHub calls are made.  The stub is
+		// applied after createDaemonApp() resolves, which means the first
+		// processor tick may already have dequeued the initial github.poll job
+		// before the stub is installed.  This is safe for two reasons:
+		//   a) No repositories are registered, so pollAllRepositories() is a no-op.
+		//   b) Any error from triggerPoll() is caught inside handleGitHubPoll().
+		// The same comment applies to daemon-2 below.
 		const stubTriggerPoll = (ctx: DaemonAppContext) => {
 			const svc = ctx.gitHubService?.getPollingService();
 			if (svc) svc.triggerPoll = async () => {};
 		};
-		stubTriggerPoll(daemon1);
+		stubTriggerPoll(h1.ctx);
 
 		// gitHubService.start() seeds the initial github.poll job synchronously.
-		expect(daemon1.gitHubService).not.toBeNull();
-		const initialJobs = daemon1.jobQueue.listJobs({
+		expect(h1.ctx.gitHubService).not.toBeNull();
+		const initialJobs = h1.ctx.jobQueue.listJobs({
 			queue: GITHUB_POLL,
 			status: ['pending', 'processing'],
 		});
 		expect(initialJobs.length).toBeGreaterThanOrEqual(1);
 
 		// Wait for the first job to complete so the self-scheduled follow-up
-		// job is enqueued.
-		const firstCompleted = await waitForJob(daemon1, GITHUB_POLL, ['completed']);
+		// job (scheduled ~600 s out) is enqueued.
+		const firstCompleted = await waitForJob(h1.ctx, GITHUB_POLL, ['completed']);
 		expect(firstCompleted).toBeDefined();
 
-		// The follow-up job should now be pending (scheduled ~600 s out).
-		const followUpBefore = daemon1.jobQueue.listJobs({
+		// The follow-up job should be pending (scheduled ~600 s out).
+		const followUpBefore = h1.ctx.jobQueue.listJobs({
 			queue: GITHUB_POLL,
 			status: ['pending'],
 		});
 		expect(followUpBefore.length).toBeGreaterThanOrEqual(1);
 		const followUpId = followUpBefore[0].id;
 
-		// Simulate a crash: insert a stale processing job (the follow-up
-		// arrived earlier than expected and was being processed when daemon died).
-		const crashedJobId = insertStaleProcessingJob(daemon1, GITHUB_POLL);
+		// Simulate a crash: insert a brand-new stale processing job as if
+		// the daemon was in the middle of executing an unscheduled poll when
+		// it died (e.g., triggered by a webhook or manual event).
+		const crashedJobId = insertStaleProcessingJob(h1, GITHUB_POLL);
 
 		// Verify it shows up as 'processing' before stopping daemon-1.
-		const beforeStop = daemon1.jobQueue.listJobs({
+		const beforeStop = h1.ctx.jobQueue.listJobs({
 			queue: GITHUB_POLL,
 			status: ['processing'],
 		});
 		expect(beforeStop.some((j) => j.id === crashedJobId)).toBe(true);
 
-		await stopDaemon(daemon1);
+		await stopDaemon(h1);
 
 		// --- Daemon-2: restart ---
-		const daemon2 = await startDaemon(dbPath, GITHUB_TEST_ENV);
-		stubTriggerPoll(daemon2);
+		const h2 = await startDaemon(dbPath, GITHUB_TEST_ENV);
+		// Same stub + same safety note as daemon-1.
+		stubTriggerPoll(h2.ctx);
 
 		// Eager reclamation: the stale 'processing' job is reclaimed to 'pending'
 		// by jobProcessor.start() and then immediately picked up by the processor.
-		// By the time we check, it may already be 'completed'.  Assert it is no
-		// longer stuck in a stale 'processing' state (i.e. it was processed).
+		// By the time we check, it may already be 'completed' — wait for any
+		// terminal state.
 		const result = await waitForJobById(
-			daemon2,
+			h2.ctx,
 			GITHUB_POLL,
 			crashedJobId,
 			['completed', 'failed', 'dead'],
@@ -360,18 +416,18 @@ describe('Job queue crash/restart recovery (integration)', () => {
 
 		// The previously scheduled follow-up job must still exist in the DB
 		// (not lost across the restart).
-		const followUpAfter = getJobById(daemon2, followUpId);
+		const followUpAfter = getJobById(h2.ctx, followUpId);
 		expect(followUpAfter).toBeDefined();
 
 		// Chain continuity: at least one pending poll job exists (either the
 		// preserved follow-up or a newly self-scheduled one).
-		const pendingAfter = daemon2.jobQueue.listJobs({
+		const pendingAfter = h2.ctx.jobQueue.listJobs({
 			queue: GITHUB_POLL,
 			status: ['pending'],
 		});
 		expect(pendingAfter.length).toBeGreaterThanOrEqual(1);
 
-		await stopDaemon(daemon2);
+		await stopDaemon(h2);
 	}, 30_000);
 
 	// -------------------------------------------------------------------------
@@ -382,33 +438,31 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		const dbPath = path.join(TEST_DB_DIR, `room-tick-${Date.now()}.db`);
 
 		// --- Daemon-1: start and insert a stale tick job for a fake room ---
-		const daemon1 = await startDaemon(dbPath);
+		const h1 = await startDaemon(dbPath);
 
 		const fakeRoomId = `test-room-${crypto.randomUUID()}`;
 
 		// Insert a stale room.tick job to simulate a crash mid-tick.
-		const staleTick = insertStaleProcessingJob(daemon1, ROOM_TICK, {
-			roomId: fakeRoomId,
-		});
+		const staleTick = insertStaleProcessingJob(h1, ROOM_TICK, { roomId: fakeRoomId });
 
 		// Verify the stale tick is visible as 'processing' before stopping.
-		const processingBefore = daemon1.jobQueue.listJobs({
+		const processingBefore = h1.ctx.jobQueue.listJobs({
 			queue: ROOM_TICK,
 			status: ['processing'],
 		});
 		expect(processingBefore.some((j) => j.id === staleTick)).toBe(true);
 
-		await stopDaemon(daemon1);
+		await stopDaemon(h1);
 
 		// --- Daemon-2: restart ---
-		const daemon2 = await startDaemon(dbPath);
+		const h2 = await startDaemon(dbPath);
 
 		// Eager reclamation moves the job from 'processing' to 'pending', and
 		// the processor immediately picks it up.  The handler will not find a
-		// live runtime for fakeRoomId so it exits cleanly.
-		// Key assertion: job must NOT stay stuck in 'processing'.
+		// live runtime for fakeRoomId so it exits cleanly (no self-reschedule).
+		// Key assertion: job must NOT stay stuck in stale 'processing'.
 		const result = await waitForJobById(
-			daemon2,
+			h2.ctx,
 			ROOM_TICK,
 			staleTick,
 			['completed', 'failed', 'dead'],
@@ -417,7 +471,7 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		expect(result).toBeDefined();
 		expect(['completed', 'failed', 'dead']).toContain(result!.status);
 
-		await stopDaemon(daemon2);
+		await stopDaemon(h2);
 	}, 30_000);
 
 	// -------------------------------------------------------------------------
@@ -428,34 +482,34 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		const dbPath = path.join(TEST_DB_DIR, `cleanup-job-${Date.now()}.db`);
 
 		// --- Daemon-1: start, let it enqueue the initial cleanup job, then crash ---
-		const daemon1 = await startDaemon(dbPath);
+		const h1 = await startDaemon(dbPath);
 
 		// app.ts enqueues the initial cleanup job at startup if none exists.
-		const initialCleanup = daemon1.jobQueue.listJobs({
+		const initialCleanup = h1.ctx.jobQueue.listJobs({
 			queue: JOB_QUEUE_CLEANUP,
 			status: ['pending', 'processing', 'completed'],
 		});
 		expect(initialCleanup.length).toBeGreaterThanOrEqual(1);
 
 		// Simulate a crash: insert a stale processing cleanup job.
-		const staleCleanupId = insertStaleProcessingJob(daemon1, JOB_QUEUE_CLEANUP);
+		const staleCleanupId = insertStaleProcessingJob(h1, JOB_QUEUE_CLEANUP);
 
 		// Verify it shows up as 'processing' before stopping.
-		const before = daemon1.jobQueue.listJobs({
+		const before = h1.ctx.jobQueue.listJobs({
 			queue: JOB_QUEUE_CLEANUP,
 			status: ['processing'],
 		});
 		expect(before.some((j) => j.id === staleCleanupId)).toBe(true);
 
-		await stopDaemon(daemon1);
+		await stopDaemon(h1);
 
 		// --- Daemon-2: restart ---
-		const daemon2 = await startDaemon(dbPath);
+		const h2 = await startDaemon(dbPath);
 
 		// Eager reclamation: the stale cleanup job is reclaimed and processed.
 		// The cleanup handler completes successfully (no old jobs to delete yet).
 		const completed = await waitForJobById(
-			daemon2,
+			h2.ctx,
 			JOB_QUEUE_CLEANUP,
 			staleCleanupId,
 			['completed'],
@@ -465,14 +519,23 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		expect(completed!.status).toBe('completed');
 
 		// After completion, the cleanup handler self-schedules the next run.
-		const nextCleanup = await waitForJob(daemon2, JOB_QUEUE_CLEANUP, ['pending']);
+		// Accept 'pending' or 'processing' — the processor may have picked it up
+		// already by the time waitForJob polls.
+		const nextCleanup = await waitForJob(
+			h2.ctx,
+			JOB_QUEUE_CLEANUP,
+			['pending', 'processing'],
+			JOB_WAIT_TIMEOUT_MS
+		);
 		expect(nextCleanup).toBeDefined();
 
-		// The next cleanup job should be scheduled ~24 h in the future.
+		// The next cleanup job must be a *different* job (not the stale one that
+		// just ran) and must be scheduled ~24 h in the future.
+		expect(nextCleanup!.id).not.toBe(staleCleanupId);
 		const minExpected = Date.now() + 23 * 60 * 60 * 1000; // 23 h from now
 		expect(nextCleanup!.runAt).toBeGreaterThan(minExpected);
 
-		await stopDaemon(daemon2);
+		await stopDaemon(h2);
 	}, 30_000);
 
 	// -------------------------------------------------------------------------
@@ -483,35 +546,35 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		const dbPath = path.join(TEST_DB_DIR, `eager-reclaim-${Date.now()}.db`);
 
 		// --- Daemon-1: create stale jobs then stop ---
-		const daemon1 = await startDaemon(dbPath);
+		const h1 = await startDaemon(dbPath);
 
 		const staleIds = [
-			insertStaleProcessingJob(daemon1, SESSION_TITLE_GENERATION, {
+			insertStaleProcessingJob(h1, SESSION_TITLE_GENERATION, {
 				sessionId: 'eager-test-1',
 				userMessageText: 'msg1',
 			}),
-			insertStaleProcessingJob(daemon1, JOB_QUEUE_CLEANUP),
+			insertStaleProcessingJob(h1, JOB_QUEUE_CLEANUP),
 		];
 
 		// Verify all stale jobs are 'processing' in daemon-1.
-		const processing1 = daemon1.jobQueue.listJobs({ status: ['processing'] });
+		const processing1 = h1.ctx.jobQueue.listJobs({ status: ['processing'] });
 		for (const id of staleIds) {
 			expect(processing1.some((j) => j.id === id)).toBe(true);
 		}
 
-		await stopDaemon(daemon1);
+		await stopDaemon(h1);
 
 		// --- Daemon-2: restart ---
 		// jobProcessor.start() calls reclaimStale() synchronously BEFORE the
-		// first poll tick fires.  So reclamation must already have happened
-		// by the time createDaemonApp() resolves.
-		const daemon2 = await startDaemon(dbPath);
+		// first poll tick fires.  So reclamation must already have happened by
+		// the time createDaemonApp() resolves.
+		const h2 = await startDaemon(dbPath);
 
-		// None of the stale IDs should still be stuck as 'processing' (with
-		// old stale startedAt values).  They must have been either reclaimed
-		// to 'pending' or (if the processor ran very fast) already moved to
-		// a terminal state.
-		const stillStuckProcessing = daemon2.jobQueue
+		// None of the stale IDs should still be stuck as 'processing' with
+		// the old stale startedAt timestamp (> 5 min ago).  They must have been
+		// either reclaimed to 'pending', dequeued to fresh 'processing', or
+		// already moved to a terminal state.
+		const stillStuckProcessing = h2.ctx.jobQueue
 			.listJobs({ status: ['processing'] })
 			.filter(
 				(j) =>
@@ -521,33 +584,24 @@ describe('Job queue crash/restart recovery (integration)', () => {
 			);
 		expect(stillStuckProcessing.length).toBe(0);
 
-		// Each stale job should eventually reach a non-stuck state.
+		// Each stale job should eventually reach a non-stuck terminal state.
 		for (const id of staleIds) {
 			const final = await (async () => {
 				const deadline = Date.now() + JOB_WAIT_TIMEOUT_MS;
 				while (Date.now() < deadline) {
-					const job = getJobById(daemon2, id);
-					if (job && ['pending', 'completed', 'failed', 'dead'].includes(job.status)) {
+					const job = getJobById(h2.ctx, id);
+					if (job && ['completed', 'failed', 'dead'].includes(job.status)) {
 						return job;
-					}
-					// Still in 'processing' with a fresh startedAt (not stale) — that's fine.
-					if (
-						job &&
-						job.status === 'processing' &&
-						job.startedAt !== null &&
-						job.startedAt > Date.now() - 5 * 60 * 1000
-					) {
-						// Being processed right now — wait for it to finish.
 					}
 					await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
 				}
-				return getJobById(daemon2, id);
+				return getJobById(h2.ctx, id);
 			})();
 			expect(final).toBeDefined();
-			expect(['pending', 'completed', 'failed', 'dead']).toContain(final!.status);
+			expect(['completed', 'failed', 'dead']).toContain(final!.status);
 		}
 
-		await stopDaemon(daemon2);
+		await stopDaemon(h2);
 	}, 30_000);
 
 	// -------------------------------------------------------------------------
@@ -558,10 +612,10 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		const dbPath = path.join(TEST_DB_DIR, `file-backed-${Date.now()}.db`);
 
 		// --- Daemon-1: enqueue a future pending job then stop ---
-		const daemon1 = await startDaemon(dbPath);
+		const h1 = await startDaemon(dbPath);
 
 		const futureRunAt = Date.now() + 60 * 60 * 1000; // 1 h from now
-		const enqueuedJob = daemon1.jobQueue.enqueue({
+		const enqueuedJob = h1.ctx.jobQueue.enqueue({
 			queue: SESSION_TITLE_GENERATION,
 			payload: { sessionId: 'persist-test', userMessageText: 'hello' },
 			runAt: futureRunAt,
@@ -570,13 +624,13 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		expect(enqueuedJob.id).toBeTruthy();
 		expect(enqueuedJob.status).toBe('pending');
 
-		await stopDaemon(daemon1);
+		await stopDaemon(h1);
 
 		// --- Daemon-2: restart ---
-		const daemon2 = await startDaemon(dbPath);
+		const h2 = await startDaemon(dbPath);
 
 		// The job enqueued by daemon-1 must survive in the file-backed DB.
-		const jobs = daemon2.jobQueue.listJobs({
+		const jobs = h2.ctx.jobQueue.listJobs({
 			queue: SESSION_TITLE_GENERATION,
 			status: ['pending'],
 		});
@@ -586,6 +640,6 @@ describe('Job queue crash/restart recovery (integration)', () => {
 		// runAt must not be corrupted across restart.
 		expect(Math.abs(found.runAt - futureRunAt)).toBeLessThan(1000);
 
-		await stopDaemon(daemon2);
+		await stopDaemon(h2);
 	}, 30_000);
 });
