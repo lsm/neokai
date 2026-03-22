@@ -3,6 +3,7 @@
  *
  * Admin-oriented RPC handlers for session group management:
  * - space.sessionGroup.list         - List all groups for a space
+ * - space.sessionGroup.create       - Create a group with optional initial members (test/admin)
  * - space.sessionGroup.updateMember - Force-update a member's status (admin / stuck recovery)
  * - space.sessionGroup.delete       - Delete a stuck / orphaned group
  */
@@ -36,6 +37,74 @@ export function setupSpaceSessionGroupHandlers(
 
 		const groups = sessionGroupRepo.getGroupsBySpace(params.spaceId);
 		return { groups };
+	});
+
+	// ─── space.sessionGroup.create ───────────────────────────────────────────────
+	// Admin / test-infrastructure operation: create a session group with optional members.
+	// Used by E2E tests to inject session group state without running real agents.
+	messageHub.onRequest('space.sessionGroup.create', async (data) => {
+		const params = data as {
+			spaceId: string;
+			name: string;
+			taskId?: string;
+			members?: Array<{
+				sessionId: string;
+				role: string;
+				agentId?: string;
+				status?: 'active' | 'completed' | 'failed';
+			}>;
+		};
+
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.name) throw new Error('name is required');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		const group = sessionGroupRepo.createGroup({
+			spaceId: params.spaceId,
+			name: params.name,
+			taskId: params.taskId,
+		});
+
+		await daemonHub
+			.emit('spaceSessionGroup.created', {
+				sessionId: `space:${params.spaceId}`,
+				spaceId: params.spaceId,
+				taskId: params.taskId ?? '',
+				group,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit spaceSessionGroup.created:', err);
+			});
+
+		const members = [];
+		for (let i = 0; i < (params.members ?? []).length; i++) {
+			const m = params.members![i];
+			const member = sessionGroupRepo.addMember(group.id, m.sessionId, {
+				role: m.role,
+				agentId: m.agentId,
+				status: m.status ?? 'active',
+				orderIndex: i,
+			});
+			members.push(member);
+
+			await daemonHub
+				.emit('spaceSessionGroup.memberAdded', {
+					sessionId: `space:${params.spaceId}`,
+					spaceId: params.spaceId,
+					groupId: group.id,
+					member,
+				})
+				.catch((err) => {
+					log.warn('Failed to emit spaceSessionGroup.memberAdded:', err);
+				});
+		}
+
+		const fullGroup = sessionGroupRepo.getGroup(group.id)!;
+		return { group: fullGroup };
 	});
 
 	// ─── space.sessionGroup.updateMember ─────────────────────────────────────────
