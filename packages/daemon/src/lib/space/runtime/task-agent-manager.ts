@@ -505,6 +505,12 @@ export class TaskAgentManager {
 	 * WorkflowExecutors are loaded, so executors are ready when Task Agents run.
 	 */
 	async rehydrate(): Promise<void> {
+		// Rebuild the taskId → groupId map from all active groups before rehydrating
+		// individual Task Agent sessions. This ensures the map is fully populated even
+		// for tasks whose session rehydration fails, and covers all active groups in one
+		// indexed query rather than N per-task queries.
+		this.rehydrateGroupMaps();
+
 		const activeTasks = this.config.taskRepo.listActiveWithTaskAgentSession();
 
 		let attempted = 0;
@@ -805,8 +811,39 @@ export class TaskAgentManager {
 	}
 
 	// -------------------------------------------------------------------------
-	// Private — rehydration helper
+	// Private — rehydration helpers
 	// -------------------------------------------------------------------------
+
+	/**
+	 * Rebuild the `taskId → groupId` in-memory map from all active groups in the DB.
+	 *
+	 * Queries `space_session_groups` for every row with `status = 'active'` and a
+	 * non-null `task_id`. Groups without a `task_id`
+	 * (standalone groups) are silently skipped — there is no taskId key to map.
+	 * Groups with no active members are still valid and are included.
+	 *
+	 * Existing map entries are NOT overwritten: if a fresh `spawnTaskAgent()` call
+	 * already populated `taskGroupIds` before `rehydrate()` runs, that value takes
+	 * precedence over the DB row (the in-memory value is always the most recent).
+	 *
+	 * This method is synchronous and performs a single DB read. It is called at the
+	 * start of `rehydrate()` so the full map is available before individual Task Agent
+	 * sessions are restored.
+	 */
+	private rehydrateGroupMaps(): void {
+		const activeGroups = this.config.sessionGroupRepo.listActiveGroupsWithTaskId();
+		let restored = 0;
+		for (const { id, taskId } of activeGroups) {
+			// Don't overwrite if already populated by a concurrent spawnTaskAgent()
+			if (!this.taskGroupIds.has(taskId)) {
+				this.taskGroupIds.set(taskId, id);
+				restored++;
+			}
+		}
+		log.info(
+			`TaskAgentManager.rehydrateGroupMaps: restored ${restored}/${activeGroups.length} active group mappings`
+		);
+	}
 
 	/**
 	 * Rehydrate a single Task Agent session after daemon restart.
@@ -949,12 +986,6 @@ export class TaskAgentManager {
 				}
 				this.subSessions.get(taskId)!.set(subSessionId, subSession);
 			}
-		}
-
-		// --- Restore taskGroupIds from DB so getTaskGroupId() works after restart
-		const existingGroups = this.config.sessionGroupRepo.getGroupsByTask(spaceId, taskId);
-		if (existingGroups.length > 0) {
-			this.taskGroupIds.set(taskId, existingGroups[0].id);
 		}
 
 		log.info(
