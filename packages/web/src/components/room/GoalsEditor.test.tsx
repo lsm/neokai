@@ -54,7 +54,9 @@ describe('GoalsEditor', () => {
 		it('should render "Create Mission" button', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateMission = Array.from(buttons).some((btn) => btn.textContent === 'Create Mission');
+			const hasCreateMission = Array.from(buttons).some(
+				(btn) => btn.textContent === 'Create Mission'
+			);
 			expect(hasCreateMission).toBe(true);
 		});
 	});
