@@ -357,17 +357,42 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					if (runtime) {
 						const group = groupRepo.getGroupByTaskId(args.task_id);
 						if (group && group.completedAt === null) {
-							// There's an active group - cancel it first if moving to terminal state
-							if (
-								args.status === 'completed' ||
-								args.status === 'needs_attention' ||
-								args.status === 'cancelled'
-							) {
-								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
-								if (!cancelledGroup) {
+							if (args.status === 'cancelled') {
+								// Use runtime.cancelTask() which properly handles group termination
+								// AND cascades the cancellation to pending dependent tasks.
+								const cancelResult = await runtime.cancelTask(args.task_id);
+								if (!cancelResult.success) {
 									return jsonResult({
 										success: false,
-										error: `Failed to cancel active group for task ${args.task_id} — group may have been modified concurrently`,
+										error: `Failed to cancel task ${args.task_id} — runtime cancellation was unsuccessful`,
+									});
+								}
+								// cancelTask already set status and emitted task updates; emit UI updates and return
+								if (daemonHub) {
+									for (const cancelledId of cancelResult.cancelledTaskIds) {
+										const cancelledTask = await taskManager.getTask(cancelledId);
+										if (cancelledTask) {
+											void daemonHub.emit('room.task.update', {
+												sessionId: `room:${roomId}`,
+												roomId,
+												task: cancelledTask,
+											});
+										}
+									}
+								}
+								return jsonResult({
+									success: true,
+									message: `Task ${args.task_id} cancelled successfully.`,
+								});
+							} else if (args.status === 'completed' || args.status === 'needs_attention') {
+								// Terminate the group WITHOUT cascading cancellation to pending dependent tasks.
+								// Only cancellation of a dependency should affect dependents — completing or
+								// marking a task as needs_attention should leave dependents untouched.
+								const terminated = await runtime.terminateTaskGroup(args.task_id);
+								if (!terminated) {
+									return jsonResult({
+										success: false,
+										error: `Failed to terminate active group for task ${args.task_id} — group may have been modified concurrently`,
 									});
 								}
 							}

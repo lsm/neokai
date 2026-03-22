@@ -15,6 +15,7 @@ import { MessageHub } from '@neokai/shared';
 import type { NeoTask } from '@neokai/shared';
 import { setupTaskHandlers } from '../../../src/lib/rpc-handlers/task-handlers';
 import type { TaskManagerFactory } from '../../../src/lib/rpc-handlers/task-handlers';
+import { VALID_STATUS_TRANSITIONS } from '../../../src/lib/room/managers/task-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { RoomRuntimeService } from '../../../src/lib/room/runtime/room-runtime-service';
 import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
@@ -807,10 +808,26 @@ describe('task.setStatus RPC Handler', () => {
 			listTasks: mock(async () => []),
 			failTask: mock(async () => task!),
 			cancelTask: mock(async () => ({ ...task!, status: 'cancelled' as const })),
-			setTaskStatus: mock(async (_id: string, status: string, _opts?: unknown) => ({
-				...task!,
-				status: status as NeoTask['status'],
-			})),
+			setTaskStatus: mock(async (_id: string, status: string, opts?: { mode?: string }) => {
+				// Validate transition like the real manager (single source of truth)
+				if (
+					opts?.mode !== 'manual' &&
+					!VALID_STATUS_TRANSITIONS[task!.status]?.includes(status as NeoTask['status'])
+				) {
+					throw new Error(`Invalid status transition from '${task!.status}' to '${status}'.`);
+				}
+				return { ...task!, status: status as NeoTask['status'] };
+			}),
+			archiveTask: mock(async (_id: string, opts?: { mode?: string }) => {
+				// Validate archival like the real manager (single source of truth)
+				if (
+					opts?.mode !== 'manual' &&
+					!VALID_STATUS_TRANSITIONS[task!.status]?.includes('archived' as NeoTask['status'])
+				) {
+					throw new Error(`Invalid status transition from '${task!.status}' to 'archived'.`);
+				}
+				return { ...task!, status: 'archived' as const };
+			}),
 		};
 		return mock(() => manager);
 	}
@@ -1094,7 +1111,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			await getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {});
 
-			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1', undefined);
 		});
 
 		it('emits task update and room overview after archiving via runtime', async () => {
@@ -1131,7 +1148,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			expect(
 				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
-			).toHaveBeenCalledWith('task-1');
+			).toHaveBeenCalledWith('task-1', undefined);
 		});
 
 		it('calls taskManager.archiveTask when runtime has no runtime for room', async () => {
@@ -1147,7 +1164,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			expect(
 				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
-			).toHaveBeenCalledWith('task-1');
+			).toHaveBeenCalledWith('task-1', undefined);
 		});
 
 		it('throws for invalid transition from in_progress to archived', async () => {
@@ -1157,6 +1174,76 @@ describe('task.setStatus RPC Handler', () => {
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {})
 			).rejects.toThrow('Invalid status transition');
+		});
+	});
+
+	describe('manual mode', () => {
+		it('allows invalid transitions when mode is manual', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+
+			// pending → completed is invalid in runtime mode but allowed in manual mode
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'manual' },
+				{}
+			);
+			expect(result).toEqual({ task: { ...pendingTask, status: 'completed' } });
+		});
+
+		it('allows archived → pending transition in manual mode', async () => {
+			const archivedTask = { ...mockTask, status: 'archived' as const };
+			setup({ task: archivedTask, runtimeService: makeNullRuntimeService() });
+
+			// archived → pending is normally terminal (no transitions), but manual mode allows it
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'pending', mode: 'manual' },
+				{}
+			);
+			expect(result).toEqual({ task: { ...archivedTask, status: 'pending' } });
+		});
+
+		it('still enforces transitions in runtime mode (explicitly)', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+
+			await expect(
+				getHandler()(
+					{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'runtime' },
+					{}
+				)
+			).rejects.toThrow('Invalid status transition');
+		});
+
+		it('still enforces transitions when mode is not provided (default runtime behavior)', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
+			).rejects.toThrow('Invalid status transition');
+		});
+
+		it('passes mode to setTaskStatus', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			const factory = makeSetStatusTaskManagerFactory(pendingTask);
+			setup({
+				task: pendingTask,
+				runtimeService: makeNullRuntimeService(),
+				taskManagerFactory: factory,
+			});
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'manual' },
+				{}
+			);
+
+			// Verify that setTaskStatus was called with mode: 'manual'
+			const taskManagerInstance = (factory as ReturnType<typeof mock>).mock.results[0].value;
+			expect(taskManagerInstance.setTaskStatus).toHaveBeenCalledWith(
+				'task-1',
+				'completed',
+				expect.objectContaining({ mode: 'manual' })
+			);
 		});
 	});
 });

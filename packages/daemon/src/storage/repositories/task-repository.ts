@@ -182,6 +182,10 @@ export class TaskRepository {
 			fields.push('pr_created_at = ?');
 			values.push(params.prCreatedAt ?? null);
 		}
+		if (params.archivedAt !== undefined) {
+			fields.push('archived_at = ?');
+			values.push(params.archivedAt ?? null);
+		}
 		if (params.inputDraft !== undefined) {
 			fields.push('input_draft = ?');
 			values.push(params.inputDraft ?? null);

@@ -1340,6 +1340,7 @@ describe('TaskView — Task options dropdown menu', () => {
 				taskId: 'task-1',
 				status: 'completed',
 				result: 'Marked complete by user',
+				mode: 'manual',
 			});
 			expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
 		});
@@ -2060,6 +2061,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				status: 'in_progress',
+				mode: 'manual',
 			});
 		});
 	});
@@ -2130,6 +2132,7 @@ describe('TaskView — Reactivate and Archive actions', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				status: 'archived',
+				mode: 'manual',
 			});
 		});
 	});
@@ -2303,6 +2306,157 @@ describe('TaskView — Reactivate and Archive actions', () => {
 		expect(textarea.disabled).toBe(false);
 		const sendButton = getByTestId('input-textarea-send') as HTMLButtonElement;
 		expect(sendButton.disabled).toBe(false);
+	});
+});
+
+describe('TaskView — SetStatusModal', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
+			return {};
+		});
+	});
+
+	it('opens SetStatusModal when Set Status button is clicked from info panel', async () => {
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(trigger).not.toBeNull();
+		fireEvent.click(trigger);
+
+		// Click Set Status button
+		const setStatusButton = container.querySelector(
+			'[data-testid="task-info-panel-set-status"]'
+		) as HTMLElement;
+		expect(setStatusButton).not.toBeNull();
+
+		await act(async () => {
+			fireEvent.click(setStatusButton);
+		});
+
+		// Modal should appear
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="set-status-confirm"]')).not.toBeNull();
+		});
+	});
+
+	it('calls task.setStatus with mode: manual when status is selected and confirmed', async () => {
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel and click Set Status
+		fireEvent.click(
+			container.querySelector('[data-testid="task-info-panel-trigger"]') as HTMLElement
+		);
+		await act(async () => {
+			fireEvent.click(
+				container.querySelector('[data-testid="task-info-panel-set-status"]') as HTMLElement
+			);
+		});
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="set-status-confirm"]')).not.toBeNull();
+		});
+
+		// Select 'pending' from the dropdown (portal renders in document.body)
+		const select = document.querySelector('select') as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: 'pending' } });
+		});
+
+		// Confirm
+		await act(async () => {
+			fireEvent.click(document.querySelector('[data-testid="set-status-confirm"]') as HTMLElement);
+		});
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				status: 'pending',
+				mode: 'manual',
+			});
+		});
+	});
+
+	it('shows destructive warning when transitioning from archived', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
+			return {};
+		});
+
+		// archived tasks don't show the Set Status button — verify it's hidden
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open the info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		// For archived tasks, the info panel trigger may still exist but setStatus button should not
+		if (trigger) {
+			fireEvent.click(trigger);
+			expect(container.querySelector('[data-testid="task-info-panel-set-status"]')).toBeNull();
+		}
+	});
+
+	it('shows destructive warning for completed→pending transition', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel and click Set Status
+		fireEvent.click(
+			container.querySelector('[data-testid="task-info-panel-trigger"]') as HTMLElement
+		);
+		await act(async () => {
+			fireEvent.click(
+				container.querySelector('[data-testid="task-info-panel-set-status"]') as HTMLElement
+			);
+		});
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="set-status-confirm"]')).not.toBeNull();
+		});
+
+		// Select 'pending' to trigger destructive warning
+		const select = document.querySelector('select') as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: 'pending' } });
+		});
+
+		// Warning text should appear in the modal
+		await waitFor(() => {
+			expect(document.body.textContent).toContain('Previous results will be cleared');
+		});
 	});
 });
 

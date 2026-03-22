@@ -53,18 +53,21 @@ export interface TaskInfoPanelProps {
 		onComplete?: () => void;
 		onCancel?: () => void;
 		onArchive?: () => void;
+		onSetStatus?: () => void;
 	};
 	/** Whether each action should be shown (context-aware) */
 	visibleActions: {
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
+		setStatus?: boolean;
 	};
 	/** Whether each action is disabled */
 	disabledActions?: {
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
+		setStatus?: boolean;
 	};
 }
 
@@ -91,7 +94,10 @@ export function TaskInfoPanel({
 		null;
 
 	const hasVisibleActions =
-		visibleActions.complete || visibleActions.cancel || visibleActions.archive;
+		visibleActions.complete ||
+		visibleActions.cancel ||
+		visibleActions.archive ||
+		visibleActions.setStatus;
 
 	return (
 		<div
@@ -235,6 +241,26 @@ export function TaskInfoPanel({
 										/>
 									</svg>
 									Archive
+								</button>
+							)}
+
+							{visibleActions.setStatus && actions.onSetStatus && (
+								<button
+									type="button"
+									onClick={actions.onSetStatus}
+									disabled={disabledActions?.setStatus}
+									data-testid="task-info-panel-set-status"
+									class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 text-gray-400 hover:text-blue-400 hover:border-blue-700/60"
+								>
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4 6h16M4 12h8m-8 6h16"
+										/>
+									</svg>
+									Set Status
 								</button>
 							)}
 						</div>

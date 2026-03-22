@@ -1757,7 +1757,10 @@ export class RoomRuntime {
 	 * 2. Cleans up the worktree to free disk space.
 	 * 3. Sets the task status to 'archived' with archivedAt timestamp.
 	 */
-	async archiveTaskGroup(taskId: string): Promise<boolean> {
+	async archiveTaskGroup(
+		taskId: string,
+		options?: { mode?: 'runtime' | 'manual' }
+	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 
 		if (group) {
@@ -1784,7 +1787,7 @@ export class RoomRuntime {
 		}
 
 		// Set archivedAt timestamp on task (transitions to 'archived' status)
-		await this.taskManager.archiveTask(taskId);
+		await this.taskManager.archiveTask(taskId, { mode: options?.mode });
 
 		return true;
 	}
