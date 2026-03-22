@@ -39,9 +39,9 @@ describe('GoalsEditor', () => {
 	};
 
 	describe('Rendering', () => {
-		it('should render the Goals header', () => {
+		it('should render the Missions header', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('Goals');
+			expect(container.textContent).toContain('Missions');
 		});
 
 		it('should display goal count badge', () => {
@@ -51,27 +51,29 @@ describe('GoalsEditor', () => {
 			expect(badge?.textContent).toBe('2');
 		});
 
-		it('should render "Create Goal" button', () => {
+		it('should render "Create Mission" button', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Goal');
-			expect(hasCreateGoal).toBe(true);
+			const hasCreateMission = Array.from(buttons).some(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			expect(hasCreateMission).toBe(true);
 		});
 	});
 
 	describe('Empty State', () => {
-		it('should show empty state when no goals', () => {
+		it('should show empty state when no missions', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('No goals yet');
+			expect(container.textContent).toContain('No missions yet');
 		});
 
-		it('should have create goal button in empty state', () => {
+		it('should have create mission button in empty state', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) =>
-				btn.textContent?.includes('first goal')
+			const hasCreateMission = Array.from(buttons).some((btn) =>
+				btn.textContent?.includes('first mission')
 			);
-			expect(hasCreateGoal).toBe(true);
+			expect(hasCreateMission).toBe(true);
 		});
 	});
 
@@ -464,7 +466,7 @@ describe('GoalsEditor', () => {
 		/** Helper: open the create modal and navigate to step 1 */
 		const openCreateModal = (container: Element) => {
 			const createButton = Array.from(container.querySelectorAll('button')).find(
-				(btn) => btn.textContent === 'Create Goal'
+				(btn) => btn.textContent === 'Create Mission'
 			);
 			fireEvent.click(createButton!);
 		};

@@ -204,7 +204,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								}`}
 								onClick={() => handleTabChange('goals')}
 							>
-								Goals
+								Missions
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${

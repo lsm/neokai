@@ -126,7 +126,7 @@ export interface RPCHandlerSetupResult {
  */
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
 	// Room handlers (create roomManager first as session handlers depend on it)
-	const roomManager = new RoomManager(deps.db.getDatabase());
+	const roomManager = new RoomManager(deps.db.getDatabase(), deps.reactiveDb);
 
 	// Create factory function for per-room goal managers
 	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {

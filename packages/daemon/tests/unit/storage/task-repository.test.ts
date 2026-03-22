@@ -15,6 +15,7 @@ import type {
 	TaskPriority,
 	TaskFilter,
 } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 describe('TaskRepository', () => {
 	let db: Database;
@@ -52,7 +53,7 @@ describe('TaskRepository', () => {
 			CREATE INDEX idx_tasks_room ON tasks(room_id);
 			CREATE INDEX idx_tasks_status ON tasks(status);
 		`);
-		repository = new TaskRepository(db as any);
+		repository = new TaskRepository(db, noOpReactiveDb);
 	});
 
 	afterEach(() => {

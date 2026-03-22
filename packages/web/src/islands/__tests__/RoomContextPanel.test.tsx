@@ -298,7 +298,7 @@ describe('RoomContextPanel', () => {
 			makeGoal('g3', 'Archived Goal', [], 'archived'),
 		];
 		render(<RoomContextPanel roomId="room-1" />);
-		expect(screen.getByText('Goals')).toBeTruthy();
+		expect(screen.getByText('Missions')).toBeTruthy();
 		// Count matches active goals (excludes archived)
 		expect(screen.getByText('(2)')).toBeTruthy();
 	});
@@ -369,9 +369,9 @@ describe('RoomContextPanel', () => {
 		expect(taskBtn?.className).toContain('bg-dark-700');
 	});
 
-	it('shows "No goals" when goal list is empty', () => {
+	it('shows "No missions" when mission list is empty', () => {
 		render(<RoomContextPanel roomId="room-1" />);
-		expect(screen.getByText('No goals')).toBeTruthy();
+		expect(screen.getByText('No missions')).toBeTruthy();
 	});
 
 	// -- Goals section: completed tasks toggle --

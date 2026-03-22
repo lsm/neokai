@@ -48,7 +48,7 @@ export class GoalManager {
 		reactiveDb: ReactiveDatabase
 	) {
 		this.goalRepo = new GoalRepository(db, reactiveDb);
-		this.taskRepo = new TaskRepository(db);
+		this.taskRepo = new TaskRepository(db, reactiveDb);
 	}
 
 	/**

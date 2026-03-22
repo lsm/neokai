@@ -196,9 +196,8 @@ export function setupTaskHandlers(
 		const draft = typeof params.draft === 'string' ? params.draft.trim() || null : null;
 
 		// Update input_draft directly via repository (lightweight, no status side effects)
-		const taskRepo = new TaskRepository(db.getDatabase());
+		const taskRepo = new TaskRepository(db.getDatabase(), reactiveDb);
 		taskRepo.updateTask(params.taskId, { inputDraft: draft });
-		reactiveDb.notifyChange('tasks');
 
 		return { success: true };
 	});
