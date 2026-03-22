@@ -300,12 +300,6 @@ describe('Job queue crash recovery (online)', () => {
 		const daemon1 = await createDaemonServer({ env: GITHUB_TEST_ENV, dbPath });
 		const ctx1 = getDaemonCtx(daemon1);
 
-		// Stub triggerPoll to prevent any real GitHub API requests on daemon-1.
-		const pollingService1 = ctx1.gitHubService?.getPollingService();
-		if (pollingService1) {
-			pollingService1.triggerPoll = async () => {};
-		}
-
 		// Insert a stale github.poll processing job (simulating crash mid-poll).
 		const staleJobId = insertStaleProcessingJob(ctx1, GITHUB_POLL, {}, 3);
 
@@ -319,11 +313,18 @@ describe('Job queue crash recovery (online)', () => {
 		const daemon2 = await createDaemonServer({ env: GITHUB_TEST_ENV, dbPath });
 		const ctx2 = getDaemonCtx(daemon2);
 
-		// Stub triggerPoll on daemon-2 to prevent real GitHub API requests.
-		const pollingService2 = ctx2.gitHubService?.getPollingService();
-		if (pollingService2) {
-			pollingService2.triggerPoll = async () => {};
-		}
+		// No triggerPoll stub is set here — and none is needed.
+		//
+		// Setting a stub *after* createDaemonServer() returns would be racy:
+		// JobQueueProcessor.start() calls reclaimStale() and immediately fires
+		// tick(), which dequeues the reclaimed job synchronously.  By the time
+		// this code runs, the job handler may have already called triggerPoll().
+		//
+		// The stub is intentionally omitted because it is not required for test
+		// correctness: no repositories are registered in this test environment,
+		// so GitHubPollingService.triggerPoll() → pollAllRepositories() is a
+		// no-op regardless.  Any errors from triggerPoll() are caught inside
+		// handleGitHubPoll() and do not affect job completion.
 
 		// EAGER RECLAMATION: stale job must leave 'processing' within 5 s.
 		await assertEagerReclaim(ctx2, staleJobId, GITHUB_POLL);
@@ -395,17 +396,29 @@ describe('Job queue crash recovery (online)', () => {
 		expect(completedTick).toBeDefined();
 		expect(completedTick!.status).toBe('completed');
 
-		// TICK LOOP RE-SEEDED: daemon-2 bootstraps tick jobs for all existing rooms
-		// on startup.  Confirm at least one room.tick job for this room exists
-		// (pending or completed), showing the tick chain is not permanently stalled.
-		const allTicks = ctx2.jobQueue.listJobs({
-			queue: ROOM_TICK,
-			status: ['pending', 'processing', 'completed'],
-		});
-		const forThisRoom = allTicks.filter(
-			(j) => (j.payload as { roomId?: string }).roomId === roomId
-		);
-		expect(forThisRoom.length).toBeGreaterThanOrEqual(1);
+		// TICK LOOP RE-SEEDED: daemon-2 bootstraps a *new* pending tick for every
+		// existing room on startup (via roomRuntimeService.start().then(seedAllRooms)).
+		// We verify a distinct pending tick — different from the stale job we already
+		// tracked — exists for this room.  This assertion would fail if the bootstrap
+		// seeding code were broken (the completed stale job would no longer satisfy it).
+		//
+		// The seeded tick has runAt = now + DEFAULT_TICK_INTERVAL_MS (30 s), so it
+		// remains in 'pending' state during the test window.
+		const RESEED_TIMEOUT_MS = 5_000;
+		const reseedDeadline = Date.now() + RESEED_TIMEOUT_MS;
+		let reseededTick: Job | undefined;
+		while (Date.now() < reseedDeadline) {
+			const pendingTicks = ctx2.jobQueue.listJobs({
+				queue: ROOM_TICK,
+				status: ['pending'],
+			});
+			reseededTick = pendingTicks.find(
+				(j) => (j.payload as { roomId?: string }).roomId === roomId && j.id !== staleJobId
+			);
+			if (reseededTick) break;
+			await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+		}
+		expect(reseededTick).toBeDefined();
 
 		await stopDaemon(daemon2);
 	}, 60_000);
