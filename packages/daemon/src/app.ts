@@ -259,6 +259,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		reactiveDb,
+		liveQueries,
 	});
 
 	// Create WebSocket handlers
