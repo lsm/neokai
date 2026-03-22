@@ -1336,10 +1336,11 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Step A has no channels — no _resolvedChannels yet
+		// Step A has no channels — _resolvedChannels is cleared to [] (not undefined)
+		// because storeResolvedChannels always writes the field to prevent stale topology.
 		const runAfterStart = workflowRunRepo.getRun(run.id)!;
 		const configAfterStart = (runAfterStart.config ?? {}) as Record<string, unknown>;
-		expect(configAfterStart._resolvedChannels).toBeUndefined();
+		expect(configAfterStart._resolvedChannels).toEqual([]);
 
 		// Advance to Step B (which has channels)
 		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });

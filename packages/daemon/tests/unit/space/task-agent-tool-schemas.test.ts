@@ -15,6 +15,8 @@ import {
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
+	ListGroupMembersSchema,
+	RelayMessageSchema,
 } from '../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
 // ---------------------------------------------------------------------------
@@ -274,19 +276,84 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 5 tool schemas', () => {
+	test('contains all 7 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
 		expect(keys).toContain('spawn_step_agent');
 		expect(keys).toContain('check_step_status');
 		expect(keys).toContain('advance_workflow');
 		expect(keys).toContain('report_result');
 		expect(keys).toContain('request_human_input');
-		expect(keys).toHaveLength(5);
+		expect(keys).toContain('list_group_members');
+		expect(keys).toContain('relay_message');
+		expect(keys).toHaveLength(7);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {
 		for (const schema of Object.values(TASK_AGENT_TOOL_SCHEMAS)) {
 			expect(typeof schema.safeParse).toBe('function');
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// list_group_members
+// ---------------------------------------------------------------------------
+
+describe('ListGroupMembersSchema', () => {
+	test('accepts empty object', () => {
+		const result = ListGroupMembersSchema.safeParse({});
+		expect(result.success).toBe(true);
+	});
+
+	test('accepts object with extra fields (passthrough)', () => {
+		// Zod strips extra fields by default — just verify it does not throw
+		const result = ListGroupMembersSchema.safeParse({ extra: 'ignored' });
+		expect(result.success).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// relay_message
+// ---------------------------------------------------------------------------
+
+describe('RelayMessageSchema', () => {
+	test('accepts valid input with target_session_id and message', () => {
+		const result = RelayMessageSchema.safeParse({
+			target_session_id: 'session-abc',
+			message: 'Hello, please review this PR.',
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.target_session_id).toBe('session-abc');
+			expect(result.data.message).toBe('Hello, please review this PR.');
+		}
+	});
+
+	test('rejects missing target_session_id', () => {
+		const result = RelayMessageSchema.safeParse({ message: 'hello' });
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects missing message', () => {
+		const result = RelayMessageSchema.safeParse({ target_session_id: 'session-abc' });
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects non-string target_session_id', () => {
+		const result = RelayMessageSchema.safeParse({ target_session_id: 123, message: 'hello' });
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects non-string message', () => {
+		const result = RelayMessageSchema.safeParse({
+			target_session_id: 'session-abc',
+			message: { text: 'object' },
+		});
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects empty object', () => {
+		const result = RelayMessageSchema.safeParse({});
+		expect(result.success).toBe(false);
 	});
 });
