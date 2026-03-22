@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { SessionInfo } from '@neokai/shared';
+import type { GroupMessage } from '../../types/group-message';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import {
 	useSessionQuestionState,
@@ -39,16 +40,6 @@ interface TaskMeta {
 	authorSessionId: string;
 	turnId: string;
 	iteration: number;
-}
-
-interface GroupMessage {
-	id: number;
-	groupId: string;
-	sessionId: string | null;
-	role: string;
-	messageType: string;
-	content: string;
-	createdAt: number;
 }
 
 interface TaskConversationRendererProps {
