@@ -361,5 +361,70 @@ describe('TurnSummaryBlock', () => {
 			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
 			expect(container.textContent).toContain('2m 5s');
 		});
+
+		it('shows 0s for zero duration', () => {
+			const turn = makeTurn({ startTime: 1_000_000, endTime: 1_000_000 });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			expect(container.textContent).toContain('0s');
+		});
+	});
+
+	// ── Accessibility ─────────────────────────────────────────────────────────
+
+	describe('accessibility', () => {
+		it('has role="button" on the root element', () => {
+			const { container } = render(<TurnSummaryBlock turn={makeTurn()} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root?.getAttribute('role')).toBe('button');
+		});
+
+		it('has tabIndex=0 for keyboard navigation', () => {
+			const { container } = render(<TurnSummaryBlock turn={makeTurn()} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]') as HTMLElement;
+			expect(root?.tabIndex).toBe(0);
+		});
+
+		it('does NOT call onClick for non-Enter/Space key presses', () => {
+			const onClickMock = vi.fn();
+			const turn = makeTurn();
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={onClickMock} />);
+			const root = container.querySelector('[data-testid="turn-block"]') as HTMLElement;
+			fireEvent.keyDown(root, { key: 'Escape' });
+			fireEvent.keyDown(root, { key: 'Tab' });
+			fireEvent.keyDown(root, { key: 'ArrowDown' });
+			expect(onClickMock).not.toHaveBeenCalled();
+		});
+
+		it('active indicator has aria-label="Active turn"', () => {
+			const turn = makeTurn({ isActive: true, endTime: null });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const indicator = container.querySelector('[data-testid="turn-block-active"]');
+			expect(indicator?.getAttribute('aria-label')).toBe('Active turn');
+		});
+	});
+
+	// ── Border class ──────────────────────────────────────────────────────────
+
+	describe('border class', () => {
+		it('applies role border class from ROLE_COLORS for coder', () => {
+			const turn = makeTurn({ agentRole: 'coder' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-l-blue-500');
+		});
+
+		it('applies role border class for leader', () => {
+			const turn = makeTurn({ agentRole: 'leader' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-l-purple-500');
+		});
+
+		it('falls back to gray border for unknown role', () => {
+			const turn = makeTurn({ agentRole: 'unknown-role', agentLabel: 'Unknown' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-l-gray-500');
+		});
 	});
 });
