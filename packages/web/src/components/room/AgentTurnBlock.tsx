@@ -153,7 +153,7 @@ function NestedMessageRenderer({
 								messageColors.assistant.background,
 								messageColors.assistant.text,
 								borderRadius.message.bubble,
-								'max-w-[85%] md:max-w-[70%]'
+								'w-full'
 							)}
 						>
 							{isLast ? (
@@ -475,29 +475,19 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 			<div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
 				{/* Input section */}
 				{inputText && (
-					<div class="border-b border-blue-200 dark:border-blue-800 p-3">
-						<div class="border rounded-lg overflow-hidden bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
-							<div class="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20">
-								<svg
-									class="w-4 h-4 flex-shrink-0 text-blue-600 dark:text-blue-400"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
-								>
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-									/>
-								</svg>
-								<span class="text-sm font-semibold text-blue-900 dark:text-blue-100">User</span>
-							</div>
-							<div class="relative border-t border-blue-200 dark:border-blue-800">
-								<div class="p-3 bg-white dark:bg-gray-900">
-									<div class="text-sm text-blue-800 dark:text-blue-200 prose prose-sm dark:prose-invert max-w-full overflow-x-auto">
-										<MarkdownRenderer content={inputText} />
-									</div>
+					<div class="p-3">
+						<div class="flex justify-end">
+							<div
+								class={cn(
+									messageSpacing.user.bubble.combined,
+									messageColors.user.background,
+									messageColors.user.text,
+									borderRadius.message.bubble,
+									'max-w-[85%] md:max-w-[70%]'
+								)}
+							>
+								<div class="prose prose-sm max-w-full overflow-x-auto">
+									<MarkdownRenderer content={inputText} />
 								</div>
 							</div>
 						</div>
