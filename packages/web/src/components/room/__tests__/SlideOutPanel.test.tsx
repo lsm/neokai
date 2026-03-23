@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, act, waitFor } from '@testing-library/preact';
 import { SlideOutPanel } from '../SlideOutPanel';
+import { ReadonlySessionChat } from '../ReadonlySessionChat';
 
 // -------------------------------------------------------
 // Mocks
@@ -80,12 +81,15 @@ vi.mock('../../../hooks/useMessageMaps.ts', () => ({
 	}),
 }));
 
-// Mock sessionStore to spy on select
+// Mock sessionStore to spy on select — value starts null and must stay null
 const mockSessionStoreSelect = vi.fn();
+const mockActiveSessionId = { value: null as string | null };
 vi.mock('../../../lib/session-store.ts', () => ({
 	sessionStore: {
 		select: mockSessionStoreSelect,
-		activeSessionId: { value: null },
+		get activeSessionId() {
+			return mockActiveSessionId;
+		},
 		sdkMessages: { value: [] },
 	},
 }));
@@ -107,6 +111,7 @@ describe('SlideOutPanel', () => {
 		vi.clearAllMocks();
 		registeredDeltaHandler = null;
 		mockIsConnected.value = true;
+		mockActiveSessionId.value = null;
 	});
 
 	afterEach(() => {
@@ -121,6 +126,8 @@ describe('SlideOutPanel', () => {
 		);
 		await waitFor(() => expect(mockRequest).toHaveBeenCalled());
 		expect(mockSessionStoreSelect).not.toHaveBeenCalled();
+		// activeSessionId must be unchanged — ReadonlySessionChat must not modify it
+		expect(mockActiveSessionId.value).toBeNull();
 	});
 
 	it('should fetch messages via state.sdkMessages RPC with the given sessionId', async () => {
@@ -401,5 +408,144 @@ describe('SlideOutPanel', () => {
 				limit: 100,
 			})
 		);
+	});
+});
+
+// -------------------------------------------------------
+// ReadonlySessionChat (direct mount)
+// -------------------------------------------------------
+
+describe('ReadonlySessionChat', () => {
+	beforeEach(() => {
+		vi.resetAllMocks();
+		registeredDeltaHandler = null;
+		mockIsConnected.value = true;
+		mockActiveSessionId.value = null;
+		// Restore default mock implementations after resetAllMocks
+		mockOnEvent.mockImplementation((eventName: string, handler: DeltaHandler) => {
+			if (eventName === 'state.sdkMessages.delta') {
+				registeredDeltaHandler = handler;
+			}
+			return () => {
+				if (eventName === 'state.sdkMessages.delta') {
+					registeredDeltaHandler = null;
+				}
+			};
+		});
+		mockRequest.mockResolvedValue({ sdkMessages: [], hasMore: false });
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('should render data-testid="readonly-session-chat"', async () => {
+		const { container } = render(<ReadonlySessionChat sessionId="direct-test" />);
+		await waitFor(() => expect(mockRequest).toHaveBeenCalled());
+		expect(container.querySelector('[data-testid="readonly-session-chat"]')).not.toBeNull();
+	});
+
+	it('should NOT call sessionStore.select on mount', async () => {
+		render(<ReadonlySessionChat sessionId="direct-test" />);
+		await waitFor(() => expect(mockRequest).toHaveBeenCalled());
+		expect(mockSessionStoreSelect).not.toHaveBeenCalled();
+		expect(mockActiveSessionId.value).toBeNull();
+	});
+
+	it('should fetch via state.sdkMessages with the given sessionId', async () => {
+		render(<ReadonlySessionChat sessionId="direct-session-99" />);
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('state.sdkMessages', {
+				sessionId: 'direct-session-99',
+			})
+		);
+	});
+
+	it('should join the session channel on mount', async () => {
+		render(<ReadonlySessionChat sessionId="chan-test" />);
+		await waitFor(() => expect(mockJoinRoom).toHaveBeenCalledWith('session:chan-test'));
+	});
+
+	it('should subscribe to state.sdkMessages.delta on mount', async () => {
+		render(<ReadonlySessionChat sessionId="delta-sub-test" />);
+		await waitFor(() =>
+			expect(mockOnEvent).toHaveBeenCalledWith('state.sdkMessages.delta', expect.any(Function))
+		);
+	});
+
+	it('should leave room on unmount', async () => {
+		const { unmount } = render(<ReadonlySessionChat sessionId="unmount-test" />);
+		await waitFor(() => expect(mockJoinRoom).toHaveBeenCalledWith('session:unmount-test'));
+		unmount();
+		expect(mockLeaveRoom).toHaveBeenCalledWith('session:unmount-test');
+	});
+
+	it('cross-session rejection: delta from wrong channel should not render message', async () => {
+		const { container } = render(<ReadonlySessionChat sessionId="target-session" />);
+		await waitFor(() => expect(mockOnEvent).toHaveBeenCalled());
+
+		act(() => {
+			registeredDeltaHandler?.(
+				{ added: [makeMessage('msg-wrong-channel')] },
+				{ channel: 'session:other-session' }
+			);
+		});
+
+		expect(container.querySelector('[data-testid="msg-msg-wrong-channel"]')).toBeNull();
+	});
+
+	it('cross-session acceptance: delta from correct channel should render message', async () => {
+		const { container } = render(<ReadonlySessionChat sessionId="target-session" />);
+		await waitFor(() => expect(mockOnEvent).toHaveBeenCalled());
+
+		act(() => {
+			registeredDeltaHandler?.(
+				{ added: [makeMessage('msg-correct-channel')] },
+				{ channel: 'session:target-session' }
+			);
+		});
+
+		await waitFor(() =>
+			expect(container.querySelector('[data-testid="msg-msg-correct-channel"]')).not.toBeNull()
+		);
+	});
+
+	it('should show "No messages yet" when initial fetch returns empty list', async () => {
+		const { container } = render(<ReadonlySessionChat sessionId="empty-session" />);
+		await waitFor(() => expect(container.textContent).toContain('No messages yet'));
+	});
+
+	it('should show error message when initial fetch fails', async () => {
+		mockRequest.mockRejectedValueOnce(new Error('Network error'));
+		const { container } = render(<ReadonlySessionChat sessionId="err-session" />);
+		await waitFor(() => expect(container.textContent).toContain('Network error'));
+	});
+
+	it('should discard stale fetch response when sessionId changes before response resolves', async () => {
+		let resolveFirst: (v: { sdkMessages: unknown[]; hasMore: boolean }) => void;
+		const firstFetch = new Promise<{ sdkMessages: unknown[]; hasMore: boolean }>((res) => {
+			resolveFirst = res;
+		});
+
+		mockRequest
+			.mockReturnValueOnce(firstFetch)
+			.mockResolvedValue({ sdkMessages: [], hasMore: false });
+
+		const { rerender, container } = render(<ReadonlySessionChat sessionId="session-a" />);
+
+		// Re-render with new sessionId before first fetch resolves
+		rerender(<ReadonlySessionChat sessionId="session-b" />);
+
+		// Now resolve the stale first request with a message
+		act(() => {
+			resolveFirst!({
+				sdkMessages: [makeMessage('stale-msg-uuid')],
+				hasMore: false,
+			});
+		});
+
+		// Stale message must NOT appear
+		await waitFor(() => expect(container.textContent).toContain('No messages yet'));
+		expect(container.querySelector('[data-testid="msg-stale-msg-uuid"]')).toBeNull();
 	});
 });
