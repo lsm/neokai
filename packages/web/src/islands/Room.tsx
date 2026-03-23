@@ -16,7 +16,7 @@ import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
-import { TaskView } from '../components/room/TaskView';
+import { TaskViewToggle } from '../components/room/TaskViewToggle';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
@@ -150,7 +150,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			<div class="flex-1 flex flex-col overflow-hidden">
 				{/* Task view: show Craft + Lead sessions for the selected task */}
 				{taskViewId ? (
-					<TaskView key={taskViewId} roomId={roomId} taskId={taskViewId} />
+					<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
 				) : sessionViewId ? (
 					/* Session view: show a specific session within the room */
 					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
