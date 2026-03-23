@@ -37,11 +37,11 @@ function getRoleColors(role: string) {
 	switch (role.toLowerCase()) {
 		case 'planner':
 			return {
-				bg: 'bg-teal-50 dark:bg-teal-900/20',
-				border: 'border-teal-200 dark:border-teal-800',
-				text: 'text-teal-700 dark:text-teal-300',
-				badge: 'bg-teal-100 dark:bg-teal-800/50 text-teal-700 dark:text-teal-300',
-				icon: 'text-teal-600 dark:text-teal-400',
+				bg: 'bg-cyan-50 dark:bg-cyan-900/20',
+				border: 'border-cyan-200 dark:border-cyan-800',
+				text: 'text-cyan-700 dark:text-cyan-300',
+				badge: 'bg-cyan-100 dark:bg-cyan-800/50 text-cyan-700 dark:text-cyan-300',
+				icon: 'text-cyan-600 dark:text-cyan-400',
 			};
 		case 'leader':
 			return {
@@ -77,9 +77,11 @@ function getRoleColors(role: string) {
 function NestedMessageRenderer({
 	message,
 	toolResultsMap,
+	isLast = false,
 }: {
 	message: SDKMessage;
 	toolResultsMap?: Map<string, unknown>;
+	isLast?: boolean;
 }) {
 	// Handle assistant messages
 	if (message.type === 'assistant') {
@@ -129,7 +131,7 @@ function NestedMessageRenderer({
 					);
 				})}
 
-				{/* Text blocks - rendered like thinking block: header + one-line preview */}
+				{/* Text blocks - rendered like thinking block: header + preview */}
 				{textBlocks.map((block, idx) => {
 					const text = (block as { text: string }).text.trim();
 					if (!text) return null;
@@ -158,12 +160,18 @@ function NestedMessageRenderer({
 							</div>
 							<div class="relative border-t border-green-200 dark:border-green-800">
 								<div class="p-3 bg-white dark:bg-gray-900">
-									<div
-										class="text-sm text-green-800 dark:text-green-200 prose prose-sm prose-p:my-0 dark:prose-invert [&>*]:my-0 whitespace-normal break-words line-clamp-1"
-										style="max-width: 100%"
-									>
-										<MarkdownRenderer content={text} />
-									</div>
+									{isLast ? (
+										<div class="text-sm text-green-800 dark:text-green-200 prose prose-sm dark:prose-invert max-w-full overflow-x-auto">
+											<MarkdownRenderer content={text} />
+										</div>
+									) : (
+										<div
+											class="text-sm text-green-800 dark:text-green-200 prose prose-sm prose-p:my-0 dark:prose-invert [&>*]:my-0 whitespace-normal break-words line-clamp-1"
+											style="max-width: 100%"
+										>
+											<MarkdownRenderer content={text} />
+										</div>
+									)}
 								</div>
 							</div>
 						</div>
@@ -223,13 +231,16 @@ function NestedMessageRenderer({
 		return null;
 	}
 
-	// Handle result messages
+	// Handle result messages - skip non-error results since the last assistant
+	// message already renders the final output
 	if (message.type === 'result') {
 		const resultMessage = message as SDKMessage & {
 			subtype: string;
 			result?: string;
 			is_error?: boolean;
 		};
+
+		if (!resultMessage.is_error) return null;
 
 		if (resultMessage.result) {
 			return (
@@ -310,23 +321,39 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 	return (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
 			{/* Header - always visible, matches SubagentBlock header style */}
-			<div class={cn('flex items-center justify-between p-3', colors.bg)}>
+			<div class="flex items-center justify-between p-3">
 				<div class="flex items-center gap-2 min-w-0 flex-1">
 					{/* Agent icon */}
 					<span class={colors.icon}>
-						<svg
-							class="w-5 h-5 flex-shrink-0"
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-						>
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-							/>
-						</svg>
+						{turn.agentRole === 'planner' ? (
+							<svg
+								class="w-5 h-5 flex-shrink-0"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+								/>
+							</svg>
+						) : (
+							<svg
+								class="w-5 h-5 flex-shrink-0"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+								/>
+							</svg>
+						)}
 					</span>
 
 					{/* Agent role badge */}
@@ -411,31 +438,64 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 			<div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
 				{/* Input section */}
 				{inputText && (
-					<div class="border-b border-gray-200 dark:border-gray-700 p-3">
-						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
-						<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
-							<MarkdownRenderer content={inputText} />
+					<div class="border-b border-blue-200 dark:border-blue-800 p-3">
+						<div class="border rounded-lg overflow-hidden bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+							<div class="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20">
+								<svg
+									class="w-4 h-4 flex-shrink-0 text-blue-600 dark:text-blue-400"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										strokeWidth={2}
+										d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+									/>
+								</svg>
+								<span class="text-sm font-semibold text-blue-900 dark:text-blue-100">User</span>
+							</div>
+							<div class="relative border-t border-blue-200 dark:border-blue-800">
+								<div class="p-3 bg-white dark:bg-gray-900">
+									<div class="text-sm text-blue-800 dark:text-blue-200 prose prose-sm dark:prose-invert max-w-full overflow-x-auto">
+										<MarkdownRenderer content={inputText} />
+									</div>
+								</div>
+							</div>
 						</div>
 					</div>
 				)}
 
 				{/* Nested messages section */}
-				{nestedMessages.length > 0 && (
-					<div class="border-b border-gray-200 dark:border-gray-700 p-3">
-						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-							Messages ({nestedMessages.length})
-						</div>
-						<div class="space-y-3">
-							{nestedMessages.map((msg, idx) => (
-								<NestedMessageRenderer
-									key={msg.uuid || `nested-${idx}`}
-									message={msg}
-									toolResultsMap={new Map()}
-								/>
-							))}
-						</div>
-					</div>
-				)}
+				{nestedMessages.length > 0 &&
+					(() => {
+						// Find the index of the last assistant message with text content
+						const lastAssistantIdx = nestedMessages.reduce(
+							(acc, msg, idx) => (msg.type === 'assistant' ? idx : acc),
+							-1
+						);
+						return (
+							<div class="border-b border-gray-200 dark:border-gray-700 p-3">
+								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+									Messages ({nestedMessages.length})
+								</div>
+								<div class="space-y-3">
+									{nestedMessages.map((msg, idx) => {
+										const isLastAssistant = idx === lastAssistantIdx;
+										return (
+											<NestedMessageRenderer
+												key={msg.uuid || `nested-${idx}`}
+												message={msg}
+												toolResultsMap={new Map()}
+												isLast={isLastAssistant}
+											/>
+										);
+									})}
+								</div>
+							</div>
+						);
+					})()}
 			</div>
 		</div>
 	);
