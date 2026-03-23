@@ -273,7 +273,7 @@ describe('SpaceWorkflowRepository', () => {
 		expect(repo.getWorkflow(wf.id)).toBeNull();
 
 		// Steps should be gone (CASCADE)
-		const rows = db.prepare(`SELECT * FROM space_workflow_steps WHERE workflow_id = ?`).all(wf.id);
+		const rows = db.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`).all(wf.id);
 		expect(rows).toHaveLength(0);
 	});
 
@@ -533,7 +533,7 @@ describe('SpaceWorkflowRepository', () => {
 
 		// Verify agent_id column is set
 		const row = db
-			.prepare('SELECT agent_id FROM space_workflow_steps WHERE workflow_id = ?')
+			.prepare('SELECT agent_id FROM space_workflow_nodes WHERE workflow_id = ?')
 			.get(wf.id) as { agent_id: string };
 		expect(row.agent_id).toBe('agent-99');
 	});

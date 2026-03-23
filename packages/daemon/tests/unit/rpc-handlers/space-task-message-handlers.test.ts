@@ -130,7 +130,7 @@ function createMockDatabase(
 						priority: task.priority,
 						depends_on: '[]',
 						task_agent_session_id: task.taskAgentSessionId ?? null,
-						workflow_step_id: null,
+						workflow_node_id: null,
 						workflow_run_id: null,
 						result: null,
 						error: null,
