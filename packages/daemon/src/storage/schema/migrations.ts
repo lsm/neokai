@@ -1628,9 +1628,11 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_workflow_id ON space_workflow_transitions(workflow_id)`
 	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_step ON space_workflow_transitions(workflow_id, from_step_id)`
-	);
+	if (tableHasColumn(db, 'space_workflow_transitions', 'from_step_id')) {
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_step ON space_workflow_transitions(workflow_id, from_step_id)`
+		);
+	}
 
 	// -------------------------------------------------------------------------
 	// space_workflow_runs  (must be before space_tasks — FK dependency)
@@ -1715,9 +1717,11 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
 	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
-	);
+	if (tableHasColumn(db, 'space_tasks', 'workflow_step_id')) {
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
+		);
+	}
 	// Note: idx_space_tasks_task_agent_session_id is created by migration 32,
 	// which first adds the column via ALTER TABLE for existing databases.
 	// Note: goal_id column is added by migration 34 (ALTER TABLE for existing DBs).
@@ -2609,7 +2613,8 @@ function runMigration44(db: BunDatabase): void {
 function runMigration45(db: BunDatabase): void {
 	// Skip if space_workflow_steps was already renamed to space_workflow_nodes,
 	// or if the spaces feature was never enabled on this DB.
-	if (!tableExists(db, 'space_workflow_steps')) {
+	// Also skip if space_workflow_nodes already exists (migration was already applied).
+	if (!tableExists(db, 'space_workflow_steps') || tableExists(db, 'space_workflow_nodes')) {
 		return;
 	}
 

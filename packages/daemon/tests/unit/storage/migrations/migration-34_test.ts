@@ -365,7 +365,7 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 			'CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)'
 		);
 		db.exec(
-			'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)'
+			'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)'
 		);
 		db.exec(
 			'CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)'

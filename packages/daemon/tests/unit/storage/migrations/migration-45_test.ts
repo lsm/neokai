@@ -717,7 +717,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 		const transExists = db
 			.prepare(`SELECT id FROM space_workflow_transitions WHERE id='trans-1'`)
 			.get();
-		expect(transExists).toBeUndefined(); // No transition inserted, so should not exist
+		expect(transExists).toBeNull(); // No transition inserted, so should not exist
 	});
 
 	test('preserves columns added by earlier migrations', () => {

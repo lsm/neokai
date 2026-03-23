@@ -76,13 +76,13 @@ describe('Migration 38: Add is_cyclic to space_workflow_transitions', () => {
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
 		).run('wf-1', 'space-1', 'Test Workflow', now, now);
 		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('step-1', 'wf-1', 'Step A', 0, now, now);
 		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('step-2', 'wf-1', 'Step B', 1, now, now);
 		db.prepare(
-			`INSERT INTO space_workflow_transitions (id, workflow_id, from_step_id, to_step_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_transitions (id, workflow_id, from_node_id, to_node_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
 		).run('trans-1', 'wf-1', 'step-1', 'step-2', 0, now, now);
 
 		const row = db
@@ -102,13 +102,13 @@ describe('Migration 38: Add is_cyclic to space_workflow_transitions', () => {
 			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
 		).run('wf-1', 'space-1', 'Test Workflow', now, now);
 		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('step-1', 'wf-1', 'Step A', 0, now, now);
 		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 		).run('step-2', 'wf-1', 'Step B', 1, now, now);
 		db.prepare(
-			`INSERT INTO space_workflow_transitions (id, workflow_id, from_step_id, to_step_id, is_cyclic, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_transitions (id, workflow_id, from_node_id, to_node_id, is_cyclic, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		).run('trans-1', 'wf-1', 'step-1', 'step-2', 1, 0, now, now);
 
 		const row = db
