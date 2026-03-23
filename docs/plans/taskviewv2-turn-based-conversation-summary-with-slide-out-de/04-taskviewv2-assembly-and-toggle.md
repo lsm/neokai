@@ -78,8 +78,8 @@ Build the full TaskViewV2 component that combines `useGroupMessages`, `useTurnBl
        isInitialLoad?: boolean, loadingOlder?: boolean, nearBottomThreshold?: number }
      ```
      V2 must maintain the following state to wire this hook:
-     - `autoScrollEnabled: boolean` state (default `true`) — wired to the `enabled` parameter. Include a toggle button (matching V1's autoscroll toggle at ~lines 1369-1387) so users can lock/unlock autoscroll.
-     - `isFirstLoad: boolean` state — set to `true` initially and whenever `conversationKey` changes (matching V1's pattern at ~lines 769-801). Set to `false` once the first non-zero `TurnBlockItem[]` arrives. Pass as `isInitialLoad` to the hook.
+     - `autoScrollEnabled: boolean` state (default `true`) — wired to the `enabled` parameter. Include a toggle button (matching V1's autoscroll toggle at ~lines 1490-1505) so users can lock/unlock autoscroll.
+     - `isFirstLoad: boolean` state — set to `true` initially and whenever `conversationKey` changes (matching V1's pattern at ~lines 889, 910-922). Set to `false` once the first non-zero `TurnBlockItem[]` arrives. Pass as `isInitialLoad` to the hook.
      - Pass `TurnBlockItem[]` array length as `messageCount`.
      - **Note**: The current `useGroupMessages` (LiveQuery-based) has no `loadingOlder` field — it streams all messages via snapshot + delta with no client-side pagination. Omit `loadingOlder` from the `useAutoScroll` call for now. If load-older pagination is added to `useGroupMessages` in the future, pass it then.
      This ensures initial-load scroll-to-bottom fires correctly and subsequent updates only auto-scroll when the user hasn't scrolled up.

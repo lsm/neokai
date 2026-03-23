@@ -18,7 +18,7 @@ The following refactors landed in `dev` (PR #720) after the initial plan was wri
 
 - **`useGroupMessages` hook already extracted** to `packages/web/src/hooks/useGroupMessages.ts`. Uses LiveQuery pattern (`liveQuery.subscribe` with snapshot + delta events), NOT the old RPC+cursor pagination. Returns `{ messages: SessionGroupMessage[], isLoading, isReconnecting }`.
 - **`SessionGroupMessage` interface already exported** from the hook file with fields: `id`, `groupId`, `sessionId`, `role`, `messageType`, `content`, `createdAt`.
-- **`TaskConversationRenderer.tsx` already refactored** to use the hook (now ~466 lines). It still contains `ROLE_COLORS`, `parseGroupMessage()`, and the rendering logic.
+- **`TaskConversationRenderer.tsx` already refactored** to use the hook (now ~472 lines). It still contains `ROLE_COLORS`, `parseGroupMessage()`, and the rendering logic.
 - **No pagination in the LiveQuery hook** — the server handles windowing; all messages are streamed via snapshot + delta. `isAtTail` is effectively always `true`.
 
 ## Milestones
