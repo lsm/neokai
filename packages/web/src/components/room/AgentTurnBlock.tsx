@@ -526,8 +526,12 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 								</div>
 								<div class="space-y-3">
 									{hasMore && (
-										<div class="text-xs text-gray-500 dark:text-gray-400 italic text-center py-1">
-											({nestedMessages.length - MESSAGES_TO_SHOW}) more messages
+										<div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 py-1">
+											<span class="flex-1 border-t border-gray-300 dark:border-gray-600"></span>
+											<span class="shrink-0">
+												({nestedMessages.length - MESSAGES_TO_SHOW}) more messages
+											</span>
+											<span class="flex-1 border-t border-gray-300 dark:border-gray-600"></span>
 										</div>
 									)}
 									{messagesToRender.map((msg, idx) => {
