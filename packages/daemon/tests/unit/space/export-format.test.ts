@@ -76,7 +76,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-uuid-1',
 		name: 'CI Workflow',
 		description: 'Runs CI pipeline',
-		steps: [
+		nodes: [
 			{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Code step' },
 			{
 				id: 'step-uuid-2',
@@ -312,7 +312,7 @@ describe('exportWorkflow', () => {
 
 	test('partial appliesTo resolution — keeps resolved subset, drops stale UUIDs', () => {
 		const workflow = makeWorkflow({
-			steps: [
+			nodes: [
 				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
 				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
 			],
@@ -335,7 +335,7 @@ describe('exportWorkflow', () => {
 
 	test('all-stale appliesTo → appliesTo omitted (rule becomes global)', () => {
 		const workflow = makeWorkflow({
-			steps: [{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' }],
+			nodes: [{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' }],
 			transitions: [],
 			startStepId: 'step-uuid-1',
 			rules: [
@@ -378,7 +378,7 @@ describe('exportWorkflow', () => {
 
 	test('includes isCyclic in exported transitions', () => {
 		const workflow = makeWorkflow({
-			steps: [
+			nodes: [
 				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
 				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
 			],
@@ -558,7 +558,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Simple',
-			steps: [],
+			nodes: [],
 			transitions: [],
 			startNode: 'first',
 			rules: [],
@@ -573,7 +573,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [{ agentRef: 'My Coder', name: 'Step' }],
+			nodes: [{ agentRef: 'My Coder', name: 'Step' }],
 			transitions: [],
 			startNode: 'Step',
 			rules: [],
@@ -591,7 +591,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agentRef: '', name: 'Step' }],
+			nodes: [{ agentRef: '', name: 'Step' }],
 			transitions: [],
 			startNode: 'Step',
 			rules: [],
@@ -606,7 +606,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ name: 'Step' }],
+			nodes: [{ name: 'Step' }],
 			transitions: [],
 			startNode: 'Step',
 			rules: [],
@@ -621,7 +621,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -645,7 +645,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -675,7 +675,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -696,7 +696,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -720,7 +720,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agentRef: 'Agent B', name: 'Step B' }],
+			nodes: [{ agentRef: 'Agent B', name: 'Step B' }],
 			transitions: [{ fromNode: '', toNode: 'Step B' }],
 			startNode: 'Step B',
 			rules: [],
@@ -735,7 +735,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agentRef: 'Agent A', name: 'Step A' }],
+			nodes: [{ agentRef: 'Agent A', name: 'Step A' }],
 			transitions: [{ fromNode: 'ghost', toNode: 'Step A' }],
 			startNode: 'Step A',
 			rules: [],
@@ -754,7 +754,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agentRef: 'Agent A', name: 'Step A' }],
+			nodes: [{ agentRef: 'Agent A', name: 'Step A' }],
 			transitions: [{ fromNode: 'Step A', toNode: 'phantom' }],
 			startNode: 'Step A',
 			rules: [],
@@ -773,7 +773,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step A' }, // duplicate
 			],
@@ -795,7 +795,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agentRef: 'Agent A', name: 'Step A' }],
+			nodes: [{ agentRef: 'Agent A', name: 'Step A' }],
 			transitions: [],
 			startNode: 'nonexistent',
 			rules: [],
@@ -814,7 +814,7 @@ describe('validateExportedWorkflow', () => {
 			version: 3,
 			type: 'workflow',
 			name: 'Simple',
-			steps: [],
+			nodes: [],
 			transitions: [],
 			startNode: 'x',
 			rules: [],
@@ -831,7 +831,7 @@ describe('validateExportedWorkflow', () => {
 		const data = {
 			type: 'workflow',
 			name: 'Simple',
-			steps: [],
+			nodes: [],
 			transitions: [],
 			startNode: 'x',
 			rules: [],
@@ -846,7 +846,7 @@ describe('validateExportedWorkflow', () => {
 			version: -1,
 			type: 'workflow',
 			name: 'Simple',
-			steps: [],
+			nodes: [],
 			transitions: [],
 			startNode: 'x',
 			rules: [],
@@ -861,7 +861,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -882,7 +882,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -912,7 +912,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -941,7 +941,7 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{ agentRef: 'Agent A', name: 'Step A' },
 				{ agentRef: 'Agent B', name: 'Step B' },
 			],
@@ -1101,7 +1101,7 @@ describe('round-trip: export → JSON → validate', () => {
 
 	test('condition type with expression round-trip', () => {
 		const workflow = makeWorkflow({
-			steps: [
+			nodes: [
 				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Build' },
 				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Deploy' },
 			],
@@ -1214,7 +1214,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 			spaceId: 'space-uuid-1',
 			name: 'Multi-Agent Workflow',
 			description: 'Tests multi-agent steps',
-			steps: [
+			nodes: [
 				{
 					id: 'step-uuid-1',
 					name: 'Parallel code+review',
@@ -1308,7 +1308,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 
 	test('single-agent step with channels exports channels', () => {
 		const workflow = makeMultiAgentWorkflow({
-			steps: [
+			nodes: [
 				{
 					id: 'step-uuid-1',
 					name: 'Solo with channel',
@@ -1335,7 +1335,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 
 	test('export produces no agentRef when step has neither agentId nor agents', () => {
 		const workflow = makeMultiAgentWorkflow({
-			steps: [{ id: 'step-uuid-1', name: 'Broken step' } as any],
+			nodes: [{ id: 'step-uuid-1', name: 'Broken step' } as any],
 			startStepId: 'step-uuid-1',
 			transitions: [],
 		});
@@ -1381,7 +1381,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{
 					agents: [{ agentRef: 'My Coder', instructions: 'Code it' }, { agentRef: 'Reviewer' }],
 					name: 'Parallel Step',
@@ -1407,7 +1407,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{
 					agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
@@ -1433,7 +1433,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [
+			nodes: [
 				{
 					agents: [{ agentRef: 'Hub' }, { agentRef: 'Spoke1' }, { agentRef: 'Spoke2' }],
 					channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
@@ -1457,7 +1457,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [{ agents: [], name: 'Empty agents step' }],
+			nodes: [{ agents: [], name: 'Empty agents step' }],
 			transitions: [],
 			startNode: 'Empty agents step',
 			rules: [],
@@ -1475,7 +1475,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [
+			nodes: [
 				{
 					agents: [{ agentRef: '' }],
 					name: 'Step',
@@ -1502,7 +1502,7 @@ describe('round-trip: multi-agent + channels', () => {
 			spaceId: 'space-1',
 			name: 'Collab Workflow',
 			description: 'Coder and reviewer in parallel',
-			steps: [
+			nodes: [
 				{
 					id: 'step-1',
 					name: 'Code and Review',
