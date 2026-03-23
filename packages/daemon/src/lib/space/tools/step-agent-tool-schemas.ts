@@ -4,7 +4,7 @@
  *
  * Tools:
  *   list_peers          — list other group members with their roles, statuses, and permitted channels
- *   send_feedback       — primary channel-validated direct messaging tool
+ *   send_message       — primary channel-validated direct messaging tool
  *   request_peer_input  — fallback Task Agent mediated messaging tool
  *
  * This file contains only schema definitions — no runtime logic or side effects.
@@ -31,11 +31,11 @@ export const ListPeersSchema = z.object({});
 export type ListPeersInput = z.infer<typeof ListPeersSchema>;
 
 // ---------------------------------------------------------------------------
-// send_feedback
+// send_message
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `send_feedback` input.
+ * Schema for `send_message` input.
  *
  * Primary direct messaging tool for step agents. Validates against declared channel
  * topology before routing. Supports three target forms:
@@ -46,7 +46,7 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
  * Returns an error with available channels and suggests `request_peer_input` when
  * the channel topology does not permit the requested direction.
  */
-export const SendFeedbackSchema = z.object({
+export const SendMessageSchema = z.object({
 	/**
 	 * Target role(s) to send the message to.
 	 * - String: point-to-point to a single role (e.g., 'coder')
@@ -65,7 +65,7 @@ export const SendFeedbackSchema = z.object({
 	message: z.string().min(1).describe('The message content to send to the target peer(s)'),
 });
 
-export type SendFeedbackInput = z.infer<typeof SendFeedbackSchema>;
+export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
 // ---------------------------------------------------------------------------
 // request_peer_input
@@ -75,7 +75,7 @@ export type SendFeedbackInput = z.infer<typeof SendFeedbackSchema>;
  * Schema for `request_peer_input` input.
  *
  * Fallback Task Agent mediated communication tool. Available when no direct channel
- * is declared for the target role, or when `send_feedback` fails validation.
+ * is declared for the target role, or when `send_message` fails validation.
  *
  * This is ASYNC and NON-BLOCKING — the tool returns an acknowledgment immediately.
  * The peer's answer will arrive as a separate user turn prefixed with:
@@ -107,7 +107,7 @@ export type RequestPeerInputInput = z.infer<typeof RequestPeerInputSchema>;
  */
 export const STEP_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
-	send_feedback: SendFeedbackSchema,
+	send_message: SendMessageSchema,
 	request_peer_input: RequestPeerInputSchema,
 } as const;
 

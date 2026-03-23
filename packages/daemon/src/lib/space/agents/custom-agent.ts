@@ -155,9 +155,9 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 		`You are part of a multi-agent team within this workflow step. ` +
 			`You have MCP tools for communicating with peer agents in the same group.`
 	);
-	sections.push(`\n### Primary: \`send_feedback\` (channel-validated direct messaging)\n`);
+	sections.push(`\n### Primary: \`send_message\` (channel-validated direct messaging)\n`);
 	sections.push(
-		`Use \`send_feedback\` to send messages directly to permitted peers based on the declared channel topology.`
+		`Use \`send_message\` to send messages directly to permitted peers based on the declared channel topology.`
 	);
 	sections.push(
 		`- \`target: 'role'\` — point-to-point to a specific role (e.g., \`'coder'\`)\n` +
@@ -170,7 +170,7 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	);
 	sections.push(`\n### Fallback: \`request_peer_input\` (Task Agent mediated)\n`);
 	sections.push(
-		`Use \`request_peer_input\` when no direct channel is declared or as a fallback when \`send_feedback\` fails validation.`
+		`Use \`request_peer_input\` when no direct channel is declared or as a fallback when \`send_message\` fails validation.`
 	);
 	sections.push(
 		`This is **async and non-blocking** — the tool returns immediately with an acknowledgment. ` +
@@ -182,11 +182,11 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	sections.push(`\n### Discovering peers: \`list_peers\`\n`);
 	sections.push(
 		`Use \`list_peers\` to see all other agents in this step's group, their roles, statuses, ` +
-			`and permitted outgoing channels for \`send_feedback\`.`
+			`and permitted outgoing channels for \`send_message\`.`
 	);
 	sections.push(`\n### Communication model rules\n`);
 	sections.push(
-		`- If this step has declared channels: use \`send_feedback\` for permitted directions, ` +
+		`- If this step has declared channels: use \`send_message\` for permitted directions, ` +
 			`\`request_peer_input\` for undeclared directions\n` +
 			`- If this step has no declared channels: all communication goes through \`request_peer_input\`\n` +
 			`- All communication is scoped to this group — you cannot message agents in other tasks`

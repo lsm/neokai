@@ -163,7 +163,7 @@ describe('buildCustomAgentSystemPrompt', () => {
 		const prompt = buildCustomAgentSystemPrompt(agent);
 		expect(prompt).toContain('Peer Communication');
 		expect(prompt).toContain('list_peers');
-		expect(prompt).toContain('send_feedback');
+		expect(prompt).toContain('send_message');
 		expect(prompt).toContain('request_peer_input');
 	});
 
