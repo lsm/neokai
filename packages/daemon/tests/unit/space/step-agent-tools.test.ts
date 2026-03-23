@@ -3,7 +3,7 @@
  *
  * Covers all 3 step agent peer communication tools:
  *   list_peers          — list peers excluding self and task-agent
- *   send_feedback       — channel-validated direct messaging
+ *   send_message       — channel-validated direct messaging
  *   request_peer_input  — Task Agent mediated async fallback
  *
  * Tests use a real SQLite database (via runMigrations) and mock message
@@ -291,10 +291,10 @@ describe('step-agent-tools: list_peers', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: send_feedback
+// Tests: send_message
 // ---------------------------------------------------------------------------
 
-describe('step-agent-tools: send_feedback', () => {
+describe('step-agent-tools: send_message', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -318,7 +318,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'LGTM!' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'LGTM!' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
@@ -326,7 +326,7 @@ describe('step-agent-tools: send_feedback', () => {
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
 		expect(data.delivered[0].role).toBe('reviewer');
 		expect(injected).toHaveLength(1);
-		expect(injected[0].message).toBe('[Feedback from coder]: LGTM!');
+		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
 	});
 
 	test('point-to-point fails when channel not declared', async () => {
@@ -335,7 +335,7 @@ describe('step-agent-tools: send_feedback', () => {
 		]);
 		const config = makeConfig(ctx, { workflowRunId });
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'hello' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -344,13 +344,13 @@ describe('step-agent-tools: send_feedback', () => {
 		expect(data.suggestion).toContain('request_peer_input');
 	});
 
-	test('returns error when no channels declared at all (empty topology blocks send_feedback)', async () => {
+	test('returns error when no channels declared at all (empty topology blocks send_message)', async () => {
 		const config = makeConfig(ctx); // no workflowRunId, no channels
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'test' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
-		// With no declared channels, send_feedback is unavailable — all communication
+		// With no declared channels, send_message is unavailable — all communication
 		// must go through request_peer_input (Task Agent mediated).
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('No channel topology declared');
@@ -369,7 +369,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: '*', message: 'broadcast!' });
+		const result = await handlers.send_message({ target: '*', message: 'broadcast!' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
@@ -383,7 +383,7 @@ describe('step-agent-tools: send_feedback', () => {
 		]);
 		const config = makeConfig(ctx, { workflowRunId });
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: '*', message: 'broadcast' });
+		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -395,7 +395,7 @@ describe('step-agent-tools: send_feedback', () => {
 		// No channels declared at all
 		const config = makeConfig(ctx);
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: '*', message: 'broadcast' });
+		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -422,7 +422,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({
+		const result = await handlers.send_message({
 			target: ['reviewer', 'security'],
 			message: 'multicast!',
 		});
@@ -446,7 +446,7 @@ describe('step-agent-tools: send_feedback', () => {
 		});
 		const config = makeConfig(ctx, { workflowRunId });
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({
+		const result = await handlers.send_message({
 			target: ['reviewer', 'security'],
 			message: 'msg',
 		});
@@ -466,7 +466,7 @@ describe('step-agent-tools: send_feedback', () => {
 		]);
 		const config = makeConfig(ctx, { workflowRunId }); // myRole='coder'
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'hello' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -491,7 +491,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'hub', message: 'done!' });
+		const result = await handlers.send_message({ target: 'hub', message: 'done!' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
@@ -514,7 +514,7 @@ describe('step-agent-tools: send_feedback', () => {
 		const handlers = createStepAgentToolHandlers(config);
 
 		// coder → reviewer
-		const r1 = await handlers.send_feedback({ target: 'reviewer', message: 'code ready' });
+		const r1 = await handlers.send_message({ target: 'reviewer', message: 'code ready' });
 		expect(JSON.parse(r1.content[0].text).success).toBe(true);
 
 		// reviewer → coder (as reviewer)
@@ -527,7 +527,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlersAsReviewer = createStepAgentToolHandlers(configAsReviewer);
-		const r2 = await handlersAsReviewer.send_feedback({ target: 'coder', message: 'approved' });
+		const r2 = await handlersAsReviewer.send_message({ target: 'coder', message: 'approved' });
 		expect(JSON.parse(r2.content[0].text).success).toBe(true);
 	});
 
@@ -537,7 +537,7 @@ describe('step-agent-tools: send_feedback', () => {
 		]);
 		const config = makeConfig(ctx, { workflowRunId });
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'tester', message: 'test pls' });
+		const result = await handlers.send_message({ target: 'tester', message: 'test pls' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -563,7 +563,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'hello' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
 		// Partial success — one delivered, one failed
@@ -585,7 +585,7 @@ describe('step-agent-tools: send_feedback', () => {
 			},
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'test' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -596,7 +596,7 @@ describe('step-agent-tools: send_feedback', () => {
 	test('returns error when group not found', async () => {
 		const config = makeConfig(ctx, { getGroupId: () => undefined });
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'test' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -612,7 +612,7 @@ describe('step-agent-tools: send_feedback', () => {
 			getGroupId: () => 'nonexistent-group-id',
 		});
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'Hello' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
 		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(false);
 		expect(data.error).toMatch(/not found/);
@@ -639,7 +639,7 @@ describe('step-agent-tools: send_feedback', () => {
 		});
 		const handlers = createStepAgentToolHandlers(config);
 
-		const result = await handlers.send_feedback({
+		const result = await handlers.send_message({
 			target: ['reviewer', 'security'],
 			message: 'Hello',
 		});
@@ -666,7 +666,7 @@ describe('step-agent-tools: send_feedback', () => {
 		});
 		const handlers = createStepAgentToolHandlers(config);
 
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'Hello' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -840,7 +840,7 @@ describe('step-agent-tools: system prompt includes peer communication section', 
 		});
 
 		expect(prompt).toContain('Peer Communication');
-		expect(prompt).toContain('send_feedback');
+		expect(prompt).toContain('send_message');
 		expect(prompt).toContain('request_peer_input');
 		expect(prompt).toContain('list_peers');
 		expect(prompt).toContain('channel-validated');

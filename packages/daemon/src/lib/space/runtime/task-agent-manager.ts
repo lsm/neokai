@@ -1345,7 +1345,7 @@ export class TaskAgentManager {
 	 * Build a step agent MCP server for a newly spawned sub-session.
 	 * Called from the `buildStepAgentMcpServer` callback passed to createTaskAgentMcpServer().
 	 *
-	 * The server gives the step agent peer communication tools (list_peers, send_feedback,
+	 * The server gives the step agent peer communication tools (list_peers, send_message,
 	 * request_peer_input) that are scoped to its group and channel topology.
 	 *
 	 * The `injectToTaskAgent` callback routes `request_peer_input` requests through the

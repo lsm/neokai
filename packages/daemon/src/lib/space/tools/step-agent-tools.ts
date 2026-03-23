@@ -5,11 +5,11 @@
  * the same workflow step group:
  *
  *   list_peers          — discover other group members with roles and permitted channels
- *   send_feedback       — primary channel-validated direct messaging tool
+ *   send_message       — primary channel-validated direct messaging tool
  *   request_peer_input  — fallback Task Agent mediated messaging (async)
  *
  * Communication model:
- * - Step agents communicate via declared channel topology (`send_feedback`).
+ * - Step agents communicate via declared channel topology (`send_message`).
  * - When no channel is declared, or as a fallback, use `request_peer_input`
  *   which routes through the Task Agent.
  * - `list_peers` reveals who is in the group and what channels are available.
@@ -20,7 +20,7 @@
  *   - Fan-out one-way: hub→[spoke1, spoke2, ...]
  *   - Hub-spoke: hub↔spokes (hub sends to all, spokes only reply to hub)
  *
- * When no channels are declared for a step, all `send_feedback` calls fail with
+ * When no channels are declared for a step, all `send_message` calls fail with
  * a suggestion to use `request_peer_input` instead.
  *
  * Design:
@@ -39,12 +39,12 @@ import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
 	ListPeersSchema,
-	SendFeedbackSchema,
+	SendMessageSchema,
 	RequestPeerInputSchema,
 } from './step-agent-tool-schemas';
 import type {
 	ListPeersInput,
-	SendFeedbackInput,
+	SendMessageInput,
 	RequestPeerInputInput,
 } from './step-agent-tool-schemas';
 
@@ -76,7 +76,7 @@ export interface StepAgentToolsConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/**
 	 * Injects a message into a peer sub-session as a user turn.
-	 * Used by `send_feedback` to deliver messages to target sessions.
+	 * Used by `send_message` to deliver messages to target sessions.
 	 */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
 	/**
@@ -161,7 +161,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		 * Does NOT include self (filtered by `mySessionId`).
 		 * Does NOT include the Task Agent (filtered by role 'task-agent').
 		 *
-		 * Returns permittedTargets: roles this agent can directly send to via send_feedback.
+		 * Returns permittedTargets: roles this agent can directly send to via send_message.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
 			const loaded = loadGroupAndResolver();
@@ -190,7 +190,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 				message:
 					`Found ${peers.length} peer(s). ` +
 					(channelTopologyDeclared
-						? `Permitted direct targets via send_feedback: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`
+						? `Permitted direct targets via send_message: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`
 						: 'No channel topology declared — use request_peer_input to communicate with peers.'),
 			});
 		},
@@ -212,14 +212,14 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		 *   - Hub-spoke isolation is enforced by channel topology (spoke→spoke channels
 		 *     are not declared; spokes can only reply to hub)
 		 */
-		async send_feedback(args: SendFeedbackInput): Promise<ToolResult> {
+		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message } = args;
 
 			const loaded = loadGroupAndResolver();
 			if (!loaded.ok) return loaded.error;
 			const { group, resolver } = loaded;
 
-			// When no channel topology is declared for this step, all send_feedback calls
+			// When no channel topology is declared for this step, all send_message calls
 			// fail. Agents in a step with no declared channels must use request_peer_input
 			// so that all inter-agent communication is mediated by the Task Agent.
 			if (resolver.isEmpty()) {
@@ -227,7 +227,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 					success: false,
 					error:
 						`No channel topology declared for this step. ` +
-						`Direct messaging via send_feedback is not available. ` +
+						`Direct messaging via send_message is not available. ` +
 						`Use request_peer_input to communicate with peers through the Task Agent.`,
 					suggestion: 'request_peer_input',
 				});
@@ -293,7 +293,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 					continue;
 				}
 				for (const targetMember of targetSessions) {
-					const prefixedMessage = `[Feedback from ${myRole}]: ${message}`;
+					const prefixedMessage = `[Message from ${myRole}]: ${message}`;
 					try {
 						await messageInjector(targetMember.sessionId, prefixedMessage);
 						delivered.push({ role: targetRole, sessionId: targetMember.sessionId });
@@ -343,7 +343,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		 * Route a question or request through the Task Agent to a peer.
 		 *
 		 * This is the FALLBACK tool for when no direct channel is declared, or when
-		 * `send_feedback` fails validation. It routes through the Task Agent, which
+		 * `send_message` fails validation. It routes through the Task Agent, which
 		 * has unrestricted relay access to all group members.
 		 *
 		 * ASYNC and NON-BLOCKING — returns immediately with an acknowledgment.
@@ -407,18 +407,18 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 			(args) => handlers.list_peers(args)
 		),
 		tool(
-			'send_feedback',
+			'send_message',
 			'Send a message directly to one or more peer agents via declared channel topology. ' +
 				"Supports point-to-point ('coder'), broadcast ('*'), and multicast (['coder','reviewer']). " +
 				'Validates against declared channels — returns an error with available channels if unauthorized. ' +
 				'Use request_peer_input as a fallback when no channel is declared.',
-			SendFeedbackSchema.shape,
-			(args) => handlers.send_feedback(args)
+			SendMessageSchema.shape,
+			(args) => handlers.send_message(args)
 		),
 		tool(
 			'request_peer_input',
 			'Route a question or request to a peer through the Task Agent. ' +
-				'Use this when no direct channel is declared or as a fallback when send_feedback fails. ' +
+				'Use this when no direct channel is declared or as a fallback when send_message fails. ' +
 				'Call list_peers first to verify the target_role exists in the group. ' +
 				'ASYNC: returns immediately. The peer response arrives later as a user turn prefixed with [Peer response from {role}]: ...',
 			RequestPeerInputSchema.shape,
