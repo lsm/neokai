@@ -173,28 +173,21 @@ describe('RuntimeMessageRenderer', () => {
 			expect(getByText('Agent rate limited')).toBeTruthy();
 		});
 
-		it('shows resetsAt time when resetsAt is provided', () => {
+		it('renders text as-is without appending a duplicate reset time', () => {
+			// The daemon already embeds the time in text (e.g. "Pausing until 12:30:00 PM.")
+			// Appending a "Resets at" suffix from the resetsAt field would double-display the time.
 			const now = new Date('2025-01-01T12:30:00').getTime();
 			const { container } = render(
 				<RuntimeMessageRenderer
 					message={makeRuntimeMessage({
 						type: 'rate_limited',
-						text: 'Slow',
+						text: 'Rate limit detected. Pausing until 12:30:00 PM.',
 						resetsAt: now,
 					})}
 				/>
 			);
 			const p = container.querySelector('p.text-xs');
-			expect(p?.textContent).toContain('Resets at');
-		});
-
-		it('does not show "Resets at" when resetsAt is absent', () => {
-			const { container } = render(
-				<RuntimeMessageRenderer
-					message={makeRuntimeMessage({ type: 'rate_limited', text: 'Slow' })}
-				/>
-			);
-			const p = container.querySelector('p.text-xs');
+			expect(p?.textContent).toBe('Rate limit detected. Pausing until 12:30:00 PM.');
 			expect(p?.textContent).not.toContain('Resets at');
 		});
 
@@ -343,6 +336,18 @@ describe('RuntimeMessageRenderer', () => {
 			const md = getByTestId('markdown-renderer');
 			expect(md.className).toContain('text-sm');
 			expect(md.className).toContain('text-gray-300');
+		});
+
+		it('renders without crash when text field is missing (empty string fallback)', () => {
+			const { getByTestId, getByText } = render(
+				<RuntimeMessageRenderer message={makeRuntimeMessage({ type: 'leader_summary' })} />
+			);
+			// Card and heading still render
+			expect(getByTestId('runtime-message')).toBeTruthy();
+			expect(getByText('Turn Summary')).toBeTruthy();
+			// MarkdownRenderer receives an empty string
+			const md = getByTestId('markdown-renderer');
+			expect(md.textContent).toBe('');
 		});
 	});
 

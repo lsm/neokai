@@ -21,3 +21,5 @@ export type { RoomAgentsProps } from './RoomAgents';
 // @public - Library export
 export { TurnSummaryBlock } from './TurnSummaryBlock';
 export type { TurnSummaryBlockProps } from './TurnSummaryBlock';
+// @public - Library export
+export { RuntimeMessageRenderer } from './RuntimeMessageRenderer';

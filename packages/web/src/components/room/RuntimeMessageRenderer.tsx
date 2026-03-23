@@ -28,8 +28,6 @@ export function RuntimeMessageRenderer({ message: runtimeMsg }: Props) {
 
 	if (raw.type === 'rate_limited') {
 		const text = typeof raw.text === 'string' ? raw.text : 'Rate limit reached';
-		const resetsAt =
-			typeof raw.resetsAt === 'number' ? new Date(raw.resetsAt).toLocaleTimeString() : null;
 		const sessionRole = typeof raw.sessionRole === 'string' ? raw.sessionRole : '';
 		const roleLabel =
 			sessionRole === 'leader' ? 'Leader' : sessionRole === 'worker' ? 'Worker' : 'Agent';
@@ -54,10 +52,7 @@ export function RuntimeMessageRenderer({ message: runtimeMsg }: Props) {
 					</svg>
 					<div class="flex-1 min-w-0">
 						<p class="text-sm text-amber-300 font-medium">{roleLabel} rate limited</p>
-						<p class="text-xs text-amber-400/80 mt-0.5">
-							{text}
-							{resetsAt ? ` Resets at ${resetsAt}.` : ''}
-						</p>
+						<p class="text-xs text-amber-400/80 mt-0.5">{text}</p>
 					</div>
 				</div>
 			</div>
