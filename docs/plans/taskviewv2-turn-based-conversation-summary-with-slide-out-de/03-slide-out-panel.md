@@ -123,7 +123,8 @@ Write unit tests covering message loading isolation, panel open/close behavior, 
 4. Write test cases:
    - **Session isolation**: Verify that `sessionStore.select` is NEVER called when `ReadonlySessionChat` mounts — spy on `sessionStore.select` and confirm zero calls. Verify `sessionStore.activeSessionId` is not changed.
    - **Message loading**: Verify `ReadonlySessionChat` fetches messages via the correct RPC with the given `sessionId`.
-   - **Cross-session channel filter**: Emit a mock `state.sdkMessages.delta` event with a `context.channel` that does NOT match the component's `sessionId` (e.g., `session:other-id`). Verify that the foreign message is NOT added to the component's rendered message list. This tests the channel-filtering guard from Task 3.1 step 4.
+   - **Cross-session channel filter (rejection)**: Fire a mock `state.sdkMessages.delta` event with BOTH arguments: `mockOnEvent({ added: [msg] }, { channel: 'session:other-id' })` — where the channel does NOT match the component's `sessionId`. Verify the foreign message is NOT added to the rendered message list. **Important**: The mock must pass the two-argument `(data, context)` shape matching the real `ChannelEventHandler` signature — omitting the `context` argument would make `context.channel` undefined and silently bypass the filter.
+   - **Cross-session channel filter (acceptance)**: Fire a mock delta event with the CORRECT channel: `mockOnEvent({ added: [msg] }, { channel: 'session:${sessionId}' })`. Verify the message IS appended to the rendered list. Without this positive test, a vacuous implementation that rejects all events would pass the rejection test alone.
    - **Closed state**: When `isOpen: false`, panel is not visible (has translate-x-full or similar).
    - **Open state**: When `isOpen: true` with a sessionId, panel is visible and `ReadonlySessionChat` is mounted with correct sessionId.
    - **Close button**: Clicking close button calls `onClose`.
