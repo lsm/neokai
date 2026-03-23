@@ -661,7 +661,8 @@ test.describe('Visual Workflow Editor', () => {
 	test('Channel edges are visually distinct from transition edges', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Create a workflow with a transition (edge) via RPC so we have both types
+		// Create a workflow with a transition (edge) via RPC so we have both types.
+		// Include channels in the RPC payload so Task Agent channel edges are rendered.
 		const agentId = await getDefaultAgentId(page, spaceId);
 		const s1 = crypto.randomUUID();
 		const s2 = crypto.randomUUID();
@@ -675,8 +676,22 @@ test.describe('Visual Workflow Editor', () => {
 					spaceId: sid,
 					name: 'Channel vs Transition Test',
 					steps: [
-						{ id: step1, name: 'Start', agentId: aId },
-						{ id: step2, name: 'End', agentId: aId },
+						{
+							id: step1,
+							name: 'Start',
+							agentId: aId,
+							channels: [
+								{ from: 'task-agent', to: 'coder', direction: 'bidirectional' },
+							],
+						},
+						{
+							id: step2,
+							name: 'End',
+							agentId: aId,
+							channels: [
+								{ from: 'task-agent', to: 'coder', direction: 'bidirectional' },
+							],
+						},
 					],
 					transitions: [
 						{ id: trans1, from: step1, to: step2, order: 0, condition: { type: 'always' } },
@@ -723,8 +738,8 @@ test.describe('Visual Workflow Editor', () => {
 		// Transition edges should NOT be dashed (stroke-dasharray should be null or empty)
 		expect(strokeDasharray === null || strokeDasharray === '').toBe(true);
 
-		// Task Agent channel edges should exist (auto-created when nodes exist)
-		// They have data-channel-edge="true" attribute
+		// Channel edges should exist because we included channels in the RPC payload.
+		// They have data-channel-edge="true" attribute.
 		const channelEdge = editor.locator('[data-channel-edge="true"]');
 		await expect(channelEdge).toBeVisible({ timeout: 5000 });
 
@@ -933,8 +948,17 @@ test.describe('Visual Workflow Editor', () => {
 			await panel.getByTestId('add-channel-button').click();
 		}
 
-		// Wait a moment for the state to update
-		await page.waitForTimeout(500);
+		// Wait for the canvas to update: marker-start should become non-null
+		// once bidirectional arrowhead rendering is implemented
+		await page.waitForFunction(
+			() => {
+				const path = document.querySelector('[data-channel-edge="true"] path:not([stroke="transparent"])');
+				if (!path) return false;
+				const markerStart = path.getAttribute('marker-start');
+				return markerStart !== null && markerStart !== '';
+			},
+			{ timeout: 5000 }
+		);
 
 		// Verify the canvas now shows double-arrowhead (both marker-start and marker-end)
 		const channelPath2 = editor
