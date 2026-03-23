@@ -52,3 +52,9 @@ export {
 	type UseGroupMessagesResult,
 } from './useGroupMessages';
 export { useRoomLiveQuery } from './useRoomLiveQuery';
+export {
+	useTurnBlocks,
+	type TurnBlock,
+	type RuntimeMessage,
+	type TurnBlockItem,
+} from './useTurnBlocks';
