@@ -29,10 +29,10 @@ import { currentRoomTabSignal } from '../../lib/signals';
 import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 import { RejectModal } from '../ui/RejectModal';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
+import { AgentTurnBlock } from './AgentTurnBlock';
 import { RuntimeMessageRenderer } from './RuntimeMessageRenderer';
 import { SlideOutPanel } from './SlideOutPanel';
 import { TaskInfoPanel } from './TaskInfoPanel';
-import { TurnSummaryBlock } from './TurnSummaryBlock';
 import { HumanInputArea } from './task-shared/HumanInputArea';
 import {
 	CompleteTaskDialog,
@@ -148,10 +148,6 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 		scrollToBottom(true);
 		setAutoScrollEnabled(true);
 	}, [scrollToBottom]);
-
-	const handleTurnClick = useCallback((turn: TurnBlock) => {
-		setSelectedTurn((prev) => (prev?.id === turn.id ? null : turn));
-	}, []);
 
 	const handleClosePanel = useCallback(() => {
 		setSelectedTurn(null);
@@ -426,24 +422,12 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 									No messages yet
 								</div>
 							) : (
-								(() => {
-									let turnNumber = 0;
-									return turnBlocks.map((item) => {
-										if (item.type === 'turn') {
-											turnNumber++;
-											return (
-												<TurnSummaryBlock
-													key={item.turn.id}
-													turn={item.turn}
-													onClick={handleTurnClick}
-													isSelected={selectedTurn?.id === item.turn.id}
-													turnNumber={turnNumber}
-												/>
-											);
-										}
-										return <RuntimeMessageRenderer key={item.index} message={item} />;
-									});
-								})()
+								turnBlocks.map((item) => {
+									if (item.type === 'turn') {
+										return <AgentTurnBlock key={item.turn.id} turn={item.turn} />;
+									}
+									return <RuntimeMessageRenderer key={item.index} message={item} />;
+								})
 							)}
 						</div>
 					) : (
