@@ -23,6 +23,7 @@ import { useGroupMessages } from '../../hooks/useGroupMessages';
 import { useTaskViewData } from '../../hooks/useTaskViewData';
 import { useTurnBlocks } from '../../hooks/useTurnBlocks';
 import type { TurnBlock } from '../../hooks/useTurnBlocks';
+import { TASK_STATUS_COLORS } from '../../lib/task-constants';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { currentRoomTabSignal } from '../../lib/signals';
 import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
@@ -46,17 +47,6 @@ interface TaskViewV2Props {
 	roomId: string;
 	taskId: string;
 }
-
-const TASK_STATUS_COLORS: Record<string, string> = {
-	pending: 'text-gray-400',
-	in_progress: 'text-yellow-400',
-	completed: 'text-green-400',
-	needs_attention: 'text-red-400',
-	review: 'text-purple-400',
-	draft: 'text-gray-500',
-	cancelled: 'text-gray-500',
-	archived: 'text-gray-600',
-};
 
 export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 	const {
@@ -94,7 +84,11 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 	} = useTaskViewData(roomId, taskId);
 
 	// Live-stream messages for the current group
-	const { messages, isLoading: messagesLoading } = useGroupMessages(group?.id ?? null);
+	const {
+		messages,
+		isLoading: messagesLoading,
+		isReconnecting,
+	} = useGroupMessages(group?.id ?? null);
 
 	// isAtTail is always true for LiveQuery (no client-side pagination)
 	const turnBlocks = useTurnBlocks(messages, true);
@@ -380,6 +374,35 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 							class="flex flex-col gap-2 p-3"
 							data-testid="turn-blocks-container"
 						>
+							{/* Reconnecting banner — shown while WebSocket is down and messages exist */}
+							{isReconnecting && (
+								<div
+									data-testid="reconnecting-banner"
+									class="flex items-center gap-2 rounded border border-yellow-700/50 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-400"
+								>
+									<svg
+										class="h-3 w-3 animate-spin"
+										fill="none"
+										viewBox="0 0 24 24"
+										aria-hidden="true"
+									>
+										<circle
+											class="opacity-25"
+											cx="12"
+											cy="12"
+											r="10"
+											stroke="currentColor"
+											stroke-width="4"
+										/>
+										<path
+											class="opacity-75"
+											fill="currentColor"
+											d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+										/>
+									</svg>
+									Reconnecting…
+								</div>
+							)}
 							{messagesLoading && turnBlocks.length === 0 ? (
 								<div class="flex items-center justify-center py-8 text-gray-500 text-sm">
 									Loading conversation…

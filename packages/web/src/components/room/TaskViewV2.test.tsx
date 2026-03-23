@@ -44,12 +44,13 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 // useGroupMessages — controlled by mockGroupMessages
 let mockGroupMessages: SessionGroupMessage[] = [];
 let mockMessagesLoading = false;
+let mockIsReconnecting = false;
 
 vi.mock('../../hooks/useGroupMessages.ts', () => ({
 	useGroupMessages: () => ({
 		messages: mockGroupMessages,
 		isLoading: mockMessagesLoading,
-		isReconnecting: false,
+		isReconnecting: mockIsReconnecting,
 	}),
 }));
 
@@ -301,12 +302,29 @@ function makeTurn(overrides: Partial<TurnBlock> = {}): TurnBlock {
 	};
 }
 
-// Setup default useTaskViewData mock state — overrideable in each test
+// Setup default useTaskViewData mock state — overrideable in each test.
+// Use vi.fn() so mockReturnValue() takes effect on the next render call.
 let mockTaskViewData: ReturnType<typeof import('../../hooks/useTaskViewData').useTaskViewData>;
-let mockSetConversationKey: (fn: (k: number) => number) => void;
+const useTaskViewDataFn = vi.fn((_roomId: string, _taskId: string) => mockTaskViewData);
+
+// Signal-driven conversationKey — changing this signal causes Preact to
+// reactively re-render any component that reads it (via the getter in the mock
+// below). This is more reliable than rerender() + mockReturnValue for testing
+// effects that depend on conversationKey changing.
+const mockConversationKeySignal = signal(0);
 
 vi.mock('../../hooks/useTaskViewData.ts', () => ({
-	useTaskViewData: () => mockTaskViewData,
+	useTaskViewData: (roomId: string, taskId: string) => {
+		const base = useTaskViewDataFn(roomId, taskId);
+		return {
+			...base,
+			// Getter so that Preact's signal tracking picks up the dependency
+			// when the component destructures conversationKey during render.
+			get conversationKey() {
+				return mockConversationKeySignal.value;
+			},
+		};
+	},
 }));
 
 function makeDefaultTaskViewData(
@@ -400,9 +418,12 @@ describe('TaskViewV2', () => {
 		mockGroupMessages = [];
 		mockTurnBlockItems = [];
 		mockMessagesLoading = false;
+		mockIsReconnecting = false;
 		mockShowScrollButton = false;
 		_draftContent.value = '';
+		mockConversationKeySignal.value = 0;
 		mockTaskViewData = makeDefaultTaskViewData();
+		useTaskViewDataFn.mockImplementation(() => mockTaskViewData);
 	});
 
 	afterEach(() => {
@@ -693,25 +714,88 @@ describe('TaskViewV2', () => {
 		expect(container.textContent).toContain('PR #42');
 	});
 
-	// --- conversationKey renders new key ---
+	// --- conversationKey state resets ---
 
-	it('renders new turn-blocks-container key when conversationKey changes', async () => {
-		const data = makeDefaultTaskViewData(makeTask(), makeGroup());
-		data.conversationKey = 0;
-		mockTaskViewData = data;
+	it('replaces turn-blocks-container DOM node when conversationKey changes (rendererKey drives state reset)', async () => {
+		// When conversationKey changes, rendererKey changes, which:
+		// 1. Replaces the turn-blocks-container div (key-based unmount+remount)
+		// 2. Triggers useEffect([rendererKey]) to reset selectedTurn, autoScrollEnabled, isFirstLoad
+		//
+		// We use mockConversationKeySignal (a Preact signal) so the component
+		// reactively re-renders when the signal changes — more reliable than
+		// calling rerender() with the same props.
+		const turn = makeTurn({ id: 'turn-1', sessionId: 'session-worker' });
+		mockTurnBlockItems = [{ type: 'turn', turn }];
 
-		const { getByTestId, rerender } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		const container1 = getByTestId('turn-blocks-container');
-		expect(container1).toBeTruthy();
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		const containerBefore = getByTestId('turn-blocks-container');
 
-		// Bump conversationKey
-		data.conversationKey = 1;
-		mockTaskViewData = { ...data };
-		rerender(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-
-		await waitFor(() => {
-			const container2 = getByTestId('turn-blocks-container');
-			expect(container2).toBeTruthy();
+		// Bump conversationKey via signal → reactive re-render
+		await act(async () => {
+			mockConversationKeySignal.value = 1;
 		});
+
+		// The turn-blocks-container should be a NEW DOM node (key changed = unmount+remount)
+		const containerAfter = getByTestId('turn-blocks-container');
+		expect(containerAfter).not.toBe(containerBefore);
+	});
+
+	it('resets slide-out panel (selectedTurn → null) when conversationKey changes', async () => {
+		const turn = makeTurn({ id: 'turn-1', sessionId: 'session-worker' });
+		mockTurnBlockItems = [{ type: 'turn', turn }];
+
+		const { getByTestId, queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+
+		// Open the slide-out panel
+		fireEvent.click(getByTestId('turn-block'));
+		await waitFor(() => expect(getByTestId('slide-out-panel')).toBeTruthy());
+
+		// Bump conversationKey via signal → reactive re-render → useEffect resets selectedTurn
+		await act(async () => {
+			mockConversationKeySignal.value = 1;
+		});
+
+		// Slide-out should be closed after conversationKey change
+		await waitFor(() => expect(queryByTestId('slide-out-panel')).toBeNull());
+	});
+
+	it('resets autoScrollEnabled to true when conversationKey changes', async () => {
+		const { container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+
+		// Disable auto-scroll
+		const toggleBtn = container.querySelector('[title="Disable auto-scroll"]') as HTMLElement;
+		fireEvent.click(toggleBtn);
+		await waitFor(() =>
+			expect(container.querySelector('[title="Enable auto-scroll"]')).toBeTruthy()
+		);
+
+		// Bump conversationKey via signal → reactive re-render → useEffect resets autoScrollEnabled
+		await act(async () => {
+			mockConversationKeySignal.value = 1;
+		});
+
+		await waitFor(() =>
+			expect(container.querySelector('[title="Disable auto-scroll"]')).toBeTruthy()
+		);
+	});
+
+	// --- isReconnecting ---
+
+	it('shows reconnecting banner when isReconnecting is true', () => {
+		mockIsReconnecting = true;
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(getByTestId('reconnecting-banner')).toBeTruthy();
+	});
+
+	it('does not show reconnecting banner when isReconnecting is false', () => {
+		mockIsReconnecting = false;
+		const { queryByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(queryByTestId('reconnecting-banner')).toBeNull();
+	});
+
+	it('reconnecting banner shows text "Reconnecting…"', () => {
+		mockIsReconnecting = true;
+		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
+		expect(getByTestId('reconnecting-banner').textContent).toContain('Reconnecting');
 	});
 });
