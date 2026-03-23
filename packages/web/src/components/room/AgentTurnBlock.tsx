@@ -299,7 +299,7 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 					{/* Tool call count */}
 					{turn.toolCallCount > 0 && (
 						<span class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400">
-							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path
 									strokeLinecap="round"
 									strokeLinejoin="round"
@@ -320,7 +320,7 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 					{/* Thinking count */}
 					{turn.thinkingCount > 0 && (
 						<span class="flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400">
-							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path
 									strokeLinecap="round"
 									strokeLinejoin="round"
@@ -335,7 +335,7 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 					{/* Assistant message count */}
 					{turn.assistantCount > 0 && (
 						<span class="flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
-							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path
 									strokeLinecap="round"
 									strokeLinejoin="round"
