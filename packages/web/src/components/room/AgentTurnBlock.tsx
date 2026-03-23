@@ -205,22 +205,31 @@ function NestedMessageRenderer({
 				return null;
 			}
 
-			// Render non-tool-result content blocks
+			// Normalize whitespace for comparison
+			const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+			// Render non-tool-result content blocks, skipping duplicates of inputText
+			const textBlocks = content.filter((block) => {
+				const blockObj = block as Record<string, unknown>;
+				if (blockObj.type !== 'text' || typeof blockObj.text !== 'string') return false;
+				if (inputText && normalizeWS(blockObj.text) === normalizeWS(inputText)) return false;
+				return true;
+			});
+
+			if (textBlocks.length === 0) return null;
+
 			return (
 				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
-					{content.map((block, idx) => {
+					{textBlocks.map((block, idx) => {
 						const blockObj = block as Record<string, unknown>;
-						if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
-							return (
-								<div
-									key={idx}
-									class="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words"
-								>
-									{blockObj.text}
-								</div>
-							);
-						}
-						return null;
+						return (
+							<div
+								key={idx}
+								class="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words"
+							>
+								{blockObj.text as string}
+							</div>
+						);
 					})}
 				</div>
 			);
