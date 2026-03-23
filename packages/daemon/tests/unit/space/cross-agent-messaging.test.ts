@@ -1,24 +1,28 @@
 /**
- * Integration-level tests for cross-agent messaging.
+ * Unit tests for cross-agent messaging.
  *
- * Exercises the full messaging stack with a real SQLite DB and mock injectors
- * (no real agent sessions). Focuses on end-to-end behavioral enforcement:
+ * Exercises the step agent peer communication tools (send_message, list_peers)
+ * and the Task Agent list_group_members tool in isolation with a real SQLite DB.
  *
+ * Test patterns covered:
  *   send_message  — channel validation, target modes, fan-out, hub-spoke
  *   list_peers    — peer discovery with channel info
- *   list_group_members    — Task Agent group view
+ *   list_group_members — Task Agent group view with channel topology
  *
- * Channel topology patterns tested end-to-end through tool handlers:
+ * Channel topology patterns tested:
  *   A → B          one-way point-to-point
  *   A ↔ B          bidirectional point-to-point
  *   A → [B,C,D]    fan-out one-way
  *   A ↔ [B,C,D]    hub-spoke bidirectional (spoke isolation enforced)
  *
- * Pure ChannelResolver unit tests (canSend, getPermittedTargets, fromRunConfig
- * invalid-entry filtering) live in channel-resolver.test.ts.
+ * Task Agent participation in channel topology:
+ *   - list_group_members shows permittedTargets for all members including Task Agent
+ *   - When channel to/from Task Agent is declared, it appears in permittedTargets
+ *   - When channel to/from Task Agent is removed, permittedTargets updates accordingly
  *
- * Group scoping is explicitly tested: messages must never cross task-group
- * boundaries.
+ * Note: Task Agent does not have send_message tool. Node agents cannot deliver
+ * messages to Task Agent via send_message (task-agent is filtered from delivery targets).
+ * Task Agent's participation in the topology is visible via list_group_members.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -851,6 +855,231 @@ describe('list_group_members — Task Agent group view', () => {
 		const result = parse(await handlers.list_group_members({}));
 		expect(result.success).toBe(false);
 		expect(result.error as string).toContain('No session group found');
+	});
+});
+
+// ===========================================================================
+// 6b. Task Agent participation in channel topology
+// ===========================================================================
+// These tests verify that the Task Agent's role in the channel topology is
+// correctly reflected via list_group_members. The key insight is:
+//   - list_group_members shows permittedTargets for ALL members including Task Agent
+//   - When a channel to/from Task Agent is declared, it appears in permittedTargets
+//   - When the channel is removed (topology changes), permittedTargets updates
+//
+// Note: Task Agent does not have a send_message tool. When a step agent calls
+// send_message targeting 'task-agent', the channel resolver check passes (if channel
+// declared), but the task-agent is filtered from delivery targets, so the message
+// is never delivered. This is by design — Task Agent communicates via its own mechanisms,
+// not by receiving injected messages.
+
+describe('Task Agent in channel topology — via list_group_members', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('coder permittedTargets includes task-agent when channel coder→task-agent is declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			status: 'active',
+		});
+
+		// Declare channel: coder → task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('coder', 'task-agent')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+		);
+
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const coder = members.find((m) => m.role === 'coder');
+		expect(coder?.permittedTargets).toContain('task-agent');
+	});
+
+	test('reviewer permittedTargets includes task-agent when channel reviewer→task-agent is declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
+			role: 'reviewer',
+			status: 'active',
+		});
+
+		// Declare channel: reviewer → task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('reviewer', 'task-agent')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+		);
+
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const reviewer = members.find((m) => m.role === 'reviewer');
+		expect(reviewer?.permittedTargets).toContain('task-agent');
+	});
+
+	test('task-agent permittedTargets is empty when no channels to/from task-agent declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			status: 'active',
+		});
+
+		// Declare channel between coder and reviewer — NOT involving task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('coder', 'reviewer'), ch('reviewer', 'coder')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+		);
+
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const taskAgentMember = members.find((m) => m.role === 'task-agent');
+		expect(taskAgentMember?.permittedTargets).toEqual([]);
+	});
+
+	test('task-agent permittedTargets includes coder when channel task-agent→coder is declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			status: 'active',
+		});
+
+		// Declare channel: task-agent → coder (Task Agent can send to coder)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('task-agent', 'coder')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+		);
+
+		const result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+
+		const members = result.members as Array<{
+			role: string;
+			permittedTargets: string[];
+		}>;
+		const taskAgentMember = members.find((m) => m.role === 'task-agent');
+		expect(taskAgentMember?.permittedTargets).toContain('coder');
+	});
+
+	test('removing channel to task-agent updates permittedTargets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			status: 'active',
+		});
+
+		// Initially: channel coder → task-agent
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [ch('coder', 'task-agent')] },
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
+		);
+
+		let result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+		let members = result.members as Array<{ role: string; permittedTargets: string[] }>;
+		let coder = members.find((m) => m.role === 'coder');
+		expect(coder?.permittedTargets).toContain('task-agent');
+
+		// Remove channel to task-agent — update topology to empty
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: { _resolvedChannels: [] },
+		});
+
+		result = parse(await handlers.list_group_members({}));
+		expect(result.success).toBe(true);
+		members = result.members as Array<{ role: string; permittedTargets: string[] }>;
+		coder = members.find((m) => m.role === 'coder');
+		expect(coder?.permittedTargets).not.toContain('task-agent');
 	});
 });
 
