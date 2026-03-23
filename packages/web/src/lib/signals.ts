@@ -32,8 +32,13 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'home' | 'chats' | 'rooms' | 'projects' | 'settings';
+export type NavSection = 'home' | 'chats' | 'rooms' | 'inbox' | 'projects' | 'spaces' | 'settings';
 export const navSectionSignal = signal<NavSection>('home');
+
+// Space navigation signals
+export const currentSpaceIdSignal = signal<string | null>(null);
+export const currentSpaceSessionIdSignal = signal<string | null>(null);
+export const currentSpaceTaskIdSignal = signal<string | null>(null);
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
@@ -41,6 +46,16 @@ export const contextPanelOpenSignal = signal<boolean>(false);
 // Create Room modal open state - shared between ContextPanel and Lobby
 export const createRoomModalSignal = signal<boolean>(false);
 
+// Room tab navigation signal - set this to navigate to a specific room tab
+// Room.tsx watches this and switches activeTab accordingly, then clears it
+export const currentRoomTabSignal = signal<string | null>(null);
+
 // Settings section signal - which settings section is active
-export type SettingsSection = 'general' | 'providers' | 'mcp-servers' | 'usage' | 'about';
+export type SettingsSection =
+	| 'general'
+	| 'providers'
+	| 'mcp-servers'
+	| 'fallback-models'
+	| 'usage'
+	| 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

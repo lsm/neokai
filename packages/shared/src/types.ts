@@ -56,6 +56,7 @@ export type {
  * - 'leader': Leader agent session (Room Runtime)
  * - 'general': General-purpose agent session (Room Runtime)
  * - 'lobby': Instance-level agent session
+ * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
  */
 export type SessionType =
 	| 'worker'
@@ -64,14 +65,20 @@ export type SessionType =
 	| 'coder'
 	| 'leader'
 	| 'general'
-	| 'lobby';
+	| 'lobby'
+	| 'spaces_global'
+	| 'space_task_agent';
 
 /**
- * Context for room/lobby sessions
+ * Context for room/lobby/space sessions
  */
 export interface SessionContext {
 	roomId?: string;
 	lobbyId?: string;
+	/** Space ID for Space system sessions */
+	spaceId?: string;
+	/** Task ID for Space Task Agent sessions */
+	taskId?: string;
 }
 
 /**
@@ -184,8 +191,10 @@ export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'e
  * - 'anthropic': Default Claude API provider
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
  * - 'minimax': MiniMax via Anthropic-compatible API
+ * - 'anthropic-copilot': GitHub Copilot backend via Anthropic-compatible embedded server
+ * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by Codex app-server
  */
-export type Provider = 'anthropic' | 'glm' | 'minimax';
+export type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthropic-codex';
 
 /**
  * Provider-specific configuration
@@ -303,11 +312,11 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
 	/**
 	 * Query mode for message sending behavior
-	 * - 'immediate': Messages sent to Claude immediately (default)
-	 * - 'manual': Messages saved but not sent until explicitly triggered
+	 * - 'immediate': Messages are enqueued for immediate delivery (default)
+	 * - 'manual': Messages are deferred until explicitly triggered
 	 *
-	 * Note: Auto-queue behavior (messages queued during processing) is automatic
-	 * and doesn't require a separate mode setting.
+	 * Note: auto-defer behavior (messages enqueued during active processing)
+	 * is automatic and doesn't require a separate mode setting.
 	 * @default 'immediate'
 	 */
 	queryMode?: 'immediate' | 'manual';
@@ -526,7 +535,16 @@ export interface SessionMetadata {
 	};
 	// Session architecture fields
 	/** Type of session in architecture context */
-	sessionType?: 'room_chat' | 'planner' | 'coder' | 'leader' | 'general' | 'worker' | 'lobby';
+	sessionType?:
+		| 'room_chat'
+		| 'planner'
+		| 'coder'
+		| 'leader'
+		| 'general'
+		| 'worker'
+		| 'lobby'
+		| 'spaces_global'
+		| 'space_task_agent';
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */
@@ -586,7 +604,7 @@ export interface MessageImage {
 	media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 }
 
-export type MessageDeliveryMode = 'current_turn' | 'next_turn';
+export type MessageDeliveryMode = 'immediate' | 'defer';
 
 // Tool types
 export interface Tool {

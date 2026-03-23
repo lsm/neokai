@@ -5,7 +5,7 @@
  * Tests runtime state indicator, pause/resume/stop/start controls,
  * confirmation dialogs, loading state,
  * stats overview grid (sessions, pending, active, completed, failed),
- * and tasks/sessions list rendering.
+ * and task list rendering.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -15,6 +15,7 @@ import type { TaskSummary, RuntimeState } from '@neokai/shared';
 
 // Define signals for store mock
 let mockTasks: ReturnType<typeof signal<TaskSummary[]>>;
+let mockGoalByTaskId: ReturnType<typeof signal<Map<string, unknown>>>;
 let mockSessions: ReturnType<typeof signal<{ id: string; title: string; status: string }[]>>;
 let mockRoomId: ReturnType<typeof signal<string | null>>;
 let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
@@ -25,12 +26,12 @@ const mockPauseRuntime = vi.fn().mockResolvedValue(undefined);
 const mockResumeRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStopRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStartRuntime = vi.fn().mockResolvedValue(undefined);
-const mockApproveTask = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../lib/room-store.ts', () => ({
 	get roomStore() {
 		return {
 			tasks: mockTasks,
+			goalByTaskId: mockGoalByTaskId,
 			sessions: mockSessions,
 			roomId: mockRoomId,
 			runtimeState: mockRuntimeState,
@@ -39,10 +40,13 @@ vi.mock('../../lib/room-store.ts', () => ({
 			resumeRuntime: mockResumeRuntime,
 			stopRuntime: mockStopRuntime,
 			startRuntime: mockStartRuntime,
-			approveTask: mockApproveTask,
 			archiveRoom: vi.fn().mockResolvedValue(undefined),
 		};
 	},
+}));
+
+vi.mock('../../lib/signals.ts', () => ({
+	currentRoomTabSignal: { value: null },
 }));
 
 const mockNavigateToRoomTask = vi.fn();
@@ -59,6 +63,7 @@ vi.mock('../../lib/utils.ts', () => ({
 
 // Initialize signals after mocks
 mockTasks = signal<TaskSummary[]>([]);
+mockGoalByTaskId = signal(new Map());
 mockSessions = signal([]);
 mockRoomId = signal<string | null>('room-1');
 mockRuntimeState = signal<RuntimeState | null>(null);
@@ -73,6 +78,7 @@ describe('RoomDashboard', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
+		mockGoalByTaskId.value = new Map();
 		mockSessions.value = [];
 		mockRoomId.value = 'room-1';
 		mockRuntimeState.value = null;
@@ -81,7 +87,6 @@ describe('RoomDashboard', () => {
 		mockResumeRuntime.mockClear();
 		mockStopRuntime.mockClear();
 		mockStartRuntime.mockClear();
-		mockApproveTask.mockClear();
 		mockNavigateToRoomTask.mockClear();
 	});
 
@@ -375,82 +380,6 @@ describe('RoomDashboard', () => {
 
 			expect(mockStopRuntime).toHaveBeenCalledTimes(1);
 		});
-
-		it('should show approve confirmation dialog when Approve is clicked on a review task', async () => {
-			mockTasks.value = [createTask('t1', 'review', { title: 'Review this' })];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent === 'Approve'
-			)!;
-			await fireEvent.click(approveBtn);
-
-			expect(document.body.textContent).toContain('Approve Task');
-			expect(document.body.textContent).toContain('proceed to the next phase');
-		});
-
-		it('should not call approveTask until confirmation is accepted', async () => {
-			mockTasks.value = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent === 'Approve'
-			)!;
-			await fireEvent.click(approveBtn);
-
-			expect(mockApproveTask).not.toHaveBeenCalled();
-		});
-
-		it('should call approveTask with task id when approve confirmation is accepted', async () => {
-			mockTasks.value = [createTask('task-42', 'review')];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			// Click the Approve button on the task
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent === 'Approve'
-			)!;
-			await fireEvent.click(approveBtn);
-
-			// Accept confirmation - find the confirm button in the modal portal
-			// The modal has a second "Approve" button (the confirm one)
-			const allApproveButtons = Array.from(document.body.querySelectorAll('button')).filter(
-				(b) => b.textContent === 'Approve'
-			);
-			const confirmBtn = allApproveButtons[allApproveButtons.length - 1];
-			await fireEvent.click(confirmBtn);
-
-			expect(mockApproveTask).toHaveBeenCalledWith('task-42');
-		});
-
-		it('should close approve confirmation when cancel is clicked', async () => {
-			mockTasks.value = [createTask('t1', 'review')];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const approveBtn = Array.from(container.querySelectorAll('button')).find(
-				(b) => b.textContent === 'Approve'
-			)!;
-			await fireEvent.click(approveBtn);
-
-			// Verify modal is open
-			expect(document.body.textContent).toContain('Approve Task');
-
-			// Click Cancel
-			const cancelBtn = Array.from(document.body.querySelectorAll('button')).find(
-				(b) => b.textContent === 'Cancel'
-			)!;
-			await fireEvent.click(cancelBtn);
-
-			// Modal should be closed, approveTask not called
-			expect(mockApproveTask).not.toHaveBeenCalled();
-		});
 	});
 
 	describe('Loading State', () => {
@@ -492,7 +421,7 @@ describe('RoomDashboard', () => {
 			await selectReviewTab(container);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View')
+				b.textContent?.includes('View details')
 			)!;
 			expect(viewBtn).toBeTruthy();
 
@@ -508,22 +437,12 @@ describe('RoomDashboard', () => {
 			await selectReviewTab(container);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View')
+				b.textContent?.includes('View details')
 			)!;
 			await fireEvent.click(viewBtn);
 
 			// navigateToRoomTask should be called exactly once (from onView), not twice
 			expect(mockNavigateToRoomTask).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	describe('Sessions Section', () => {
-		it('should show Sessions heading', () => {
-			const { container } = render(<RoomDashboard />);
-
-			const headings = container.querySelectorAll('h2');
-			const sessionsHeading = Array.from(headings).find((h) => h.textContent === 'Sessions');
-			expect(sessionsHeading).toBeTruthy();
 		});
 	});
 });

@@ -98,11 +98,11 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 	beforeEach(async () => {
 		dbPath = makeTempDbPath();
 		db = new Database(dbPath);
-		await db.initialize();
+		reactiveDb = createReactiveDatabase(db);
+		await db.initialize(reactiveDb);
 
 		// Access the underlying BunDatabase that LiveQueryEngine needs
 		bunDb = db.getDatabase();
-		reactiveDb = createReactiveDatabase(db);
 		engine = new LiveQueryEngine(bunDb, reactiveDb);
 	});
 

@@ -7,8 +7,8 @@
  *
  * Callers are responsible for pre-processing terminated tasks before calling this
  * function. For example:
- * - needs_attention → caller should use runtime.reviveTaskForMessage()
- * - cancelled/completed → caller should block with a user-facing error
+ * - needs_attention/cancelled → caller should use runtime.reviveTaskForMessage()
+ * - completed → caller should use runtime.reviveTaskForMessage() or block with an error
  */
 
 import type { TaskStatus } from '@neokai/shared';

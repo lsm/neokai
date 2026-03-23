@@ -536,9 +536,9 @@ describe('AgentSession', () => {
 				switchModel: switchModelSpy,
 			};
 
-			const result = await agentSession.handleModelSwitch('claude-opus-4-20250514');
+			const result = await agentSession.handleModelSwitch('claude-opus-4-20250514', 'anthropic');
 
-			expect(switchModelSpy).toHaveBeenCalledWith('claude-opus-4-20250514');
+			expect(switchModelSpy).toHaveBeenCalledWith('claude-opus-4-20250514', 'anthropic');
 			expect(result).toEqual(mockResult);
 		});
 
@@ -2070,6 +2070,121 @@ describe('AgentSession', () => {
 			expect(agentSession.getSessionData().worktree).toBeUndefined();
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 			expect(agentSession.getSessionData().type).toBe('room');
+		});
+	});
+
+	describe('setRuntimeSystemPrompt', () => {
+		it('should update the in-memory system prompt without persisting it', () => {
+			const mockSession: Session = {
+				id: 'room:chat:test',
+				title: 'Room Chat',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+				type: 'room_chat',
+			};
+
+			const mockDb = {
+				getSession: mock(() => null),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-api-key');
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			// Initially no system prompt
+			expect(agentSession.getSessionData().config.systemPrompt).toBeUndefined();
+
+			// Set the runtime system prompt
+			agentSession.setRuntimeSystemPrompt('You are the Room Agent.');
+
+			// In-memory config should reflect the new prompt
+			expect(agentSession.getSessionData().config.systemPrompt).toBe('You are the Room Agent.');
+
+			// The DB update should NOT have been called (runtime-only, not persisted)
+			const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
+				.updateSession.mock.calls;
+			expect(updateSessionCalls.length).toBe(0);
+		});
+
+		it('should overwrite an existing runtime system prompt', () => {
+			const mockSession: Session = {
+				id: 'room:chat:test2',
+				title: 'Room Chat',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1.0,
+					systemPrompt: 'old prompt',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+				type: 'room_chat',
+			};
+
+			const mockDb = {
+				getSession: mock(() => null),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-api-key');
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			agentSession.setRuntimeSystemPrompt('new prompt');
+
+			expect(agentSession.getSessionData().config.systemPrompt).toBe('new prompt');
 		});
 	});
 

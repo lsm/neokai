@@ -18,6 +18,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { GateFailureRecord } from '../runtime/dead-loop-detector';
 
 /** Rate limit backoff state stored in group metadata */
@@ -30,12 +31,25 @@ export interface RateLimitBackoff {
 	sessionRole: 'worker' | 'leader';
 }
 
-/** Persisted bootstrap context for lazily creating Leader sessions */
-export interface DeferredLeaderConfig {
+/**
+ * Persisted bootstrap context for the Leader session.
+ * Survives daemon restart and is used by recoverZombieGroups() to recreate a
+ * missing leader from scratch, and by routeWorkerToLeader() as the restart-recovery
+ * fallback when the leader is absent from the in-memory session cache.
+ * Also carries leaderTaskContext — the message prefix prepended on the first
+ * worker→leader routing call.
+ */
+export interface LeaderBootstrapConfig {
 	roomId: string;
 	goalId: string | null;
 	reviewContext?: 'plan_review' | 'code_review';
 	leaderTaskContext?: string;
+	/**
+	 * When true, the leader session was already created eagerly in spawn()
+	 * alongside the worker. Used by findZombieGroups() to know the leader is
+	 * expected in cache even on the first review round (feedbackIteration == 0).
+	 */
+	eagerlyCreated?: boolean;
 }
 
 /** Type-specific metadata for task groups */
@@ -60,12 +74,17 @@ interface TaskGroupMetadata {
 	approved?: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit?: RateLimitBackoff | null;
-	/** Persisted bootstrap config for deferred Leader creation */
-	deferredLeader?: DeferredLeaderConfig | null;
+	/** Persisted bootstrap config for the leader session (restart-recovery and first-routing context) */
+	deferredLeader?: LeaderBootstrapConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted?: boolean;
 	/** Gate failure history for dead loop detection */
 	gateFailures?: GateFailureRecord[];
+	/**
+	 * Latest progress summary provided by the leader at the end of each turn.
+	 * Summarizes (1) what the task is about and (2) what has been done/changed so far.
+	 */
+	leaderProgressSummary?: string;
 	/** Whether the group is paused waiting for a question to be answered */
 	waitingForQuestion?: boolean;
 	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
@@ -76,6 +95,23 @@ interface TaskGroupMetadata {
 	 * because bypass tasks have no PR.
 	 */
 	workerBypassed?: boolean;
+	/**
+	 * Who approved this task. Set to 'human' when a human calls resumeWorkerFromHuman
+	 * with approved=true. Set to 'leader_semi_auto' when runtime auto-approves in
+	 * semi-autonomous mode. Used as idempotency guard for auto-approve deferred callbacks.
+	 */
+	approvalSource?: 'human' | 'leader_semi_auto';
+	/**
+	 * Links this session group to a specific mission_executions row for recurring missions.
+	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
+	 */
+	executionId?: string;
+	/**
+	 * True once the leader has had at least one message injected (via routeWorkerToLeader
+	 * or resumeLeaderFromHuman). Never reset, so onLeaderTerminalState can reliably
+	 * distinguish spurious pre-work idle events from real terminal events.
+	 */
+	leaderHasWork?: boolean;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -124,8 +160,8 @@ export interface SessionGroup {
 	approved: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit: RateLimitBackoff | null;
-	/** Persisted bootstrap config for deferred Leader creation */
-	deferredLeader: DeferredLeaderConfig | null;
+	/** Persisted bootstrap config for the leader session (restart-recovery and first-routing context) */
+	deferredLeader: LeaderBootstrapConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted: boolean;
 	/** Whether the group is paused waiting for a question to be answered */
@@ -137,6 +173,25 @@ export interface SessionGroup {
 	 * When true, checkLeaderPrMerged fails open even with approved=true (no PR exists).
 	 */
 	workerBypassed: boolean;
+	/**
+	 * Who approved this task ('human' or 'leader_semi_auto'), or null if not yet approved.
+	 */
+	approvalSource: 'human' | 'leader_semi_auto' | null;
+	/**
+	 * Links this session group to a specific mission_executions row for recurring missions.
+	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
+	 */
+	executionId?: string;
+	/**
+	 * True once the leader has had at least one message injected. Never reset.
+	 * Used by onLeaderTerminalState to drop spurious pre-work idle events.
+	 */
+	leaderHasWork: boolean;
+	/**
+	 * Latest progress summary provided by the leader at the end of each turn.
+	 * Summarizes (1) what the task is about and (2) what has been done/changed so far.
+	 */
+	leaderProgressSummary: string | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -150,7 +205,10 @@ export interface TaskGroupEvent {
 }
 
 export class SessionGroupRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb: ReactiveDatabase
+	) {}
 
 	// ===== Group lifecycle =====
 
@@ -165,19 +223,33 @@ export class SessionGroupRepository {
 		const now = Date.now();
 		const metadata: TaskGroupMetadata = { ...defaultMetadata(), workerRole, workspacePath };
 
-		this.db
-			.prepare(
-				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+		// reactiveDb.beginTransaction() batches change events only — not a DB transaction.
+		// this.db.transaction() provides actual SQLite atomicity so the second INSERT
+		// failure rolls back the first.
+		this.reactiveDb.beginTransaction();
+		try {
+			this.db.transaction(() => {
+				this.db
+					.prepare(
+						`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES (?, 'task', ?, 0, ?, ?)`
-			)
-			.run(id, taskId, JSON.stringify(metadata), now);
+					)
+					.run(id, taskId, JSON.stringify(metadata), now);
 
-		this.db
-			.prepare(
-				`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
+				this.db
+					.prepare(
+						`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
 			 VALUES (?, ?, 'worker', ?), (?, ?, 'leader', ?)`
-			)
-			.run(id, workerSessionId, now, id, leaderSessionId, now);
+					)
+					.run(id, workerSessionId, now, id, leaderSessionId, now);
+			})();
+
+			this.reactiveDb.notifyChange('session_groups');
+			this.reactiveDb.commitTransaction();
+		} catch (e) {
+			this.reactiveDb.abortTransaction();
+			throw e;
+		}
 
 		return this.getGroup(id)!;
 	}
@@ -219,6 +291,30 @@ export class SessionGroupRepository {
 		return this.rowToGroup(row);
 	}
 
+	/**
+	 * Returns ALL active (completedAt IS NULL) groups for a specific task.
+	 * Used for defense-in-depth deduplication in spawnGroupForTask — checks every
+	 * active group, not just the most recent, to catch stale zombie groups that
+	 * would otherwise allow a duplicate spawn.
+	 */
+	getActiveGroupsForTask(taskId: string): SessionGroup[] {
+		const rows = this.db
+			.prepare(
+				`SELECT
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
+					sg.created_at, sg.completed_at,
+					worker.session_id AS worker_session_id,
+					leader.session_id AS leader_session_id
+				FROM session_groups sg
+				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
+				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
+				WHERE sg.ref_id = ? AND sg.group_type IN ('task', 'task_pair') AND sg.completed_at IS NULL
+				ORDER BY sg.created_at DESC`
+			)
+			.all(taskId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToGroup(r));
+	}
+
 	getActiveGroups(roomId: string): SessionGroup[] {
 		const rows = this.db
 			.prepare(
@@ -246,6 +342,7 @@ export class SessionGroupRepository {
 			)
 			.run(now, groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -258,7 +355,64 @@ export class SessionGroupRepository {
 			)
 			.run(now, groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
+	}
+
+	/**
+	 * DB-level zombie cleanup for a room: marks active session groups as completed
+	 * when their task is in a terminal state
+	 * (completed, cancelled, archived, needs_attention).
+	 *
+	 * 'needs_attention' is the renamed 'failed' status (migration 24) and IS terminal —
+	 * TaskGroupManager.fail() sets it via failTask(). Zombies arise when the group's
+	 * completed_at was never set due to a crash after failTask() ran.
+	 *
+	 * Synchronous and safe to call from stop() without async/await.
+	 * Returns the number of groups cleaned up.
+	 */
+	cleanupZombieGroupsForRoom(roomId: string): number {
+		const now = Date.now();
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = ?, version = version + 1
+				 WHERE completed_at IS NULL
+				   AND group_type IN ('task', 'task_pair')
+				   AND ref_id IN (
+				     SELECT t.id FROM tasks t
+				     WHERE t.room_id = ?
+				       AND t.status IN ('completed', 'cancelled', 'archived', 'needs_attention')
+				   )`
+			)
+			.run(now, roomId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
+		return result.changes;
+	}
+
+	/**
+	 * Force-complete all active groups for a task except the specified one.
+	 * Used as a safety net in complete()/fail() to clean up any duplicate/stale
+	 * groups that slipped past the deduplication check.
+	 *
+	 * Returns the number of groups cleaned up.
+	 */
+	cleanupStaleGroupsForTask(taskId: string, keepGroupId: string): number {
+		const now = Date.now();
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = ?, version = version + 1
+				 WHERE ref_id = ? AND group_type IN ('task', 'task_pair')
+				   AND completed_at IS NULL AND id != ?`
+			)
+			.run(now, taskId, keepGroupId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
+		return result.changes;
 	}
 
 	/**
@@ -268,6 +422,9 @@ export class SessionGroupRepository {
 	 */
 	deleteGroup(groupId: string): boolean {
 		const result = this.db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(groupId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('session_groups');
+		}
 		return result.changes > 0;
 	}
 
@@ -281,17 +438,27 @@ export class SessionGroupRepository {
 	 * lightweight revive intended for the "send message to failed task" flow.
 	 */
 	reviveGroup(groupId: string): SessionGroup | null {
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups
-				 SET completed_at = NULL,
-				     version = version + 1
-				 WHERE id = ?`
-			)
-			.run(groupId);
+		try {
+			const result = this.db
+				.prepare(
+					`UPDATE session_groups
+					 SET completed_at = NULL,
+					     version = version + 1
+					 WHERE id = ?`
+				)
+				.run(groupId);
 
-		if (result.changes === 0) return null;
-		return this.getGroup(groupId);
+			if (result.changes === 0) return null;
+			this.reactiveDb.notifyChange('session_groups');
+			return this.getGroup(groupId);
+		} catch (err) {
+			// Only swallow unique constraint violations (another active group exists for ref_id).
+			// All other DB errors (disk full, closed DB, etc.) are re-thrown.
+			if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+				return null;
+			}
+			throw err;
+		}
 	}
 
 	/**
@@ -311,18 +478,28 @@ export class SessionGroupRepository {
 			deferredLeader: current.deferredLeader,
 		};
 
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups
-				 SET completed_at = NULL,
-				     metadata = ?,
-				     version = version + 1
-				 WHERE id = ?`
-			)
-			.run(JSON.stringify(resetMetadata), groupId);
+		try {
+			const result = this.db
+				.prepare(
+					`UPDATE session_groups
+					 SET completed_at = NULL,
+					     metadata = ?,
+					     version = version + 1
+					 WHERE id = ?`
+				)
+				.run(JSON.stringify(resetMetadata), groupId);
 
-		if (result.changes === 0) return null;
-		return this.getGroup(groupId);
+			if (result.changes === 0) return null;
+			this.reactiveDb.notifyChange('session_groups');
+			return this.getGroup(groupId);
+		} catch (err) {
+			// Only swallow unique constraint violations (another active group exists for ref_id).
+			// All other DB errors (disk full, closed DB, etc.) are re-thrown.
+			if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+				return null;
+			}
+			throw err;
+		}
 	}
 
 	// ===== Metadata update helpers (partial merge pattern) =====
@@ -352,6 +529,7 @@ export class SessionGroupRepository {
 			)
 			.run(JSON.stringify(merged), groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -376,6 +554,7 @@ export class SessionGroupRepository {
 			)
 			.run(JSON.stringify(merged), groupId, expectedVersion);
 		if (result.changes === 0) return null;
+		this.reactiveDb.notifyChange('session_groups');
 		return this.getGroup(groupId);
 	}
 
@@ -423,6 +602,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -441,6 +621,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -459,6 +640,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -477,6 +659,37 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
+	}
+
+	/**
+	 * Set (or clear) approvalSource in metadata without version check.
+	 * Tracks who approved the task: 'human' for human approvals, 'leader_semi_auto' for
+	 * auto-approvals in semi-autonomous mode. Also serves as an idempotency guard for
+	 * the deferred auto-approve callback (skip if already set).
+	 * Pass null to clear (roll back after a failed resumeWorkerFromHuman).
+	 */
+	setApprovalSource(groupId: string, source: 'human' | 'leader_semi_auto' | null): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		if (source === null) {
+			// Remove the field entirely so rowToGroup returns null for approvalSource
+			const { approvalSource: _removed, ...rest } = currentMeta;
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(rest), groupId);
+		} else {
+			const merged = { ...currentMeta, approvalSource: source };
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(merged), groupId);
+		}
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -496,6 +709,26 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
+	}
+
+	/**
+	 * Set executionId in group metadata without version check.
+	 * Links this group to a mission_executions row for recurring mission correlation.
+	 */
+	setExecutionId(groupId: string, executionId: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, executionId };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -518,13 +751,54 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
+	}
+
+	/**
+	 * Mark the leader as having received at least one message.
+	 * Set once by routeWorkerToLeader and resumeLeaderFromHuman; never reset.
+	 * Used by onLeaderTerminalState to drop spurious pre-work idle events.
+	 */
+	setLeaderHasWork(groupId: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		if (currentMeta.leaderHasWork) return; // already set, skip the write
+		const merged = { ...currentMeta, leaderHasWork: true };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
+	}
+
+	/**
+	 * Update the leader progress summary for a group without version check.
+	 * Called at the end of each leader turn to persist a summary of task progress.
+	 */
+	setLeaderProgressSummary(groupId: string, summary: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, leaderProgressSummary: summary };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
 	 * Persist deferred Leader bootstrap configuration.
 	 * Stored in metadata so runtime restart can still lazy-create the leader session.
 	 */
-	setDeferredLeader(groupId: string, deferredLeader: DeferredLeaderConfig | null): void {
+	setDeferredLeader(groupId: string, deferredLeader: LeaderBootstrapConfig | null): void {
 		const raw = (
 			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
 				string,
@@ -536,6 +810,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	// ===== Rate Limit Backoff =====
@@ -556,6 +831,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
+		this.reactiveDb.notifyChange('session_groups');
 	}
 
 	/**
@@ -594,23 +870,32 @@ export class SessionGroupRepository {
 	 * Keeps the last 50 records to bound storage size.
 	 */
 	recordGateFailure(groupId: string, gateName: string, reason: string): void {
-		this.db.transaction(() => {
-			const raw = (
-				this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
-					string,
-					unknown
-				>
-			)?.metadata as string;
-			const currentMeta = this.parseMetadata(raw);
-			const existing = currentMeta.gateFailures ?? [];
-			const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
-			// Cap at 50 records — old entries are unlikely to matter for detection
-			const updated = [...existing, record].slice(-50);
-			const merged = { ...currentMeta, gateFailures: updated };
-			this.db
-				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
-				.run(JSON.stringify(merged), groupId);
-		})();
+		// reactiveDb.beginTransaction() batches change events only — not a DB transaction.
+		// this.db.transaction() provides actual SQLite atomicity for the read-modify-write.
+		this.reactiveDb.beginTransaction();
+		try {
+			this.db.transaction(() => {
+				const raw = (
+					this.db
+						.prepare(`SELECT metadata FROM session_groups WHERE id = ?`)
+						.get(groupId) as Record<string, unknown>
+				)?.metadata as string;
+				const currentMeta = this.parseMetadata(raw);
+				const existing = currentMeta.gateFailures ?? [];
+				const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
+				// Cap at 50 records — old entries are unlikely to matter for detection
+				const updated = [...existing, record].slice(-50);
+				const merged = { ...currentMeta, gateFailures: updated };
+				this.db
+					.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+					.run(JSON.stringify(merged), groupId);
+			})();
+			this.reactiveDb.notifyChange('session_groups');
+			this.reactiveDb.commitTransaction();
+		} catch (e) {
+			this.reactiveDb.abortTransaction();
+			throw e;
+		}
 	}
 
 	/**
@@ -637,6 +922,7 @@ export class SessionGroupRepository {
 				`UPDATE session_group_members SET session_id = ? WHERE group_id = ? AND role = 'worker'`
 			)
 			.run(newSessionId, groupId);
+		this.reactiveDb.notifyChange('session_group_members');
 	}
 
 	updateLastForwardedMessageId(
@@ -649,7 +935,7 @@ export class SessionGroupRepository {
 		});
 	}
 
-	// ===== Group events (status/system timeline, no mirrored SDK chat) =====
+	// ===== Group events (status/system timeline) =====
 
 	appendEvent(params: { groupId: string; kind: string; payloadJson?: string }): number {
 		const result = this.db
@@ -658,6 +944,7 @@ export class SessionGroupRepository {
 			 VALUES (?, ?, ?, ?)`
 			)
 			.run(params.groupId, params.kind, params.payloadJson ?? null, Date.now());
+		this.reactiveDb.notifyChange('task_group_events');
 		return Number(result.lastInsertRowid);
 	}
 
@@ -741,6 +1028,10 @@ export class SessionGroupRepository {
 			waitingForQuestion: meta.waitingForQuestion ?? false,
 			waitingSession: meta.waitingSession ?? null,
 			workerBypassed: meta.workerBypassed === true,
+			approvalSource: meta.approvalSource ?? null,
+			executionId: meta.executionId,
+			leaderHasWork: meta.leaderHasWork === true,
+			leaderProgressSummary: meta.leaderProgressSummary ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

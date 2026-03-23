@@ -204,3 +204,47 @@ export const borderColors = {
 		},
 	},
 } as const;
+
+/**
+ * Unified design token object.
+ * Groups all tokens under a single namespace for structured access.
+ * All existing named exports remain available for backwards compatibility.
+ */
+export const tokens = {
+	color: {
+		accent: 'bg-indigo-500' as const,
+		surface: {
+			app: 'bg-dark-950' as const,
+			panel: 'bg-dark-900' as const,
+			card: 'bg-dark-800' as const,
+		},
+		text: {
+			primary: 'text-gray-100' as const,
+			secondary: 'text-gray-400' as const,
+			muted: 'text-gray-500' as const,
+		},
+		border: {
+			default: borderColors.ui.default,
+			subtle: borderColors.ui.secondary,
+		},
+		status: {
+			success: 'text-green-400' as const,
+			warning: 'text-amber-400' as const,
+			error: 'text-red-400' as const,
+			info: 'text-indigo-400' as const,
+		},
+	},
+	spacing: {
+		chatMaxWidth: 'max-w-4xl' as const,
+	},
+	radius: {
+		...borderRadius,
+		panel: 'rounded-xl' as const,
+	},
+	transition: {
+		quick: 'transition-all duration-150 ease-out' as const,
+		smooth: 'transition-all duration-250 ease-out' as const,
+	},
+} as const;
+
+export default tokens;

@@ -49,8 +49,12 @@ export function setupMessageHandlers(
 
 		// Remove tool_result from the .jsonl file
 		// Pass both SDK session ID and NeoKai session ID for fallback search
+		// Use worktree path when available — SDK creates session files based on CWD
+		const sdkWorkspacePath = session.worktree
+			? session.worktree.worktreePath
+			: session.workspacePath;
 		const success = removeToolResultFromSessionFile(
-			session.workspacePath,
+			sdkWorkspacePath,
 			sdkSessionId,
 			messageUuid,
 			targetSessionId

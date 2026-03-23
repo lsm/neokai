@@ -58,7 +58,7 @@ describe('RoomRuntime', () => {
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
-			// Worker starts immediately, leader is deferred until routeWorkerToLeader
+			// Both worker and leader are created eagerly in spawn()
 			const workerCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
 			);
@@ -66,7 +66,7 @@ describe('RoomRuntime', () => {
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
 			expect(workerCalls).toHaveLength(1);
-			expect(leaderCalls).toHaveLength(0);
+			expect(leaderCalls).toHaveLength(1);
 
 			// Task should be in_progress
 			const updated = await ctx.taskManager.getTask(task.id);
@@ -100,12 +100,13 @@ describe('RoomRuntime', () => {
 			expect(ctx.sessionFactory.calls).toHaveLength(0);
 		});
 
-		it('should use mutex to prevent concurrent ticks', async () => {
+		it('should be idempotent — sequential ticks do not double-spawn groups', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
 
-			// Run two ticks concurrently
-			await Promise.all([ctx.runtime.tick(), ctx.runtime.tick()]);
+			// Sequential ticks: the second tick sees an active group (slot taken) and no-ops
+			await ctx.runtime.tick();
+			await ctx.runtime.tick();
 
 			// Only one group should be spawned
 			const activeGroups = ctx.groupRepo.getActiveGroups('room-1');

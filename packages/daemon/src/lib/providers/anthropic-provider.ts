@@ -5,7 +5,7 @@
  * No special configuration needed - the SDK handles everything.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	Provider,
 	ProviderCapabilities,
@@ -13,7 +13,7 @@ import type {
 	ModelTier,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
-import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 
 /**
  * Canonical SDK model IDs (short-form IDs preferred by the SDK)
@@ -182,7 +182,7 @@ export class AnthropicProvider implements Provider {
 				cwd: process.cwd(),
 				maxTurns: 0,
 				pathToClaudeCodeExecutable: resolveSDKCliPath(),
-				executable: isBundledBinary() ? 'bun' : undefined,
+				executable: isRunningUnderBun() ? 'bun' : undefined,
 			},
 		});
 
@@ -320,7 +320,10 @@ export class AnthropicProvider implements Provider {
 			return true;
 		}
 
-		// Known other provider prefixes (exclude these)
+		// Known other provider prefixes (exclude these).
+		// Even if no provider is currently registered for openai-/gpt-/copilot- prefixes,
+		// keeping them here prevents Anthropic from claiming those model IDs by default,
+		// which would cause confusing "model not found" errors from the Anthropic API.
 		const otherProviderPrefixes = [
 			'glm-',
 			'deepseek-',

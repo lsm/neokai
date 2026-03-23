@@ -1,9 +1,15 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
-import { createRoomAgentToolHandlers } from '../../../src/lib/room/tools/room-agent-tools';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
+import {
+	createRoomAgentToolHandlers,
+	createRoomAgentMcpServer,
+	createLeaderContextMcpServer,
+} from '../../../src/lib/room/tools/room-agent-tools';
 
 describe('Room Agent Tools', () => {
 	let db: Database;
@@ -34,7 +40,21 @@ describe('Room Agent Tools', () => {
 				metrics TEXT DEFAULT '{}',
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL,
-				completed_at INTEGER
+				completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0,
+				goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT NOT NULL DEFAULT 'one_shot'
+					CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+					CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+				schedule TEXT,
+				schedule_paused INTEGER NOT NULL DEFAULT 0,
+				next_run_at INTEGER,
+				structured_metrics TEXT,
+				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+				consecutive_failures INTEGER NOT NULL DEFAULT 0,
+		replan_count INTEGER NOT NULL DEFAULT 0
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY,
@@ -58,7 +78,8 @@ describe('Room Agent Tools', () => {
 				active_session TEXT,
 				pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER
+				pr_created_at INTEGER,
+				updated_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -84,12 +105,46 @@ describe('Room Agent Tools', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
+			CREATE TABLE mission_metric_history (
+				id TEXT PRIMARY KEY,
+				goal_id TEXT NOT NULL,
+				metric_name TEXT NOT NULL,
+				value REAL NOT NULL,
+				recorded_at INTEGER NOT NULL,
+				FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup
+				ON mission_metric_history(goal_id, metric_name, recorded_at);
+			CREATE TABLE mission_executions (
+				id TEXT PRIMARY KEY,
+				goal_id TEXT NOT NULL,
+				execution_number INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				status TEXT NOT NULL DEFAULT 'running',
+				result_summary TEXT,
+				task_ids TEXT NOT NULL DEFAULT '[]',
+				planning_attempts INTEGER NOT NULL DEFAULT 0,
+				FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+				UNIQUE(goal_id, execution_number)
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_active
+				ON mission_executions(goal_id) WHERE status = 'running';
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
-		goalManager = new GoalManager(db as never, roomId);
-		taskManager = new TaskManager(db as never, roomId);
-		groupRepo = new SessionGroupRepository(db as never);
+		goalManager = new GoalManager(db as never, roomId, noOpReactiveDb);
+		taskManager = new TaskManager(db as never, roomId, noOpReactiveDb);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});
 
@@ -170,6 +225,14 @@ describe('Room Agent Tools', () => {
 				await handlers.update_goal({ goal_id: 'no-such-goal', status: 'completed' })
 			);
 			expect(result.success).toBe(false);
+		});
+
+		it('should return error when no update fields provided', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(await handlers.update_goal({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/No update fields provided/);
 		});
 	});
 
@@ -994,7 +1057,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should return error for cancelled task (worktree is gone, restart required)', async () => {
+		it('should auto-reactivate cancelled task and deliver message (preserving group history)', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
@@ -1010,21 +1073,70 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to cancelled state
+			// Move to cancelled state with a group that has completedAt set
 			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.cancelTask(taskId);
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
+			);
+			// Cancelled task should be auto-reactivated and message delivered
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('cancelled');
+			expect(result.message).toContain('in_progress');
+
+			// Task should now be in_progress
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+
+			// Group history is PRESERVED — no resetGroupForRestart, reviveTaskForMessage keeps context
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
+		});
+
+		it('should roll back cancelled task when reviveTaskForMessage fails (group state preserved)', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to cancelled state with a group that has completedAt set
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
 			await taskManager.cancelTask(taskId);
 
 			const result = parseResult(
 				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
 			);
-			// Cancelled tasks cannot receive messages — workspace is cleaned up
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('cancelled');
-			expect(result.error).toContain('set_task_status');
 
-			// Task should remain cancelled (no revive attempted)
+			// Task status should be rolled back to cancelled
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('cancelled');
+
+			// Group state should be untouched — no metadata was wiped during the failed attempt
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter!.completedAt).not.toBeNull();
 		});
 
 		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {
@@ -1243,6 +1355,39 @@ describe('Room Agent Tools', () => {
 			expect(groupAfter).not.toBeNull();
 			expect(groupAfter!.completedAt).toBeNull();
 			expect(groupAfter!.submittedForReview).toBe(false);
+		});
+
+		it('should reset old completed group when restarting task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress, insert a group, and mark it completed via the repo
+			// so that completedAt is non-null before reactivation
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			expect(groupInserted).not.toBeNull();
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+			await taskManager.completeTask(taskId, 'Done');
+
+			// Verify the group has a non-null completedAt before reactivation
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.completedAt).not.toBeNull();
+
+			// Reactivate the completed task
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+
+			// resetGroupForRestart should have cleared completedAt and reset metadata
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
+			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
 		it('should succeed when group is already gone', async () => {
@@ -1477,7 +1622,7 @@ describe('Room Agent Tools', () => {
 			expect(result.error).toContain('Invalid status transition');
 		});
 
-		it('should return error when group cancellation fails due to version conflict', async () => {
+		it('should return error when terminateTaskGroup fails for completed transition', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1487,11 +1632,9 @@ describe('Room Agent Tools', () => {
 			// Create an active group
 			insertGroup(taskId, 'awaiting_human');
 
-			// Create handler with mock runtime that returns null from cancel (simulating version conflict)
+			// Create handler with mock runtime where terminateTaskGroup returns false (version conflict)
 			const mockRuntime = {
-				taskGroupManager: {
-					cancel: async () => null, // Returns null to simulate version conflict
-				},
+				terminateTaskGroup: async () => false, // Returns false to simulate version conflict
 			};
 			const h = createRoomAgentToolHandlers({
 				roomId,
@@ -1501,14 +1644,14 @@ describe('Room Agent Tools', () => {
 				runtimeService: { getRuntime: () => mockRuntime as never },
 			});
 
-			// Try to complete the task - should fail because group cancellation failed
+			// Try to complete the task - should fail because group termination failed
 			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to cancel active group');
+			expect(result.error).toContain('Failed to terminate active group');
 			expect(result.error).toContain('group may have been modified concurrently');
 		});
 
-		it('should succeed when group cancellation succeeds', async () => {
+		it('should succeed when terminateTaskGroup succeeds for completed transition', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1516,15 +1659,13 @@ describe('Room Agent Tools', () => {
 			await taskManager.startTask(taskId);
 
 			// Create an active group
-			const groupId = insertGroup(taskId, 'awaiting_human');
+			insertGroup(taskId, 'awaiting_human');
 
-			// Create handler with mock runtime that successfully cancels
+			// Create handler with mock runtime that successfully terminates
 			const mockRuntime = {
-				taskGroupManager: {
-					cancel: async (gId: string) => {
-						expect(gId).toBe(groupId);
-						return { id: gId, state: 'cancelled' };
-					},
+				terminateTaskGroup: async (_taskId: string) => {
+					expect(_taskId).toBe(taskId);
+					return true;
 				},
 			};
 			const h = createRoomAgentToolHandlers({
@@ -1535,13 +1676,14 @@ describe('Room Agent Tools', () => {
 				runtimeService: { getRuntime: () => mockRuntime as never },
 			});
 
-			// Complete the task - should succeed because group cancellation succeeded
+			// Complete the task — should succeed because group termination succeeded
+			// NOTE: completing a task does NOT cascade-cancel dependent tasks (bug fix)
 			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('completed');
 		});
 
-		it('should allow status change without runtime even if group exists', async () => {
+		it('should reject status change to terminal state without runtime when active group exists', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -1551,13 +1693,718 @@ describe('Room Agent Tools', () => {
 			// Create an active group
 			insertGroup(taskId, 'awaiting_human');
 
-			// Handler without runtime service - should still allow transition
-			// (for backwards compatibility or when runtime is not available)
+			// Handler without runtime service - should FAIL since active group exists
+			// (would leave a zombie worker session if allowed)
 			const result = parseResult(
 				await handlers.set_task_status({ task_id: taskId, status: 'completed' })
 			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('runtime service');
+		});
+	});
+
+	describe('record_metric', () => {
+		it('should reject non-measurable goals', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'One-Shot Goal' }));
+			const result = parseResult(
+				await handlers.record_metric({
+					goal_id: created.goalId as string,
+					metric_name: 'kpi',
+					value: 42,
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(result.error as string).toContain('not a measurable mission');
+		});
+
+		it('should reject non-existent goal', async () => {
+			const result = parseResult(
+				await handlers.record_metric({ goal_id: 'no-such-goal', metric_name: 'kpi', value: 42 })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error as string).toContain('not found');
+		});
+
+		it('should record metric for measurable goal', async () => {
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Measurable Goal' }));
+			const goalId = goalResult.goalId as string;
+			// Directly set missionType + structuredMetrics via manager
+			await goalManager.updateGoalStatus(goalId, 'active');
+			const dbGoal = await goalManager.getGoal(goalId);
+			expect(dbGoal).toBeDefined();
+
+			// Create goal directly with missionType via goalManager
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal 2',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
+			});
+
+			const result = parseResult(
+				await handlers.record_metric({ goal_id: mGoal.id, metric_name: 'coverage', value: 60 })
+			);
 			expect(result.success).toBe(true);
-			expect(result.task.status).toBe('completed');
+			expect((result.metric as { name: string }).name).toBe('coverage');
+			expect((result.metric as { value: number }).value).toBe(60);
+			// progress = 60/80 = 75%
+			expect((result.metric as { goalProgress: number }).goalProgress).toBe(75);
+		});
+
+		it('should reject unknown metric name', async () => {
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
+			});
+			const result = parseResult(
+				await handlers.record_metric({ goal_id: mGoal.id, metric_name: 'unknown_kpi', value: 50 })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error as string).toContain('not defined in structuredMetrics');
+		});
+	});
+
+	describe('get_metrics', () => {
+		it('should return empty structured metrics for goal without them', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Legacy Goal' }));
+			const result = parseResult(await handlers.get_metrics({ goal_id: created.goalId as string }));
+			expect(result.success).toBe(true);
+			expect((result.structuredMetrics as unknown[]).length).toBe(0);
+		});
+
+		it('should return metric state for measurable goal', async () => {
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal',
+				missionType: 'measurable',
+				structuredMetrics: [
+					{ name: 'coverage', target: 80, current: 50 },
+					{ name: 'latency', target: 200, current: 300, direction: 'decrease', baseline: 1000 },
+				],
+			});
+
+			const result = parseResult(await handlers.get_metrics({ goal_id: mGoal.id }));
+			expect(result.success).toBe(true);
+			expect(result.missionType).toBe('measurable');
+			expect((result.metrics as unknown[]).length).toBe(2);
+
+			const coverage = (
+				result.metrics as Array<{
+					name: string;
+					current: number;
+					target: number;
+					met: boolean;
+					direction: string;
+				}>
+			).find((m) => m.name === 'coverage');
+			expect(coverage!.current).toBe(50);
+			expect(coverage!.target).toBe(80);
+			expect(coverage!.met).toBe(false);
+			expect(coverage!.direction).toBe('increase');
+		});
+
+		it('should report allTargetsMet=true when all met', async () => {
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 90 }],
+			});
+
+			const result = parseResult(await handlers.get_metrics({ goal_id: mGoal.id }));
+			expect(result.allTargetsMet).toBe(true);
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.get_metrics({ goal_id: 'no-such-goal' }));
+			expect(result.success).toBe(false);
+		});
+	});
+
+	describe('createLeaderContextMcpServer', () => {
+		/**
+		 * Helper: return the registered tool names from an SDK MCP server.
+		 * The SDK stores registered tools in `instance._registeredTools` keyed by tool name.
+		 */
+		function getRegisteredToolNames(server: {
+			instance: { _registeredTools: Record<string, unknown> };
+		}): string[] {
+			return Object.keys(server.instance._registeredTools).sort();
+		}
+
+		it('should expose the 7 leader tools (context + task management)', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			expect(names).toEqual([
+				'cancel_task',
+				'get_room_status',
+				'get_task_detail',
+				'list_goals',
+				'list_tasks',
+				'update_task',
+				'update_task_status',
+			]);
+		});
+
+		it('should NOT expose approve_task', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			expect(names).not.toContain('approve_task');
+		});
+
+		it('should NOT expose reject_task', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			expect(names).not.toContain('reject_task');
+		});
+
+		it('should NOT expose human-only or session management tools', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			const excluded = [
+				'create_goal',
+				'update_goal',
+				'create_task',
+				'stop_session',
+				'send_message_to_task',
+				'approve_task',
+				'reject_task',
+			];
+			for (const w of excluded) {
+				expect(names).not.toContain(w);
+			}
+		});
+
+		describe('update_task tool', () => {
+			it('should update task title and description', async () => {
+				const task = await taskManager.createTask({
+					title: 'Original title',
+					description: 'Original description',
+				});
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.update_task({
+						task_id: task.id,
+						title: 'Updated title',
+						description: 'Updated description',
+					})
+				);
+				expect(result.success).toBe(true);
+				const updated = result.task as { title: string; description: string };
+				expect(updated.title).toBe('Updated title');
+				expect(updated.description).toBe('Updated description');
+			});
+
+			it('should update task priority', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.update_task({ task_id: task.id, priority: 'urgent' })
+				);
+				expect(result.success).toBe(true);
+				const updated = result.task as { priority: string };
+				expect(updated.priority).toBe('urgent');
+			});
+
+			it('should update task dependencies', async () => {
+				const dep = await taskManager.createTask({ title: 'Dep', description: 'D' });
+				const task = await taskManager.createTask({ title: 'Task', description: 'D' });
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.update_task({ task_id: task.id, depends_on: [dep.id] })
+				);
+				expect(result.success).toBe(true);
+				const updated = result.task as { dependsOn: string[] };
+				expect(updated.dependsOn).toContain(dep.id);
+			});
+
+			it('should reject self-dependency', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.update_task({ task_id: task.id, depends_on: [task.id] })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('cannot depend on itself');
+			});
+
+			it('should fail gracefully when task not found', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.update_task({ task_id: 'nonexistent', title: 'X' })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toBeDefined();
+			});
+		});
+
+		describe('cancel_task tool', () => {
+			it('should cancel a pending task and return cancelledTaskIds with clean message', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(true);
+				expect(result.cancelledTaskIds).toContain(task.id);
+				// No "0 dependent" phrasing when there are no cascaded dependents
+				expect(result.message).not.toContain('0 dependent');
+				const updated = await taskManager.getTask(task.id);
+				expect(updated?.status).toBe('cancelled');
+			});
+
+			it('should cascade cancellation and include all cancelled IDs in response', async () => {
+				const parent = await taskManager.createTask({ title: 'Parent', description: 'D' });
+				const child = await taskManager.createTask({
+					title: 'Child',
+					description: 'D',
+					dependsOn: [parent.id],
+				});
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: parent.id }));
+				expect(result.success).toBe(true);
+				const cancelledIds = result.cancelledTaskIds as string[];
+				expect(cancelledIds).toContain(parent.id);
+				expect(cancelledIds).toContain(child.id);
+				const updatedParent = await taskManager.getTask(parent.id);
+				const updatedChild = await taskManager.getTask(child.id);
+				expect(updatedParent?.status).toBe('cancelled');
+				expect(updatedChild?.status).toBe('cancelled');
+			});
+
+			it('should reject cancellation of already-terminal tasks', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				await taskManager.completeTask(task.id, 'done');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('terminal state');
+			});
+
+			it('should reject cancellation of in_progress task with active group without runtimeService', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				// Create an active group — triggers the guard
+				insertGroup(task.id, 'awaiting_worker');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+					// no runtimeService — simulates leader context
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('runtime service');
+			});
+
+			it('should reject cancellation of review task with active group without runtimeService', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				await taskManager.reviewTask(task.id);
+				// Create an active group — triggers the guard
+				insertGroup(task.id, 'awaiting_human');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+					// no runtimeService — simulates leader context
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('runtime service');
+			});
+
+			it('should fail gracefully when task not found', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: 'nonexistent' }));
+				expect(result.success).toBe(false);
+				expect(result.error).toBeDefined();
+			});
+		});
+
+		describe('update_task_status tool (set_task_status handler)', () => {
+			it('should transition task from needs_attention to pending', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				await taskManager.failTask(task.id, 'failed');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.set_task_status({ task_id: task.id, status: 'pending' })
+				);
+				expect(result.success).toBe(true);
+				const updated = await taskManager.getTask(task.id);
+				expect(updated?.status).toBe('pending');
+			});
+
+			it('should reject transitioning in_progress task with active group to terminal status without runtimeService', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				// Create an active group — triggers the guard
+				insertGroup(task.id, 'awaiting_worker');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+					// no runtimeService — simulates leader context
+				});
+				const result = parseResult(
+					await leaderHandlers.set_task_status({ task_id: task.id, status: 'cancelled' })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('runtime service');
+			});
+
+			it('should reject invalid status transitions', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				// draft → completed is not a valid transition
+				const result = parseResult(
+					await leaderHandlers.set_task_status({ task_id: task.id, status: 'completed' })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Invalid status transition');
+			});
+
+			it('should fail gracefully when task not found', async () => {
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+				});
+				const result = parseResult(
+					await leaderHandlers.set_task_status({ task_id: 'nonexistent', status: 'pending' })
+				);
+				expect(result.success).toBe(false);
+				expect(result.error).toBeDefined();
+			});
+		});
+
+		it('should use the distinct MCP server name "leader-context"', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			expect(server.name).toBe('leader-context');
+		});
+
+		it('full room-agent server name should remain "room-agent"', () => {
+			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			expect(fullServer.name).toBe('room-agent');
+		});
+
+		it('full server exposes all 20 tools', () => {
+			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(fullServer as never);
+			expect(names).toHaveLength(20);
+			expect(names).toContain('approve_task');
+			expect(names).toContain('reject_task');
+			expect(names).toContain('set_schedule');
+			expect(names).toContain('pause_schedule');
+			expect(names).toContain('resume_schedule');
+			expect(names).toContain('record_metric');
+			expect(names).toContain('get_metrics');
+			expect(names).toContain('list_executions');
+		});
+	});
+
+	describe('create_goal Mission V2 fields', () => {
+		it('should create a measurable mission with structuredMetrics', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Improve coverage',
+					mission_type: 'measurable',
+					structured_metrics: [{ name: 'test_coverage', target: 90, current: 70, unit: '%' }],
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('measurable');
+			const metrics = goal.structuredMetrics as Array<Record<string, unknown>>;
+			expect(metrics).toHaveLength(1);
+			expect(metrics[0].name).toBe('test_coverage');
+			expect(metrics[0].target).toBe(90);
+			expect(metrics[0].current).toBe(70);
+			expect(metrics[0].unit).toBe('%');
+		});
+
+		it('should create a recurring mission', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Daily sync',
+					mission_type: 'recurring',
+					autonomy_level: 'semi_autonomous',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('recurring');
+			expect(goal.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('should default current to 0 when not provided in structured_metrics', async () => {
+			const result = parseResult(
+				await handlers.create_goal({
+					title: 'Perf goal',
+					mission_type: 'measurable',
+					structured_metrics: [
+						{ name: 'latency_p99', target: 100, direction: 'decrease', baseline: 500, unit: 'ms' },
+					],
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			const metrics = goal.structuredMetrics as Array<Record<string, unknown>>;
+			expect(metrics[0].current).toBe(0);
+			expect(metrics[0].direction).toBe('decrease');
+			expect(metrics[0].baseline).toBe(500);
+		});
+	});
+
+	describe('update_goal V2 fields', () => {
+		it('should update goal title and description via patchGoal', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Old title' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'New title',
+					description: 'Updated description',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.title).toBe('New title');
+			expect(goal.description).toBe('Updated description');
+		});
+
+		it('should update missionType and autonomyLevel via patchGoal', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					mission_type: 'measurable',
+					autonomy_level: 'semi_autonomous',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('measurable');
+			expect(goal.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('should update structuredMetrics via patchGoal', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Goal', mission_type: 'measurable' })
+			);
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					structured_metrics: [{ name: 'coverage', target: 80 }],
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			const metrics = goal.structuredMetrics as Array<Record<string, unknown>>;
+			expect(metrics).toHaveLength(1);
+			expect(metrics[0].name).toBe('coverage');
+			expect(metrics[0].current).toBe(0);
+		});
+
+		it('should update both patch fields and status together', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'Renamed',
+					status: 'completed',
+				})
+			);
+			expect(result.success).toBe(true);
+			// Status update overwrites the last returned goal (status is applied after patch)
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.status).toBe('completed');
+		});
+
+		it('should update priority via patchGoal when provided with other patch fields', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Goal' }));
+			const goalId = created.goalId as string;
+			const result = parseResult(
+				await handlers.update_goal({
+					goal_id: goalId,
+					title: 'Updated',
+					priority: 'urgent',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.priority).toBe('urgent');
+		});
+	});
+
+	describe('list_executions', () => {
+		it('should return empty list for goal with no executions', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Recurring', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+			const result = parseResult(await handlers.list_executions({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			expect(result.goalId).toBe(goalId);
+			expect(result.missionType).toBe('recurring');
+			expect(result.executions).toEqual([]);
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.list_executions({ goal_id: 'no-such' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not found');
+		});
+
+		it('should list executions after startExecution', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Recurring', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+			// Start an execution via goalManager
+			await goalManager.startExecution(goalId);
+			const result = parseResult(await handlers.list_executions({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const executions = result.executions as Array<Record<string, unknown>>;
+			expect(executions).toHaveLength(1);
+			expect(executions[0].status).toBe('running');
+			expect(executions[0].executionNumber).toBe(1);
+		});
+	});
+
+	describe('set_task_status — archived', () => {
+		it('should archive a completed task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(true);
+			const updated = await taskManager.getTask(task.id);
+			expect(updated?.status).toBe('archived');
+			expect(updated?.archivedAt).toBeDefined();
+		});
+
+		it('should archive a cancelled task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.cancelTask(task.id);
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(true);
+			const updated = await taskManager.getTask(task.id);
+			expect(updated?.status).toBe('archived');
+		});
+
+		it('should archive a needs_attention task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'failed');
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(true);
+			const updated = await taskManager.getTask(task.id);
+			expect(updated?.status).toBe('archived');
+		});
+
+		it('should reject archiving a pending task (invalid transition)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: task.id, status: 'archived' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toBeDefined();
+		});
+	});
+
+	describe('get_room_status — draft count', () => {
+		it('should include draft task count', async () => {
+			// Create a regular (pending) task
+			await taskManager.createTask({ title: 'Pending', description: 'D' });
+			// Create a draft task (status param supported by CreateTaskParams)
+			await taskManager.createTask({ title: 'Draft', description: 'D', status: 'draft' });
+			const result = parseResult(await handlers.get_room_status());
+			expect(result.success).toBe(true);
+			const status = result.status as Record<string, unknown>;
+			const tasks = status.tasks as Record<string, number>;
+			expect(tasks.draft).toBe(1);
+			expect(tasks.pending).toBe(1);
+		});
+	});
+
+	describe('list_tasks — archived filter', () => {
+		it('should filter by archived status', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'D' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+			await taskManager.archiveTask(task.id);
+
+			const result = parseResult(await handlers.list_tasks({ status: 'archived' }));
+			expect(result.success).toBe(true);
+			const tasks = result.tasks as Array<Record<string, unknown>>;
+			expect(tasks.some((t) => t.id === task.id)).toBe(true);
 		});
 	});
 });

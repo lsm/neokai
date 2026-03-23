@@ -22,24 +22,36 @@ import {
 	type TaskPriority,
 	type AgentType,
 	type RuntimeState,
+	type GlobalSettings,
+	type FallbackModelEntry,
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
-import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
+import type {
+	SessionGroupRepository,
+	SessionGroup,
+	RateLimitBackoff,
+} from '../state/session-group-repository';
 import type { TaskManager } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
 import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
+import type { ModelSwitchResult } from '../../agent/model-switch-handler';
 import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
-import type { PlannerCreateTaskParams, ReplanContext } from '../agents/planner-agent';
+import type {
+	PlannerCreateTaskParams,
+	ReplanContext,
+	MetricReplanStatus,
+} from '../agents/planner-agent';
 import {
 	createPlannerAgentInit,
 	createPlannerMcpServer,
 	buildPlannerTaskMessage,
 } from '../agents/planner-agent';
+import { getEffectiveMaxPlanningAttempts } from '../../../storage/repositories/goal-repository';
 import { createCoderAgentInit, buildCoderTaskMessage } from '../agents/coder-agent';
 import { createGeneralAgentInit, buildGeneralTaskMessage } from '../agents/general-agent';
 import { buildLeaderTaskContext } from '../agents/leader-agent';
@@ -56,12 +68,17 @@ import {
 	runWorkerExitGate,
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
+	closeStalePr,
 	type HookOptions,
 	type HookResult,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 } from './lifecycle-hooks';
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
+import { getNextRunAt } from './cron-utils';
+import { inferProviderForModel } from '../../providers/registry';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import { enqueueRoomTick, cancelPendingTickJobs } from '../../job-handlers/room-tick.handler';
 
 const log = new Logger('room-runtime');
 
@@ -69,6 +86,13 @@ export const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
 export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
 /** Default when room config does not specify maxPlanningRetries (no auto-retry) */
 const DEFAULT_MAX_PLANNING_RETRIES = 0;
+
+/**
+ * Task statuses that indicate a group is stale and should be auto-cleaned.
+ * Groups whose tasks are in these terminal states but still marked active
+ * consume concurrency slots and prevent new tasks from being picked up.
+ */
+const STALE_TASK_STATUSES = new Set<string>(['completed', 'cancelled', 'archived']);
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -79,6 +103,12 @@ export interface WorkerMessage {
 	text: string;
 	/** Names of tools called (for envelope summary) */
 	toolCallNames: string[];
+}
+
+/** Response from session.model.get RPC */
+interface SessionModelGetResult {
+	currentModel: string;
+	modelInfo?: { provider?: string };
 }
 
 export interface RoomRuntimeConfig {
@@ -99,8 +129,13 @@ export interface RoomRuntimeConfig {
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
-	/** Tick interval in ms (default: 30000) */
-	tickInterval?: number;
+	/**
+	 * Job defer used to schedule and cancel room.tick jobs.
+	 * When provided, scheduleTick() enqueues a room.tick job via enqueueRoomTick.
+	 * When absent (e.g., in unit tests), tick scheduling is a no-op and tests
+	 * drive ticks directly via runtime.tick().
+	 */
+	jobQueue?: JobQueueRepository;
 	/**
 	 * Fetch Worker assistant messages for forwarding to Leader.
 	 * Returns messages after (exclusive) the message with afterMessageId.
@@ -121,6 +156,8 @@ export interface RoomRuntimeConfig {
 	getTask: (taskId: string) => Promise<NeoTask | null>;
 	/** Fetch goal from DB by ID (for lazy leader init with current data) */
 	getGoal: (goalId: string) => Promise<RoomGoal | null>;
+	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
+	getGlobalSettings: () => GlobalSettings;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -129,9 +166,7 @@ function jsonResult(data: Record<string, unknown>): LeaderToolResult {
 
 export class RoomRuntime {
 	private state: RuntimeState = 'paused';
-	private tickLocked = false;
-	private tickQueued = false;
-	private tickTimer: ReturnType<typeof setInterval> | null = null;
+	private readonly jobQueue: JobQueueRepository | null;
 
 	private readonly roomId: string;
 	private room: Room;
@@ -142,7 +177,6 @@ export class RoomRuntime {
 	private readonly sessionFactory: SessionFactory;
 	private maxConcurrentGroups: number;
 	private maxFeedbackIterations: number;
-	private readonly tickInterval: number;
 	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
@@ -150,6 +184,7 @@ export class RoomRuntime {
 	private readonly deadLoopConfig: DeadLoopConfig;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
+	private readonly getGlobalSettings: () => GlobalSettings;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -248,7 +283,7 @@ export class RoomRuntime {
 		this.sessionFactory = config.sessionFactory;
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? DEFAULT_MAX_CONCURRENT_GROUPS;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
-		this.tickInterval = config.tickInterval ?? 30_000;
+		this.jobQueue = config.jobQueue ?? null;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
@@ -256,6 +291,7 @@ export class RoomRuntime {
 		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
+		this.getGlobalSettings = config.getGlobalSettings;
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -265,21 +301,127 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			provider: config.model ? this.resolveProviderForModel(config.model) : undefined,
 			workerModel: config.workerModel,
+			workerProvider: config.workerModel
+				? this.resolveProviderForModel(config.workerModel)
+				: undefined,
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
 			daemonHub: config.daemonHub,
-			runtimeService: {
-				getRuntime: (roomId: string) => (roomId === this.room.id ? this : null),
-			},
 		});
 
 		// Keep test and direct-runtime usage predictable: when no explicit leader model
 		// is provided, derive it from the initial room config.
 		if (!config.model || config.model.trim() === '') {
-			this.taskGroupManager.updateModel(this.resolveAgentModel(config.room, 'leader'));
+			const leaderModel = this.resolveAgentModel(config.room, 'leader');
+			this.taskGroupManager.updateModel(leaderModel, this.resolveProviderForModel(leaderModel));
 		}
+	}
+
+	// =========================================================================
+	// Fallback Model Switching (for rate limit handling)
+	// =========================================================================
+
+	/**
+	 * Attempt to switch a session to a fallback model when a rate limit is detected.
+	 * Returns true if a fallback was attempted, false if no fallback is available.
+	 */
+	private async trySwitchToFallbackModel(
+		groupId: string,
+		sessionId: string,
+		sessionRole: 'worker' | 'leader'
+	): Promise<boolean> {
+		const settings = this.getGlobalSettings();
+		const fallbackModels = settings.fallbackModels ?? [];
+
+		if (fallbackModels.length === 0) {
+			return false;
+		}
+
+		// Get current model info from the session
+		let currentModel: string;
+		let currentProvider: string;
+		try {
+			const modelInfo = (await this.messageHub?.request('session.model.get', { sessionId })) as
+				| SessionModelGetResult
+				| undefined;
+			if (!modelInfo || !modelInfo.currentModel) {
+				log.warn(`Could not get current model for session ${sessionId}`);
+				return false;
+			}
+			currentModel = modelInfo.currentModel;
+			currentProvider = modelInfo.modelInfo?.provider ?? 'anthropic';
+		} catch (err) {
+			log.warn(`Error getting current model for session ${sessionId}:`, err);
+			return false;
+		}
+
+		// Find the index of the current model in the fallback chain
+		const currentIndex = fallbackModels.findIndex(
+			(f) => f.model === currentModel && f.provider === currentProvider
+		);
+
+		// Determine the next fallback model
+		let fallback: FallbackModelEntry | undefined;
+		if (currentIndex === -1) {
+			// Current model is not in fallback chain, use the first fallback
+			fallback = fallbackModels[0];
+		} else {
+			// Try the next one in the chain
+			const nextIndex = currentIndex + 1;
+			if (nextIndex < fallbackModels.length) {
+				fallback = fallbackModels[nextIndex];
+			}
+			// If current is the last in chain and there's only one fallback, no point switching
+			// to itself, so don't fall back
+		}
+
+		if (!fallback) {
+			log.info(
+				`No fallback model available for ${sessionRole} session ${sessionId} ` +
+					`(current: ${currentProvider}/${currentModel}, chain exhausted)`
+			);
+			return false;
+		}
+
+		// Don't switch to the same model
+		if (fallback.model === currentModel && fallback.provider === currentProvider) {
+			return false;
+		}
+
+		try {
+			const result = (await this.messageHub?.request('session.model.switch', {
+				sessionId,
+				model: fallback.model,
+				provider: fallback.provider,
+			})) as ModelSwitchResult | undefined;
+
+			if (result?.success) {
+				log.info(
+					`Switched ${sessionRole} session ${sessionId} from ${currentProvider}/${currentModel} ` +
+						`to ${fallback.provider}/${fallback.model} due to rate limit`
+				);
+				this.appendGroupEvent(groupId, 'model_fallback', {
+					text: `Switched from ${currentModel} to ${fallback.model} due to rate limit`,
+					fromModel: currentModel,
+					fromProvider: currentProvider,
+					toModel: fallback.model,
+					toProvider: fallback.provider,
+					sessionRole,
+				});
+				return true;
+			} else {
+				log.warn(
+					`Fallback model switch failed for ${sessionRole} session ${sessionId}: ${result?.error ?? 'unknown error'}`
+				);
+			}
+		} catch (err) {
+			log.error(`Error switching ${sessionRole} session ${sessionId} to fallback model:`, err);
+		}
+
+		return false;
 	}
 
 	// =========================================================================
@@ -288,12 +430,12 @@ export class RoomRuntime {
 
 	start(): void {
 		this.state = 'running';
-		this.tickTimer = setInterval(() => this.tick(), this.tickInterval);
 		this.scheduleTick();
 	}
 
 	pause(): void {
 		this.state = 'paused';
+		if (this.jobQueue) cancelPendingTickJobs(this.roomId, this.jobQueue);
 	}
 
 	resume(): void {
@@ -303,16 +445,22 @@ export class RoomRuntime {
 
 	stop(): void {
 		this.state = 'stopped';
-		if (this.tickTimer) {
-			clearInterval(this.tickTimer);
-			this.tickTimer = null;
-		}
+		if (this.jobQueue) cancelPendingTickJobs(this.roomId, this.jobQueue);
 		// Clean up all mirroring subscriptions
 		for (const cleanup of this.mirroringCleanups.values()) {
 			cleanup();
 		}
 		this.mirroringCleanups.clear();
 		this.observer.dispose();
+
+		// Safety net: mark zombie groups (active groups for terminal tasks) as completed.
+		// Runs synchronously at stop time — no session recovery, just DB consistency.
+		const zombiesCleaned = this.groupRepo.cleanupZombieGroupsForRoom(this.roomId);
+		if (zombiesCleaned > 0) {
+			log.warn(
+				`[stop] Room ${this.roomId}: cleaned up ${zombiesCleaned} zombie group(s) on runtime stop`
+			);
+		}
 	}
 
 	getState(): RuntimeState {
@@ -334,6 +482,14 @@ export class RoomRuntime {
 			return room.defaultModel;
 		}
 		return this.defaultModel;
+	}
+
+	/**
+	 * Infer the provider for a given model ID using naming conventions.
+	 * Delegates to the shared inferProviderForModel utility.
+	 */
+	private resolveProviderForModel(modelId: string): string {
+		return inferProviderForModel(modelId);
 	}
 
 	/**
@@ -368,7 +524,11 @@ export class RoomRuntime {
 		const config = (currentRoom.config ?? {}) as Record<string, unknown>;
 
 		// Keep TaskGroupManager model aligned to the current Leader model.
-		this.taskGroupManager.updateModel(this.resolveAgentModel(currentRoom, 'leader'));
+		const updatedLeaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		this.taskGroupManager.updateModel(
+			updatedLeaderModel,
+			this.resolveProviderForModel(updatedLeaderModel)
+		);
 
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
@@ -468,11 +628,130 @@ export class RoomRuntime {
 			return;
 		}
 
-		// Check rate limit backoff
+		// Check rate limit backoff (set by mirroring on each incoming message)
 		if (this.groupRepo.isRateLimited(groupId)) {
 			log.info(`[Worker→Leader] Group ${groupId}: rate limited — pausing routing to Leader`);
 			this.scheduleTickAfterRateLimitReset(groupId);
 			return;
+		}
+
+		// Collect Worker messages since last forwarded message.
+		// Done early — before any bounce gate — so API errors in the output can be
+		// detected and short-circuit the worktree / exit-gate bounces below.
+		// (A worker that hit a 429 or 4xx should not be bounced back into another API call.)
+		const workerMessages = this.getWorkerMessages
+			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
+			: [];
+
+		// Build worker output text once — used for error detection, bypass detection, and the
+		// leader envelope.  For empty messages use a sentinel string (it won't match any error
+		// pattern, so the classification below is a no-op for silent terminal exits).
+		const workerOutputText =
+			workerMessages.length > 0
+				? workerMessages
+						.map((m) => m.text)
+						.filter(Boolean)
+						.join('\n\n')
+				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
+
+		// Classify any API errors in worker output BEFORE the worktree / exit-gate checks.
+		//
+		// Why here?  The rate-limit check above only catches errors that mirroring already
+		// persisted to the group.  When the rate limit expires and recoverStuckWorkers
+		// re-triggers this handler, the group-level flag is expired-but-non-null (the timer
+		// intentionally does NOT clear it — the sentinel is only cleared in send_to_worker).
+		// If the worker's output still contains a 429 (or a 4xx terminal error), running the
+		// worktree gate next would bounce the worker straight back into another failing API
+		// call — creating a rapid bounce loop.  Detecting the error first prevents that.
+		//
+		// terminal    → fail task immediately (4xx — unrecoverable, no point bouncing)
+		// rate_limit  → set initial backoff and pause (only on first detection; re-triggers fall through)
+		// usage_limit → immediately try fallback model; if none available, fall through to rate_limit behavior (backoff + pause)
+		// recoverable / null → fall through to worktree check and exit gate
+		{
+			const errorClass = classifyError(workerOutputText);
+			if (errorClass?.class === 'terminal') {
+				log.info(`Terminal API error in worker output for group ${groupId}: ${errorClass.reason}`);
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Terminal error: ${errorClass.reason}`,
+				});
+				await this.taskGroupManager.fail(groupId, errorClass.reason);
+				this.cleanupMirroring(groupId, `Terminal API error: ${errorClass.reason}`);
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+				this.scheduleTick();
+				return;
+			}
+			if (errorClass?.class === 'rate_limit') {
+				// Only set backoff on first detection (group.rateLimit is null).
+				// After the initial backoff expires, recoverStuckWorkers re-triggers this handler
+				// with the same old 429 message still in the worker output.  Skipping re-detection
+				// here lets the worker fall through to the worktree check and attempt cleanup/retry.
+				// If the retry hits a new 429, mirroring will re-establish the backoff.
+				if (!group.rateLimit) {
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(workerOutputText, 'worker')
+						: null;
+					// For bare "API Error: 429" with no parseable reset time, apply a 1-minute
+					// minimum backoff so the worker is not immediately bounced into another
+					// failing API call.
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'worker',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					log.info(
+						`Rate limit detected in worker output for group ${groupId}. ` +
+							`Backoff until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`
+					);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Rate limit detected. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'worker',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
+					// Try to switch to a fallback model if configured
+					await this.trySwitchToFallbackModel(groupId, group.workerSessionId, 'worker');
+					return;
+				}
+				// group.rateLimit already set (even if expired): re-trigger after expiry.
+				// Fall through to the worktree check so the worker can attempt cleanup/retry.
+			}
+			if (errorClass?.class === 'usage_limit') {
+				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+				// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
+				log.info(
+					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
+				);
+				const switched = await this.trySwitchToFallbackModel(
+					groupId,
+					group.workerSessionId,
+					'worker'
+				);
+				if (!switched) {
+					// No fallback available — fall through to rate_limit behavior (backoff + pause)
+					// Parse reset time from the usage limit message, or use 1-minute default
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(workerOutputText, 'worker')
+						: null;
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'worker',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'worker',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
+					return;
+				}
+				// Fall through to normal routing — fallback model switch event was already appended
+				// in trySwitchToFallbackModel so the UI shows the switch clearly.
+			}
 		}
 
 		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
@@ -512,22 +791,6 @@ export class RoomRuntime {
 				return; // Keep worker turn active
 			}
 		}
-
-		// Collect Worker messages since last forwarded message (needed for bypass marker detection)
-		const workerMessages = this.getWorkerMessages
-			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
-			: [];
-
-		// Build worker output text once — used both for bypass detection and leader envelope.
-		// For empty messages, use a sentinel string for the envelope but pass undefined to the
-		// gate so bypass detection is skipped (no output means no marker).
-		const workerOutputText =
-			workerMessages.length > 0
-				? workerMessages
-						.map((m) => m.text)
-						.filter(Boolean)
-						.join('\n\n')
-				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
 
 		// Lifecycle hooks: Worker Exit Gate
 		// Validates preconditions before routing to leader (branch/PR for coder/general, tasks for planners)
@@ -597,45 +860,6 @@ export class RoomRuntime {
 					log.info(
 						`Bypass detected for ${group.workerRole} group ${groupId} — pre-setting submittedForReview, human approval still required`
 					);
-				}
-			}
-		}
-
-		// Classify any API errors in worker output.
-		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
-		// rate_limit → pause with timed backoff (429 / usage limit)
-		// recoverable / null → fall through to normal leader routing
-		{
-			const errorClass = classifyError(workerOutputText);
-			if (errorClass?.class === 'terminal') {
-				log.info(`Terminal API error in worker output for group ${groupId}: ${errorClass.reason}`);
-				this.appendGroupEvent(groupId, 'status', {
-					text: `Terminal error: ${errorClass.reason}`,
-				});
-				await this.taskGroupManager.fail(groupId, errorClass.reason);
-				this.cleanupMirroring(groupId, `Terminal API error: ${errorClass.reason}`);
-				await this.emitTaskUpdateById(group.taskId);
-				await this.emitGoalProgressForTask(group.taskId);
-				this.scheduleTick();
-				return;
-			}
-			if (errorClass?.class === 'rate_limit') {
-				const rateLimitBackoff = errorClass.resetsAt
-					? createRateLimitBackoff(workerOutputText, 'worker')
-					: null;
-				if (rateLimitBackoff) {
-					this.groupRepo.setRateLimit(groupId, rateLimitBackoff);
-					log.info(
-						`Rate limit detected in worker output for group ${groupId}. ` +
-							`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
-					);
-					this.appendGroupEvent(groupId, 'rate_limited', {
-						text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
-						resetsAt: rateLimitBackoff.resetsAt,
-						sessionRole: 'worker',
-					});
-					this.scheduleTickAfterRateLimitReset(groupId);
-					return;
 				}
 			}
 		}
@@ -734,6 +958,18 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
 
+		// Guard: leader hasn't received any work yet. This can happen if a spurious idle event
+		// fires before the first worker→leader routing (e.g. a race during startup). Ignore it.
+		// leaderHasWork is set to true by routeWorkerToLeader and resumeLeaderFromHuman before
+		// calling injectMessage, so it is never reset and survives feedbackIteration resets.
+		if (!group.leaderHasWork) {
+			log.debug(
+				`[onLeaderTerminalState] Group ${groupId}: ignoring terminal event ` +
+					`(leaderHasWork=false) — leader hasn't received work yet`
+			);
+			return;
+		}
+
 		// Clear active session indicator — leader is no longer generating output
 		const leaderTask = await this.taskManager.getTask(group.taskId);
 		if (leaderTask?.activeSession === 'leader') {
@@ -767,6 +1003,109 @@ export class RoomRuntime {
 			return;
 		}
 
+		// Classify any API errors in leader output.
+		// terminal    → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
+		// rate_limit  → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
+		//               (no parseable reset time) mirroring skips setRateLimit, so we must apply a
+		//               minimum backoff here to prevent the task stalling indefinitely.
+		// usage_limit → immediately try fallback model; if none available, fall through to rate_limit behavior (backoff + pause)
+		// recoverable / null → fall through (leader finished without calling a tool — that's fine)
+		//
+		// Note: fetching with afterMessageId=null returns all leader messages since session start.
+		// Because terminal errors always fail the task immediately, earlier-iteration terminal errors
+		// cannot persist to later iterations — so false-positive re-detection is not a concern here.
+		{
+			const leaderMessages = this.getWorkerMessages
+				? this.getWorkerMessages(group.leaderSessionId, null)
+				: [];
+			const leaderOutputText =
+				leaderMessages.length > 0
+					? leaderMessages
+							.map((m) => m.text)
+							.filter(Boolean)
+							.join('\n\n')
+					: '';
+			if (leaderOutputText) {
+				const errorClass = classifyError(leaderOutputText);
+				if (errorClass?.class === 'terminal') {
+					log.info(
+						`Terminal API error in leader output for group ${groupId}: ${errorClass.reason}`
+					);
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Terminal error in leader: ${errorClass.reason}`,
+					});
+					await this.taskGroupManager.fail(groupId, errorClass.reason);
+					this.cleanupMirroring(groupId, `Terminal API error in leader: ${errorClass.reason}`);
+					await this.emitTaskUpdateById(group.taskId);
+					await this.emitGoalProgressForTask(group.taskId);
+					this.scheduleTick();
+					return;
+				}
+				// Only apply backoff on first detection.
+				// Unlike the worker path (where recoverStuckWorkers re-triggers onWorkerTerminalState
+				// after expiry), there is no recoverStuckLeaders mechanism that re-calls this handler.
+				// The !group.rateLimit guard is a defensive check: it prevents the backoff from being
+				// reset if this handler is somehow called again while a rate limit is already recorded.
+				// A full leader retry after 429 would require re-injecting the worker message into the
+				// leader session — tracked as a future improvement (out of scope for this fix).
+				if (errorClass?.class === 'rate_limit' && !group.rateLimit) {
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(leaderOutputText, 'leader')
+						: null;
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'leader',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					log.info(
+						`Rate limit detected in leader output for group ${groupId}. Backoff until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`
+					);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Rate limit detected in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'leader',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
+					// Try to switch to a fallback model if configured
+					await this.trySwitchToFallbackModel(groupId, group.leaderSessionId, 'leader');
+					return;
+				}
+				if (errorClass?.class === 'usage_limit') {
+					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
+					log.info(
+						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
+					);
+					const switched = await this.trySwitchToFallbackModel(
+						groupId,
+						group.leaderSessionId,
+						'leader'
+					);
+					if (!switched) {
+						// No fallback available — fall through to rate_limit behavior (backoff + pause)
+						const rateLimitBackoff = errorClass.resetsAt
+							? createRateLimitBackoff(leaderOutputText, 'leader')
+							: null;
+						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+							detectedAt: Date.now(),
+							resetsAt: Date.now() + 60 * 1000,
+							sessionRole: 'leader',
+						};
+						this.groupRepo.setRateLimit(groupId, backoff);
+						this.appendGroupEvent(groupId, 'rate_limited', {
+							text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+							resetsAt: backoff.resetsAt,
+							sessionRole: 'leader',
+						});
+						this.scheduleTickAfterRateLimitReset(groupId);
+						return;
+					}
+					// Fall through to normal completion — fallback model switch event was already appended
+				}
+			}
+		}
+
 		// Leader can finish without calling a tool - that's fine.
 		// No contract violation logic needed.
 	}
@@ -784,15 +1123,24 @@ export class RoomRuntime {
 		toolName: string,
 		params: {
 			message?: string;
-			mode?: 'steer' | 'queue';
+			mode?: 'immediate' | 'defer';
 			summary?: string;
 			reason?: string;
 			pr_url?: string;
+			progress_summary?: string;
 		}
 	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
 			return jsonResult({ success: false, error: `Group not found: ${groupId}` });
+		}
+
+		// Persist and emit progress summary whenever the leader provides one
+		if (params.progress_summary) {
+			this.groupRepo.setLeaderProgressSummary(groupId, params.progress_summary);
+			this.appendGroupEvent(groupId, 'leader_summary', {
+				text: `[Turn Summary] ${params.progress_summary}`,
+			});
 		}
 
 		// No state guard - tools always available
@@ -822,8 +1170,8 @@ export class RoomRuntime {
 					});
 				}
 				const message = params.message ?? '';
-				const mode = params.mode ?? 'queue';
-				const deliveryMode = mode === 'queue' ? 'next_turn' : 'current_turn';
+				const mode = params.mode ?? 'defer';
+				const deliveryMode = mode === 'defer' ? 'defer' : 'immediate';
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
@@ -881,6 +1229,7 @@ export class RoomRuntime {
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							rootWorkspacePath: this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
@@ -926,6 +1275,31 @@ export class RoomRuntime {
 				this.cleanupMirroring(groupId, 'Task completed.');
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
+				// Reset consecutive failures on success and emit auto_completed event if applicable.
+				{
+					// Tasks are linked to at most one goal in the current data model.
+					const completeGoals = await this.goalManager.getGoalsForTask(group.taskId);
+					const completeGoal = completeGoals[0] ?? null;
+					if (completeGoal?.autonomyLevel === 'semi_autonomous') {
+						// Reset failure counter on success.
+						if ((completeGoal.consecutiveFailures ?? 0) > 0) {
+							await this.goalManager.updateConsecutiveFailures(completeGoal.id, 0);
+						}
+						// Emit auto_completed notification if this was auto-approved.
+						if (group.approvalSource === 'leader_semi_auto' && this.daemonHub) {
+							const completedTask = await this.taskManager.getTask(group.taskId);
+							void this.daemonHub.emit('goal.task.auto_completed', {
+								sessionId: `room:${this.roomId}`,
+								roomId: this.roomId,
+								goalId: completeGoal.id,
+								taskId: group.taskId,
+								taskTitle: completedTask?.title ?? '',
+								prUrl: completedTask?.prUrl ?? '',
+								approvalSource: 'leader_semi_auto',
+							});
+						}
+					}
+				}
 				// If this was a planning task, promote its draft children to pending
 				await this.promoteDraftTasksIfPlanning(group.taskId);
 				this.scheduleTick();
@@ -938,6 +1312,24 @@ export class RoomRuntime {
 				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
+				// Escalation policy: track consecutive failures for semi-autonomous goals.
+				// When consecutiveFailures reaches the max threshold, set goal to needs_human.
+				{
+					// Tasks are linked to at most one goal in the current data model.
+					const failGoals = await this.goalManager.getGoalsForTask(group.taskId);
+					const failGoal = failGoals[0] ?? null;
+					if (failGoal?.autonomyLevel === 'semi_autonomous') {
+						const newCount = (failGoal.consecutiveFailures ?? 0) + 1;
+						await this.goalManager.updateConsecutiveFailures(failGoal.id, newCount);
+						const maxFailures = failGoal.maxConsecutiveFailures ?? 3;
+						if (newCount >= maxFailures) {
+							log.info(
+								`Goal ${failGoal.id} (${failGoal.title}) escalated to needs_human after ${newCount} consecutive failure(s)`
+							);
+							await this.goalManager.updateGoalStatus(failGoal.id, 'needs_human');
+						}
+					}
+				}
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
 			}
@@ -966,11 +1358,16 @@ export class RoomRuntime {
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							rootWorkspacePath: this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
 							groupId,
 							hasReviewers,
+							// approved and workerBypassed intentionally omitted: runLeaderSubmitGate
+							// does not call checkLeaderRootRepoSynced (submit is pre-merge), so
+							// these fields are not needed here. If a future hook in runLeaderSubmitGate
+							// requires them, add them explicitly to avoid silent skips.
 						};
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
@@ -1001,12 +1398,75 @@ export class RoomRuntime {
 					}
 				}
 
+				// If the task already has a different PR URL (e.g., agent created a new PR
+				// instead of updating the existing one), close the stale PR before proceeding.
+				{
+					const existingTask = await this.taskManager.getTask(group.taskId);
+					if (existingTask?.prUrl && existingTask.prUrl !== prUrl) {
+						const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
+						log.info(
+							`submit_for_review: new PR ${prUrl} differs from existing ${existingTask.prUrl} — closing stale PR`
+						);
+						this.appendGroupEvent(groupId, 'status', {
+							text: `Closing stale PR ${existingTask.prUrl}, superseded by ${prUrl}.`,
+						});
+						await closeStalePr(existingTask.prUrl, prUrl, groupWorkspace, this.hookOptions);
+					}
+				}
+
 				// Mark that submit_for_review was called (gates complete_task state machine)
 				this.groupRepo.setSubmittedForReview(groupId, true);
 
 				await this.taskGroupManager.submitForReview(groupId, prUrl);
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
+
+				// Semi-autonomous mode: auto-approve coder/general tasks without human interaction.
+				// Planner tasks always require human approval regardless of autonomy level.
+				if (group.workerRole !== 'planner') {
+					// Tasks are linked to at most one goal in the current data model.
+					const semiAutoGoals = await this.goalManager.getGoalsForTask(group.taskId);
+					const semiAutoGoal = semiAutoGoals[0] ?? null;
+					if (semiAutoGoal?.autonomyLevel === 'semi_autonomous') {
+						const capturedGroupId = groupId;
+						const capturedTaskId = group.taskId;
+						// Defer auto-approve until after this tool result has been fully committed.
+						// Using setTimeout(0) ensures we do not call resumeWorkerFromHuman inline
+						// from handleLeaderTool, avoiding reentrancy/ordering issues.
+						setTimeout(() => {
+							// Idempotency guard: skip if already approved (prevents duplicate resumes
+							// on daemon restart or if this callback fires more than once).
+							const currentGroup = this.groupRepo.getGroup(capturedGroupId);
+							if (!currentGroup || currentGroup.approvalSource) return;
+							// Persist approval source before calling resumeWorkerFromHuman so that
+							// a restart during the resume sees the source and can skip re-processing.
+							this.groupRepo.setApprovalSource(capturedGroupId, 'leader_semi_auto');
+							void this.resumeWorkerFromHuman(
+								capturedTaskId,
+								'PR auto-approved under semi-autonomous mode. Proceed with merge and complete_task.',
+								{ approved: true }
+							)
+								.then((ok) => {
+									if (!ok) {
+										// Resume returned false (e.g. group no longer submittedForReview
+										// or leader session gone). Clear approvalSource so future retries
+										// are not blocked by the idempotency guard.
+										this.groupRepo.setApprovalSource(capturedGroupId, null);
+									}
+								})
+								.catch((err) => {
+									log.error(`[semi-auto] Failed to auto-approve task ${capturedTaskId}:`, err);
+									// Clear approvalSource on throw so retries are not permanently blocked.
+									this.groupRepo.setApprovalSource(capturedGroupId, null);
+								});
+						}, 0);
+						return jsonResult({
+							success: true,
+							message: `PR submitted. Auto-approving under semi-autonomous mode.`,
+						});
+					}
+				}
+
 				// Do NOT call scheduleTick() — the group stays alive in submitted-for-review mode.
 				// The slot is excluded from the active count in executeTick().
 				return jsonResult({
@@ -1025,20 +1485,41 @@ export class RoomRuntime {
 	 */
 	createLeaderCallbacks(groupId: string): LeaderToolCallbacks {
 		return {
-			sendToWorker: async (_groupId: string, message: string, mode?: 'steer' | 'queue') => {
-				return this.handleLeaderTool(groupId, 'send_to_worker', { message, mode });
+			sendToWorker: async (
+				_groupId: string,
+				message: string,
+				mode?: 'immediate' | 'defer',
+				progressSummary?: string
+			) => {
+				return this.handleLeaderTool(groupId, 'send_to_worker', {
+					message,
+					mode,
+					progress_summary: progressSummary,
+				});
 			},
-			completeTask: async (_groupId: string, summary: string) => {
-				return this.handleLeaderTool(groupId, 'complete_task', { summary });
+			completeTask: async (_groupId: string, summary: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'complete_task', {
+					summary,
+					progress_summary: progressSummary,
+				});
 			},
-			failTask: async (_groupId: string, reason: string) => {
-				return this.handleLeaderTool(groupId, 'fail_task', { reason });
+			failTask: async (_groupId: string, reason: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'fail_task', {
+					reason,
+					progress_summary: progressSummary,
+				});
 			},
-			replanGoal: async (_groupId: string, reason: string) => {
-				return this.handleLeaderTool(groupId, 'replan_goal', { reason });
+			replanGoal: async (_groupId: string, reason: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'replan_goal', {
+					reason,
+					progress_summary: progressSummary,
+				});
 			},
-			submitForReview: async (_groupId: string, prUrl: string) => {
-				return this.handleLeaderTool(groupId, 'submit_for_review', { pr_url: prUrl });
+			submitForReview: async (_groupId: string, prUrl: string, progressSummary?: string) => {
+				return this.handleLeaderTool(groupId, 'submit_for_review', {
+					pr_url: prUrl,
+					progress_summary: progressSummary,
+				});
 			},
 		};
 	}
@@ -1070,9 +1551,15 @@ export class RoomRuntime {
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
 		const previousStatus = task.status;
 		const previousApproved = group.approved;
+		const previousApprovalSource = group.approvalSource;
 
 		if (isApproval && !previousApproved) {
 			this.groupRepo.setApproved(group.id, true);
+			// Record approval source for auditing. Only set to 'human' if not already set
+			// (preserves 'leader_semi_auto' source set before this call in semi-autonomous mode).
+			if (!group.approvalSource) {
+				this.groupRepo.setApprovalSource(group.id, 'human');
+			}
 		}
 
 		// For approvals, keep task in review status and let leader's complete_task
@@ -1097,6 +1584,10 @@ export class RoomRuntime {
 				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
 				if (isApproval && !previousApproved) {
 					this.groupRepo.setApproved(group.id, previousApproved);
+					// Roll back approvalSource to prevent deadlock: if the deferred auto-approve
+					// callback set approvalSource before this call, but the resume failed, the
+					// idempotency guard would permanently block future retries without rollback.
+					this.groupRepo.setApprovalSource(group.id, previousApprovalSource);
 				}
 				return false;
 			}
@@ -1108,6 +1599,8 @@ export class RoomRuntime {
 			}
 			if (isApproval && !previousApproved) {
 				this.groupRepo.setApproved(group.id, previousApproved);
+				// Roll back approvalSource (see comment above).
+				this.groupRepo.setApprovalSource(group.id, previousApprovalSource);
 			}
 			log.error(`Failed to resume from human for task ${taskId}:`, error);
 			return false;
@@ -1190,6 +1683,8 @@ export class RoomRuntime {
 		let injected = false;
 		if (leaderAvailable) {
 			try {
+				// Set leaderHasWork before injecting so the terminal event is not dropped.
+				this.groupRepo.setLeaderHasWork(group.id);
 				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 				injected = true;
 			} catch (error) {
@@ -1255,22 +1750,44 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Archive a task group - cleanup worktree regardless of state.
+	 * Archive a task group - terminate active sessions, cleanup worktree, and set archived status.
 	 *
-	 * Called when user archives a task via UI. This cleans up the worktree
-	 * to free disk space even for failed tasks (kept for debugging initially).
-	 * Also sets the archivedAt timestamp on the task.
+	 * Called when user archives a task via UI. This:
+	 * 1. Terminates any active sessions and mirroring (if group is still active).
+	 * 2. Cleans up the worktree to free disk space.
+	 * 3. Sets the task status to 'archived' with archivedAt timestamp.
 	 */
-	async archiveTaskGroup(taskId: string): Promise<boolean> {
+	async archiveTaskGroup(
+		taskId: string,
+		options?: { mode?: 'runtime' | 'manual' }
+	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 
-		// Cleanup worktree via TaskGroupManager (handles both active and completed groups)
 		if (group) {
+			// Terminate active sessions if group is still active.
+			// If terminateGroup() fails (e.g., concurrent version conflict), we log and
+			// continue rather than aborting — archive is destructive and non-reversible,
+			// so the worktree and task must still be cleaned up regardless of group state.
+			// This is a deliberate best-effort approach (distinct from terminateTaskGroup
+			// which returns false on failure and lets the caller decide).
+			const isActiveGroup = group.completedAt === null;
+			if (isActiveGroup) {
+				const terminated = await this.taskGroupManager.terminateGroup(group.id);
+				if (!terminated) {
+					log.warn(
+						`archiveTaskGroup: failed to terminate active group ${group.id} for task ${taskId}`
+					);
+				}
+			}
+			await this.terminateGroupSessions(group);
+			this.cleanupMirroring(group.id, isActiveGroup ? 'Task archived by user.' : undefined);
+
+			// Cleanup worktree via TaskGroupManager
 			await this.taskGroupManager.archiveGroup(group.id);
 		}
 
-		// Set archivedAt timestamp on task
-		await this.taskManager.archiveTask(taskId);
+		// Set archivedAt timestamp on task (transitions to 'archived' status)
+		await this.taskManager.archiveTask(taskId, { mode: options?.mode });
 
 		return true;
 	}
@@ -1323,6 +1840,70 @@ export class RoomRuntime {
 
 		this.scheduleTick();
 		return { success: true, cancelledTaskIds: [...cancelledTaskIds] };
+	}
+
+	/**
+	 * Force-stop a session group by ID.
+	 *
+	 * Kills worker and leader sessions, marks the group as failed, and deletes the
+	 * group record from the DB. Used for manual cleanup of stale or stuck groups
+	 * via the `session_group.stop` RPC.
+	 *
+	 * Task status is NOT changed — the group is removed while leaving the task
+	 * in its current state. Call task.cancel separately if needed.
+	 *
+	 * Returns { success: false } if the group doesn't exist or belongs to a
+	 * different room (validated by checking the task via this room's TaskManager).
+	 */
+	async forceStopSessionGroup(groupId: string): Promise<{ success: boolean; error?: string }> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) {
+			return { success: false, error: `Session group ${groupId} not found` };
+		}
+
+		// Validate the group belongs to this room by fetching the task via this
+		// room's TaskManager (which is scoped to this.roomId).
+		const task = await this.taskManager.getTask(group.taskId);
+		if (!task) {
+			// Task not in this room or doesn't exist. Refuse to act on foreign groups.
+			return {
+				success: false,
+				error: `Group ${groupId} belongs to a different room or its task no longer exists`,
+			};
+		}
+
+		// Stop the actual agent processes first (best-effort).
+		await this.terminateGroupSessions(group);
+
+		// Mark group as terminal in the DB (unobserves sessions too).
+		if (group.completedAt === null) {
+			const terminated = await this.taskGroupManager.terminateGroup(groupId);
+			if (!terminated) {
+				// Concurrent modification (optimistic lock conflict) — the group may have
+				// already been terminated by another code path. Log and continue; the
+				// deleteGroup() below will still free the concurrency slot.
+				log.warn(
+					`[forceStopSessionGroup] terminateGroup(${groupId}) returned null — ` +
+						`possible concurrent modification; proceeding with delete`
+				);
+			}
+		}
+
+		// Clean up message mirroring subscriptions.
+		this.cleanupMirroring(groupId, 'Force-stopped by user.');
+
+		// Delete the group record from the DB (freeing the concurrency slot).
+		this.groupRepo.deleteGroup(groupId);
+
+		// Emit task update so the frontend reflects the removed group.
+		// emitGoalProgressForTask is intentionally omitted: goal progress is derived
+		// from task status, which forceStopSessionGroup deliberately leaves unchanged.
+		// There is nothing for the goal progress bar to update.
+		await this.emitTaskUpdateById(group.taskId);
+		this.scheduleTick();
+
+		log.info(`[forceStopSessionGroup] Group ${groupId} for task ${group.taskId} force-stopped`);
+		return { success: true };
 	}
 
 	/**
@@ -1447,6 +2028,8 @@ export class RoomRuntime {
 		}
 
 		try {
+			// Set leaderHasWork before injecting so the terminal event is not dropped.
+			this.groupRepo.setLeaderHasWork(group.id);
 			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
@@ -1493,7 +2076,17 @@ export class RoomRuntime {
 						assignedAgent: params.agent,
 					});
 					if (goal) {
-						await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+						// For recurring missions, use the atomic dual-write path so that
+						// mission_executions.task_ids stays in sync after a daemon restart.
+						const activeExecution =
+							goal.missionType === 'recurring'
+								? this.goalManager.getActiveExecution(goal.id)
+								: null;
+						if (activeExecution) {
+							await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, newTask.id);
+						} else {
+							await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+						}
 					}
 					log.info(`Planning (restored) created draft task: ${newTask.id} (${newTask.title})`);
 					return { id: newTask.id, title: newTask.title };
@@ -1548,19 +2141,28 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Re-attach runtime-only message mirroring for a resumed group.
+	 *
+	 * TaskView now reads canonical persisted rows (sdk_messages + task_group_events),
+	 * but mirroring is still kept for legacy projection rows and compatibility paths.
+	 */
+	restoreRecoveredGroupMirroring(group: SessionGroup): void {
+		this.cleanupMirroring(group.id);
+		this.setupMirroring(group);
+	}
+
 	// =========================================================================
 	// Message Mirroring
 	// =========================================================================
 
 	/**
-	 * Set up live message forwarding for a group's worker/leader sessions.
+	 * Set up live message monitoring for a group's worker/leader sessions.
 	 *
-	 * Subscribes to DaemonHub sdk.message events and broadcasts enriched deltas
-	 * on state.groupMessages.delta for TaskConversationRenderer.
-	 *
-	 * IMPORTANT: We intentionally do NOT mirror worker/leader SDK messages into
-	 * any group message table anymore. Task view history is reconstructed from each
-	 * session's sdk_messages stream via task.getGroupMessages.
+	 * Subscribes to DaemonHub sdk.message events for runtime-only side effects
+	 * (rate-limit detection, fallback notices, dead-loop heuristics).
+	 * Canonical TaskView timeline data is read directly from sdk_messages +
+	 * task_group_events.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -1568,8 +2170,6 @@ export class RoomRuntime {
 		const mirroredUuids = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
-			const shortSessionId = sessionId.slice(0, 8);
-
 			return this.daemonHub!.on(
 				'sdk.message',
 				(event) => {
@@ -1598,28 +2198,8 @@ export class RoomRuntime {
 						}
 					}
 
-					// Read current iteration from DB to stay accurate across feedback cycles
-					const currentGroup = this.groupRepo.getGroup(group.id);
-					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
-					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
-
-					// Broadcast enriched delta to subscribed frontends.
-					if (this.messageHub) {
-						const enrichedMessage = {
-							...event.message,
-							_taskMeta: {
-								authorRole: role,
-								authorSessionId: sessionId,
-								turnId,
-								iteration,
-							},
-						};
-						this.messageHub.event(
-							'state.groupMessages.delta',
-							{ added: [{ ...enrichedMessage, timestamp: Date.now() }], timestamp: Date.now() },
-							{ channel: `group:${group.id}` }
-						);
-					}
+					// Canonical timeline rows are persisted by the SDK/session layer into
+					// sdk_messages. No per-message projection write is needed here.
 				},
 				{ sessionId }
 			);
@@ -1649,17 +2229,6 @@ export class RoomRuntime {
 			kind,
 			payloadJson: payload ? JSON.stringify(payload) : undefined,
 		});
-		if (this.messageHub) {
-			const now = Date.now();
-			this.messageHub.event(
-				'state.groupMessages.delta',
-				{
-					added: [{ type: 'status', text: payload?.text ?? kind, timestamp: now }],
-					timestamp: now,
-				},
-				{ channel: `group:${groupId}` }
-			);
-		}
 	}
 
 	private cleanupMirroring(groupId: string, statusText?: string): void {
@@ -1697,29 +2266,16 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Main scheduling loop. Idempotent with mutex protection.
+	 * Main scheduling loop. Concurrency is managed by the job defer — at most one
+	 * pending room.tick job exists per room, so concurrent calls are not expected
+	 * in production. In unit tests, callers drive ticks directly and sequentially.
 	 */
 	async tick(): Promise<void> {
 		if (this.state !== 'running') return;
-
-		// Mutex: only one tick at a time
-		if (this.tickLocked) {
-			this.tickQueued = true;
-			return;
-		}
-
-		this.tickLocked = true;
-		try {
-			await this.executeTick();
-		} finally {
-			this.tickLocked = false;
-			// Re-tick if queued while we were running
-			if (this.tickQueued) {
-				this.tickQueued = false;
-				// Use microtask to avoid stack depth issues
-				queueMicrotask(() => this.tick());
-			}
-		}
+		// Run stale group cleanup at the tick level — not gated by any tick lock so it
+		// always fires even if the tick body is skipped due to a lock in the future.
+		await this.cleanStaleGroups();
+		await this.executeTick();
 	}
 
 	/**
@@ -1730,12 +2286,11 @@ export class RoomRuntime {
 	 * checkpoints when there are no zombies (common case).
 	 *
 	 * Leader zombie detection rules:
-	 * - A leader is "expected" if feedbackIteration > 0 (at least one review round completed)
-	 *   OR if deferredLeader is null (no deferred bootstrap config means the leader was already
-	 *   live at some point and may have gone missing after a process restart).
-	 * - When deferredLeader is set (non-null), the leader is lazily created by routeWorkerToLeader;
-	 *   before that happens feedbackIteration == 0 and the leader session does not yet exist —
-	 *   this is normal and must NOT be treated as a zombie.
+	 * - A leader is "expected" if feedbackIteration > 0 (at least one review round completed),
+	 *   OR deferredLeader is null (leader was previously live and may be missing after restart),
+	 *   OR deferredLeader.eagerlyCreated is true (leader was created eagerly in spawn()).
+	 * - Old lazy-init groups (eagerlyCreated unset, feedbackIteration == 0) have NOT created
+	 *   the leader yet — missing leader is expected and must NOT be flagged as zombie.
 	 */
 	private findZombieGroups(): SessionGroup[] {
 		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
@@ -1743,13 +2298,16 @@ export class RoomRuntime {
 
 		for (const group of allActiveGroups) {
 			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
-			// Leader is expected to exist when:
-			//   1. feedbackIteration > 0: leader was created in a prior review round, or
-			//   2. deferredLeader == null: no pending lazy-creation config means the leader
-			//      was previously live and may be missing after a restart.
-			// Groups where deferredLeader is set and feedbackIteration == 0 have NOT created
-			// the leader yet — missing leader is expected there and must NOT be flagged.
-			const leaderExpected = group.feedbackIteration > 0 || group.deferredLeader === null;
+			// Leader is expected when:
+			//   1. feedbackIteration > 0: at least one review round completed (leader was live)
+			//   2. deferredLeader === null: no pending config means leader was previously live
+			//   3. deferredLeader.eagerlyCreated === true: leader was created eagerly in spawn()
+			// Old lazy-init groups (eagerlyCreated unset, feedbackIteration == 0) are NOT flagged:
+			// the missing leader is expected there and routeWorkerToLeader will create it.
+			const leaderExpected =
+				group.feedbackIteration > 0 ||
+				group.deferredLeader === null ||
+				group.deferredLeader?.eagerlyCreated === true;
 			const leaderMissing =
 				leaderExpected && !this.sessionFactory.hasSession(group.leaderSessionId);
 
@@ -1814,9 +2372,13 @@ export class RoomRuntime {
 					});
 					leaderRestored = true;
 				} else {
-					// Leader restoration failure is not fatal - leader may be lazily created
+					// Leader restoration failure: group may have been created with old lazy-init
+					// code (leader never persisted to DB), or the DB record was lost.
+					// For new eager-init groups the leader was persisted at spawn() time, so this
+					// indicates data loss; recovery falls back to recreating the leader from
+					// deferredLeader config in routeWorkerToLeader() when the worker finishes.
 					log.warn(
-						`Could not restore leader ${group.leaderSessionId} for group ${group.id} - may be lazily created later.`
+						`Could not restore leader ${group.leaderSessionId} for group ${group.id} - will be recreated when worker routes output.`
 					);
 				}
 			}
@@ -1828,6 +2390,34 @@ export class RoomRuntime {
 				continue; // Awaiting human - no continuation message needed
 			}
 
+			// Groups waiting for a question answer need special handling.
+			// Injecting a regular continuation message would leave an orphaned user
+			// message after the pending AskUserQuestion tool use (invalid conversation
+			// state) and confuse the agent once it resumes.
+			// Instead, just start the SDK query so the SDK re-encounters the pending
+			// AskUserQuestion in its session file and re-calls canUseTool, which
+			// re-establishes the pendingResolver so the user can submit their answer.
+			if (group.waitingForQuestion) {
+				try {
+					const sessionId =
+						group.waitingSession === 'leader' ? group.leaderSessionId : group.workerSessionId;
+					const restored = group.waitingSession === 'leader' ? leaderRestored : workerRestored;
+					if (restored) {
+						await this.sessionFactory.startSession(sessionId);
+						log.info(
+							`[ZombieRecovery] Group ${group.id}: started SDK query for ` +
+								`${group.waitingSession} session waiting for question answer`
+						);
+					}
+				} catch (error) {
+					log.error(
+						`[ZombieRecovery] Group ${group.id}: failed to start session for waitingForQuestion:`,
+						error
+					);
+				}
+				continue; // Skip regular continuation message injection
+			}
+
 			try {
 				if (workerRestored) {
 					await this.sessionFactory.injectMessage(
@@ -1836,10 +2426,26 @@ export class RoomRuntime {
 					);
 				}
 				if (leaderRestored) {
-					await this.sessionFactory.injectMessage(
-						group.leaderSessionId,
-						'The system was restarted. Continue reviewing from where you left off.'
-					);
+					// Only inject "continue reviewing" if the leader has already received work
+					// (feedbackIteration > 0 means at least one worker→leader routing happened).
+					// When feedbackIteration == 0 the leader was eagerly created in spawn() but
+					// has not been given any worker output yet — it will receive work when the
+					// worker finishes and routeWorkerToLeader() fires.
+					if (group.feedbackIteration > 0) {
+						// Set leaderHasWork before injecting so the terminal event is not
+						// dropped by onLeaderTerminalState. Defensive: if leaderHasWork was
+						// already true (normal case for feedbackIteration>0), this is a no-op.
+						this.groupRepo.setLeaderHasWork(group.id);
+						await this.sessionFactory.injectMessage(
+							group.leaderSessionId,
+							'The system was restarted. Continue reviewing from where you left off.'
+						);
+					} else {
+						log.debug(
+							`[recoverZombieGroups] Group ${group.id}: leader restored but feedbackIteration=0 ` +
+								`— skipping "continue reviewing" inject; worker will route output on completion.`
+						);
+					}
 				}
 			} catch (error) {
 				log.error(`Failed to inject continuation message for group ${group.id}:`, error);
@@ -1854,27 +2460,43 @@ export class RoomRuntime {
 	 * 1. Observer callback fired but the routing threw an error (now logged, but still need recovery)
 	 * 2. Observer callback was missed due to a race condition (extremely rare)
 	 * 3. Any other silent failure in the worker→leader routing path
+	 * 4. Worker paused by rate limit — when the backoff expires the timer fires scheduleTick()
+	 *    which calls this function; the group is re-triggered regardless of feedbackIteration.
 	 *
 	 * Conditions for a "stuck worker":
-	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
+	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never
+	 *   happened), OR the group has an expired rate limit that was set during a later iteration —
+	 *   in that case the leader was never triggered (onWorkerTerminalState returned early after
+	 *   detecting the rate limit) so recovery is still needed.
 	 * - Worker session IS in the session factory (not a zombie)
 	 * - Worker session processing state is terminal (idle or interrupted)
-	 * - Leader session is NOT in the session factory (not yet created)
+	 * - Leader session may or may not exist (with eager init, it always exists; with old lazy
+	 *   init, it may not exist yet — both cases are handled by routeWorkerToLeader)
 	 * - Group is NOT awaiting human review
-	 * - Group is NOT rate-limited
+	 * - Group is NOT actively rate-limited (resetsAt still in the future)
 	 * - Group is NOT paused waiting for a question answer (waiting_for_input is intentional pause)
 	 * - A recovery for this group is NOT already in-flight from a previous tick
 	 */
 	private recoverStuckWorkers(): void {
 		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
 
+		const now = Date.now();
 		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
 		for (const group of activeGroups) {
-			// Only recover groups that haven't routed to leader yet
-			if (group.feedbackIteration > 0) continue;
+			// An expired rate limit means the worker was paused mid-iteration (feedbackIteration may
+			// be > 0) and the leader was never triggered. Allow recovery in that case.
+			// isRateLimited() already returns false for expired limits, so we check the raw field.
+			const hasExpiredRateLimit = group.rateLimit !== null && now >= group.rateLimit.resetsAt;
+
+			// Skip groups where the leader is actively working (feedbackIteration > 0 means the
+			// worker→leader routing already happened at least once and the leader may still be
+			// reviewing). The exception is an expired rate limit: in that case onWorkerTerminalState
+			// returned early (before routing to the leader) so feedbackIteration was NOT incremented
+			// for this iteration — the leader is idle and recovery is safe.
+			if (group.feedbackIteration > 0 && !hasExpiredRateLimit) continue;
 			// Skip groups awaiting human
 			if (group.submittedForReview) continue;
-			// Skip rate-limited groups
+			// Skip actively rate-limited groups (backoff not yet expired)
 			if (this.groupRepo.isRateLimited(group.id)) continue;
 			// Skip groups paused waiting for a question answer — waiting_for_input is an
 			// intentional pause, not a stuck state; the task resumes when the user answers
@@ -1883,13 +2505,28 @@ export class RoomRuntime {
 			// Worker must be in the session factory (not a zombie)
 			if (!this.sessionFactory.hasSession(group.workerSessionId)) continue;
 
-			// Leader must NOT exist yet (routing hasn't happened)
-			if (this.sessionFactory.hasSession(group.leaderSessionId)) continue;
-
 			// Worker must be in a terminal state (idle or interrupted)
 			// Note: waiting_for_input is excluded — it is handled separately as an intentional pause
 			const workerState = this.sessionFactory.getProcessingState(group.workerSessionId);
 			if (workerState !== 'idle' && workerState !== 'interrupted') continue;
+
+			// Skip if the worker has no new messages since the last forwarding.
+			// This prevents spurious re-routing when feedbackIteration was reset by
+			// resumeLeaderFromHuman (or resumeWorkerFromHuman) but the worker has not
+			// produced any new output yet — re-routing would inject a sentinel string
+			// into the leader while it is already processing the human's message.
+			// For the expired-rate-limit case this also acts as a safety net: if the LEADER
+			// hit the rate limit (rateLimit.sessionRole === 'leader'), the worker messages were
+			// already forwarded (lastForwardedMessageId updated) and this check skips re-routing.
+			// When getWorkerMessages is absent (some test contexts), fall through to
+			// preserve the original safety-net behavior.
+			if (this.getWorkerMessages) {
+				const newMessages = this.getWorkerMessages(
+					group.workerSessionId,
+					group.lastForwardedMessageId
+				);
+				if (newMessages.length === 0) continue;
+			}
 
 			// Guard against duplicate in-flight recovery: if a previous tick already
 			// triggered routing for this group and it hasn't completed yet, skip it.
@@ -1900,12 +2537,15 @@ export class RoomRuntime {
 				continue;
 			}
 
+			const reason = hasExpiredRateLimit
+				? `rate limit expired (feedbackIteration=${group.feedbackIteration})`
+				: `feedbackIteration=0, waitingForQuestion=false`;
 			log.warn(
-				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but leader never created ` +
-					`(feedbackIteration=0, waitingForQuestion=false). Re-triggering worker→leader routing.`
+				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but routing to leader not yet ` +
+					`completed (${reason}). Re-triggering worker→leader routing.`
 			);
 			this.appendGroupEvent(group.id, 'status', {
-				text: `Worker found in ${workerState} state without a leader — re-triggering routing to Leader.`,
+				text: `Worker found in ${workerState} state with routing not yet complete — re-triggering routing to Leader.`,
 			});
 
 			// Mark as in-flight before firing, clear when done (success or error)
@@ -1923,9 +2563,124 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Auto-clean stale session groups whose tasks have reached a terminal state.
+	 *
+	 * Groups become stale when a task transitions to completed/cancelled/archived
+	 * while its group was still marked active (e.g., after a daemon crash or an
+	 * external status change). Stale groups consume concurrency slots and prevent
+	 * new tasks from being picked up.
+	 *
+	 * This runs at the start of every tick as a safety net. Stale groups are
+	 * terminated (sessions stopped, group marked failed) so slots are freed.
+	 */
+	private async cleanStaleGroups(): Promise<void> {
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		if (activeGroups.length === 0) return;
+
+		// NOTE: getActiveGroups() uses an INNER JOIN on tasks — groups whose tasks
+		// were hard-deleted from the DB will not appear here. Those groups are handled
+		// by the zombie recovery path (findZombieGroups / recoverZombieGroups).
+
+		for (const group of activeGroups) {
+			try {
+				const task = await this.taskManager.getTask(group.taskId);
+				const isStale = !task || STALE_TASK_STATUSES.has(task.status);
+				if (!isStale) continue;
+
+				log.warn(
+					`[cleanStaleGroups] Group ${group.id} is stale ` +
+						`(task ${group.taskId} status=${task?.status ?? 'not found'}) — auto-cleaning`
+				);
+
+				// Stop the actual agent processes (best-effort).
+				await this.terminateGroupSessions(group);
+
+				// Mark group as terminal (unobserves sessions); no-op if already terminal.
+				if (group.completedAt === null) {
+					await this.taskGroupManager.terminateGroup(group.id);
+				}
+
+				// Clean up mirroring subscriptions.
+				this.cleanupMirroring(group.id, 'Stale group auto-cleaned by tick.');
+
+				// Emit UI updates so the frontend reflects the cleaned-up state.
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+			} catch (error) {
+				log.error(`[cleanStaleGroups] Failed to clean stale group ${group.id} — skipping:`, error);
+			}
+		}
+	}
+
+	/**
+	 * Clean zombie groups for a specific task before spawning a new group.
+	 * Called from spawnGroupForTask() to free the unique constraint slot for this task.
+	 *
+	 * Identifies active groups (completedAt IS NULL) whose both sessions are missing
+	 * from cache — these are fully abandoned and cannot progress. Terminates them so
+	 * the unique index slot is freed before createGroup() inserts the new row.
+	 *
+	 * Unlike cleanStaleGroups() which checks task terminal status, this checks session
+	 * liveness directly and terminates the group without changing task status.
+	 *
+	 * NOTE on ordering vs recoverZombieGroups():
+	 * recoverZombieGroups() runs inside executeTick() BEFORE the spawn loop, so in the
+	 * normal zombie case (task row still present), it will always handle the zombie
+	 * first (failing the group and moving the task to needs_attention). This method's
+	 * exclusive territory is zombie groups whose task row has been hard-deleted from
+	 * the tasks table: getActiveGroups() uses an INNER JOIN and misses those, but
+	 * getActiveGroupsForTask() (no JOIN) still finds them. This method terminates those
+	 * groups without changing task status so the new group can be inserted.
+	 */
+	private async cleanStaleGroupsForTask(task: NeoTask): Promise<void> {
+		const activeGroups = this.groupRepo.getActiveGroupsForTask(task.id);
+		for (const group of activeGroups) {
+			try {
+				const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
+				const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
+				// Only terminate if both sessions are gone — a group with one live session
+				// may still be in progress or submitted for review.
+				if (!workerMissing || !leaderMissing) continue;
+
+				log.warn(
+					`[cleanStaleGroupsForTask] Group ${group.id} for task ${task.id} ` +
+						`has no live sessions — auto-cleaning before spawn`
+				);
+
+				// Stop any live sessions (best-effort — both are missing here but defensive).
+				await this.terminateGroupSessions(group);
+
+				// Mark group as terminal without failing the task.
+				// The task remains pending so spawnGroupForTask can create a fresh group.
+				if (group.completedAt === null) {
+					const result = await this.taskGroupManager.terminateGroup(group.id);
+					if (result === null) {
+						log.warn(
+							`[cleanStaleGroupsForTask] terminateGroup returned null for group ${group.id} ` +
+								`(version conflict) — slot may not be freed; spawn will hit UNIQUE constraint`
+						);
+					}
+				}
+
+				this.cleanupMirroring(group.id, 'Zombie group auto-cleaned before spawn.');
+			} catch (error) {
+				log.error(
+					`[cleanStaleGroupsForTask] Failed to clean zombie group ${group.id} for task ${task.id} — skipping:`,
+					error
+				);
+			}
+		}
+	}
+
 	private async executeTick(): Promise<void> {
+		// Note: cleanStaleGroups() is called in tick() before executeTick(), so it runs
+		// independently of any future tick-body lock.
+
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
-		// Sync detection avoids unnecessary microtask checkpoints in the common case.
+		// Ordering: zombie recovery runs BEFORE tickRecurringMissions so that any
+		// in-flight execution from a prior restart is recovered first, preventing a
+		// duplicate catch-up trigger from the scheduler.
 		const zombies = this.findZombieGroups();
 		if (zombies.length > 0) {
 			await this.recoverZombieGroups(zombies);
@@ -1936,23 +2691,35 @@ export class RoomRuntime {
 		// Note: synchronous scan, only fires async work as fire-and-forget if stuck workers are found.
 		this.recoverStuckWorkers();
 
+		// Recurring mission scheduler: check for due missions and trigger new executions.
+		// Also checks for completed executions to advance next_run_at.
+		// Runs only when runtime is in 'running' state (enforced by tick() guard above).
+		// tickRecurringMissions() returns void (synchronously) when there are no recurring goals,
+		// or Promise<void> when async work is needed — only await in the latter case to preserve
+		// the microtask-ordering behaviour that existing tests depend on.
+		const recurringWork = this.tickRecurringMissions();
+		if (recurringWork !== undefined) {
+			await recurringWork;
+			// Bail out early if the runtime was stopped during the async recurring mission work.
+			if (this.state !== 'running') return;
+		}
+
 		// Check capacity — groups awaiting human review don't consume slots
-		const activeGroups = this.groupRepo
-			.getActiveGroups(this.roomId)
-			.filter((g) => !g.submittedForReview);
-		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
+		const workingGroups = allActiveGroups.filter((g) => !g.submittedForReview);
+		const availableSlots = this.maxConcurrentGroups - workingGroups.length;
 
 		if (availableSlots <= 0) return;
 
 		// Planning takes priority over execution.
 		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning group first.
-		const goalForPlanning = await this.getNextGoalForPlanning();
-		if (goalForPlanning) {
-			await this.spawnPlanningGroup(goalForPlanning);
+		const planningNeeded = await this.getNextGoalForPlanning();
+		if (planningNeeded) {
+			await this.spawnPlanningGroup(planningNeeded.goal, planningNeeded.replanContext);
 			return; // Don't start execution groups in the same tick
 		}
 
-		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
+		// Find pending non-planning tasks (planning tasks are spawned directly, not via defer)
 		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
 		const planningTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') === 'planning');
 		if (planningTasks.length > 0) {
@@ -1966,9 +2733,24 @@ export class RoomRuntime {
 		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 		if (executableTasks.length === 0) return;
 
+		// Collect task IDs that already have an active (non-terminal) group.
+		// Uses allActiveGroups (including submitted-for-review) to prevent spawning
+		// a duplicate group while another is awaiting human review.
+		// This prevents duplicate group spawning when concurrent ticks race
+		// (the job defer processor runs up to maxConcurrent jobs in parallel,
+		// so two ticks can both see a task as 'pending' before either transitions
+		// it to 'in_progress').
+		const activeGroupTaskIds = new Set(allActiveGroups.map((g) => g.taskId));
+
 		// Filter to tasks whose dependencies are all completed
 		const readyTasks: NeoTask[] = [];
 		for (const task of executableTasks) {
+			if (activeGroupTaskIds.has(task.id)) {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — active group already exists`
+				);
+				continue;
+			}
 			if (await this.taskManager.areDependenciesMet(task)) {
 				readyTasks.push(task);
 			} else {
@@ -1991,23 +2773,213 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Scheduler tick for recurring missions.
+	 *
+	 * Two phases per tick:
+	 * Phase 1 — Completion check: for each recurring goal with a running execution,
+	 *   check whether all of its tasks have reached a terminal state. If so, mark
+	 *   the execution as completed and advance next_run_at.
+	 * Phase 2 — Trigger check: for each recurring goal where next_run_at <= now
+	 *   AND schedule_paused = false AND no active execution, start a new execution.
+	 *
+	 * Overlap prevention: enforced at two levels —
+	 *   (1) DB partial unique index on mission_executions(goal_id) WHERE status='running'
+	 *   (2) App-level check via getActiveExecution() before insert
+	 *
+	 * Catch-up: if next_run_at is in the past, fire once immediately, then
+	 * advance from current time (skipping missed intervals).
+	 *
+	 * Precision: up to 30s jitter from tick interval (acceptable for @hourly+).
+	 *
+	 * Returns void synchronously when there are no recurring goals (to preserve microtask ordering),
+	 * or a Promise<void> when async work is needed.
+	 * Call site must conditionally await: `const p = this.tickRecurringMissions(); if (p) await p;`
+	 */
+	private tickRecurringMissions(): void | Promise<void> {
+		// Synchronous pre-check — goalRepo.listGoals is a bun:sqlite synchronous call.
+		// Avoids an extra microtask yield when there are no recurring goals.
+		const recurringGoals = this.goalManager
+			.listGoalsSync('active')
+			.filter((g) => g.missionType === 'recurring');
+
+		if (recurringGoals.length === 0) return; // synchronous return — no microtask added
+
+		return this._doTickRecurringMissions(recurringGoals);
+	}
+
+	private async _doTickRecurringMissions(recurringGoals: RoomGoal[]): Promise<void> {
+		const nowSec = Math.floor(Date.now() / 1000);
+
+		// Phase 1: Complete finished executions
+		for (const goal of recurringGoals) {
+			const activeExecution = this.goalManager.getActiveExecution(goal.id);
+			if (!activeExecution) continue;
+
+			// Check if all tasks for this execution are in terminal state
+			const taskIds = activeExecution.taskIds;
+			if (taskIds.length === 0) {
+				// Orphan guard: execution has been running with no tasks for > 5 minutes.
+				// This happens if planning failed before any tasks were created (e.g. a crash
+				// between startExecution and spawnPlanningGroup). Fail it so Phase 2 can fire again.
+				const ORPHAN_THRESHOLD_SEC = 5 * 60; // 5 minutes
+				if (nowSec - activeExecution.startedAt > ORPHAN_THRESHOLD_SEC) {
+					log.warn(
+						`Recurring mission ${goal.id}: orphan execution ${activeExecution.id} ` +
+							`has no tasks after ${ORPHAN_THRESHOLD_SEC}s — failing it`
+					);
+					this.goalManager.failExecution(
+						activeExecution.id,
+						`Orphan: execution started but no tasks were created within ${ORPHAN_THRESHOLD_SEC}s.`
+					);
+				}
+				continue;
+			}
+
+			const tasks = await Promise.all(taskIds.map((id) => this.taskManager.getTask(id)));
+			const validTasks = tasks.filter(Boolean) as NonNullable<(typeof tasks)[number]>[];
+			if (validTasks.length === 0) continue;
+
+			const isTerminal = (status: string) =>
+				status === 'completed' || status === 'needs_attention' || status === 'cancelled';
+			const allTerminal = validTasks.every((t) => isTerminal(t.status));
+			if (!allTerminal) continue;
+
+			// All tasks are terminal: mark execution as completed (or failed)
+			const anyCompleted = validTasks.some((t) => t.status === 'completed');
+			const resultSummary = anyCompleted
+				? `Execution ${activeExecution.executionNumber} completed: ${validTasks.filter((t) => t.status === 'completed').length}/${validTasks.length} tasks succeeded.`
+				: `Execution ${activeExecution.executionNumber} failed: all tasks reached terminal state without completion.`;
+
+			if (anyCompleted) {
+				this.goalManager.completeExecution(activeExecution.id, resultSummary);
+				log.info(
+					`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} completed`
+				);
+			} else {
+				this.goalManager.failExecution(activeExecution.id, resultSummary);
+				log.warn(
+					`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} failed`
+				);
+			}
+
+			// Advance next_run_at from current time
+			if (goal.schedule) {
+				const tz = goal.schedule.timezone ?? 'UTC';
+				const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+				if (nextRunAt !== null) {
+					await this.goalManager.updateNextRunAt(goal.id, nextRunAt);
+					log.info(
+						`Recurring mission ${goal.id} next run scheduled at ${new Date(nextRunAt * 1000).toISOString()}`
+					);
+				}
+			}
+
+			// Emit goal progress update
+			if (this.daemonHub) {
+				const updatedGoal = await this.goalManager.getGoal(goal.id);
+				if (updatedGoal) {
+					void this.daemonHub.emit('goal.progressUpdated', {
+						sessionId: `room:${this.roomId}`,
+						roomId: this.roomId,
+						goalId: goal.id,
+						progress: updatedGoal.progress,
+					});
+				}
+			}
+		}
+
+		// Phase 2: Trigger new executions for due missions
+		// Refresh goal list after Phase 1 mutations
+		const refreshedGoals = (await this.goalManager.listGoals('active')).filter(
+			(g) => g.missionType === 'recurring'
+		);
+
+		for (const goal of refreshedGoals) {
+			if (goal.schedulePaused) continue;
+			if (!goal.schedule) continue;
+			if (goal.nextRunAt === undefined || goal.nextRunAt === null) continue;
+			if (goal.nextRunAt > nowSec) continue; // not due yet
+
+			// Calculate next_run_at BEFORE startExecution so it is written atomically
+			// in the same transaction — prevents a crash leaving an execution running
+			// with an expired next_run_at.
+			const tz = goal.schedule.timezone ?? 'UTC';
+			const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+
+			// Check for active execution (overlap prevention — app level)
+			const activeExecution = this.goalManager.getActiveExecution(goal.id);
+			if (activeExecution) {
+				// Overlap: execution still running but next_run_at is past
+				// Advance next_run_at to prevent repeated log spam on every tick
+				log.warn(
+					`Recurring mission ${goal.id} (${goal.title}) due but execution ${activeExecution.id} still running — skipping trigger, advancing next_run_at`
+				);
+				if (nextRunAt !== null) {
+					await this.goalManager.updateNextRunAt(goal.id, nextRunAt);
+				}
+				continue;
+			}
+
+			// Trigger a new execution — nextRunAt is set atomically in the same transaction.
+			// try/catch handles the DB unique-constraint guard against concurrent inserts.
+			let execution;
+			try {
+				execution = this.goalManager.startExecution(goal.id, nextRunAt ?? undefined);
+				log.info(
+					`Recurring mission ${goal.id} (${goal.title}) triggered execution ${execution.executionNumber}`
+				);
+			} catch (err) {
+				// Unique constraint violation from DB index: another process already inserted a row.
+				// Idempotent — log and skip.
+				log.warn(
+					`Recurring mission ${goal.id}: failed to start execution (possible race) — ${err}`
+				);
+				continue;
+			}
+
+			// Fetch previous execution result for context
+			const prevExecutions = this.goalManager.listExecutions(goal.id, 2);
+			const prevCompleted = prevExecutions.find(
+				(e) => e.id !== execution.id && e.status === 'completed'
+			);
+			const previousResultSummary = prevCompleted?.resultSummary;
+
+			// Spawn planning group with executionId
+			await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+		}
+	}
+
+	/**
 	 * Find the highest-priority active goal that needs planning.
 	 *
 	 * A goal needs planning when:
 	 * - status is 'active'
 	 * - has no linked tasks at all, OR all linked tasks need attention
 	 * - has no pending/in_progress/draft/escalated tasks
-	 * - planning_attempts < this.maxPlanningAttempts
+	 * - planning_attempts < effective max planning attempts
 	 *
-	 * Goals that exceed maxPlanningAttempts are transitioned to 'needs_human'.
+	 * For measurable missions, an additional case is handled:
+	 * - All execution tasks completed successfully but metric targets not met → replan with metric context
+	 * - All metric targets met → complete the mission automatically
+	 *
+	 * Goals that exceed max planning attempts are transitioned to 'needs_human'.
 	 */
-	private async getNextGoalForPlanning(): Promise<RoomGoal | null> {
+	private async getNextGoalForPlanning(): Promise<{
+		goal: RoomGoal;
+		replanContext?: ReplanContext;
+	} | null> {
 		const activeGoals = await this.goalManager.listGoals('active');
+		const currentRoom = this.getCurrentRoom();
+		const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 
 		for (const goal of activeGoals) {
+			// Recurring missions are ONLY planned through the scheduler path (tickRecurringMissions).
+			// Never let the standard selector pick them up.
+			if (goal.missionType === 'recurring') continue;
 			const linkedTaskIds = goal.linkedTaskIds ?? [];
 
-			let needsPlanning: boolean;
+			let needsPlanning = false;
+			let replanContext: ReplanContext | undefined;
 
 			if (linkedTaskIds.length === 0) {
 				// No tasks at all: brand new goal
@@ -2040,22 +3012,99 @@ export class RoomRuntime {
 				// Re-plan if no active tasks and either all tasks reached a terminal state
 				// (failed or cancelled) or all execution tasks reached a terminal state
 				needsPlanning = !hasActiveTask && (allFailed || allExecutionFailed);
+
+				// Measurable mission: check if all execution tasks completed (not failed)
+				// and whether metric targets are met.
+				if (
+					!needsPlanning &&
+					!hasActiveTask &&
+					goal.missionType === 'measurable' &&
+					goal.structuredMetrics &&
+					goal.structuredMetrics.length > 0
+				) {
+					const allExecutionCompleted =
+						executionTasks.length > 0 && executionTasks.every((t) => t.status === 'completed');
+
+					if (allExecutionCompleted) {
+						const targetsResult = await this.goalManager.checkMetricTargets(goal.id);
+
+						if (targetsResult.allMet) {
+							// All targets met — complete the mission automatically
+							log.info(
+								`Measurable mission ${goal.id} (${goal.title}): all metric targets met, completing.`
+							);
+							await this.goalManager.updateGoalStatus(goal.id, 'completed', { progress: 100 });
+							if (this.daemonHub) {
+								void this.daemonHub.emit('goal.progressUpdated', {
+									sessionId: `room:${this.roomId}`,
+									roomId: this.roomId,
+									goalId: goal.id,
+									progress: 100,
+								});
+							}
+							continue; // Don't plan for this goal
+						}
+
+						// Targets not met — trigger replanning with metric context.
+						// executionTasks is already filtered to taskType !== 'planning' and all have
+						// status === 'completed' (allExecutionCompleted guard above).
+						needsPlanning = true;
+						const completedExecTasks = executionTasks.map((t) => ({
+							title: t.title,
+							result: t.result ?? 'completed',
+						}));
+
+						// Fetch recent history for each metric
+						const metricStatuses: MetricReplanStatus[] = await Promise.all(
+							targetsResult.results.map(async (r) => {
+								const metric = goal.structuredMetrics!.find((m) => m.name === r.name);
+								const history = await this.goalManager.getMetricHistory(goal.id, r.name);
+								const recentHistory = history.slice(-5).map((h) => h.value);
+								return {
+									name: r.name,
+									current: r.current,
+									target: r.target,
+									baseline: metric?.baseline,
+									direction: metric?.direction,
+									met: r.met,
+									recentHistory,
+								};
+							})
+						);
+
+						const unmetNames = targetsResult.results
+							.filter((r) => !r.met)
+							.map((r) => r.name)
+							.join(', ');
+
+						replanContext = {
+							completedTasks: completedExecTasks,
+							failedTask: {
+								title: 'Metric targets not met',
+								error: `All tasks completed but metric targets not reached. Unmet metrics: ${unmetNames}`,
+							},
+							attempt: (goal.planning_attempts ?? 0) + 1,
+							metricContext: { metrics: metricStatuses },
+						};
+					}
+				}
 			}
 
 			if (!needsPlanning) continue;
 
+			const effectiveMax = getEffectiveMaxPlanningAttempts(goal, roomConfig);
 			const attempts = goal.planning_attempts ?? 0;
 
-			if (attempts >= this.maxPlanningAttempts) {
+			if (attempts >= effectiveMax) {
 				// Too many failed planning attempts: escalate to human
 				log.warn(
-					`Goal ${goal.id} (${goal.title}) exceeded max planning attempts, marking needs_human`
+					`Goal ${goal.id} (${goal.title}) exceeded max planning attempts (${effectiveMax}), marking needs_human`
 				);
 				await this.goalManager.updateGoalStatus(goal.id, 'needs_human');
 				continue;
 			}
 
-			return goal;
+			return { goal, replanContext };
 		}
 
 		return null;
@@ -2064,21 +3113,40 @@ export class RoomRuntime {
 	/**
 	 * Spawn a planning (Planner, Leader) group for a goal that has no tasks yet.
 	 * Creates a planning task, increments planning_attempts, and starts the group.
+	 *
+	 * For recurring missions, pass executionId to correlate the group with the
+	 * mission_executions row. Pass previousResultSummary for continuity context.
 	 */
-	private async spawnPlanningGroup(goal: RoomGoal, replanContext?: ReplanContext): Promise<void> {
+	private async spawnPlanningGroup(
+		goal: RoomGoal,
+		replanContext?: ReplanContext,
+		executionId?: string,
+		previousResultSummary?: string
+	): Promise<void> {
 		const isReplan = !!replanContext;
+		const isRecurringExecution = !!executionId;
+
 		// Create the planning task itself
 		const planningTask = await this.taskManager.createTask({
 			title: isReplan ? `Replan: ${goal.title}` : `Plan: ${goal.title}`,
 			description: isReplan
 				? `Replan the goal "${goal.title}" after task failure. Build on completed work.`
-				: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
+				: isRecurringExecution
+					? `Scheduled execution of "${goal.title}".` +
+						(previousResultSummary
+							? ` Previous run result: ${previousResultSummary}`
+							: ' (first execution)')
+					: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
 			taskType: 'planning',
 			status: 'pending',
 		});
 
-		// Link planning task to the goal
-		await this.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+		// Link planning task to the goal (or execution for recurring missions)
+		if (isRecurringExecution) {
+			await this.goalManager.linkTaskToExecution(goal.id, executionId, planningTask.id);
+		} else {
+			await this.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+		}
 
 		// Increment planning attempts BEFORE spawning (counts attempts, not outcomes)
 		await this.goalManager.incrementPlanningAttempts(goal.id);
@@ -2097,8 +3165,12 @@ export class RoomRuntime {
 				createdByTaskId: planningTask.id,
 				assignedAgent: params.agent,
 			});
-			// Link the draft task to the goal so it appears in the room
-			await this.goalManager.linkTaskToGoal(goal.id, task.id);
+			// Link the draft task to the goal (or execution for recurring missions)
+			if (isRecurringExecution) {
+				await this.goalManager.linkTaskToExecution(goal.id, executionId, task.id);
+			} else {
+				await this.goalManager.linkTaskToGoal(goal.id, task.id);
+			}
 			log.info(`Planning created draft task: ${task.id} (${task.title})`);
 			return { id: task.id, title: task.title };
 		};
@@ -2129,6 +3201,8 @@ export class RoomRuntime {
 		}
 		const plannerModel = this.resolveAgentModel(currentRoom, 'planner');
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		const plannerProvider = this.resolveProviderForModel(plannerModel);
+		const leaderProvider = this.resolveProviderForModel(leaderModel);
 
 		// Build WorkerConfig for the Planner agent
 		// isPlanApproved uses a mutable ref — groupId is set after spawn() returns
@@ -2144,6 +3218,7 @@ export class RoomRuntime {
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
 			model: plannerModel,
+			provider: plannerProvider,
 			createDraftTask,
 			updateDraftTask,
 			removeDraftTask,
@@ -2163,6 +3238,7 @@ export class RoomRuntime {
 				workspacePath: this.taskGroupManager.workspacePath,
 				groupId: '', // not used by buildLeaderTaskContext
 				model: leaderModel,
+				provider: leaderProvider,
 				reviewContext: 'plan_review',
 			}),
 		};
@@ -2170,7 +3246,7 @@ export class RoomRuntime {
 		// Notify UI: planning task created
 		this.emitTaskUpdate(planningTask);
 
-		// Spawn the planning group directly (bypasses the tick queue)
+		// Spawn the planning group directly (bypasses the tick defer)
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
@@ -2192,7 +3268,10 @@ export class RoomRuntime {
 				'plan_review'
 			);
 		} catch (err) {
-			// spawn() already called failTask() before throwing — log and continue
+			// spawn() calls failTask() only for worktree-creation failures (line ~241).
+			// If session init throws after startTask(), the task stays in_progress.
+			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+			// next tick once the process stabilises.
 			log.error(`Failed to spawn planning group for goal ${goal.id}: ${err}`);
 			await this.emitTaskUpdateById(planningTask.id);
 			return;
@@ -2201,12 +3280,20 @@ export class RoomRuntime {
 		// Wire up the mutable ref so isPlanApproved can query the group
 		spawnedGroupId = group.id;
 
+		// For recurring missions, persist the execution ID in group metadata.
+		// recoverZombieGroups() stores it for auditability; the actual execution state
+		// is recovered via getActiveExecution() which reads mission_executions directly.
+		if (isRecurringExecution) {
+			this.groupRepo.setExecutionId(group.id, executionId);
+		}
+
 		// Notify UI: planning task is now in_progress
 		await this.emitTaskUpdateById(planningTask.id);
 		this.setupMirroring(group);
 
 		log.info(
-			`Spawned planning group for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}`
+			`Spawned planning group for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}` +
+				(isRecurringExecution ? ` [execution ${executionId}]` : '')
 		);
 	}
 
@@ -2215,6 +3302,24 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
+		// Clean zombie groups for this task before the active-group dedup check.
+		// Handles the case where a previous crashed session left an active group with
+		// missing sessions. Without this, getActiveGroupsForTask() would detect the
+		// zombie and return early, keeping the task stuck indefinitely.
+		await this.cleanStaleGroupsForTask(task);
+
+		// Defense-in-depth: verify no active group exists for this task right before spawning.
+		// Catches races that slip past the executeTick() filter (e.g., concurrent ticks).
+		// Check ALL active groups, not just the most recent — a stale older group with
+		// completedAt === null would be missed by getGroupByTaskId() which returns only the latest.
+		const allActiveGroups = this.groupRepo.getActiveGroupsForTask(task.id);
+		if (allActiveGroups.length > 0) {
+			log.warn(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has ${allActiveGroups.length} active group(s) (${allActiveGroups.map((g) => g.id).join(', ')}) — skipping duplicate spawn`
+			);
+			return;
+		}
+
 		// Find the goal linked to this task. Goal is optional — tasks without a goal still run.
 		const goals = await this.goalManager.getGoalsForTask(task.id);
 		const goal = goals[0] ?? null;
@@ -2244,6 +3349,8 @@ export class RoomRuntime {
 		const workerRole = agentType === 'general' ? 'general' : 'coder';
 		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+		const workerProvider = this.resolveProviderForModel(workerModel);
+		const leaderProvider = this.resolveProviderForModel(leaderModel);
 		let workerConfig: WorkerConfig;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
@@ -2255,6 +3362,7 @@ export class RoomRuntime {
 			workspacePath: this.taskGroupManager.workspacePath,
 			groupId: '',
 			model: leaderModel,
+			provider: leaderProvider,
 			reviewContext: 'code_review' as const,
 		};
 
@@ -2266,6 +3374,7 @@ export class RoomRuntime {
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: workerModel,
+				provider: workerProvider,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -2284,6 +3393,7 @@ export class RoomRuntime {
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: workerModel,
+				provider: workerProvider,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -2316,8 +3426,22 @@ export class RoomRuntime {
 				'code_review'
 			);
 		} catch (err) {
-			// spawn() already called failTask() before throwing — log and continue to next task
-			log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			// UNIQUE constraint violation means a concurrent tick already spawned a group
+			// for this task (race between two ticks that both passed the active-group check).
+			// This is expected under high concurrency — log at warn, not error.
+			const errStr = String(err);
+			if (errStr.includes('UNIQUE constraint failed')) {
+				log.warn(
+					`[spawnGroupForTask] Task ${task.id} ("${task.title}"): UNIQUE constraint — ` +
+						`concurrent tick already spawned a group. Skipping.`
+				);
+			} else {
+				// spawn() calls failTask() only for worktree-creation failures (line ~241).
+				// If session init throws after startTask(), the task stays in_progress.
+				// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+				// next tick once the process stabilises.
+				log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			}
 			await this.emitTaskUpdateById(task.id);
 			return;
 		}
@@ -2333,23 +3457,32 @@ export class RoomRuntime {
 
 	/**
 	 * If the completed task was a planning task, promote its draft children to pending
-	 * so they enter the execution queue on the next tick.
+	 * so they enter the execution defer on the next tick.
 	 */
 	private async promoteDraftTasksIfPlanning(taskId: string): Promise<void> {
 		const task = await this.taskManager.getTask(taskId);
 		if (!task || task.taskType !== 'planning') return;
 
 		// Safety net: ensure all draft children are linked to the same goal
-		// as the planning task. MCP server closures may have been lost on
-		// daemon restart, so linkTaskToGoal may not have been called.
+		// (and execution for recurring missions) as the planning task.
+		// MCP server closures may have been lost on daemon restart, so the
+		// link call may not have fired during the original planning session.
 		const goals = await this.goalManager.getGoalsForTask(taskId);
 		const goal = goals[0];
 		if (goal) {
+			// For recurring missions look up the active execution so that
+			// mission_executions.task_ids is also populated (same as the primary path).
+			const activeExecution =
+				goal.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
 			const drafts = await this.taskManager.getDraftTasksByCreator(taskId);
 			const linked = new Set(goal.linkedTaskIds ?? []);
 			for (const draft of drafts) {
 				if (!linked.has(draft.id)) {
-					await this.goalManager.linkTaskToGoal(goal.id, draft.id);
+					if (activeExecution) {
+						await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, draft.id);
+					} else {
+						await this.goalManager.linkTaskToGoal(goal.id, draft.id);
+					}
 					log.info(`Linked draft task ${draft.id} to goal ${goal.id} (safety net)`);
 				}
 			}
@@ -2412,7 +3545,8 @@ export class RoomRuntime {
 		}
 
 		const attempts = goal.planning_attempts ?? 0;
-		if (attempts >= this.maxPlanningAttempts) {
+		const effectiveMax = this.maxPlanningAttempts;
+		if (attempts >= effectiveMax) {
 			// Fail the task and escalate instead of replanning
 			await this.taskGroupManager.fail(groupId, reason);
 			this.cleanupMirroring(groupId, `Task failed: ${reason}`);
@@ -2421,7 +3555,7 @@ export class RoomRuntime {
 			this.scheduleTick();
 			return jsonResult({
 				success: false,
-				error: `Max planning retries (${this.maxPlanningAttempts - 1}) reached. Goal escalated to human.`,
+				error: `Max planning retries (${effectiveMax - 1}) reached. Goal escalated to human.`,
 			});
 		}
 
@@ -2458,7 +3592,12 @@ export class RoomRuntime {
 			attempt: attempts + 1,
 		};
 
-		await this.spawnPlanningGroup(goal, replanContext);
+		// For recurring missions, pass the active executionId so task-linking uses
+		// linkTaskToExecution instead of linkTaskToGoal (execution identity preserved).
+		const activeExecution =
+			goal.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
+
+		await this.spawnPlanningGroup(goal, replanContext, activeExecution?.id);
 		this.scheduleTick();
 
 		return jsonResult({
@@ -2469,35 +3608,31 @@ export class RoomRuntime {
 
 	private scheduleTick(): void {
 		if (this.state !== 'running') return;
-		// Use queueMicrotask for non-blocking tick scheduling
-		queueMicrotask(() => this.tick());
+		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, 0);
 	}
 
 	/**
 	 * Schedule a tick after rate limit reset time.
 	 * Used to resume work after API rate limit backoff period expires.
+	 *
+	 * Do NOT clearRateLimit here. The expired (non-null) rateLimit object serves as the
+	 * re-detection sentinel in onWorkerTerminalState / onLeaderTerminalState: the
+	 * `!group.rateLimit` guard uses it to distinguish "first detection" from "re-trigger
+	 * after expiry", preventing an infinite 60-second bounce loop.
+	 * The rate limit is cleared in `send_to_worker` when a new worker iteration genuinely starts.
 	 */
 	private scheduleTickAfterRateLimitReset(groupId: string): void {
 		const remainingMs = this.groupRepo.getRateLimitRemainingMs(groupId);
-		if (remainingMs <= 0) {
-			// Rate limit already expired, schedule immediate tick
-			this.scheduleTick();
-			return;
+		const delayMs = remainingMs <= 0 ? 0 : remainingMs + 5000;
+
+		if (delayMs > 0) {
+			log.info(
+				`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
+					`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
+			);
 		}
 
-		// Add a small buffer (5 seconds) to ensure rate limit has fully reset
-		const delayMs = remainingMs + 5000;
-
-		log.info(
-			`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
-				`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
-		);
-
-		setTimeout(() => {
-			// Clear the rate limit backoff since it should be expired now
-			this.groupRepo.clearRateLimit(groupId);
-			this.scheduleTick();
-		}, delayMs);
+		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, delayMs);
 	}
 
 	/**

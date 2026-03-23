@@ -9,7 +9,7 @@ import {
 	InterruptHandler,
 	type InterruptHandlerContext,
 } from '../../../src/lib/agent/interrupt-handler';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
@@ -34,6 +34,7 @@ describe('InterruptHandler', () => {
 	let queueClearSpy: ReturnType<typeof mock>;
 	let queueStopSpy: ReturnType<typeof mock>;
 	let sdkInterruptSpy: ReturnType<typeof mock>;
+	let sdkCloseSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -82,8 +83,10 @@ describe('InterruptHandler', () => {
 		} as unknown as Logger;
 
 		sdkInterruptSpy = mock(async () => {});
+		sdkCloseSpy = mock(() => {});
 		mockQueryObject = {
 			interrupt: sdkInterruptSpy,
+			close: sdkCloseSpy,
 		} as unknown as Query;
 
 		mockAbortController = new AbortController();
@@ -273,6 +276,66 @@ describe('InterruptHandler', () => {
 
 			// Should not throw
 			expect(handler).toBeDefined();
+		});
+
+		it('should call SDK close() to terminate subprocess and MCP transports', async () => {
+			handler = createHandler();
+
+			await handler.handleInterrupt();
+
+			expect(sdkCloseSpy).toHaveBeenCalled();
+		});
+
+		it('should call close() after interrupt() and waiting for query promise', async () => {
+			const callOrder: string[] = [];
+			sdkInterruptSpy.mockImplementation(async () => {
+				callOrder.push('interrupt');
+			});
+			sdkCloseSpy.mockImplementation(() => {
+				callOrder.push('close');
+			});
+			const queryPromise = new Promise<void>((resolve) => {
+				setTimeout(() => {
+					callOrder.push('promise');
+					resolve();
+				}, 10);
+			});
+			handler = createHandler({ queryPromise });
+
+			await handler.handleInterrupt();
+
+			const interruptIdx = callOrder.indexOf('interrupt');
+			const promiseIdx = callOrder.indexOf('promise');
+			const closeIdx = callOrder.indexOf('close');
+			expect(interruptIdx).not.toBe(-1);
+			expect(promiseIdx).not.toBe(-1);
+			expect(closeIdx).not.toBe(-1);
+			expect(interruptIdx).toBeLessThan(promiseIdx);
+			expect(promiseIdx).toBeLessThan(closeIdx);
+		});
+
+		it('should handle SDK close() failure gracefully', async () => {
+			sdkCloseSpy.mockImplementation(() => {
+				throw new Error('Close failed');
+			});
+			handler = createHandler();
+
+			// Should not throw
+			await handler.handleInterrupt();
+
+			expect(mockLogger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('SDK close() failed'),
+				'Close failed'
+			);
+		});
+
+		it('should skip close() when queryObject is null', async () => {
+			handler = createHandler({ queryObject: null });
+
+			// Should not throw
+			await handler.handleInterrupt();
+
+			expect(sdkCloseSpy).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -20,7 +20,8 @@ import { MessageHub } from '@neokai/shared';
 import { setupRoomHandlers } from '../../../src/lib/rpc-handlers/room-handlers';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
-import type { Room, RoomOverview, NeoStatus } from '@neokai/shared';
+import type { SessionManager } from '../../../src/lib/session-manager';
+import type { Room, RoomOverview, NeoStatus, Session } from '@neokai/shared';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -326,6 +327,47 @@ describe('Room RPC Handlers', () => {
 				expect.objectContaining({
 					sessionId: 'global',
 					roomId: 'room-123',
+				})
+			);
+		});
+
+		it('syncs room chat session model when defaultModel changes', async () => {
+			const updateSessionMock = mock(async () => {});
+			const existingSession: Partial<Session> = {
+				id: 'room:chat:room-123',
+				config: {
+					model: 'glm-5-turbo',
+					provider: 'glm',
+					maxTokens: 4096,
+					temperature: 1.0,
+				},
+			};
+			const sessionManager = {
+				getSessionFromDB: mock(() => existingSession as Session),
+				updateSession: updateSessionMock,
+			} as unknown as SessionManager;
+
+			const { hub, handlers } = createMockMessageHub();
+			setupRoomHandlers(
+				hub,
+				roomManagerData.roomManager,
+				daemonHubData.daemonHub,
+				undefined,
+				sessionManager
+			);
+
+			const handler = handlers.get('room.update');
+			expect(handler).toBeDefined();
+
+			await handler!({ roomId: 'room-123', defaultModel: 'sonnet' }, {});
+
+			expect(updateSessionMock).toHaveBeenCalledWith(
+				'room:chat:room-123',
+				expect.objectContaining({
+					config: expect.objectContaining({
+						model: 'sonnet',
+						provider: 'anthropic',
+					}),
 				})
 			);
 		});

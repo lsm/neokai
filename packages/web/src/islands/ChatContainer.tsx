@@ -19,6 +19,7 @@
 import type {
 	MessageDeliveryMode,
 	MessageImage,
+	ModelInfo,
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
@@ -69,6 +70,11 @@ import { cn } from '../lib/utils.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import type { RoomContext } from '../components/ChatHeader.tsx';
+import { navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
+import { ErrorCategory } from '../types/error.ts';
+import type { StructuredError } from '../types/error.ts';
+import { getProviderLabel } from '../hooks/index.ts';
+import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -403,14 +409,14 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Model switch with processing confirmation
 	const handleModelSwitchWithConfirmation = useCallback(
-		async (modelId: string) => {
+		async (model: ModelInfo) => {
 			if (isProcessing) {
 				const confirmed = confirm(
 					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
 				);
 				if (!confirmed) return;
 			}
-			await switchModel(modelId);
+			await switchModel(model);
 		},
 		[switchModel, isProcessing]
 	);
@@ -635,7 +641,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		async (
 			content: string,
 			images?: MessageImage[],
-			deliveryMode: MessageDeliveryMode = 'current_turn'
+			deliveryMode: MessageDeliveryMode = 'immediate'
 		) => {
 			// If session is pending worktree choice, set the mode first
 			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
@@ -768,8 +774,52 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		return { currentAction: undefined, streamingPhase: null };
 	}, [agentState, messages]);
 
-	// Combined error (local + store)
-	const error = localError || storeError?.message || null;
+	// Get retry attempts from session store
+	const retryAttempts = sessionStore.retryAttempts.value;
+
+	// Build retry status message if there are retry attempts
+	const retryStatusMessage = useMemo(() => {
+		if (retryAttempts.length === 0) return null;
+		const lastRetry = retryAttempts[retryAttempts.length - 1];
+		const progress = `${lastRetry.attempt}/${lastRetry.max_retries}`;
+		const errorInfo = lastRetry.error_status ? ` (${lastRetry.error_status})` : '';
+		return `API retry: attempt ${progress}${errorInfo} - ${lastRetry.error}`;
+	}, [retryAttempts]);
+
+	// Combined error (local + store + retry status)
+	const error = localError || retryStatusMessage || storeError?.message || null;
+
+	// Build provider-specific action buttons for structured errors
+	const errorDetails = storeError?.details as StructuredError | undefined;
+	const errorCategory = errorDetails?.category;
+	const errorProviderId = errorDetails?.metadata?.providerId as string | undefined;
+	const errorActions = useMemo((): ErrorBannerAction[] => {
+		if (!errorDetails || !errorCategory) return [];
+		const providerLabel = errorProviderId ? getProviderLabel(errorProviderId) : 'Provider';
+		if (errorCategory === ErrorCategory.PROVIDER_AUTH_ERROR) {
+			return [
+				{
+					label: `Re-authenticate ${providerLabel}`,
+					onClick: () => {
+						navSectionSignal.value = 'settings';
+						settingsSectionSignal.value = 'providers';
+					},
+				},
+			];
+		}
+		if (errorCategory === ErrorCategory.PROVIDER_UNAVAILABLE) {
+			const defaultAnthropicModel = availableModels.find((m) => m.provider === 'anthropic');
+			const actions: ErrorBannerAction[] = [];
+			if (defaultAnthropicModel) {
+				actions.push({
+					label: 'Switch to Anthropic',
+					onClick: () => switchModel(defaultAnthropicModel),
+				});
+			}
+			return actions;
+		}
+		return [];
+	}, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
 
 	// Derive loading state from sessionStore
 	// sessionState being null means the RPC hasn't returned yet (truly loading)
@@ -1022,6 +1072,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 						setLocalError(null);
 						sessionStore.clearError();
 					}}
+					actions={errorActions.length > 0 ? errorActions : undefined}
 				/>
 			)}
 

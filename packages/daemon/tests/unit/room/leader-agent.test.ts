@@ -104,24 +104,29 @@ function makeCallbacks(): LeaderToolCallbacks & {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	return {
 		calls,
-		async sendToWorker(groupId: string, message: string, mode?: 'steer' | 'queue') {
-			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
+		async sendToWorker(
+			groupId: string,
+			message: string,
+			mode?: 'steer' | 'queue',
+			progressSummary?: string
+		) {
+			calls.push({ method: 'sendToWorker', args: [groupId, message, mode, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async completeTask(groupId: string, summary: string) {
-			calls.push({ method: 'completeTask', args: [groupId, summary] });
+		async completeTask(groupId: string, summary: string, progressSummary?: string) {
+			calls.push({ method: 'completeTask', args: [groupId, summary, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async failTask(groupId: string, reason: string) {
-			calls.push({ method: 'failTask', args: [groupId, reason] });
+		async failTask(groupId: string, reason: string, progressSummary?: string) {
+			calls.push({ method: 'failTask', args: [groupId, reason, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async replanGoal(groupId: string, reason: string) {
-			calls.push({ method: 'replanGoal', args: [groupId, reason] });
+		async replanGoal(groupId: string, reason: string, progressSummary?: string) {
+			calls.push({ method: 'replanGoal', args: [groupId, reason, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async submitForReview(groupId: string, prUrl: string) {
-			calls.push({ method: 'submitForReview', args: [groupId, prUrl] });
+		async submitForReview(groupId: string, prUrl: string, progressSummary?: string) {
+			calls.push({ method: 'submitForReview', args: [groupId, prUrl, progressSummary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 	};
@@ -136,6 +141,27 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
+		});
+
+		it('should include task management tools in tool contract', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('update_task');
+			expect(prompt).toContain('cancel_task');
+			expect(prompt).toContain('update_task_status');
+			expect(prompt).toContain('Task Management Tools');
+		});
+
+		it('should include progress summary section', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('Progress Summary');
+			expect(prompt).toContain('progress_summary');
+			expect(prompt).toContain('What has been done so far');
+		});
+
+		it('should include progress summary section for plan review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('Progress Summary');
+			expect(prompt).toContain('progress_summary');
 		});
 
 		it('should NOT include task-specific context', () => {
@@ -204,14 +230,15 @@ describe('Leader Agent', () => {
 			// Should instruct leader to send planner back — NOT merge the PR itself
 			expect(prompt).toContain('send_to_worker');
 			expect(prompt).toContain('create_task');
-			// The "merge PR yourself" instructions should NOT be present
-			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --squash');
+			// The "merge PR yourself" instructions should NOT be present for plan_review
+			expect(prompt).not.toContain('Do NOT send the worker back to do the merge');
 		});
 
 		it('should use direct merge post-approval workflow for code review', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			// Leader merges the PR directly for coder/general tasks
-			expect(prompt).toContain('gh pr merge <PR_NUMBER> --squash');
+			// Leader merges the PR directly for coder/general tasks (no hardcoded merge method)
+			expect(prompt).toContain('gh pr merge <PR_NUMBER>');
+			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --');
 			expect(prompt).toContain('Do NOT send the worker back to do the merge');
 		});
 
@@ -316,18 +343,42 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling', undefined]);
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'Fix the error handling',
+				undefined,
+				undefined,
+			]);
 		});
 
 		it('should route send_to_worker mode to callback', async () => {
 			const callbacks = makeCallbacks();
 			const handlers = createLeaderToolHandlers('group-1', callbacks);
 
-			await handlers.send_to_worker({ message: 'Queue this', mode: 'queue' });
+			await handlers.send_to_worker({ message: 'Queue this', mode: 'defer' });
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'defer', undefined]);
+		});
+
+		it('should route send_to_worker with progress_summary to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.send_to_worker({
+				message: 'Fix the tests',
+				progress_summary: 'Task adds a health endpoint. Worker created the route but tests fail.',
+			});
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('sendToWorker');
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'Fix the tests',
+				undefined,
+				'Task adds a health endpoint. Worker created the route but tests fail.',
+			]);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {
@@ -338,7 +389,25 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('completeTask');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'All requirements met']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'All requirements met', undefined]);
+		});
+
+		it('should route complete_task with progress_summary to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.complete_task({
+				summary: 'All requirements met',
+				progress_summary: 'Task adds GET /health. Endpoint implemented with tests, PR merged.',
+			});
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('completeTask');
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'All requirements met',
+				'Task adds GET /health. Endpoint implemented with tests, PR merged.',
+			]);
 		});
 
 		it('should route fail_task to callback with groupId', async () => {
@@ -349,7 +418,7 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('failTask');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this', undefined]);
 		});
 
 		it('should route submit_for_review to callback with groupId and prUrl', async () => {
@@ -360,7 +429,11 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('submitForReview');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'https://github.com/org/repo/pull/42']);
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'https://github.com/org/repo/pull/42',
+				undefined,
+			]);
 		});
 
 		it('should route replan_goal to callback with groupId', async () => {
@@ -374,6 +447,7 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls[0].args).toEqual([
 				'group-1',
 				'Wrong approach, need different strategy',
+				undefined,
 			]);
 		});
 	});
@@ -402,14 +476,33 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
 		});
 
-		it('should include room-agent-tools MCP server for task/goal management', () => {
+		it('should include leader-context-tools MCP server with context and task management tools', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.mcpServers).toBeDefined();
-			expect(init.mcpServers!['room-agent-tools']).toBeDefined();
+			const ctxServer = init.mcpServers!['leader-context-tools'] as unknown as {
+				name: string;
+				instance: { _registeredTools: Record<string, unknown> };
+			};
+			expect(ctxServer).toBeDefined();
+			// Verify it is the narrow leader-context server, not the full room-agent server
+			expect(ctxServer.name).toBe('leader-context');
+			const toolNames = Object.keys(ctxServer.instance._registeredTools).sort();
+			// Should include both read-only context tools and task management tools
+			expect(toolNames).toEqual(
+				[
+					'cancel_task',
+					'get_room_status',
+					'get_task_detail',
+					'list_goals',
+					'list_tasks',
+					'update_task',
+					'update_task_status',
+				].sort()
+			);
 		});
 
-		it('should NOT include room-agent-tools when dependencies are missing', () => {
+		it('should NOT include leader-context-tools when dependencies are missing', () => {
 			const callbacks = makeCallbacks();
 			// Create config without goalManager, taskManager, groupRepo
 			const init = createLeaderAgentInit(
@@ -424,10 +517,10 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			expect(init.mcpServers).toBeDefined();
-			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+			expect(init.mcpServers!['leader-context-tools']).toBeUndefined();
 		});
 
-		it('should NOT include room-agent-tools when only partial dependencies provided', () => {
+		it('should NOT include leader-context-tools when only partial dependencies provided', () => {
 			const callbacks = makeCallbacks();
 			// Provide only goalManager, but not taskManager and groupRepo
 			const init = createLeaderAgentInit(
@@ -443,12 +536,12 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			expect(init.mcpServers).toBeDefined();
-			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+			expect(init.mcpServers!['leader-context-tools']).toBeUndefined();
 		});
 
-		it('should still include leader-agent-tools regardless of room-agent-tools availability', () => {
+		it('should still include leader-agent-tools regardless of leader-context-tools availability', () => {
 			const callbacks = makeCallbacks();
-			// Config without room-agent-tools dependencies
+			// Config without leader-context-tools dependencies
 			const init = createLeaderAgentInit(
 				{
 					task: makeTask(),
@@ -848,10 +941,10 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('--autopilot');
 		});
 
-		it('should use one-shot pi command with github-copilot provider', () => {
+		it('should use one-shot pi command with anthropic-copilot provider', () => {
 			const agents = buildReviewerAgents([{ model: 'pi', type: 'cli' }]);
 			const agent = agents['reviewer-pi'];
-			expect(agent.prompt).toContain('pi -p --no-session --provider github-copilot');
+			expect(agent.prompt).toContain('pi -p --no-session --provider anthropic-copilot');
 			expect(agent.prompt).toContain('--tools read,bash,grep,find,ls');
 			expect(agent.prompt).toContain('Do NOT pass `--model`');
 		});
@@ -859,7 +952,7 @@ describe('Leader Agent', () => {
 		it('should pass selected model to pi cli reviewer prompt', () => {
 			const agents = buildReviewerAgents([{ model: 'pi', type: 'cli', cliModel: 'gpt-5.3-codex' }]);
 			const agent = agents['reviewer-pi'];
-			expect(agent.prompt).toContain('--provider github-copilot --model gpt-5.3-codex');
+			expect(agent.prompt).toContain('--provider anthropic-copilot --model gpt-5.3-codex');
 			expect(agent.prompt).toContain('**Model:** gpt-5.3-codex');
 		});
 

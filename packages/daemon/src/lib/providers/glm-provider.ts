@@ -44,12 +44,25 @@ export class GlmProvider implements Provider {
 		{
 			id: 'glm-5',
 			name: 'GLM-5',
+			// Intentionally shorter alias 'glm' (not 'glm-5') so users can type a short
+			// provider-level shorthand. This asymmetry with other GLM model aliases is deliberate.
 			alias: 'glm',
 			family: 'glm',
 			provider: 'glm',
 			contextWindow: 200000,
 			description: "GLM-5 · Zhipu AI's Next-Generation Frontier Model",
 			releaseDate: '2026-02-11',
+			available: true,
+		},
+		{
+			id: 'glm-5-turbo',
+			name: 'GLM-5-Turbo',
+			alias: 'glm-5-turbo',
+			family: 'glm',
+			provider: 'glm',
+			contextWindow: 200000,
+			description: 'GLM-5-Turbo · Optimized for long-chain agent tasks and tool calling',
+			releaseDate: '2026-03-15',
 			available: true,
 		},
 		{
@@ -103,10 +116,12 @@ export class GlmProvider implements Provider {
 	/**
 	 * Get model for a specific tier
 	 * Maps Anthropic tiers to GLM models
-	 * All tiers use glm-5 (flagship model)
+	 *
+	 * Always pins to glm-5 regardless of which GLM model is active in the session.
+	 * This is an intentional policy: tier fallbacks and title generation use the
+	 * flagship model (glm-5), not the session model (which may be glm-5-turbo or glm-4.7).
 	 */
 	getModelForTier(_tier: ModelTier): string | undefined {
-		// All tiers use glm-5
 		return 'glm-5';
 	}
 

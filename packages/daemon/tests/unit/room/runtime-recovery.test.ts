@@ -6,10 +6,12 @@ import {
 } from '../../../src/lib/room/runtime/runtime-recovery';
 import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
@@ -35,7 +37,7 @@ function createMockSessionFactory() {
 		async injectMessage(
 			sessionId: string,
 			message: string,
-			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+			opts?: { deliveryMode?: 'immediate' | 'defer' }
 		) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
@@ -50,6 +52,10 @@ function createMockSessionFactory() {
 		},
 		async restoreSession(sessionId: string) {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
+			return true;
+		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
 			return true;
 		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
@@ -100,7 +106,20 @@ describe('Runtime Recovery', () => {
 				description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER DEFAULT 0,
 				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
-				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT NOT NULL DEFAULT 'one_shot'
+					CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+					CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+				schedule TEXT,
+				schedule_paused INTEGER NOT NULL DEFAULT 0,
+				next_run_at INTEGER,
+				structured_metrics TEXT,
+				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+				consecutive_failures INTEGER NOT NULL DEFAULT 0,
+		replan_count INTEGER NOT NULL DEFAULT 0
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -116,7 +135,8 @@ describe('Runtime Recovery', () => {
 				active_session TEXT,
 				pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER
+				pr_created_at INTEGER,
+				updated_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -142,14 +162,23 @@ describe('Runtime Recovery', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		const mockHub = createMockDaemonHub();
-		groupRepo = new SessionGroupRepository(db as never);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
-		taskManager = new TaskManager(db as never, 'room-1');
-		goalManager = new GoalManager(db as never, 'room-1');
+		taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+		goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 		sessionFactory = createMockSessionFactory();
 
 		runtime = new RoomRuntime({
@@ -160,7 +189,6 @@ describe('Runtime Recovery', () => {
 			goalManager,
 			sessionFactory,
 			workspacePath: '/workspace',
-			tickInterval: 60_000,
 		});
 	});
 

@@ -6,16 +6,14 @@
  * - Model indicator showing current leader/worker model
  * - Archive button to archive the room
  * - Confirmation dialogs for pause, stop, and archive actions
- * - Stats overview (sessions, pending, active, completed, failed tasks)
- * - Sessions list
- * - Tasks list grouped by status
+ * - Tasks list grouped by status (Active/Review/Done/Archived tabs)
  */
 
 import { useState } from 'preact/hooks';
 import type { RuntimeState } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
 import { navigateToRooms, navigateToRoomTask } from '../../lib/router';
-import { RoomSessions } from './RoomSessions';
+import { currentRoomTabSignal } from '../../lib/signals';
 import { RoomTasks } from './RoomTasks';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { cn } from '../../lib/utils';
@@ -35,16 +33,13 @@ function RuntimeStateIndicator({ state }: { state: RuntimeState }) {
 
 export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
-	const sessions = roomStore.sessions.value;
 	const roomId = roomStore.roomId.value;
 	const runtimeState = roomStore.runtimeState.value;
 	const runtimeModels = roomStore.runtimeModels.value;
 	const [actionLoading, setActionLoading] = useState(false);
 	const [showPauseConfirm, setShowPauseConfirm] = useState(false);
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
-	const [showApproveConfirm, setShowApproveConfirm] = useState<string | null>(null);
 	const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
-	const [approvalLoading, setApprovalLoading] = useState(false);
 
 	// Get the resolved models (leader and worker)
 	const { leaderModel, workerModel } = runtimeModels;
@@ -81,20 +76,6 @@ export function RoomDashboard() {
 		} finally {
 			setActionLoading(false);
 			setShowStopConfirm(false);
-		}
-	};
-
-	const handleApprove = async () => {
-		const taskId = showApproveConfirm;
-		if (!taskId) return;
-		setApprovalLoading(true);
-		try {
-			await roomStore.approveTask(taskId);
-		} catch {
-			// Error handled by store
-		} finally {
-			setApprovalLoading(false);
-			setShowApproveConfirm(null);
 		}
 	};
 
@@ -218,16 +199,34 @@ export function RoomDashboard() {
 				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
 				<RoomTasks
 					tasks={tasks}
+					goalByTaskId={roomStore.goalByTaskId.value}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
-					onApprove={roomId ? (taskId) => setShowApproveConfirm(taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+					onGoalClick={() => {
+						currentRoomTabSignal.value = 'goals';
+					}}
+					onReject={async (taskId, feedback) => {
+						try {
+							await roomStore.rejectTask(taskId, feedback);
+						} catch {
+							// Error handled by store
+						}
+					}}
+					onApprove={async (taskId) => {
+						try {
+							await roomStore.approveTask(taskId);
+						} catch {
+							// Error handled by store
+						}
+					}}
+					onReactivate={async (taskId) => {
+						try {
+							await roomStore.setTaskStatus(taskId, 'in_progress');
+						} catch {
+							// Error handled by store
+						}
+					}}
 				/>
-			</div>
-
-			{/* Sessions list */}
-			<div class="space-y-2">
-				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Sessions</h2>
-				<RoomSessions sessions={sessions} />
 			</div>
 
 			{/* Pause Confirmation */}
@@ -251,18 +250,6 @@ export function RoomDashboard() {
 				message="Stopping will completely shut down the room runtime. All active sessions will be terminated and no new tasks will be processed. You can start the room again later."
 				confirmText="Stop Room"
 				isLoading={actionLoading}
-			/>
-
-			{/* Approve Task Confirmation */}
-			<ConfirmModal
-				isOpen={showApproveConfirm !== null}
-				onClose={() => setShowApproveConfirm(null)}
-				onConfirm={handleApprove}
-				title="Approve Task"
-				message="Are you sure you want to approve this task? It will proceed to the next phase."
-				confirmText="Approve"
-				confirmButtonVariant="primary"
-				isLoading={approvalLoading}
 			/>
 
 			{/* Archive Confirmation */}

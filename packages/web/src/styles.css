@@ -10,6 +10,47 @@
 	--color-dark-850-rgb: 24 24 27;
 	--color-dark-800-rgb: 31 31 35;
 	--color-blue: 59 130 246;
+
+	/* Accent */
+	--color-accent: 99 102 241;
+	--color-accent-hover: 79 70 229;
+
+	/* Surface */
+	--color-surface-0: var(--color-dark-950);
+	--color-surface-1: var(--color-dark-900);
+	--color-surface-2: var(--color-dark-800);
+
+	/* Text scale */
+	--color-text-primary: 243 244 246;
+	--color-text-secondary: 156 163 175;
+	--color-text-muted: 107 114 128;
+
+	/* Border */
+	--color-border-default: 42 42 48;
+	--color-border-subtle: 58 58 66;
+
+	/* Status */
+	--color-status-success: 34 197 94;
+	--color-status-warning: 251 191 36;
+	--color-status-error: 239 68 68;
+	--color-status-info: 99 102 241;
+
+	/* Transition durations — registers Tailwind utilities */
+	--duration-250: 250ms;
+	--duration-instant: 0ms;
+	--duration-deliberate: 400ms;
+
+	/* Border radius */
+	--radius-base: 8px;
+	--radius-lg: 12px;
+	--radius-xl: 20px;
+}
+
+:root {
+	/* Semantic duration aliases for use in raw CSS */
+	--duration-quick: 150ms;
+	--duration-smooth: 250ms;
+	--duration-deliberate: 400ms;
 }
 
 /*
@@ -59,11 +100,11 @@ html {
 }
 
 ::-webkit-scrollbar-track {
-	background: rgb(var(--color-dark-900));
+	background: rgb(var(--color-dark-950));
 }
 
 ::-webkit-scrollbar-thumb {
-	background: rgb(var(--color-dark-700));
+	background: rgb(var(--color-dark-600));
 	border-radius: 4px;
 }
 
@@ -88,7 +129,7 @@ html {
 .prose p {
 	margin-top: 1.25em;
 	margin-bottom: 1.25em;
-	line-height: 1.75;
+	line-height: 1.7;
 }
 
 .prose h1,
@@ -129,7 +170,7 @@ html {
 	color: #93c5fd;
 	font-weight: 500;
 	font-size: 0.875em;
-	background: rgb(var(--color-dark-800));
+	background: rgb(var(--color-dark-800-rgb));
 	padding: 0.2em 0.4em;
 	border-radius: 0.25rem;
 	/* Prevent long inline code from overflowing */
@@ -424,6 +465,23 @@ html {
 	animation: scaleIn 200ms ease-out;
 }
 
+@keyframes badgePop {
+	from {
+		transform: scale(0.5);
+	}
+	to {
+		transform: scale(1);
+	}
+}
+
+.animate-badge-pop {
+	animation: badgePop 150ms ease-out;
+}
+
+.animate-fadeIn-200 {
+	animation: fadeIn 200ms ease-in-out;
+}
+
 .animate-pulse-slow {
 	animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
@@ -478,9 +536,25 @@ a:focus-visible {
 	animation: shimmer 2s infinite;
 }
 
+/* text-wrap: balance for short headings and labels — fallback: no-op on unsupported browsers */
+.text-balance {
+	text-wrap: balance;
+}
+
+/* Surface utility for modals, panels, and card components */
+.surface-panel {
+	background: rgb(var(--color-dark-900));
+	border: 1px solid rgb(var(--color-dark-700));
+}
+
 /* Mobile styles for status bar controls */
 @media (max-width: 640px) {
 	.control-btn {
 		border: none !important;
 	}
+}
+
+/* Safe area inset support for iOS notch/home indicator */
+.pb-safe {
+	padding-bottom: env(safe-area-inset-bottom);
 }

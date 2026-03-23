@@ -2,7 +2,7 @@
  * Leader Agent Factory - Creates AgentSessionInit for Leader (reviewer) sessions
  *
  * The Leader agent reviews worker output and routes outcomes via MCP tools:
- * - send_to_worker(message, mode) - Forward feedback to worker (steer/queue)
+ * - send_to_worker(message, mode) - Forward feedback to worker (immediate/defer)
  * - complete_task(summary) - Accept work, mark task done
  * - fail_task(reason) - Task is not achievable
  * - replan_goal(reason) - Fail task and trigger replanning with context
@@ -29,8 +29,7 @@ import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
-import type { RoomRuntime } from '../runtime/room-runtime';
-import { createRoomAgentMcpServer } from '../tools/room-agent-tools';
+import { createLeaderContextMcpServer } from '../tools/room-agent-tools';
 
 const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-5-20250929';
 
@@ -56,12 +55,21 @@ export interface LeaderToolCallbacks {
 	sendToWorker(
 		groupId: string,
 		message: string,
-		mode?: 'steer' | 'queue'
+		mode?: 'immediate' | 'defer',
+		progressSummary?: string
 	): Promise<LeaderToolResult>;
-	completeTask(groupId: string, summary: string): Promise<LeaderToolResult>;
-	failTask(groupId: string, reason: string): Promise<LeaderToolResult>;
-	replanGoal(groupId: string, reason: string): Promise<LeaderToolResult>;
-	submitForReview(groupId: string, prUrl: string): Promise<LeaderToolResult>;
+	completeTask(
+		groupId: string,
+		summary: string,
+		progressSummary?: string
+	): Promise<LeaderToolResult>;
+	failTask(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
+	replanGoal(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
+	submitForReview(
+		groupId: string,
+		prUrl: string,
+		progressSummary?: string
+	): Promise<LeaderToolResult>;
 }
 
 export interface LeaderAgentConfig {
@@ -72,18 +80,16 @@ export interface LeaderAgentConfig {
 	workspacePath: string;
 	groupId: string;
 	model?: string;
+	/** Provider ID for this session — auto-detected from model if omitted */
+	provider?: string;
 	/** What type of work is being reviewed */
 	reviewContext?: ReviewContext;
-	/** Dependencies for room-agent-tools MCP server (optional - only needed when creating MCP server) */
+	/** Dependencies for the leader context MCP server (optional - only needed when creating MCP server) */
 	goalManager?: GoalManager;
 	taskManager?: TaskManager;
 	groupRepo?: SessionGroupRepository;
-	/** Optional: DaemonHub for emitting events (used for UI notifications) */
+	/** Used to emit task update events to the UI when leader modifies tasks */
 	daemonHub?: DaemonHub;
-	/** Optional: Runtime service for runtime operations */
-	runtimeService?: {
-		getRuntime(roomId: string): RoomRuntime | null;
-	};
 }
 
 /**
@@ -124,6 +130,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	return [
 		leaderRoleIntro(isPlanReview),
 		leaderToolContractSection(),
+		leaderProgressSummarySection(),
 		leaderPostApprovalSection(isPlanReview),
 		leaderPostRejectionSection(),
 		leaderWorkerQuestionsSection(),
@@ -152,15 +159,36 @@ function leaderToolContractSection(): string {
 ## Tool Contract (CRITICAL)
 
 You MUST call tools (no text-only final responses).
+
+### Review Tools (primary actions)
 - \`send_to_worker\` — Forward feedback to worker without changing group ownership
-  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)
-  - mode=\`steer\`: inject for current-turn steering
+  - mode=\`defer\`: enqueue for next-turn processing (default, preferred for review URLs)
+  - mode=\`immediate\`: inject for current-turn steering
 - \`complete_task\` — Accept the work if it meets all requirements
 - \`fail_task\` — Mark the task as not achievable
 - \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried
 - \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval
 
+### Task Management Tools (for managing other tasks in the room)
+- \`update_task\` — Edit title, description, priority, or dependencies of any task
+- \`cancel_task\` — Cancel a task and cascade to any pending dependents
+- \`update_task_status\` — Change a task's status (e.g., retry a failed task: needs_attention → pending)
+
+### Context Tools (read-only)
+- \`list_goals\`, \`list_tasks\`, \`get_task_detail\`, \`get_room_status\` — Inspect room state
+
 Do NOT respond with only text.`;
+}
+
+function leaderProgressSummarySection(): string {
+	return `\
+## Progress Summary (Required on every tool call)
+
+Every time you call a tool, include a \`progress_summary\` with 2-4 sentences covering:
+1. **What this task is about** — the goal and what needs to be accomplished
+2. **What has been done so far** — work completed across all iterations, key changes made
+
+This summary is shown to users so they can understand context when returning to a long-running task. Update it each turn to reflect cumulative progress.`;
 }
 
 function leaderPostApprovalSection(isPlanReview: boolean): string {
@@ -175,9 +203,9 @@ When the human message indicates approval (e.g., "approved", "merge it", "looks 
 For planning tasks the planner must run a second phase to create tasks.
 **Do NOT merge the plan PR yourself — the planner handles merge + task creation.**
 
-1. **Send the planner back** — Call \`send_to_worker\` (mode: "queue") with:
+1. **Send the planner back** — Call \`send_to_worker\` (mode: "defer") with:
    "The plan is approved. Please:
-   1. Merge the plan PR: \`gh pr merge <PR_NUMBER> --merge\`
+   1. Merge the plan PR: \`gh pr merge <PR_NUMBER>\`
    2. Read the plan file under docs/plans/
    3. Create all tasks 1:1 from the plan using the \`create_task\` tool
    4. Finish your response after all tasks are created"
@@ -193,7 +221,7 @@ When the human message indicates approval (e.g., "approved", "merge it", "looks 
 
 1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:
    \`\`\`bash
-   gh pr merge <PR_NUMBER> --squash --delete-branch
+   gh pr merge <PR_NUMBER>
    \`\`\`
 2. **Sync the root repo** — Pull the merged changes into the root workspace:
    \`\`\`bash
@@ -212,7 +240,7 @@ function leaderPostRejectionSection(): string {
 
 When the human message indicates rejection with feedback (e.g., "fix the tests", "needs changes"):
 
-1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "queue") with the human's feedback
+1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "defer") with the human's feedback
 
 After the worker addresses feedback and exits again, you will receive the updated output for review.`;
 }
@@ -222,7 +250,7 @@ function leaderWorkerQuestionsSection(): string {
 ## Handling Worker Questions
 
 If the worker output shows \`Terminal state: waiting_for_input\`, the worker is asking a question.
-- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "steer") with the answer
+- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "immediate") with the answer
 - If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`;
 }
 
@@ -263,7 +291,7 @@ You are a coordinator. You do NOT review the plan yourself. You delegate reviews
 ### Step 1: Understand the Plan
 Read the planner's output to understand what plan was created and what PR was opened.
 Extract the PR number (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).
-If no PR was created, call \`send_to_worker\` (mode: "queue") asking the planner to create one before review can proceed.
+If no PR was created, call \`send_to_worker\` (mode: "defer") asking the planner to create one before review can proceed.
 
 ### Step 2: Dispatch Reviewer Sub-agents
 Use the Task tool to dispatch each reviewer to review the plan PR. Spawn all reviewers in parallel.
@@ -275,7 +303,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 4: Route
 
-- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
+- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
 - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval
 - **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
@@ -294,10 +322,10 @@ ${helperSection}## Plan Review Guidelines
 
 **Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:
 1. Read the planner output and extract the PR number/URL.
-2. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one.
+2. If no PR exists yet, use \`send_to_worker\` (mode: "defer") to request one.
 3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
-   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
+   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
    - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.
    - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
 5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
@@ -343,7 +371,7 @@ You are a coordinator. You do NOT review code yourself. You delegate reviews to 
 ### Step 1: Understand What Was Done
 Read the worker's output to understand what was implemented and which files changed.
 Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).
-If no PR was created, call \`send_to_worker\` (mode: "queue") asking the worker to create one before review can proceed.
+If no PR was created, call \`send_to_worker\` (mode: "defer") asking the worker to create one before review can proceed.
 
 ### Step 2: Dispatch Reviewer Sub-agents
 Use the Task tool to dispatch each reviewer. Spawn all reviewers in parallel.
@@ -355,7 +383,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 4: Route
 
-- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
+- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
 - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL
 - **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
@@ -372,10 +400,10 @@ ${helperSection}## Code Review Guidelines
 
 **Every iteration follows the same workflow** — including after the worker addresses feedback.
 1. Read the worker output and extract the PR number/URL.
-2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one.
+2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "defer") to request one.
 3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
-   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
+   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
    - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.
    - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
 
@@ -428,21 +456,34 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 	return {
 		async send_to_worker(args: {
 			message: string;
-			mode?: 'steer' | 'queue';
+			mode?: 'immediate' | 'defer';
+			progress_summary?: string;
 		}): Promise<LeaderToolResult> {
-			return callbacks.sendToWorker(groupId, args.message, args.mode);
+			return callbacks.sendToWorker(groupId, args.message, args.mode, args.progress_summary);
 		},
-		async complete_task(args: { summary: string }): Promise<LeaderToolResult> {
-			return callbacks.completeTask(groupId, args.summary);
+		async complete_task(args: {
+			summary: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.completeTask(groupId, args.summary, args.progress_summary);
 		},
-		async fail_task(args: { reason: string }): Promise<LeaderToolResult> {
-			return callbacks.failTask(groupId, args.reason);
+		async fail_task(args: {
+			reason: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.failTask(groupId, args.reason, args.progress_summary);
 		},
-		async replan_goal(args: { reason: string }): Promise<LeaderToolResult> {
-			return callbacks.replanGoal(groupId, args.reason);
+		async replan_goal(args: {
+			reason: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.replanGoal(groupId, args.reason, args.progress_summary);
 		},
-		async submit_for_review(args: { pr_url: string }): Promise<LeaderToolResult> {
-			return callbacks.submitForReview(groupId, args.pr_url);
+		async submit_for_review(args: {
+			pr_url: string;
+			progress_summary?: string;
+		}): Promise<LeaderToolResult> {
+			return callbacks.submitForReview(groupId, args.pr_url, args.progress_summary);
 		},
 	};
 }
@@ -454,16 +495,24 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCallbacks) {
 	const handlers = createLeaderToolHandlers(groupId, callbacks);
 
+	const progressSummaryField = z
+		.string()
+		.optional()
+		.describe(
+			'Progress summary: (1) what this task is about, (2) what has been done/changed so far in this task. Keep it concise (2-4 sentences). This is shown to users to provide context when they return to this task.'
+		);
+
 	const tools = [
 		tool(
 			'send_to_worker',
-			'Send feedback to the worker agent. mode=queue (default) enqueues for next turn; mode=steer injects current-turn guidance.',
+			'Send feedback to the worker agent. mode=defer (default) enqueues for next turn; mode=immediate injects current-turn guidance.',
 			{
 				message: z.string().describe('Specific, actionable feedback for the worker agent'),
 				mode: z
-					.enum(['steer', 'queue'])
+					.enum(['immediate', 'defer'])
 					.optional()
-					.describe('Delivery mode: queue (default) or steer (immediate)'),
+					.describe('Delivery mode: defer (default) or immediate (inject now)'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.send_to_worker(args)
 		),
@@ -474,6 +523,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 				summary: z
 					.string()
 					.describe('Summary of what was accomplished and how it meets requirements'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.complete_task(args)
 		),
@@ -482,6 +532,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 			'Mark the task as not achievable',
 			{
 				reason: z.string().describe('Explanation of why the task cannot be completed'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.fail_task(args)
 		),
@@ -492,6 +543,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 				reason: z
 					.string()
 					.describe('What was tried, what went wrong, and why a different approach is needed'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.replan_goal(args)
 		),
@@ -500,6 +552,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 			'Work is done with a PR ready — free the group slot and park the task for human approval',
 			{
 				pr_url: z.string().min(1).describe('The GitHub PR URL for human review'),
+				progress_summary: progressSummaryField,
 			},
 			(args) => handlers.submit_for_review(args)
 		),
@@ -799,18 +852,18 @@ copilot -s --autopilot --yolo --no-ask-user --max-autopilot-continues 10${modelF
 	}
 
 	if (tool === 'pi') {
-		return `### Pi CLI (GitHub Copilot Provider)
+		return `### Pi CLI (Copilot Bridge Provider)
 
-Run Pi in one-shot mode to review the code via the GitHub Copilot provider:
+Run Pi in one-shot mode to review the code via the Copilot bridge provider:
 
 \`\`\`bash
-pi -p --no-session --provider github-copilot${modelFlag} \\
+pi -p --no-session --provider anthropic-copilot${modelFlag} \\
   --tools read,bash,grep,find,ls \\
   "<YOUR REVIEW PROMPT HERE>" 2>&1
 \`\`\`
 
 - \`-p\` runs one-shot and exits; \`--no-session\` keeps it ephemeral.
-- \`--provider github-copilot\` ensures parity with native Copilot CLI model routing.
+- \`--provider anthropic-copilot\` routes through the new Copilot SDK bridge path.
 - \`--tools read,bash,grep,find,ls\` keeps the review read-only.${cliModel ? '' : '\n- Do NOT pass `--model` — Pi uses the provider default model.'}
 - Capture stdout — the final review output is printed there.`;
 	}
@@ -937,7 +990,7 @@ function resolveProvider(reviewer: SubagentConfig): string {
 		if (provider === 'glm') return 'GLM';
 		if (provider === 'minimax') return 'MiniMax';
 		if (provider === 'openai') return 'OpenAI';
-		if (provider === 'github-copilot' || provider === 'github') return 'GitHub';
+		if (provider === 'anthropic-copilot' || provider === 'github') return 'GitHub';
 		if (provider === 'google') return 'Google';
 		return reviewer.provider;
 	}
@@ -964,7 +1017,7 @@ function resolveModelId(reviewer: SubagentConfig): string {
 	if (m === 'sonnet') return 'claude-sonnet-4-6';
 	if (m === 'haiku') return 'claude-haiku-4-5';
 	if (m === 'codex' || m === 'codex-review') return 'gpt-5.3-codex';
-	if (m === 'pi') return 'github-copilot';
+	if (m === 'pi') return 'anthropic-copilot';
 	return reviewer.model;
 }
 
@@ -1034,16 +1087,16 @@ export function createLeaderAgentInit(
 ): AgentSessionInit {
 	const mcpServer = createLeaderMcpServer(config.groupId, callbacks);
 
-	// Create room-agent-tools MCP server for task/goal management (if dependencies provided)
+	// Create a context + task management MCP server for the leader.
+	// Excludes human-only tools (approve_task, reject_task) and session management (stop_session).
 	const roomAgentTools =
 		config.goalManager && config.taskManager && config.groupRepo
-			? (createRoomAgentMcpServer({
+			? (createLeaderContextMcpServer({
 					roomId: config.room.id,
 					goalManager: config.goalManager,
 					taskManager: config.taskManager,
 					groupRepo: config.groupRepo,
 					daemonHub: config.daemonHub,
-					runtimeService: config.runtimeService,
 				}) as unknown as McpServerConfig)
 			: undefined;
 
@@ -1093,12 +1146,13 @@ export function createLeaderAgentInit(
 			},
 			mcpServers: {
 				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
-				...(roomAgentTools ? { 'room-agent-tools': roomAgentTools } : {}),
+				...(roomAgentTools ? { 'leader-context-tools': roomAgentTools } : {}),
 			},
 			features: LEADER_FEATURES,
 			context: { roomId: config.room.id },
 			type: 'leader' as const,
 			model: config.model ?? DEFAULT_LEADER_MODEL,
+			provider: config.provider,
 			agent: 'Leader',
 			agents: allAgents,
 			contextAutoQueue: false,
@@ -1116,12 +1170,13 @@ export function createLeaderAgentInit(
 		},
 		mcpServers: {
 			'leader-agent-tools': mcpServer as unknown as McpServerConfig,
-			...(roomAgentTools ? { 'room-agent-tools': roomAgentTools } : {}),
+			...(roomAgentTools ? { 'leader-context-tools': roomAgentTools } : {}),
 		},
 		features: LEADER_FEATURES,
 		context: { roomId: config.room.id },
 		type: 'leader',
 		model: config.model ?? DEFAULT_LEADER_MODEL,
+		provider: config.provider,
 		contextAutoQueue: false,
 	};
 }

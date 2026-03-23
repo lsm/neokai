@@ -200,11 +200,19 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 			await Promise.all([message1Promise, message2Promise]);
 
 			// Each session should only have its own message
-			await expect(page1.locator('text="Concurrent message 1"')).toBeVisible();
-			await expect(page1.locator('text="Concurrent message 2"')).not.toBeVisible();
+			await expect(
+				page1.locator('[data-message-role="user"]').filter({ hasText: 'Concurrent message 1' })
+			).toBeVisible();
+			await expect(
+				page1.locator('[data-message-role="user"]').filter({ hasText: 'Concurrent message 2' })
+			).not.toBeVisible();
 
-			await expect(page2.locator('text="Concurrent message 2"')).toBeVisible();
-			await expect(page2.locator('text="Concurrent message 1"')).not.toBeVisible();
+			await expect(
+				page2.locator('[data-message-role="user"]').filter({ hasText: 'Concurrent message 2' })
+			).toBeVisible();
+			await expect(
+				page2.locator('[data-message-role="user"]').filter({ hasText: 'Concurrent message 1' })
+			).not.toBeVisible();
 
 			// Cleanup
 			await cleanupTestSession(page1, session1);

@@ -78,8 +78,8 @@ describe('NavIconButton', () => {
 				</NavIconButton>
 			);
 			const button = container.querySelector('button');
-			expect(button?.className).toContain('bg-dark-800');
-			expect(button?.className).toContain('text-gray-100');
+			expect(button?.className).toContain('bg-indigo-500/20');
+			expect(button?.className).toContain('text-indigo-400');
 		});
 
 		it('should apply inactive CSS classes when not active', () => {
@@ -89,9 +89,9 @@ describe('NavIconButton', () => {
 				</NavIconButton>
 			);
 			const button = container.querySelector('button');
-			expect(button?.className).toContain('text-gray-400');
-			expect(button?.className).toContain('hover:text-gray-200');
-			expect(button?.className).toContain('hover:bg-dark-850');
+			expect(button?.className).toContain('text-gray-500');
+			expect(button?.className).toContain('hover:text-gray-300');
+			expect(button?.className).toContain('hover:bg-white/5');
 		});
 
 		it('should apply inactive CSS classes by default', () => {
@@ -101,7 +101,7 @@ describe('NavIconButton', () => {
 				</NavIconButton>
 			);
 			const button = container.querySelector('button');
-			expect(button?.className).toContain('text-gray-400');
+			expect(button?.className).toContain('text-gray-500');
 		});
 	});
 
@@ -224,8 +224,8 @@ describe('NavIconButton', () => {
 				</NavIconButton>
 			);
 			const button = container.querySelector('button');
-			expect(button?.className).toContain('w-12');
-			expect(button?.className).toContain('h-12');
+			expect(button?.className).toContain('w-10');
+			expect(button?.className).toContain('h-10');
 		});
 
 		it('should have rounded corners', () => {

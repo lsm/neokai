@@ -16,6 +16,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { NeoTask } from '@neokai/shared';
@@ -50,12 +51,18 @@ describe('GoalManager', () => {
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL,
 				completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0,
+				goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT, autonomy_level TEXT, structured_metrics TEXT, schedule TEXT,
+				schedule_paused INTEGER DEFAULT 0, next_run_at INTEGER,
+				max_consecutive_failures INTEGER, max_planning_attempts INTEGER,
+				consecutive_failures INTEGER DEFAULT 0, replan_count INTEGER DEFAULT 0,
 				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 			)
 		`);
 
 		// Create room manager and a room
-		roomManager = new RoomManager(db);
+		roomManager = new RoomManager(db, noOpReactiveDb);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
 			allowedPaths: [{ path: '/workspace/test' }],
@@ -64,10 +71,10 @@ describe('GoalManager', () => {
 		roomId = room.id;
 
 		// Create goal manager
-		goalManager = new GoalManager(db, roomId);
+		goalManager = new GoalManager(db, roomId, noOpReactiveDb);
 
 		// Create task manager for testing task linking
-		taskManager = new TaskManager(db, roomId);
+		taskManager = new TaskManager(db, roomId, { notifyChange: () => {} } as never);
 	});
 
 	afterEach(() => {
@@ -169,7 +176,7 @@ describe('GoalManager', () => {
 
 			// Create another room and goal manager
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const goalManager2 = new GoalManager(db, room2.id);
+			const goalManager2 = new GoalManager(db, room2.id, noOpReactiveDb);
 
 			// Should not be able to access room 1's goal from room 2's manager
 			const retrieved = await goalManager2.getGoal(created.id);
@@ -211,7 +218,7 @@ describe('GoalManager', () => {
 			await goalManager.createGoal({ title: 'Room 1 Goal', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const goalManager2 = new GoalManager(db, room2.id);
+			const goalManager2 = new GoalManager(db, room2.id, noOpReactiveDb);
 			await goalManager2.createGoal({ title: 'Room 2 Goal', description: '' });
 
 			const goals1 = await goalManager.listGoals();
@@ -385,7 +392,7 @@ describe('GoalManager', () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const taskManager2 = new TaskManager(db, room2.id);
+			const taskManager2 = new TaskManager(db, room2.id, { notifyChange: () => {} } as never);
 			const task = await taskManager2.createTask({ title: 'Room 2 Task', description: '' });
 
 			await expect(goalManager.linkTaskToGoal(goal.id, task.id)).rejects.toThrow(
@@ -479,7 +486,7 @@ describe('GoalManager', () => {
 			// Manually add a non-existent task ID to linkedTaskIds
 			const goalRepo = new (
 				await import('../../../src/storage/repositories/goal-repository')
-			).GoalRepository(db);
+			).GoalRepository(db, noOpReactiveDb);
 			goalRepo.updateGoal(goal.id, { linkedTaskIds: [task1.id, 'non-existent-task'] });
 
 			const updatedGoal = await goalManager.getGoal(goal.id);
@@ -664,7 +671,7 @@ describe('GoalManager', () => {
 			const goal = await goalManager.createGoal({ title: 'Room 1 Goal', description: '' });
 
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const goalManager2 = new GoalManager(db, room2.id);
+			const goalManager2 = new GoalManager(db, room2.id, noOpReactiveDb);
 
 			const result = await goalManager2.deleteGoal(goal.id);
 
@@ -686,7 +693,7 @@ describe('GoalManager', () => {
 			// Link tasks manually via repo to avoid auto-recalculation
 			const goalRepo = new (
 				await import('../../../src/storage/repositories/goal-repository')
-			).GoalRepository(db);
+			).GoalRepository(db, noOpReactiveDb);
 			goalRepo.updateGoal(goal.id, { linkedTaskIds: [task1.id, task2.id] });
 
 			const progress = await goalManager.recalculateProgress(goal.id);
@@ -708,7 +715,7 @@ describe('GoalManager', () => {
 		it('should isolate goals between rooms', async () => {
 			// Create another room
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
-			const goalManager2 = new GoalManager(db, room2.id);
+			const goalManager2 = new GoalManager(db, room2.id, noOpReactiveDb);
 
 			// Add goals to both rooms
 			await goalManager.createGoal({ title: 'Room 1 Goal', description: '' });

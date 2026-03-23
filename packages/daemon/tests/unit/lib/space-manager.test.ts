@@ -1,0 +1,243 @@
+/**
+ * SpaceManager Tests
+ *
+ * Tests workspace path validation, space lifecycle, and session management.
+ * Uses real temporary directories to exercise path resolution.
+ */
+
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SpaceManager } from '../../../src/lib/space/managers/space-manager';
+import { createSpaceTables } from '../helpers/space-test-db';
+
+describe('SpaceManager', () => {
+	let db: Database;
+	let manager: SpaceManager;
+	let tmpDir: string;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSpaceTables(db);
+		manager = new SpaceManager(db as any);
+
+		// Create a real temporary directory for workspace path tests
+		tmpDir = mkdtempSync(join(tmpdir(), 'space-manager-test-'));
+	});
+
+	afterEach(() => {
+		db.close();
+		try {
+			rmSync(tmpDir, { recursive: true });
+		} catch {
+			// ignore cleanup errors
+		}
+	});
+
+	describe('createSpace', () => {
+		it('creates a space for a valid directory', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'My Project',
+			});
+
+			expect(space.id).toBeDefined();
+			expect(space.name).toBe('My Project');
+			// Real path should be stored (symlinks resolved)
+			expect(space.workspacePath).toBeTruthy();
+			expect(space.status).toBe('active');
+		});
+
+		it('resolves symlinks and stores the real path', async () => {
+			const realDir = mkdtempSync(join(tmpdir(), 'real-dir-'));
+			const linkPath = join(tmpDir, 'link');
+			symlinkSync(realDir, linkPath);
+
+			try {
+				const space = await manager.createSpace({ workspacePath: linkPath, name: 'Linked' });
+				// The stored path should be the real path (with all symlinks resolved)
+				// Use realpathSync to get the canonical path for comparison (handles macOS /var -> /private/var)
+				const expectedRealPath = realpathSync(realDir);
+				expect(space.workspacePath).toBe(expectedRealPath);
+			} finally {
+				rmSync(realDir, { recursive: true });
+			}
+		});
+
+		it('throws for a non-existent path', async () => {
+			await expect(
+				manager.createSpace({ workspacePath: '/nonexistent/path/xyz', name: 'X' })
+			).rejects.toThrow('does not exist');
+		});
+
+		it('throws if path is not a directory (is a file)', async () => {
+			const filePath = join(tmpDir, 'somefile.txt');
+			await Bun.write(filePath, 'hello');
+
+			await expect(manager.createSpace({ workspacePath: filePath, name: 'X' })).rejects.toThrow(
+				'not a directory'
+			);
+		});
+
+		it('throws if workspace path is already used by an active space', async () => {
+			await manager.createSpace({ workspacePath: tmpDir, name: 'First' });
+
+			await expect(manager.createSpace({ workspacePath: tmpDir, name: 'Second' })).rejects.toThrow(
+				'already exists'
+			);
+		});
+
+		it('throws if workspace path is used by an archived space (paths are permanent identifiers)', async () => {
+			// Design decision: workspace_path has a UNIQUE DB constraint with no status filter,
+			// so archived spaces permanently claim their path. This test documents that behavior.
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'First' });
+			await manager.archiveSpace(space.id);
+
+			await expect(manager.createSpace({ workspacePath: tmpDir, name: 'Second' })).rejects.toThrow(
+				'already exists'
+			);
+		});
+
+		it('creates a space with supervised autonomy level', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'Supervised Space',
+				autonomyLevel: 'supervised',
+			});
+
+			expect(space.autonomyLevel).toBe('supervised');
+		});
+
+		it('creates a space with semi_autonomous autonomy level', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'Semi-Auto Space',
+				autonomyLevel: 'semi_autonomous',
+			});
+
+			expect(space.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('defaults autonomy level to supervised when not specified', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'Default Autonomy Space',
+			});
+
+			// DB default is 'supervised'
+			expect(space.autonomyLevel).toBe('supervised');
+		});
+	});
+
+	describe('getSpace', () => {
+		it('returns space by ID', async () => {
+			const created = await manager.createSpace({ workspacePath: tmpDir, name: 'P' });
+			const found = await manager.getSpace(created.id);
+			expect(found).not.toBeNull();
+			expect(found!.id).toBe(created.id);
+		});
+
+		it('returns null for unknown ID', async () => {
+			expect(await manager.getSpace('nonexistent')).toBeNull();
+		});
+	});
+
+	describe('listSpaces', () => {
+		it('lists active spaces', async () => {
+			const dir2 = mkdtempSync(join(tmpdir(), 'space-list-test-'));
+			try {
+				await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+				const b = await manager.createSpace({ workspacePath: dir2, name: 'B' });
+				await manager.archiveSpace(b.id);
+
+				const spaces = await manager.listSpaces();
+				expect(spaces).toHaveLength(1);
+				expect(spaces[0].name).toBe('A');
+			} finally {
+				rmSync(dir2, { recursive: true });
+			}
+		});
+	});
+
+	describe('updateSpace', () => {
+		it('updates space fields', async () => {
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'Old' });
+			const updated = await manager.updateSpace(space.id, { name: 'New', description: 'Desc' });
+			expect(updated.name).toBe('New');
+			expect(updated.description).toBe('Desc');
+		});
+
+		it('throws for unknown space', async () => {
+			await expect(manager.updateSpace('nonexistent', { name: 'X' })).rejects.toThrow('not found');
+		});
+
+		it('updates autonomy level to semi_autonomous', async () => {
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+			const updated = await manager.updateSpace(space.id, { autonomyLevel: 'semi_autonomous' });
+			expect(updated.autonomyLevel).toBe('semi_autonomous');
+		});
+
+		it('updates autonomy level back to supervised', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'A',
+				autonomyLevel: 'semi_autonomous',
+			});
+			const updated = await manager.updateSpace(space.id, { autonomyLevel: 'supervised' });
+			expect(updated.autonomyLevel).toBe('supervised');
+		});
+
+		it('does not change autonomy level when not provided in update', async () => {
+			const space = await manager.createSpace({
+				workspacePath: tmpDir,
+				name: 'A',
+				autonomyLevel: 'semi_autonomous',
+			});
+			const updated = await manager.updateSpace(space.id, { name: 'B' });
+			expect(updated.autonomyLevel).toBe('semi_autonomous');
+		});
+	});
+
+	describe('archiveSpace', () => {
+		it('archives a space', async () => {
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+			const archived = await manager.archiveSpace(space.id);
+			expect(archived.status).toBe('archived');
+		});
+
+		it('throws for unknown space', async () => {
+			await expect(manager.archiveSpace('nonexistent')).rejects.toThrow('not found');
+		});
+	});
+
+	describe('deleteSpace', () => {
+		it('deletes a space', async () => {
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+			expect(await manager.deleteSpace(space.id)).toBe(true);
+			expect(await manager.getSpace(space.id)).toBeNull();
+		});
+
+		it('returns false for unknown space', async () => {
+			expect(await manager.deleteSpace('nonexistent')).toBe(false);
+		});
+	});
+
+	describe('addSession / removeSession', () => {
+		it('adds and removes sessions', async () => {
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
+
+			const withSession = await manager.addSession(space.id, 'sess-1');
+			expect(withSession.sessionIds).toContain('sess-1');
+
+			const without = await manager.removeSession(space.id, 'sess-1');
+			expect(without.sessionIds).not.toContain('sess-1');
+		});
+
+		it('throws for unknown space', async () => {
+			await expect(manager.addSession('nonexistent', 's1')).rejects.toThrow('not found');
+			await expect(manager.removeSession('nonexistent', 's1')).rejects.toThrow('not found');
+		});
+	});
+});

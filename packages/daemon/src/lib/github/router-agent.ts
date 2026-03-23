@@ -14,7 +14,7 @@ import type { GitHubEvent, RoutingResult, SecurityCheckResult } from '@neokai/sh
 import type { RoutingClassification } from './prompts/router-prompt';
 import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt';
 import { Logger } from '../logger';
-import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver';
 
 const logger = new Logger('router-agent');
 
@@ -269,7 +269,7 @@ Analyze the event and determine which room should handle it. Respond with valid 
 				systemPrompt: ROUTER_AGENT_SYSTEM_PROMPT,
 				// NO tools array - truly sandboxed
 				pathToClaudeCodeExecutable: resolveSDKCliPath(),
-				executable: isBundledBinary() ? 'bun' : undefined,
+				executable: isRunningUnderBun() ? 'bun' : undefined,
 			},
 		});
 

@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import type { MessageDeliveryMode, MessageImage, SessionType } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, ModelInfo, SessionType } from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -56,7 +56,7 @@ interface QueuedOverlayMessage {
 	uuid: string;
 	text: string;
 	timestamp: number;
-	status: 'saved' | 'queued' | 'sent';
+	status: 'deferred' | 'enqueued' | 'consumed';
 }
 
 export default function MessageInput({
@@ -132,20 +132,20 @@ export default function MessageInput({
 		}
 
 		try {
-			const [queuedResponse, savedResponse] = (await Promise.all([
+			const [enqueuedResponse, deferredResponse] = (await Promise.all([
 				hub.request('session.messages.byStatus', {
 					sessionId,
-					status: 'queued',
+					status: 'enqueued',
 					limit: 20,
 				}),
 				hub.request('session.messages.byStatus', {
 					sessionId,
-					status: 'saved',
+					status: 'deferred',
 					limit: 20,
 				}),
 			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
-			setQueuedForCurrentTurn(queuedResponse.messages ?? []);
-			setQueuedForNextTurn(savedResponse.messages ?? []);
+			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
+			setQueuedForNextTurn(deferredResponse.messages ?? []);
 		} catch {
 			// Best-effort queue refresh
 		}
@@ -166,7 +166,7 @@ export default function MessageInput({
 
 	// Submit handler
 	const handleSubmit = useCallback(
-		async (deliveryMode: MessageDeliveryMode = 'current_turn') => {
+		async (deliveryMode: MessageDeliveryMode = 'immediate') => {
 			if (disabled) {
 				return;
 			}
@@ -181,7 +181,7 @@ export default function MessageInput({
 			await onSend(outgoing.content, outgoing.images, deliveryMode);
 			if (
 				agentWorking ||
-				deliveryMode === 'next_turn' ||
+				deliveryMode === 'defer' ||
 				queuedForCurrentTurn.length > 0 ||
 				queuedForNextTurn.length > 0
 			) {
@@ -211,7 +211,7 @@ export default function MessageInput({
 
 			if (e.key === 'Tab' && !e.shiftKey && agentWorking) {
 				e.preventDefault();
-				void handleSubmit('next_turn');
+				void handleSubmit('defer');
 				return;
 			}
 
@@ -219,7 +219,7 @@ export default function MessageInput({
 			if (e.key === 'Enter') {
 				if (e.metaKey || e.ctrlKey) {
 					e.preventDefault();
-					void handleSubmit('current_turn');
+					void handleSubmit('immediate');
 					return;
 				}
 
@@ -230,7 +230,7 @@ export default function MessageInput({
 
 				if (!isTouchDevice && !e.shiftKey) {
 					e.preventDefault();
-					void handleSubmit('current_turn');
+					void handleSubmit('immediate');
 				}
 			}
 		},
@@ -239,8 +239,8 @@ export default function MessageInput({
 
 	// Model switch handler
 	const handleModelSwitch = useCallback(
-		async (modelId: string) => {
-			await switchModel(modelId);
+		async (model: ModelInfo) => {
+			await switchModel(model);
 			actionsMenu.close();
 		},
 		[switchModel, actionsMenu]
@@ -329,7 +329,7 @@ export default function MessageInput({
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
-						void handleSubmit('current_turn');
+						void handleSubmit('immediate');
 					}}
 				>
 					{/* Attachment Preview */}
@@ -374,7 +374,7 @@ export default function MessageInput({
 							)}
 							{queuedForNextTurn.length > 3 && (
 								<p class="pointer-events-none text-xs text-blue-200/80">
-									+{queuedForNextTurn.length - 3} more queued
+									+{queuedForNextTurn.length - 3} more deferred
 								</p>
 							)}
 						</div>
@@ -419,7 +419,7 @@ export default function MessageInput({
 							onContentChange={setContent}
 							onKeyDown={handleKeyDown}
 							onSubmit={() => {
-								void handleSubmit('current_turn');
+								void handleSubmit('immediate');
 							}}
 							disabled={disabled}
 							placeholder={getPlaceholderForSessionType(sessionType)}

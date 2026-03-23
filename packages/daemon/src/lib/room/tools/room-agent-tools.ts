@@ -7,19 +7,27 @@
  *
  * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
  *        update_task, cancel_task, stop_session, get_room_status, approve_task, reject_task,
- *        send_message_to_task, get_task_detail
+ *        send_message_to_task, get_task_detail, set_schedule, pause_schedule, resume_schedule,
+ *        record_metric, get_metrics, list_executions
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
-import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
+import type {
+	TaskStatus,
+	TaskType,
+	AgentType,
+	MissionType,
+	AutonomyLevel,
+	MissionMetric,
+} from '@neokai/shared';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import type { RoomRuntime } from '../runtime/room-runtime';
 import { routeHumanMessageToGroup } from '../runtime/human-message-routing';
+import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../runtime/cron-utils';
 
 export interface RoomAgentToolsConfig {
 	roomId: string;
@@ -52,11 +60,32 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			title: string;
 			description?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			mission_type?: MissionType;
+			autonomy_level?: AutonomyLevel;
+			structured_metrics?: Array<{
+				name: string;
+				target: number;
+				current?: number;
+				unit?: string;
+				direction?: 'increase' | 'decrease';
+				baseline?: number;
+			}>;
 		}): Promise<ToolResult> {
+			const metrics: MissionMetric[] | undefined = args.structured_metrics?.map((m) => ({
+				name: m.name,
+				target: m.target,
+				current: m.current ?? 0,
+				...(m.unit ? { unit: m.unit } : {}),
+				...(m.direction ? { direction: m.direction } : {}),
+				...(m.baseline !== undefined ? { baseline: m.baseline } : {}),
+			}));
 			const goal = await goalManager.createGoal({
 				title: args.title,
 				description: args.description,
 				priority: args.priority,
+				missionType: args.mission_type,
+				autonomyLevel: args.autonomy_level,
+				structuredMetrics: metrics,
 			});
 			// Notify runtime so it schedules a tick immediately (instead of waiting for the timer)
 			if (daemonHub) {
@@ -77,20 +106,74 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 		async update_goal(args: {
 			goal_id: string;
+			title?: string;
+			description?: string;
 			status?: 'active' | 'needs_human' | 'completed' | 'archived';
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			mission_type?: MissionType;
+			autonomy_level?: AutonomyLevel;
+			structured_metrics?: Array<{
+				name: string;
+				target: number;
+				current?: number;
+				unit?: string;
+				direction?: 'increase' | 'decrease';
+				baseline?: number;
+			}>;
 		}): Promise<ToolResult> {
 			const goal = await goalManager.getGoal(args.goal_id);
 			if (!goal) {
 				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
 			}
+			// Guard: require at least one field to update
+			if (
+				args.title === undefined &&
+				args.description === undefined &&
+				args.status === undefined &&
+				args.priority === undefined &&
+				args.mission_type === undefined &&
+				args.autonomy_level === undefined &&
+				args.structured_metrics === undefined
+			) {
+				return jsonResult({ success: false, error: 'No update fields provided.' });
+			}
+
 			let updated = goal;
+
+			// Collect patch fields: title, description, priority, missionType, autonomyLevel, structuredMetrics
+			const hasPatchFields =
+				args.title !== undefined ||
+				args.description !== undefined ||
+				args.priority !== undefined ||
+				args.mission_type !== undefined ||
+				args.autonomy_level !== undefined ||
+				args.structured_metrics !== undefined;
+
+			if (hasPatchFields) {
+				const patch: Record<string, unknown> = {};
+				if (args.title !== undefined) patch.title = args.title;
+				if (args.description !== undefined) patch.description = args.description;
+				if (args.priority !== undefined) patch.priority = args.priority;
+				if (args.mission_type !== undefined) patch.missionType = args.mission_type;
+				if (args.autonomy_level !== undefined) patch.autonomyLevel = args.autonomy_level;
+				if (args.structured_metrics !== undefined) {
+					patch.structuredMetrics = args.structured_metrics.map((m) => ({
+						name: m.name,
+						target: m.target,
+						current: m.current ?? 0,
+						...(m.unit ? { unit: m.unit } : {}),
+						...(m.direction ? { direction: m.direction } : {}),
+						...(m.baseline !== undefined ? { baseline: m.baseline } : {}),
+					}));
+				}
+				updated = await goalManager.patchGoal(args.goal_id, patch);
+			}
+
+			// Status update is a distinct operation from patch (changes state + timestamps)
 			if (args.status) {
 				updated = await goalManager.updateGoalStatus(args.goal_id, args.status);
 			}
-			if (args.priority) {
-				updated = await goalManager.updateGoalPriority(args.goal_id, args.priority);
-			}
+
 			return jsonResult({ success: true, goal: updated });
 		},
 
@@ -127,7 +210,19 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 			if (args.goal_id) {
-				await goalManager.linkTaskToGoal(args.goal_id, task.id);
+				// For recurring missions with an active execution, use the atomic dual-write path.
+				// For all other goals, use the standard linkTaskToGoal path.
+				const linkedGoal = await goalManager.getGoal(args.goal_id);
+				if (linkedGoal?.missionType === 'recurring') {
+					const activeExecution = goalManager.getActiveExecution(args.goal_id);
+					if (activeExecution) {
+						await goalManager.linkTaskToExecution(args.goal_id, activeExecution.id, task.id);
+					} else {
+						await goalManager.linkTaskToGoal(args.goal_id, task.id);
+					}
+				} else {
+					await goalManager.linkTaskToGoal(args.goal_id, task.id);
+				}
 			}
 			// Notify runtime so it schedules a tick immediately
 			if (daemonHub) {
@@ -141,7 +236,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 		},
 
 		async list_tasks(args: { goal_id?: string; status?: TaskStatus }): Promise<ToolResult> {
-			let tasks = await taskManager.listTasks(args.status ? { status: args.status } : undefined);
+			// When explicitly filtering by 'archived', we must pass includeArchived:true
+			// because listTasks excludes archived tasks by default.
+			const filter = args.status
+				? { status: args.status, ...(args.status === 'archived' ? { includeArchived: true } : {}) }
+				: undefined;
+			let tasks = await taskManager.listTasks(filter);
 			if (args.goal_id) {
 				const goal = await goalManager.getGoal(args.goal_id);
 				if (goal) {
@@ -162,6 +262,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			const task = await taskManager.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			// Guard against self-dependency (would permanently block the task)
+			if (args.depends_on?.includes(args.task_id)) {
+				return jsonResult({ success: false, error: 'A task cannot depend on itself.' });
 			}
 			const updates: {
 				title?: string;
@@ -201,6 +305,28 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
 
+			// Guard: terminal tasks cannot be cancelled
+			if (task.status === 'completed' || task.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} is already in terminal state '${task.status}' and cannot be cancelled.`,
+				});
+			}
+
+			// Guard: cancelling a task with an active session group requires runtime service
+			// to stop the running session. Without it, the DB would be updated but the
+			// worker/leader sessions would continue running against a cancelled task.
+			// Covers both in_progress and review — both have active session groups.
+			if ((task.status === 'in_progress' || task.status === 'review') && !runtimeService) {
+				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
+				if (activeGroup && activeGroup.completedAt === null) {
+					return jsonResult({
+						success: false,
+						error: `Cannot cancel task ${args.task_id} (status '${task.status}') without runtime service — the active worker session would not be stopped.`,
+					});
+				}
+			}
+
 			let cancelledTaskIds: string[] = [];
 			let usedRuntimeCancellation = false;
 			if (runtimeService) {
@@ -236,7 +362,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					}
 				}
 			}
-			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
+			const dependentCount = cancelledTaskIds.length - 1;
+			return jsonResult({
+				success: true,
+				cancelledTaskIds,
+				message:
+					dependentCount > 0
+						? `Task ${args.task_id} and ${dependentCount} dependent task(s) cancelled`
+						: `Task ${args.task_id} cancelled`,
+			});
 		},
 
 		async stop_session(args: { task_id: string }): Promise<ToolResult> {
@@ -272,6 +406,8 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: false, error: 'Runtime service unavailable' });
 		},
 
+		// Note: MCP tool is named `update_task_status` but delegates to this handler (set_task_status).
+		// The internal name matches the existing room-agent pattern; the tool name is what the LLM sees.
 		async set_task_status(args: {
 			task_id: string;
 			status: TaskStatus;
@@ -283,13 +419,23 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
 
-			// Validate status transition
-			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-			if (!allowedTransitions.includes(args.status)) {
-				return jsonResult({
-					success: false,
-					error: `Invalid status transition from '${task.status}' to '${args.status}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
-				});
+			const terminalStatuses: TaskStatus[] = ['completed', 'needs_attention', 'cancelled'];
+
+			// Guard: transitioning a task with an active session group to a terminal state
+			// requires runtime service to cancel the running session first. Without it,
+			// the DB would change but the worker session would continue executing.
+			if (
+				(task.status === 'in_progress' || task.status === 'review') &&
+				terminalStatuses.includes(args.status) &&
+				!runtimeService
+			) {
+				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
+				if (activeGroup && activeGroup.completedAt === null) {
+					return jsonResult({
+						success: false,
+						error: `Cannot transition active task ${args.task_id} (status '${task.status}') to '${args.status}' without runtime service — the active worker session would not be stopped.`,
+					});
+				}
 			}
 
 			// Check for active group when transitioning from in_progress or review
@@ -299,17 +445,42 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					if (runtime) {
 						const group = groupRepo.getGroupByTaskId(args.task_id);
 						if (group && group.completedAt === null) {
-							// There's an active group - cancel it first if moving to terminal state
-							if (
-								args.status === 'completed' ||
-								args.status === 'needs_attention' ||
-								args.status === 'cancelled'
-							) {
-								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
-								if (!cancelledGroup) {
+							if (args.status === 'cancelled') {
+								// Use runtime.cancelTask() which properly handles group termination
+								// AND cascades the cancellation to pending dependent tasks.
+								const cancelResult = await runtime.cancelTask(args.task_id);
+								if (!cancelResult.success) {
 									return jsonResult({
 										success: false,
-										error: `Failed to cancel active group for task ${args.task_id} — group may have been modified concurrently`,
+										error: `Failed to cancel task ${args.task_id} — runtime cancellation was unsuccessful`,
+									});
+								}
+								// cancelTask already set status and emitted task updates; emit UI updates and return
+								if (daemonHub) {
+									for (const cancelledId of cancelResult.cancelledTaskIds) {
+										const cancelledTask = await taskManager.getTask(cancelledId);
+										if (cancelledTask) {
+											void daemonHub.emit('room.task.update', {
+												sessionId: `room:${roomId}`,
+												roomId,
+												task: cancelledTask,
+											});
+										}
+									}
+								}
+								return jsonResult({
+									success: true,
+									message: `Task ${args.task_id} cancelled successfully.`,
+								});
+							} else if (args.status === 'completed' || args.status === 'needs_attention') {
+								// Terminate the group WITHOUT cascading cancellation to pending dependent tasks.
+								// Only cancellation of a dependency should affect dependents — completing or
+								// marking a task as needs_attention should leave dependents untouched.
+								const terminated = await runtime.terminateTaskGroup(args.task_id);
+								if (!terminated) {
+									return jsonResult({
+										success: false,
+										error: `Failed to terminate active group for task ${args.task_id} — group may have been modified concurrently`,
 									});
 								}
 							}
@@ -318,8 +489,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
-			// Handle restart/revive: update group state for needs_attention/cancelled tasks
-			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+			// Handle restart/revive: update group state for needs_attention, completed, and cancelled tasks
+			if (
+				task.status === 'needs_attention' ||
+				task.status === 'cancelled' ||
+				task.status === 'completed'
+			) {
 				const group = groupRepo.getGroupByTaskId(args.task_id);
 				if (group) {
 					if (args.status === 'pending' || args.status === 'in_progress') {
@@ -336,10 +511,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						task.status === 'needs_attention' &&
 						group.completedAt !== null
 					) {
-						// Lightweight revive (failed → review only): clear completedAt without
-						// resetting metadata. Only supported for failed tasks — cancelled tasks
-						// have their worktree cleaned up so reviving the group would point
-						// sessions at a gone workspace.
+						// Lightweight revive: clear completedAt without resetting metadata.
+						// Supported for needs_attention (failed) → review only. Cancelled and
+						// completed tasks use resetGroupForRestart() above for a clean slate.
 						const revived = groupRepo.reviveGroup(group.id);
 						if (!revived) {
 							return jsonResult({
@@ -354,10 +528,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			// Apply status change
 			let updatedTask: typeof task;
 			try {
-				updatedTask = await taskManager.setTaskStatus(args.task_id, args.status, {
-					result: args.result,
-					error: args.error,
-				});
+				if (args.status === 'archived') {
+					// archiveTask() sets archivedAt timestamp; setTaskStatus('archived') does not
+					updatedTask = await taskManager.archiveTask(args.task_id);
+				} else {
+					updatedTask = await taskManager.setTaskStatus(args.task_id, args.status, {
+						result: args.result,
+						error: args.error,
+					});
+				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return jsonResult({ success: false, error: message });
@@ -451,25 +630,20 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
 
-			// Cancelled tasks cannot be revived via message — the worktree is cleaned
-			// up on cancellation so restoring the session would point to a gone
-			// workspace. Direct the caller to restart the task from scratch instead.
-			if (task.status === 'cancelled') {
-				return jsonResult({
-					success: false,
-					error:
-						`Task ${args.task_id} is cancelled. Cancelled tasks cannot receive messages ` +
-						'because their workspace has been cleaned up. Use set_task_status to restart it ' +
-						'(e.g. status: "pending" or "in_progress").',
-				});
-			}
-
-			// Auto-revive: if the task needs attention, transition it to 'review' and
-			// restore the agent sessions so the message can be delivered. Needs_attention
-			// tasks preserve their worktree, so session restoration is safe.
-			if (task.status === 'needs_attention') {
+			// Auto-revive: needs_attention and cancelled tasks auto-reactivate so the message
+			// can be delivered without manual intervention. Worktrees are preserved for both
+			// statuses (only archiveGroup cleans them up), so session restoration is safe.
+			//
+			// Deliberate asymmetry with set_task_status:
+			//   set_task_status(cancelled → in_progress) → resetGroupForRestart (clean slate)
+			//   send_message_to_task(cancelled task)    → reviveTaskForMessage  (keep history)
+			// Sending a message is a "continue this conversation" action; history is preserved.
+			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+				// needs_attention transitions through 'review' (its prior working state);
+				// cancelled transitions directly to 'in_progress'.
+				const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 				try {
-					await taskManager.setTaskStatus(args.task_id, 'review');
+					await taskManager.setTaskStatus(args.task_id, intermediateStatus);
 				} catch (err) {
 					return jsonResult({
 						success: false,
@@ -479,9 +653,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
 				if (!revived) {
-					// Roll back the task status; review → needs_attention is a valid transition.
+					// Roll back the task status to its original state.
 					try {
-						await taskManager.setTaskStatus(args.task_id, 'needs_attention');
+						await taskManager.setTaskStatus(args.task_id, task.status);
 					} catch {
 						// Rollback is best-effort; swallow to avoid masking the original error
 					}
@@ -489,12 +663,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						success: false,
 						error:
 							`Failed to revive task ${args.task_id}: agent sessions could not be restored. ` +
-							'Task status has been reset to needs_attention.',
+							`Task status has been reset to ${task.status}.`,
 					});
 				}
+				const fromTo = `${task.status} to ${intermediateStatus}`;
 				return jsonResult({
 					success: true,
-					message: `Task ${args.task_id} revived from needs_attention to review and message delivered to agent`,
+					message: `Task ${args.task_id} revived from ${fromTo} and message delivered to agent`,
 				});
 			}
 
@@ -541,6 +716,98 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			});
 		},
 
+		async set_schedule(args: {
+			goal_id: string;
+			cron_expression: string;
+			timezone?: string;
+		}): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'recurring') {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'}). Only recurring missions can have a schedule.`,
+				});
+			}
+			if (!isValidCronExpression(args.cron_expression)) {
+				return jsonResult({
+					success: false,
+					error: `Invalid cron expression: "${args.cron_expression}". Use 5-field cron (e.g. "0 9 * * *") or presets (@daily, @weekly, @hourly, @monthly).`,
+				});
+			}
+			const tz = args.timezone ?? goal.schedule?.timezone ?? getSystemTimezone();
+			const nextRunAt = getNextRunAt(args.cron_expression, tz);
+			if (nextRunAt === null) {
+				return jsonResult({
+					success: false,
+					error: `Cron expression "${args.cron_expression}" produces no future run times.`,
+				});
+			}
+			const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+				schedule: { expression: args.cron_expression, timezone: tz },
+				nextRunAt,
+				missionType: 'recurring',
+			});
+			return jsonResult({
+				success: true,
+				goal: updated,
+				nextRunAt,
+				nextRunAtISO: new Date(nextRunAt * 1000).toISOString(),
+			});
+		},
+
+		async pause_schedule(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'recurring') {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} is not a recurring mission.`,
+				});
+			}
+			const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+				schedulePaused: true,
+			});
+			return jsonResult({ success: true, goal: updated, message: 'Schedule paused.' });
+		},
+
+		async resume_schedule(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'recurring') {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} is not a recurring mission.`,
+				});
+			}
+			if (!goal.schedule) {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} has no schedule set. Use set_schedule first.`,
+				});
+			}
+			// Recalculate next_run_at from current time on resume
+			const tz = goal.schedule.timezone ?? getSystemTimezone();
+			const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+			const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+				schedulePaused: false,
+				nextRunAt: nextRunAt ?? undefined,
+			});
+			return jsonResult({
+				success: true,
+				goal: updated,
+				message: 'Schedule resumed.',
+				nextRunAt,
+				nextRunAtISO: nextRunAt !== null ? new Date(nextRunAt * 1000).toISOString() : null,
+			});
+		},
+
 		async get_room_status(): Promise<ToolResult> {
 			const goals = await goalManager.listGoals();
 			const tasks = await taskManager.listTasks();
@@ -568,6 +835,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					},
 					tasks: {
 						total: tasks.length,
+						draft: tasks.filter((t) => t.status === 'draft').length,
 						pending: tasks.filter((t) => t.status === 'pending').length,
 						inProgress: tasks.filter((t) => t.status === 'in_progress').length,
 						review: tasks.filter((t) => t.status === 'review').length,
@@ -584,6 +852,94 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					})),
 					tasksNeedingReview,
 				},
+			});
+		},
+
+		async record_metric(args: {
+			goal_id: string;
+			metric_name: string;
+			value: number;
+		}): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'measurable') {
+				return jsonResult({
+					success: false,
+					error: `Goal "${args.goal_id}" is not a measurable mission (missionType: ${goal.missionType ?? 'one_shot'}).`,
+				});
+			}
+			try {
+				const updated = await goalManager.recordMetric(args.goal_id, args.metric_name, args.value);
+				if (daemonHub) {
+					void daemonHub.emit('goal.progressUpdated', {
+						sessionId: `room:${roomId}`,
+						roomId,
+						goalId: updated.id,
+						progress: updated.progress,
+					});
+				}
+				return jsonResult({
+					success: true,
+					metric: {
+						name: args.metric_name,
+						value: args.value,
+						goalProgress: updated.progress,
+					},
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async get_metrics(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			// Legacy compat: goals with no structuredMetrics but with legacy metrics field
+			if (!goal.structuredMetrics || goal.structuredMetrics.length === 0) {
+				return jsonResult({
+					success: true,
+					missionType: goal.missionType ?? 'one_shot',
+					structuredMetrics: [],
+					legacyMetrics: goal.metrics ?? {},
+					note: 'No structured metrics configured. For measurable missions, add structuredMetrics to the goal.',
+				});
+			}
+			const checkResult = await goalManager.checkMetricTargets(args.goal_id);
+			return jsonResult({
+				success: true,
+				missionType: goal.missionType ?? 'one_shot',
+				allTargetsMet: checkResult.allMet,
+				metrics: checkResult.results.map((r) => {
+					const metric = goal.structuredMetrics!.find((m) => m.name === r.name);
+					return {
+						name: r.name,
+						current: r.current,
+						target: r.target,
+						met: r.met,
+						direction: metric?.direction ?? 'increase',
+						...(metric?.baseline !== undefined ? { baseline: metric.baseline } : {}),
+						...(metric?.unit ? { unit: metric.unit } : {}),
+					};
+				}),
+			});
+		},
+
+		async list_executions(args: { goal_id: string; limit?: number }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			const executions = goalManager.listExecutions(args.goal_id, args.limit ?? 20);
+			return jsonResult({
+				success: true,
+				goalId: args.goal_id,
+				missionType: goal.missionType ?? 'one_shot',
+				executions,
 			});
 		},
 	};
@@ -604,20 +960,74 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.default('normal')
 					.describe('Goal priority'),
+				mission_type: z
+					.enum(['one_shot', 'measurable', 'recurring'])
+					.optional()
+					.describe(
+						'Mission type: one_shot (default, single-run), measurable (tracks numeric KPIs), recurring (runs on a cron schedule)'
+					),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe(
+						'Autonomy level: supervised (default, PRs require human review), semi_autonomous (can merge approved PRs automatically)'
+					),
+				structured_metrics: z
+					.array(
+						z.object({
+							name: z.string().describe('Metric name (e.g. "test_coverage")'),
+							target: z.number().describe('Target value to reach'),
+							current: z.number().optional().describe('Current value (defaults to 0)'),
+							unit: z.string().optional().describe('Unit label (e.g. "%" or "ms")'),
+							direction: z
+								.enum(['increase', 'decrease'])
+								.optional()
+								.describe('Direction of improvement (default: increase)'),
+							baseline: z
+								.number()
+								.optional()
+								.describe('Baseline value (required when direction is decrease)'),
+						})
+					)
+					.optional()
+					.describe('Structured metrics for measurable missions'),
 			},
 			(args) => handlers.create_goal(args)
 		),
 		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
 		tool(
 			'update_goal',
-			'Update an existing goal',
+			'Update an existing goal. Provide only the fields you want to change; omitted fields keep their current values.',
 			{
 				goal_id: z.string().describe('ID of the goal to update'),
+				title: z.string().trim().min(1).optional().describe('New title for the goal'),
+				description: z.string().optional().describe('New description for the goal'),
 				status: z
 					.enum(['active', 'needs_human', 'completed', 'archived'])
 					.optional()
 					.describe('New status'),
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
+				mission_type: z
+					.enum(['one_shot', 'measurable', 'recurring'])
+					.optional()
+					.describe('Change mission type'),
+				autonomy_level: z
+					.enum(['supervised', 'semi_autonomous'])
+					.optional()
+					.describe('Change autonomy level'),
+				structured_metrics: z
+					.array(
+						z.object({
+							name: z.string().describe('Metric name'),
+							target: z.number().describe('Target value'),
+							current: z.number().optional().describe('Current value (defaults to 0)'),
+							unit: z.string().optional().describe('Unit label'),
+							direction: z.enum(['increase', 'decrease']).optional(),
+							baseline: z.number().optional(),
+						})
+					)
+					.optional()
+					.describe('Replace structured metrics for measurable missions'),
 			},
 			(args) => handlers.update_goal(args)
 		),
@@ -664,6 +1074,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 						'completed',
 						'needs_attention',
 						'cancelled',
+						'archived',
 					])
 					.optional()
 					.describe('Filter by status'),
@@ -699,7 +1110,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'set_task_status',
-			'Set task status to any valid status. Use this to complete, fail, restart, or change status of any task. Validates that the status transition is allowed.',
+			'Set task status to any valid status. Use this to complete, fail, restart, archive, or change status of any task. Validates that the status transition is allowed.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
 				status: z
@@ -711,8 +1122,11 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 						'completed',
 						'needs_attention',
 						'cancelled',
+						'archived',
 					])
-					.describe('New status for the task'),
+					.describe(
+						'New status for the task. Use archived to permanently archive completed/cancelled/needs_attention tasks.'
+					),
 				result: z.string().optional().describe('Result description (for completed status)'),
 				error: z.string().optional().describe('Error message (for needs_attention status)'),
 			},
@@ -749,10 +1163,74 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			(args) => handlers.get_task_detail(args)
 		),
 		tool(
+			'set_schedule',
+			'Set or update the cron schedule for a recurring mission. Supports 5-field cron expressions (e.g. "0 9 * * *") and presets: @hourly, @daily, @weekly, @monthly.',
+			{
+				goal_id: z.string().describe('ID of the recurring mission goal'),
+				cron_expression: z
+					.string()
+					.describe(
+						'Cron expression (e.g. "0 9 * * *" = 9am daily) or preset (@hourly, @daily, @weekly, @monthly)'
+					),
+				timezone: z
+					.string()
+					.optional()
+					.describe('IANA timezone string (e.g. "America/New_York"). Defaults to system timezone.'),
+			},
+			(args) => handlers.set_schedule(args)
+		),
+		tool(
+			'pause_schedule',
+			'Pause the schedule for a recurring mission. While paused, the mission will not trigger automatically.',
+			{ goal_id: z.string().describe('ID of the recurring mission goal') },
+			(args) => handlers.pause_schedule(args)
+		),
+		tool(
+			'resume_schedule',
+			'Resume a paused recurring mission schedule. Recalculates next_run_at from the current time.',
+			{ goal_id: z.string().describe('ID of the recurring mission goal') },
+			(args) => handlers.resume_schedule(args)
+		),
+		tool(
 			'get_room_status',
 			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
+		),
+		tool(
+			'record_metric',
+			'Record a metric value for a measurable mission goal. Agents use this to report KPI progress.',
+			{
+				goal_id: z.string().describe('ID of the measurable mission goal'),
+				metric_name: z
+					.string()
+					.describe('Name of the metric to record (must match structuredMetrics)'),
+				value: z.number().describe('The current value of the metric'),
+			},
+			(args) => handlers.record_metric(args)
+		),
+		tool(
+			'get_metrics',
+			'View current metric state and targets for a goal. Returns current values, targets, and whether targets are met.',
+			{
+				goal_id: z.string().describe('ID of the goal to get metrics for'),
+			},
+			(args) => handlers.get_metrics(args)
+		),
+		tool(
+			'list_executions',
+			'List execution history for a recurring mission. Returns the most recent executions with their status, timestamps, and result summaries.',
+			{
+				goal_id: z.string().describe('ID of the recurring mission goal'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(20)
+					.describe('Maximum number of executions to return (default: 20)'),
+			},
+			(args) => handlers.list_executions(args)
 		),
 	];
 
@@ -760,3 +1238,128 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 }
 
 export type RoomAgentMcpServer = ReturnType<typeof createRoomAgentMcpServer>;
+
+/**
+ * Narrow config type for the leader context MCP server.
+ * Includes daemonHub (optional) for emitting task update events to the UI.
+ */
+export type LeaderContextMcpConfig = Pick<
+	RoomAgentToolsConfig,
+	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo' | 'daemonHub'
+>;
+
+/**
+ * Create an MCP server for the Leader agent with context and task management tools.
+ *
+ * Registered as `'leader-context'` (distinct from `'room-agent'` used by the full server).
+ * Exposes read-only context tools plus task management tools the leader can use directly.
+ *
+ * Included tools:
+ *   - list_goals, list_tasks, get_task_detail, get_room_status: read-only context
+ *   - update_task: edit title, description, priority, or dependencies of any task
+ *   - cancel_task: cancel a task and cascade to pending dependents
+ *   - update_task_status: change task status with transition validation
+ *
+ * Excluded tools and reasons:
+ *   - approve_task / reject_task: human-only decisions
+ *   - create_goal / update_goal: not the leader's role
+ *   - create_task: leader delegates task creation to worker via send_to_worker
+ *   - stop_session: session management is handled by the runtime
+ *   - complete_task / fail_task: leader uses these from leader-agent-tools for the current task
+ *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
+ */
+export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
+	const handlers = createRoomAgentToolHandlers(config);
+
+	const tools = [
+		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
+		tool(
+			'list_tasks',
+			'List tasks in this room, optionally filtered by goal',
+			{
+				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
+				status: z
+					.enum([
+						'draft',
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+						'archived',
+					])
+					.optional()
+					.describe('Filter by status'),
+			},
+			(args) => handlers.list_tasks(args)
+		),
+		tool(
+			'get_task_detail',
+			'Get full details for a task including group session IDs and whether it is awaiting human review',
+			{ task_id: z.string().describe('ID of the task to get details for') },
+			(args) => handlers.get_task_detail(args)
+		),
+		tool(
+			'get_room_status',
+			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
+			{},
+			() => handlers.get_room_status()
+		),
+		tool(
+			'update_task',
+			'Update task fields (title, description, priority, or dependencies). Works for tasks in any status.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				title: z.string().trim().min(1).optional().describe('New title for the task'),
+				description: z.string().trim().min(1).optional().describe('New description for the task'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.describe('New priority level'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('Full replacement list of dependency task IDs'),
+			},
+			(args) => handlers.update_task(args)
+		),
+		tool(
+			'cancel_task',
+			'Cancel a task. Cascades cancellation to any pending tasks that depend on it.',
+			{
+				task_id: z.string().describe('ID of the task to cancel'),
+			},
+			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'update_task_status',
+			'Change a task status with transition validation. Use to retry failed tasks (needs_attention → pending), revive to review, archive completed tasks, or move between valid states.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				// 'draft' is intentionally excluded: tasks reach draft status only via the planning
+				// phase (planner agent creates them). The leader must not put tasks back to draft.
+				status: z
+					.enum([
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+						'archived',
+					])
+					.describe(
+						'New status for the task. Use archived to permanently archive completed/cancelled/needs_attention tasks.'
+					),
+				result: z.string().optional().describe('Result summary (for completed status)'),
+				error: z.string().optional().describe('Error message (for needs_attention status)'),
+			},
+			(args) => handlers.set_task_status(args)
+		),
+	];
+
+	return createSdkMcpServer({ name: 'leader-context', tools });
+}
+
+export type LeaderContextMcpServer = ReturnType<typeof createLeaderContextMcpServer>;

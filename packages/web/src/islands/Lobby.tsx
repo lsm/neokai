@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
+import type { ModelInfo, Provider } from '@neokai/shared';
 import { lobbyStore } from '../lib/lobby-store';
 import { globalStore } from '../lib/global-store';
 import { navigateToRoom, navigateToSession } from '../lib/router';
@@ -61,12 +62,22 @@ export default function Lobby() {
 		absoluteTime: p.usedAt,
 	}));
 
-	async function handleCreateSession(params: { workspacePath: string; roomId?: string }) {
+	async function handleCreateSession(params: {
+		workspacePath: string;
+		roomId?: string;
+		model?: ModelInfo;
+	}) {
 		try {
 			const { sessionId } = await createSession({
 				workspacePath: params.workspacePath,
 				roomId: params.roomId,
 				createdBy: 'human',
+				...(params.model && {
+					config: {
+						model: params.model.id,
+						provider: params.model.provider as Provider,
+					},
+				}),
 			});
 
 			// Add to recent paths

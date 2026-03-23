@@ -162,7 +162,7 @@ describe('AnthropicProvider', () => {
 			expect(provider.ownsModel('glm-5')).toBe(false);
 			expect(provider.ownsModel('deepseek-coder')).toBe(false);
 			expect(provider.ownsModel('gpt-4')).toBe(false);
-			// copilot- aliases must route to GitHubCopilotProvider, not Anthropic
+			// copilot- aliases must route to AnthropicToCopilotBridgeProvider, not Anthropic
 			expect(provider.ownsModel('copilot-sonnet')).toBe(false);
 			expect(provider.ownsModel('copilot-mini')).toBe(false);
 		});

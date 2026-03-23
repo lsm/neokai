@@ -38,4 +38,11 @@ export const toast = {
 	error: (message: string, duration?: number) => showToast(message, 'error', duration),
 	info: (message: string, duration?: number) => showToast(message, 'info', duration),
 	warning: (message: string, duration?: number) => showToast(message, 'warning', duration),
+
+	// Semantic task lifecycle methods
+	approved: (title = 'Task approved') => showToast(title, 'success'),
+	rejected: (title = 'Task rejected', message?: string) =>
+		showToast(message ? `${title}: ${message}` : title, 'info'),
+	completed: (title = 'Task completed') => showToast(title, 'success'),
+	interrupted: (title = 'Task interrupted') => showToast(title, 'info'),
 };

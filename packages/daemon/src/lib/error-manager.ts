@@ -20,6 +20,10 @@ export enum ErrorCategory {
 	TIMEOUT = 'timeout',
 	PERMISSION = 'permission',
 	RATE_LIMIT = 'rate_limit',
+	/** Provider-specific authentication failure (expired token, OAuth revoked, etc.) */
+	PROVIDER_AUTH_ERROR = 'provider_auth_error',
+	/** Provider bridge/service is unreachable or temporarily unavailable */
+	PROVIDER_UNAVAILABLE = 'provider_unavailable',
 }
 
 export interface StructuredError {
@@ -147,7 +151,12 @@ export class ErrorManager {
 		if (message.includes('ENOTFOUND') || message.includes('EHOSTUNREACH')) {
 			return 'HOST_UNREACHABLE';
 		}
-		if (message.includes('insufficient_quota') || message.includes('quota exceeded')) {
+		if (
+			message.includes('insufficient_quota') ||
+			message.includes('quota exceeded') ||
+			message.includes('no quota') ||
+			message.includes('402')
+		) {
 			return 'QUOTA_EXCEEDED';
 		}
 		if (message.includes('invalid_api_key')) {
@@ -235,6 +244,12 @@ export class ErrorManager {
 			case ErrorCategory.PERMISSION:
 				return "Permission denied. You don't have access to this resource.";
 
+			case ErrorCategory.PROVIDER_AUTH_ERROR:
+				return 'Authentication with the provider has expired. Please re-authenticate to continue.';
+
+			case ErrorCategory.PROVIDER_UNAVAILABLE:
+				return 'The provider is temporarily unavailable. You can switch to another provider or try again.';
+
 			case ErrorCategory.SYSTEM:
 			default:
 				if (originalMessage.includes('ENOSPC')) {
@@ -316,6 +331,18 @@ export class ErrorManager {
 				suggestions.push('Check that the session still exists');
 				break;
 
+			case ErrorCategory.PROVIDER_AUTH_ERROR:
+				suggestions.push('Open Provider Settings to re-authenticate');
+				suggestions.push('Check that your provider credentials have not expired');
+				suggestions.push('Try switching to a different provider temporarily');
+				break;
+
+			case ErrorCategory.PROVIDER_UNAVAILABLE:
+				suggestions.push('Switch to a different provider (e.g. Anthropic) from the model picker');
+				suggestions.push('Check that the provider bridge server is running');
+				suggestions.push('Wait a moment and try again');
+				break;
+
 			default:
 				suggestions.push('Try the operation again');
 				suggestions.push('If the issue persists, check the error details below');
@@ -388,7 +415,11 @@ export class ErrorManager {
 		let newStatus: 'connected' | 'degraded' | 'disconnected' = this.currentApiStatus;
 
 		// Track connection-related errors
-		if (category === ErrorCategory.CONNECTION || category === ErrorCategory.TIMEOUT) {
+		if (
+			category === ErrorCategory.CONNECTION ||
+			category === ErrorCategory.TIMEOUT ||
+			category === ErrorCategory.PROVIDER_UNAVAILABLE
+		) {
 			this.apiConnectionErrors++;
 			this.lastApiError = errorMessage;
 

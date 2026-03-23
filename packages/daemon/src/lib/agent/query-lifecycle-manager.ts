@@ -13,7 +13,7 @@
  * - Full reset with cost tracking, state management, and client notification
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, Session, MessageHub } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -69,6 +69,19 @@ export class QueryLifecycleManager {
 	}
 
 	/**
+	 * Get the effective workspace path for SDK session file lookups.
+	 *
+	 * The SDK subprocess uses its CWD to determine the project directory
+	 * for session files. For worktree sessions, the CWD is the worktree path,
+	 * not session.workspacePath (which is the main repo path).
+	 * Must match QueryOptionsBuilder.getCwd() to find the correct files.
+	 */
+	private getSDKWorkspacePath(): string {
+		const { session } = this.ctx;
+		return session.worktree ? session.worktree.worktreePath : session.workspacePath;
+	}
+
+	/**
 	 * Stop the current query
 	 *
 	 * Shared logic for restart and reset operations:
@@ -118,7 +131,21 @@ export class QueryLifecycleManager {
 			}
 		}
 
-		// 4. Clear references
+		// 4. Close query only if runQuery()'s finally block has not already done so.
+		// When queryPromise resolves normally, the finally block ran during the await
+		// above: it called close() and nulled ctx.queryObject. Check the live reference
+		// against our local snapshot — if they differ (null or new query), skip close()
+		// to avoid a redundant double-call. Only close when the promise timed out
+		// (finally block has not run yet, subprocess is still alive).
+		if (queryObject && this.ctx.queryObject === queryObject) {
+			try {
+				queryObject.close();
+			} catch {
+				// Ignore close errors — subprocess may already be terminated
+			}
+		}
+
+		// 5. Clear references
 		this.ctx.queryObject = null;
 		this.ctx.queryPromise = null;
 	}
@@ -150,8 +177,21 @@ export class QueryLifecycleManager {
 			// Validate and repair SDK session file before restarting.
 			// The interrupted query may have left the session file in an inconsistent state
 			// (e.g., orphaned tool_results from interrupted SDK context compaction).
+			// Also detects stale sdkSessionId when the session file no longer exists.
 			if (session.sdkSessionId) {
-				validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+				const isValid = validateAndRepairSDKSession(
+					this.getSDKWorkspacePath(),
+					session.sdkSessionId,
+					session.id,
+					db
+				);
+				if (!isValid) {
+					this.logger.warn(
+						`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+					);
+					session.sdkSessionId = undefined;
+					db.updateSession(session.id, { sdkSessionId: undefined });
+				}
 			}
 
 			await this.ctx.startStreamingQuery();
@@ -223,8 +263,21 @@ export class QueryLifecycleManager {
 				// Validate and repair SDK session file before restarting.
 				// The interrupted query may have left the session file in an inconsistent state
 				// (e.g., orphaned tool_results from interrupted SDK context compaction).
+				// Also detects stale sdkSessionId when the session file no longer exists.
 				if (session.sdkSessionId) {
-					validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+					const isValid = validateAndRepairSDKSession(
+						this.getSDKWorkspacePath(),
+						session.sdkSessionId,
+						session.id,
+						db
+					);
+					if (!isValid) {
+						this.logger.warn(
+							`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+						);
+						session.sdkSessionId = undefined;
+						db.updateSession(session.id, { sdkSessionId: undefined });
+					}
 				}
 
 				await this.ctx.startStreamingQuery();
@@ -270,7 +323,19 @@ export class QueryLifecycleManager {
 
 		// Validate SDK session file
 		if (session.sdkSessionId) {
-			validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+			const isValid = validateAndRepairSDKSession(
+				this.getSDKWorkspacePath(),
+				session.sdkSessionId,
+				session.id,
+				db
+			);
+			if (!isValid) {
+				this.logger.warn(
+					`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+				);
+				session.sdkSessionId = undefined;
+				db.updateSession(session.id, { sdkSessionId: undefined });
+			}
 		}
 
 		await this.ctx.startStreamingQuery();

@@ -155,8 +155,8 @@ describe('SDKMessageHandler', () => {
 			lifecycleManager: mockLifecycleManager,
 			queryObject: null,
 			queryPromise: null,
-			isCustomQueryProvider: false,
 			contextAutoQueueEnabled: true,
+			onInitSlashCommands: async () => {},
 		};
 
 		handler = new SDKMessageHandler(mockContext);
@@ -255,9 +255,9 @@ describe('SDKMessageHandler', () => {
 			expect((message as unknown as { isSynthetic: boolean }).isSynthetic).toBe(true);
 		});
 
-		it('should acknowledge persisted queued user messages without duplicate save', async () => {
+		it('should acknowledge persisted enqueued user messages without duplicate save', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'queued' ? [{ dbId: 'db-msg-1', uuid: 'test-uuid' }] : []
+				status === 'enqueued' ? [{ dbId: 'db-msg-1', uuid: 'test-uuid' }] : []
 			);
 
 			const message: SDKMessage = {
@@ -268,14 +268,14 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
 			// Bug fix: timestamp must be updated so message appears at correct position
 			// after page refresh (not at original queue time)
 			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-msg-1');
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
 				messageIds: ['db-msg-1'],
-				status: 'sent',
+				status: 'consumed',
 			});
 			expect(publishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
@@ -290,25 +290,25 @@ describe('SDKMessageHandler', () => {
 			expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
 		});
 
-		it('should acknowledge persisted saved user messages and update timestamp', async () => {
+		it('should acknowledge persisted deferred user messages and update timestamp', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'saved' ? [{ dbId: 'db-saved-1', uuid: 'saved-uuid' }] : []
+				status === 'deferred' ? [{ dbId: 'db-deferred-1', uuid: 'deferred-uuid' }] : []
 			);
 
 			const message: SDKMessage = {
 				type: 'user',
-				uuid: 'saved-uuid',
+				uuid: 'deferred-uuid',
 				message: { role: 'user', content: 'Saved message' },
 			} as unknown as SDKMessage;
 
 			await handler.handleMessage(message);
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-saved-1'], 'sent');
-			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-saved-1');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-deferred-1'], 'consumed');
+			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-deferred-1');
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
-				messageIds: ['db-saved-1'],
-				status: 'sent',
+				messageIds: ['db-deferred-1'],
+				status: 'consumed',
 			});
 			expect(publishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
@@ -322,13 +322,13 @@ describe('SDKMessageHandler', () => {
 			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
 		});
 
-		it('should suppress duplicate SDK replay for already-sent persisted user message', async () => {
+		it('should suppress duplicate SDK replay for already-consumed persisted user message', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-				status === 'sent' ? [{ dbId: 'db-msg-1', uuid: 'sent-user-uuid' }] : []
+				status === 'consumed' ? [{ dbId: 'db-msg-1', uuid: 'consumed-user-uuid' }] : []
 			);
 			const message: SDKMessage = {
 				type: 'user',
-				uuid: 'sent-user-uuid',
+				uuid: 'consumed-user-uuid',
 				message: { role: 'user', content: 'Already shown' },
 			} as unknown as SDKMessage;
 
@@ -376,6 +376,29 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect(mockSession.sdkSessionId).toBe('existing-session-id');
+		});
+
+		it('should not set sdkSessionId from api_retry message', async () => {
+			// api_retry has session_id but should not overwrite sdkSessionId
+			// — only system/init messages are the authoritative source
+			const message: SDKMessage = {
+				type: 'system',
+				subtype: 'api_retry',
+				uuid: 'retry-uuid',
+				session_id: 'retry-session-id',
+				attempt: 1,
+				max_retries: 3,
+				retry_delay_ms: 1000,
+				error_status: 429,
+				error: 'rate_limit',
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(mockSession.sdkSessionId).toBeUndefined();
+			// api_retry is suppressed before DB/broadcast — should not appear in transcript
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+			expect(publishSpy).not.toHaveBeenCalled();
 		});
 	});
 
@@ -470,7 +493,7 @@ describe('SDKMessageHandler', () => {
 
 		it('should not block handleResultMessage when /context enqueue fails', async () => {
 			// Bug fix: /context enqueue is fire-and-forget. If it rejects,
-			// handleResultMessage must still complete (set idle, ack queued, etc.)
+			// handleResultMessage must still complete (set idle, ack enqueued, etc.)
 			(mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mockImplementation(async () => {
 				throw new Error('Queue timeout');
 			});
@@ -498,13 +521,13 @@ describe('SDKMessageHandler', () => {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 		});
 
-		it('should fallback-ack oldest queued user on turn end when replay is absent', async () => {
+		it('should fallback-ack oldest enqueued user on turn end when replay is absent', async () => {
 			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
-				if (status === 'queued') {
+				if (status === 'enqueued') {
 					return [
 						{
 							dbId: 'db-msg-1',
-							uuid: 'queued-user-uuid',
+							uuid: 'enqueued-user-uuid',
 							type: 'user',
 							timestamp: 1700000000000,
 							message: { role: 'user', content: 'Queued message' },
@@ -530,7 +553,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
 			// Fallback-ack preserves original timestamp (T1) instead of updating
 			// to turn-end time — the message was already positioned at yield time
 			// by handleMessageYielded, or if that didn't fire, T1 is a better
@@ -539,7 +562,7 @@ describe('SDKMessageHandler', () => {
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
 				messageIds: ['db-msg-1'],
-				status: 'sent',
+				status: 'consumed',
 			});
 			expect(publishSpy).toHaveBeenCalledWith(
 				'state.sdkMessages.delta',
@@ -547,7 +570,7 @@ describe('SDKMessageHandler', () => {
 					added: expect.arrayContaining([
 						expect.objectContaining({
 							type: 'user',
-							uuid: 'queued-user-uuid',
+							uuid: 'enqueued-user-uuid',
 						}),
 					]),
 					timestamp: expect.any(Number),
@@ -845,7 +868,7 @@ describe('SDKMessageHandler', () => {
 
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
-			// Verify an assistant message was saved
+			// Verify an assistant message was deferred
 			const saveCalls = saveSDKMessageSpy.mock.calls;
 			const assistantSaves = saveCalls.filter(
 				(call: unknown[]) => (call[1] as SDKMessage).type === 'assistant'
@@ -973,7 +996,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(contextResponseMessage);
 
-			// Context response should NOT be saved to DB (early return)
+			// Context response should NOT be deferred to DB (early return)
 			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
 
 			// But context tracker should be updated
@@ -1122,6 +1145,108 @@ describe('SDKMessageHandler', () => {
 				'/context',
 				true
 			);
+		});
+
+		it('should clear internalContextCommandIds after new SDK format three-message sequence', async () => {
+			// New SDK format state machine:
+			// 1. Normal result → enqueues /context (UUID=X stored in internalContextCommandIds)
+			// 2. User replay (UUID=X, content='/context') → UUID matched, parse returns null, UUID stays in set
+			// 3. Assistant message (sc8() output, UUID≠X) → context parsed, lastMessageWasContextResponse=true
+			// 4. Result message → internalContextCommandIds.clear() fires
+			// 5. Next normal result → set is empty → queues /context again
+
+			const normalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'normal-result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			// Step 1: normal result queues /context
+			await handler.handleMessage(normalResult);
+			const contextUuid = (mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mock
+				.calls[0][0] as string;
+			expect(contextUuid).toBeString();
+
+			// Step 2: user replay with the context UUID but only plain '/context' text (new SDK format)
+			const userReplay: SDKMessage = {
+				type: 'user',
+				uuid: contextUuid,
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '/context',
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(userReplay);
+			// UUID-matched replay is suppressed — no save or broadcast
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1); // only the normal result
+
+			// Step 3: sc8() assistant message carrying actual context output (UUID differs from contextUuid)
+			const sc8AssistantContextMarkdown =
+				'## Context Usage\n\n**Model:** claude-sonnet-4-6\n**Tokens:** 20.3k / 200k (10%)\n\n' +
+				'### Estimated usage by category\n\n' +
+				'| Category | Tokens | Percentage |\n|----------|--------|------------|\n' +
+				'| System prompt | 3.6k | 1.8% |\n| System tools | 18k | 9.0% |\n' +
+				'| Messages | 108 | 0.1% |\n| Free space | 145.3k | 72.6% |';
+			const sc8AssistantMessage: SDKMessage = {
+				type: 'assistant',
+				uuid: 'sc8-assistant-uuid',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'text', text: sc8AssistantContextMarkdown }],
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(sc8AssistantMessage);
+			// Context data was parsed and tracker updated
+			expect(updateWithDetailedBreakdownSpy).toHaveBeenCalledTimes(1);
+			// sc8() assistant message is suppressed — still only 1 DB save
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
+
+			// Step 4: result message following the /context turn (zero tokens) — suppressed
+			const contextTurnResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'context-turn-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(contextTurnResult);
+			// Result suppressed — still only 1 DB save and no new /context enqueue
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
+
+			// Step 5: next normal result — internalContextCommandIds must be empty now
+			// so /context gets enqueued again
+			const nextNormalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'next-normal-result-uuid',
+				usage: {
+					input_tokens: 120,
+					output_tokens: 60,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(nextNormalResult);
+			// internalContextCommandIds was cleared in step 4, so /context is enqueued again
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(2);
 		});
 
 		it('should suppress zero-token internal result when replay correlation fails', async () => {

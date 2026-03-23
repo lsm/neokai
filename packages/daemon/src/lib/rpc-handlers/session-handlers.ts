@@ -161,31 +161,51 @@ export function setupSessionHandlers(
 			sessionId: string;
 		};
 
+		// Get roomId before updating to include in event payload
+		const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
+		const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;
+
 		// Convert UpdateSessionRequest to Partial<Session>
 		// config in UpdateSessionRequest is Partial<SessionConfig>, which is handled by
 		// database.updateSession merging with existing config
 		await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
-		// Broadcast update event to all clients
-		messageHub.event('session.updated', updates, {
+		const updatedPayload = { ...updates, sessionId: targetSessionId, roomId: roomIdForUpdate };
+
+		// Broadcast update event on session channel for per-session subscribers
+		messageHub.event('session.updated', updatedPayload, {
 			channel: `session:${targetSessionId}`,
 		});
+
+		// Also broadcast on room channel so RoomStore can react
+		if (roomIdForUpdate) {
+			messageHub.event('session.updated', updatedPayload, {
+				channel: `room:${roomIdForUpdate}`,
+			});
+		}
 
 		return { success: true };
 	});
 
 	messageHub.onRequest('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Get roomId before deleting so we can include it in the event payload
+		const agentSessionForDelete = sessionManager.getSession(targetSessionId);
+		const roomIdForDelete = agentSessionForDelete?.getSessionData().context?.roomId;
+
 		await sessionManager.deleteSession(targetSessionId);
 
-		// Broadcast deletion event to all clients
-		messageHub.event(
-			'session.deleted',
-			{ sessionId: targetSessionId },
-			{
-				channel: 'global',
-			}
-		);
+		// Broadcast on room channel so RoomStore reacts immediately.
+		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
+		// to avoid triple-firing the event. We only add the room-scoped broadcast here.
+		if (roomIdForDelete) {
+			messageHub.event(
+				'session.deleted',
+				{ sessionId: targetSessionId, roomId: roomIdForDelete },
+				{ channel: `room:${roomIdForDelete}` }
+			);
+		}
 
 		return { success: true };
 	});
@@ -227,6 +247,21 @@ export function setupSessionHandlers(
 				archivedAt: new Date().toISOString(),
 				metadata: updatedMetadata,
 			} as Partial<Session>);
+
+			// Broadcast session.updated so RoomStore and session subscribers stay in sync
+			const archivedPayloadNoWorktree = {
+				sessionId: targetSessionId,
+				status: 'archived',
+				roomId: session.context?.roomId,
+			};
+			messageHub.event('session.updated', archivedPayloadNoWorktree, {
+				channel: `session:${targetSessionId}`,
+			});
+			if (session.context?.roomId) {
+				messageHub.event('session.updated', archivedPayloadNoWorktree, {
+					channel: `room:${session.context.roomId}`,
+				});
+			}
 
 			return { success: true, requiresConfirmation: false };
 		}
@@ -273,6 +308,21 @@ export function setupSessionHandlers(
 				metadata: updatedMetadata,
 			} as Partial<Session>);
 
+			// Broadcast session.updated so RoomStore and session subscribers stay in sync
+			const archivedPayloadWithWorktree = {
+				sessionId: targetSessionId,
+				status: 'archived',
+				roomId: session.context?.roomId,
+			};
+			messageHub.event('session.updated', archivedPayloadWithWorktree, {
+				channel: `session:${targetSessionId}`,
+			});
+			if (session.context?.roomId) {
+				messageHub.event('session.updated', archivedPayloadWithWorktree, {
+					channel: `room:${session.context.roomId}`,
+				});
+			}
+
 			return {
 				success: true,
 				requiresConfirmation: false,
@@ -293,7 +343,7 @@ export function setupSessionHandlers(
 			sessionId: targetSessionId,
 			content,
 			images,
-			deliveryMode = 'current_turn',
+			deliveryMode = 'immediate',
 		} = data as {
 			sessionId: string;
 			content: string;
@@ -301,7 +351,7 @@ export function setupSessionHandlers(
 			deliveryMode?: MessageDeliveryMode;
 		};
 
-		if (deliveryMode !== 'current_turn' && deliveryMode !== 'next_turn') {
+		if (deliveryMode !== 'immediate' && deliveryMode !== 'defer') {
 			throw new Error('Invalid deliveryMode');
 		}
 
@@ -356,11 +406,17 @@ export function setupSessionHandlers(
 
 		// Get current model ID (may be an alias like "default")
 		const rawModelId = agentSession.getCurrentModel().id;
+		const sessionProvider = agentSession.getSessionData().config.provider;
+
+		if (!sessionProvider) {
+			throw new Error('Session has no provider configured');
+		}
 
 		// Resolve alias to full model ID for consistency with session.model.switch
+		// Pass provider so same-ID models are disambiguated by provider context
 		const { resolveModelAlias, getModelInfo } = await import('../model-service');
-		const currentModelId = await resolveModelAlias(rawModelId);
-		const modelInfo = await getModelInfo(currentModelId);
+		const currentModelId = await resolveModelAlias(rawModelId, 'global', sessionProvider);
+		const modelInfo = await getModelInfo(currentModelId, 'global', sessionProvider);
 
 		return {
 			currentModel: currentModelId,
@@ -371,10 +427,20 @@ export function setupSessionHandlers(
 	// Handle model switching
 	// Returns synchronous result for test compatibility and immediate feedback
 	messageHub.onRequest('session.model.switch', async (data) => {
-		const { sessionId: targetSessionId, model } = data as {
+		const {
+			sessionId: targetSessionId,
+			model,
+			provider,
+		} = data as {
 			sessionId: string;
 			model: string;
+			/** Explicit provider ID — always supply this from the UI model picker. */
+			provider?: string;
 		};
+
+		if (!provider) {
+			throw new Error('Missing required field: provider');
+		}
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
@@ -382,7 +448,7 @@ export function setupSessionHandlers(
 		}
 
 		// Call handleModelSwitch directly - returns {success, model, error}
-		const result = await agentSession.handleModelSwitch(model);
+		const result = await agentSession.handleModelSwitch(model, provider);
 
 		// Broadcast model switch result via state channels for UI updates
 		if (result.success) {
@@ -695,8 +761,41 @@ export function setupSessionHandlers(
 		return result;
 	});
 
-	// Handle triggering saved messages to be sent (Manual query mode)
-	// Use case: When user wants to manually send all saved messages in Manual mode
+	// Handle restarting the query while preserving the SDK session.
+	// Unlike resetQuery which clears pending messages and resets state,
+	// this method preserves pending messages and attempts to resume
+	// the same SDK session for conversation continuity.
+	// Use case: Manual restart from UI to refresh the agent without losing context
+	messageHub.onRequest('session.restart', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Verify session exists
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		try {
+			// Call restart directly - preserves SDK session and pending messages
+			await agentSession.restart();
+
+			// Emit event so StateManager and UI can react to the restart
+			await daemonHub.emit('agent.restart', { sessionId: targetSessionId, success: true });
+
+			return { success: true };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			await daemonHub.emit('agent.restart', {
+				sessionId: targetSessionId,
+				success: false,
+				error: errorMessage,
+			});
+			return { success: false, error: errorMessage };
+		}
+	});
+
+	// Handle triggering deferred messages to be sent (manual mode)
+	// Use case: When user wants to manually send all deferred messages
 	// ARCHITECTURE: Fire-and-forget via EventBus, AgentSession handles the actual sending
 	messageHub.onRequest('session.query.trigger', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
@@ -719,7 +818,7 @@ export function setupSessionHandlers(
 	messageHub.onRequest('session.messages.countByStatus', async (data) => {
 		const { sessionId: targetSessionId, status } = data as {
 			sessionId: string;
-			status: 'saved' | 'queued' | 'sent';
+			status: 'deferred' | 'enqueued' | 'consumed';
 		};
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -745,11 +844,11 @@ export function setupSessionHandlers(
 			limit = 20,
 		} = data as {
 			sessionId: string;
-			status: 'saved' | 'queued' | 'sent';
+			status: 'deferred' | 'enqueued' | 'consumed';
 			limit?: number;
 		};
 
-		if (!['saved', 'queued', 'sent'].includes(status)) {
+		if (!['deferred', 'enqueued', 'consumed'].includes(status)) {
 			throw new Error('Invalid status');
 		}
 

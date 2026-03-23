@@ -60,7 +60,7 @@ describe('EventSubscriptionSetup', () => {
 
 		mockQueryModeHandler = {
 			handleQueryTrigger: mock(async () => ({ success: true, messageCount: 1 })),
-			sendQueuedMessagesOnTurnEnd: mock(async () => {}),
+			sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
 		} as unknown as QueryModeHandler;
 
 		// Create mock session
@@ -106,7 +106,7 @@ describe('EventSubscriptionSetup', () => {
 			expect(registeredCallbacks.has('agent.resetRequest')).toBe(true);
 			expect(registeredCallbacks.has('message.persisted')).toBe(true);
 			expect(registeredCallbacks.has('query.trigger')).toBe(true);
-			expect(registeredCallbacks.has('query.sendQueuedOnTurnEnd')).toBe(true);
+			expect(registeredCallbacks.has('query.sendEnqueuedOnTurnEnd')).toBe(true);
 		});
 
 		it('should pass sessionId to subscription options', () => {
@@ -123,9 +123,9 @@ describe('EventSubscriptionSetup', () => {
 				setup.setup();
 
 				const callback = registeredCallbacks.get('model.switchRequest')!;
-				await callback({ sessionId: 'test-session-id', model: 'opus' });
+				await callback({ sessionId: 'test-session-id', model: 'opus', provider: 'anthropic' });
 
-				expect(mockModelSwitchHandler.switchModel).toHaveBeenCalledWith('opus');
+				expect(mockModelSwitchHandler.switchModel).toHaveBeenCalledWith('opus', 'anthropic');
 				expect(emitSpy).toHaveBeenCalledWith('model.switched', {
 					sessionId: 'test-session-id',
 					success: true,
@@ -144,7 +144,7 @@ describe('EventSubscriptionSetup', () => {
 				setup.setup();
 
 				const callback = registeredCallbacks.get('model.switchRequest')!;
-				await callback({ sessionId: 'test-session-id', model: 'opus' });
+				await callback({ sessionId: 'test-session-id', model: 'opus', provider: 'anthropic' });
 
 				expect(emitSpy).toHaveBeenCalledWith('model.switched', {
 					sessionId: 'test-session-id',
@@ -152,6 +152,15 @@ describe('EventSubscriptionSetup', () => {
 					model: 'opus',
 					error: 'Invalid model',
 				});
+			});
+
+			it('should throw when provider is missing from event', async () => {
+				setup.setup();
+
+				const callback = registeredCallbacks.get('model.switchRequest')!;
+				await expect(callback({ sessionId: 'test-session-id', model: 'opus' })).rejects.toThrow(
+					'model.switchRequest event is missing required field: provider'
+				);
 			});
 		});
 
@@ -239,14 +248,14 @@ describe('EventSubscriptionSetup', () => {
 			});
 		});
 
-		describe('query.sendQueuedOnTurnEnd handler', () => {
-			it('should call queryModeHandler.sendQueuedMessagesOnTurnEnd', async () => {
+		describe('query.sendEnqueuedOnTurnEnd handler', () => {
+			it('should call queryModeHandler.sendEnqueuedMessagesOnTurnEnd', async () => {
 				setup.setup();
 
-				const callback = registeredCallbacks.get('query.sendQueuedOnTurnEnd')!;
+				const callback = registeredCallbacks.get('query.sendEnqueuedOnTurnEnd')!;
 				await callback({ sessionId: 'test-session-id' });
 
-				expect(mockQueryModeHandler.sendQueuedMessagesOnTurnEnd).toHaveBeenCalled();
+				expect(mockQueryModeHandler.sendEnqueuedMessagesOnTurnEnd).toHaveBeenCalled();
 			});
 		});
 	});

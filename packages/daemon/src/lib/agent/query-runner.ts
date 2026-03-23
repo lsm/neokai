@@ -11,14 +11,10 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
-import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
-import type {
-	ProviderQueryOptions,
-	ProviderQueryContext,
-} from '@neokai/shared/provider/query-types';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import { generateUUID } from '@neokai/shared';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
@@ -43,6 +39,7 @@ const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
  * Original environment variables for restoration after SDK query
  */
 export interface OriginalEnvVars {
+	ANTHROPIC_API_KEY?: string;
 	ANTHROPIC_AUTH_TOKEN?: string;
 	ANTHROPIC_BASE_URL?: string;
 	API_TIMEOUT_MS?: string;
@@ -75,10 +72,11 @@ export interface QueryRunnerContext {
 	queryAbortController: AbortController | null;
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
+	// Tracks consecutive auto-recovery attempts for the current query.
+	// Reset to 0 when a query receives its first message (successful startup).
+	// Prevents infinite retry loops when the SDK is permanently broken.
+	startupTimeoutAutoRecoverAttempts: number;
 	originalEnvVars: OriginalEnvVars;
-	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
-	isCustomQueryProvider: boolean;
-
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;
@@ -89,6 +87,12 @@ export interface QueryRunnerContext {
 	onSlashCommandsFetched(): Promise<void>;
 	onModelsFetched(): Promise<void>;
 	onMarkApiSuccess(): Promise<void>;
+
+	// Optional auto-recovery callback invoked when the SDK startup timer fires.
+	// If set, the catch block skips messageQueue.clear() (preserving queued messages
+	// for transparent retry) and schedules a fresh startStreamingQuery() call
+	// instead of surfacing an error to the user.
+	onStartupTimeoutAutoRecover?(): Promise<void>;
 }
 
 /**
@@ -130,37 +134,45 @@ export class QueryRunner {
 			const { initializeProviders } = await import('../providers/factory.js');
 			const providerRegistry = initializeProviders();
 			const modelId = session.config.model || 'sonnet';
-			// Check explicit provider first (stored during session creation when model alias is resolved).
-			// This is critical for pi-mono providers whose canonical model IDs (e.g., claude-sonnet-4.6)
-			// are also claimed by Anthropic, causing incorrect routing if we only use detectProvider().
+			// As of PR #466, all new agent sessions store an explicit provider ID in
+			// session.config.provider. The registry.get('anthropic') fallback below is a
+			// temporary shim for sessions created before that change. It must NOT be
+			// expanded or used as a design pattern — new code should always have an
+			// explicit provider stored.
 			const explicitProviderId = session.config.provider as string | undefined;
 			const provider = explicitProviderId
-				? (providerRegistry.get(explicitProviderId) ?? providerRegistry.detectProvider(modelId))
-				: providerRegistry.detectProvider(modelId);
+				? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
+				: providerRegistry.get('anthropic');
 
-			// Check if the provider supports getAuthStatus (OAuth providers like OpenAI, GitHub Copilot)
+			// Check if the provider can make API calls (env vars, auth.json, gh CLI — all count).
+			// isAvailable() is the runtime gate; getAuthStatus().isAuthenticated is UI-only
+			// (NeoKai-managed OAuth) and must NOT be used here or env-var users will be blocked.
+			if (provider?.isAvailable && !(await provider.isAvailable())) {
+				const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
+				const errorMsg = authStatus?.error || 'Please configure credentials.';
+				const authError = new Error(
+					`Provider ${provider.displayName} is not available. ${errorMsg}`
+				);
+				await errorManager.handleError(
+					session.id,
+					authError,
+					ErrorCategory.PROVIDER_AUTH_ERROR,
+					`Provider ${provider.displayName} is not available. Please configure credentials to continue.`,
+					stateManager.getState(),
+					{ providerId: provider.id, providerName: provider.displayName }
+				);
+				throw authError;
+			}
+			// needsRefresh is a UI hint — warn but do not block the session.
 			if (provider?.getAuthStatus) {
 				const authStatus = await provider.getAuthStatus();
-				if (!authStatus.isAuthenticated) {
-					const authError = new Error(
-						`Provider ${provider.displayName} is not authenticated. ` +
-							(authStatus.error || 'Please configure credentials.')
-					);
-					await errorManager.handleError(
-						session.id,
-						authError,
-						ErrorCategory.AUTHENTICATION,
-						undefined,
-						stateManager.getState()
-					);
-					throw authError;
-				}
 				if (authStatus.needsRefresh) {
 					logger.warn(
 						`Provider ${provider.displayName} token needs refresh. Attempting to continue.`
 					);
 				}
-			} else {
+			}
+			if (!provider?.isAvailable) {
 				// Fall back to checking Anthropic/GLM auth for SDK-based providers
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
@@ -195,11 +207,13 @@ export class QueryRunner {
 			let queryOptions = await optionsBuilder.build();
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
-			// Apply provider env vars (only for SDK-based providers)
-			if (!provider?.createQuery) {
+			// Apply provider env vars
+			{
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
+				// Use the resolved provider ID (falls back to 'anthropic' for legacy sessions)
+				const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
+				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, resolvedProviderId);
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 
@@ -207,151 +221,6 @@ export class QueryRunner {
 			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
-
-			// Check for custom query provider (pi-mono based)
-			// Some providers (OpenAI, GitHub Copilot) bypass the SDK entirely
-			if (provider?.createQuery) {
-				logger.info(`Using custom query provider: ${provider.id} for model: ${modelId}`);
-
-				// Mark as custom query provider so SDKMessageHandler skips /context queuing
-				// Custom providers' generators complete immediately after yielding result,
-				// so nothing would consume a queued /context command
-				this.ctx.isCustomQueryProvider = true;
-
-				// Build query options for custom provider
-				const customQueryOptions: ProviderQueryOptions = {
-					model: queryOptions.model || modelId,
-					systemPrompt:
-						typeof queryOptions.systemPrompt === 'string'
-							? queryOptions.systemPrompt
-							: (queryOptions.systemPrompt as { text?: string })?.text,
-					tools: [], // Tools are handled by SDK in standard mode; custom providers handle their own tools
-					cwd: queryOptions.cwd || session.workspacePath,
-					maxTurns: queryOptions.maxTurns || 50,
-					permissionMode: queryOptions.permissionMode,
-				};
-
-				// Create abort controller for this query
-				const abortController = new AbortController();
-				this.ctx.queryAbortController = abortController;
-
-				const customQueryContext: ProviderQueryContext = {
-					signal: abortController.signal,
-					sessionId: session.id,
-				};
-
-				try {
-					const customQuery = await provider.createQuery(
-						this.createMessageGeneratorWrapper() as AsyncGenerator<SDKUserMessage>,
-						customQueryOptions,
-						customQueryContext
-					);
-
-					if (customQuery) {
-						// Set up startup timeout
-						const queryStartTime = Date.now();
-						let startupTimeoutReached = false;
-
-						const startupTimer = setTimeout(() => {
-							if (!this.ctx.firstMessageReceived) {
-								startupTimeoutReached = true;
-								const elapsed = Date.now() - queryStartTime;
-								logger.error(
-									`Custom provider startup timeout: ${provider.id} did not respond within ${elapsed}ms. ` +
-										`Model: ${modelId}, Workspace: ${session.workspacePath}`
-								);
-
-								if (!abortController.signal.aborted) {
-									abortController.abort();
-								}
-							}
-						}, STARTUP_TIMEOUT_MS);
-						this.ctx.startupTimeoutTimer = startupTimer;
-
-						// Fetch slash commands and models in background
-						this.ctx.onSlashCommandsFetched().catch((e) => {
-							logger.warn('Background fetch of slash commands failed:', e);
-						});
-						this.ctx.onModelsFetched().catch((e) => {
-							logger.warn('Background fetch of models failed:', e);
-						});
-
-						let messageCount = 0;
-
-						// Iterate through custom query generator
-						for await (const message of customQuery) {
-							if (abortController.signal.aborted) {
-								break;
-							}
-
-							if (startupTimeoutReached && messageCount === 0) {
-								throw new Error('Custom provider startup timeout - query aborted');
-							}
-
-							messageCount++;
-
-							// Clear startup timeout on first message
-							const timer = this.ctx.startupTimeoutTimer;
-							if (timer && messageCount === 1) {
-								clearTimeout(timer);
-								this.ctx.startupTimeoutTimer = null;
-							}
-
-							this.ctx.firstMessageReceived = true;
-
-							try {
-								await this.handleSDKMessage(message as SDKMessage);
-							} catch (error) {
-								logger.error('Error handling custom provider message:', error);
-								logger.error('Message type:', (message as SDKMessage).type);
-
-								const processingState = stateManager.getState();
-								await stateManager.setIdle();
-
-								await errorManager.handleError(
-									session.id,
-									error as Error,
-									ErrorCategory.MESSAGE,
-									'Error processing message from custom provider. The session has been reset.',
-									processingState,
-									{ messageType: (message as SDKMessage).type }
-								);
-							}
-						}
-
-						// If startup timed out before first message, surface as timeout error
-						if (startupTimeoutReached && messageCount === 0) {
-							throw new Error('Custom provider startup timeout - query aborted');
-						}
-
-						// Custom query completed successfully
-						return;
-					}
-
-					// createQuery returned null — the provider is not ready (e.g., Copilot token
-					// expired and refresh failed). Do NOT fall through to the standard Claude Agent
-					// SDK: that path spawns a subprocess for a different provider, causing confusing
-					// "Claude Code process exited" errors instead of a clear auth message.
-					throw new Error(
-						`Provider ${provider.displayName ?? provider.id} is not ready. ` +
-							`Please re-authenticate (Settings → Providers → ${provider.displayName ?? provider.id} → Login).`
-					);
-				} catch (customQueryError) {
-					logger.error('Custom query provider failed:', customQueryError);
-
-					// Check if this is an availability issue (provider not configured)
-					const isAvailable = await provider.isAvailable();
-					if (!isAvailable) {
-						throw new Error(`Provider ${provider.id} is not available. Please configure API key.`);
-					}
-
-					// Re-throw other errors
-					throw customQueryError;
-				}
-			}
-
-			// Fall through to standard SDK query for providers without custom query support
-			// const provider = providerRegistry.detectProvider(modelId);
 
 			// Create query with AsyncGenerator
 			const queryObject = query({
@@ -414,6 +283,8 @@ export class QueryRunner {
 				if (timer && messageCount === 1) {
 					clearTimeout(timer);
 					this.ctx.startupTimeoutTimer = null;
+					// Reset auto-recovery counter: query started successfully.
+					this.ctx.startupTimeoutAutoRecoverAttempts = 0;
 				}
 
 				this.ctx.firstMessageReceived = true;
@@ -445,15 +316,28 @@ export class QueryRunner {
 			}
 		} catch (error) {
 			logger.error('Streaming query error:', error);
-			messageQueue.clear();
 
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
+			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
+			const isConversationNotFound = errorMessage.includes('No conversation found');
 
-			// If startup timed out while trying to resume a session, clear sdkSessionId
-			// so the next attempt (Reset Agent, or sending a message) starts a fresh SDK
-			// session instead of repeatedly failing on the same problematic session file.
-			if (errorMessage.includes('SDK startup timeout') && session.sdkSessionId) {
+			// Preserve queued messages for transparent retry when auto-recovery is
+			// registered (startup timeout / conversation not found + provider switch).
+			// In all other cases, clear the queue so stale messages don't bleed
+			// into the next session.
+			if (
+				!(isStartupTimeout || isConversationNotFound) ||
+				isAbortError ||
+				!this.ctx.onStartupTimeoutAutoRecover
+			) {
+				messageQueue.clear();
+			}
+
+			// If startup timed out or conversation not found while trying to resume a session,
+			// clear sdkSessionId so the next attempt starts a fresh SDK session instead of
+			// repeatedly failing on the same problematic session file.
+			if ((isStartupTimeout || isConversationNotFound) && session.sdkSessionId) {
 				logger.error(
 					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
 						'Next query will start fresh without resume.'
@@ -463,50 +347,118 @@ export class QueryRunner {
 			}
 
 			if (!isAbortError) {
-				const apiErrorHandled = await this.handleApiValidationError(error);
+				// On startup timeout or conversation not found, attempt transparent auto-recovery
+				// (up to 1 retry): restart the query without the old resume handle
+				// (sdkSessionId already cleared above). Queued messages are preserved so
+				// the user's pending send is retried automatically without any visible error.
+				// The retry limit (attempts <= 1) prevents infinite loops when the SDK is
+				// permanently broken: after 1 failed recovery, the error surfaces normally.
+				const startupRecoverAttempts = this.ctx.startupTimeoutAutoRecoverAttempts + 1;
+				const canAutoRecover =
+					(isStartupTimeout || isConversationNotFound) &&
+					!this.ctx.isCleaningUp() &&
+					!!this.ctx.onStartupTimeoutAutoRecover &&
+					startupRecoverAttempts <= 1;
 
-				if (!apiErrorHandled) {
-					let category = ErrorCategory.SYSTEM;
-
-					if (
-						errorMessage.includes('401') ||
-						errorMessage.includes('unauthorized') ||
-						errorMessage.includes('invalid_api_key')
-					) {
-						category = ErrorCategory.AUTHENTICATION;
-					} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
-						category = ErrorCategory.CONNECTION;
-					} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-						category = ErrorCategory.RATE_LIMIT;
-					} else if (errorMessage.includes('timeout')) {
-						category = ErrorCategory.TIMEOUT;
-					} else if (errorMessage.includes('model_not_found')) {
-						category = ErrorCategory.MODEL;
-					} else if (
-						errorMessage.includes('cannot be run as root') ||
-						errorMessage.includes('dangerously-skip-permissions') ||
-						errorMessage.includes('permission') ||
-						errorMessage.includes('Exit code: 1')
-					) {
-						category = ErrorCategory.PERMISSION;
-					}
-
-					const processingState = stateManager.getState();
-
-					await errorManager.handleError(
-						session.id,
-						error as Error,
-						category,
-						undefined,
-						processingState,
-						{
-							errorMessage,
-							queueSize: messageQueue.size(),
-						}
+				if (canAutoRecover) {
+					this.ctx.startupTimeoutAutoRecoverAttempts = startupRecoverAttempts;
+					logger.warn(
+						`SDK ${isConversationNotFound ? 'conversation not found' : 'startup timeout'} — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
 					);
-				}
+					// Defer until after finally{} completes so shared state is reset first.
+					setTimeout(() => {
+						this.ctx.onStartupTimeoutAutoRecover!().catch((err: unknown) => {
+							logger.error('Auto-recovery after SDK startup timeout failed:', err);
+						});
+					}, 300);
+					// setIdle is handled by the finally block; skipping here avoids a double call.
+				} else {
+					// Reset counter so a future successfully-started session can recover again.
+					if (isStartupTimeout || isConversationNotFound) {
+						this.ctx.startupTimeoutAutoRecoverAttempts = 0;
+					}
+					const apiErrorHandled = await this.handleApiValidationError(error);
 
-				await stateManager.setIdle();
+					if (!apiErrorHandled) {
+						let category = ErrorCategory.SYSTEM;
+						const providerId = session.config.provider as string | undefined;
+
+						// Detect provider-specific errors before general categorization
+						const isProviderSession =
+							providerId && providerId !== 'anthropic' && providerId !== 'glm';
+
+						if (
+							isProviderSession &&
+							(errorMessage.includes('401') ||
+								errorMessage.includes('403') ||
+								errorMessage.includes('unauthorized') ||
+								errorMessage.includes('Unauthorized') ||
+								errorMessage.includes('token expired') ||
+								errorMessage.includes('token_expired') ||
+								errorMessage.includes('not authenticated') ||
+								errorMessage.includes('invalid_api_key'))
+						) {
+							category = ErrorCategory.PROVIDER_AUTH_ERROR;
+						} else if (
+							isProviderSession &&
+							(errorMessage.includes('ECONNREFUSED') ||
+								errorMessage.includes('ENOTFOUND') ||
+								errorMessage.includes('EHOSTUNREACH') ||
+								errorMessage.includes('service unavailable') ||
+								errorMessage.includes('503') ||
+								errorMessage.includes('502'))
+						) {
+							category = ErrorCategory.PROVIDER_UNAVAILABLE;
+						} else if (
+							errorMessage.includes('401') ||
+							errorMessage.includes('unauthorized') ||
+							errorMessage.includes('invalid_api_key')
+						) {
+							category = ErrorCategory.AUTHENTICATION;
+						} else if (
+							errorMessage.includes('ECONNREFUSED') ||
+							errorMessage.includes('ENOTFOUND')
+						) {
+							category = ErrorCategory.CONNECTION;
+						} else if (
+							errorMessage.includes('429') ||
+							errorMessage.includes('rate limit') ||
+							errorMessage.includes('402') ||
+							errorMessage.toLowerCase().includes('no quota') ||
+							errorMessage.toLowerCase().includes('quota exceeded') ||
+							errorMessage.toLowerCase().includes('insufficient_quota')
+						) {
+							category = ErrorCategory.RATE_LIMIT;
+						} else if (errorMessage.includes('timeout')) {
+							category = ErrorCategory.TIMEOUT;
+						} else if (errorMessage.includes('model_not_found')) {
+							category = ErrorCategory.MODEL;
+						} else if (
+							errorMessage.includes('cannot be run as root') ||
+							errorMessage.includes('dangerously-skip-permissions') ||
+							errorMessage.includes('permission') ||
+							errorMessage.includes('Exit code: 1')
+						) {
+							category = ErrorCategory.PERMISSION;
+						}
+
+						const processingState = stateManager.getState();
+
+						await errorManager.handleError(
+							session.id,
+							error as Error,
+							category,
+							undefined,
+							processingState,
+							{
+								errorMessage,
+								queueSize: messageQueue.size(),
+								providerId: providerId ?? 'anthropic',
+							}
+						);
+					}
+					await stateManager.setIdle();
+				}
 			}
 		} finally {
 			// Check for stale query FIRST to avoid race conditions.
@@ -532,10 +484,21 @@ export class QueryRunner {
 				}
 
 				messageQueue.stop();
-				this.ctx.queryPromise = null;
 
-				// Reset custom query provider flag
-				this.ctx.isCustomQueryProvider = false;
+				// Close and null queryObject BEFORE any async operation so that
+				// concurrent stop()/interrupt() callers see null and skip their
+				// own close() call. queryPromise is nulled LAST — callers awaiting
+				// it exit the race only after this synchronous block has run,
+				// guaranteeing they observe queryObject=null and skip the redundant
+				// close().
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors — subprocess may already be terminated
+					}
+					this.ctx.queryObject = null;
+				}
 
 				// Restore original env vars
 				const originalEnvVars = this.ctx.originalEnvVars;
@@ -551,6 +514,9 @@ export class QueryRunner {
 				if (!this.ctx.isCleaningUp()) {
 					await stateManager.setIdle();
 				}
+
+				// Null queryPromise last so callers awaiting it see queryObject=null.
+				this.ctx.queryPromise = null;
 			}
 			// Stale query: skip all cleanup — new query owns shared state
 		}
@@ -655,29 +621,63 @@ export class QueryRunner {
 		try {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 
+			// JSON-body 4xx (standard Anthropic API errors: "402 {...}")
 			const apiErrorMatch = errorMessage.match(/^(4\d{2})\s+(\{.+\})$/s);
-			if (!apiErrorMatch) {
-				return false;
+			if (apiErrorMatch) {
+				const [, statusCode, jsonBody] = apiErrorMatch;
+
+				let errorBody: { type?: string; error?: { type?: string; message?: string } };
+				try {
+					errorBody = JSON.parse(jsonBody);
+				} catch {
+					return false;
+				}
+
+				const apiErrorMessage = errorBody.error?.message || errorMessage;
+				const apiErrorType = errorBody.error?.type || 'api_error';
+
+				await this.displayErrorAsAssistantMessage(
+					`**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
+					{ markAsError: true }
+				);
+
+				return true;
 			}
 
-			const [, statusCode, jsonBody] = apiErrorMatch;
+			// Plain-text 4xx (e.g. Copilot returns "402 You have no quota (Request ID: ...)")
+			const plainErrorMatch = errorMessage.match(/^(4\d{2})\s+(.+)$/s);
+			if (plainErrorMatch) {
+				const [, statusCode, plainMessage] = plainErrorMatch;
+				await this.displayErrorAsAssistantMessage(
+					`**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
+					{ markAsError: true }
+				);
+				return true;
+			}
 
-			let errorBody: { type?: string; error?: { type?: string; message?: string } };
+			// JSON SSE error event (e.g. from Copilot bridge: {"type":"error","error":{"type":"api_error","message":"402 You have no quota ..."}})
 			try {
-				errorBody = JSON.parse(jsonBody);
+				const parsed = JSON.parse(errorMessage) as {
+					type?: string;
+					error?: { type?: string; message?: string };
+				};
+				const innerMessage = parsed?.error?.message;
+				if (typeof innerMessage === 'string') {
+					const innerMatch = innerMessage.match(/^(4\d{2})\s+(.+)$/s);
+					if (innerMatch) {
+						const [, statusCode, plainMessage] = innerMatch;
+						await this.displayErrorAsAssistantMessage(
+							`**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
+							{ markAsError: true }
+						);
+						return true;
+					}
+				}
 			} catch {
-				return false;
+				// not JSON
 			}
 
-			const apiErrorMessage = errorBody.error?.message || errorMessage;
-			const apiErrorType = errorBody.error?.type || 'api_error';
-
-			await this.displayErrorAsAssistantMessage(
-				`**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
-				{ markAsError: true }
-			);
-
-			return true;
+			return false;
 		} catch (err) {
 			logger.warn('Failed to handle API validation error:', err);
 			return false;

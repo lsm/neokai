@@ -35,6 +35,10 @@ export class JobQueueProcessor {
 
 	start(): void {
 		this.running = true;
+		// Eagerly reclaim stale jobs from a previous crash before the first poll tick,
+		// so crash-recovery is instant rather than delayed by up to STALE_CHECK_INTERVAL.
+		this.repo.reclaimStale(Date.now() - this.staleThresholdMs);
+		this.lastStaleCheck = Date.now();
 		this.pollTimer = setInterval(() => {
 			this.tick();
 		}, this.pollIntervalMs);

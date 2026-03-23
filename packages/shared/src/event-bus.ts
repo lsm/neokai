@@ -90,6 +90,16 @@ export interface EventMap {
 	'session:error': { sessionId: string; error: string; details?: unknown };
 	'session:error:clear': { sessionId: string };
 
+	// API retry events - emitted when SDK retries on server_error
+	'session:retry:attempt': {
+		sessionId: string;
+		attempt: number;
+		max_retries: number;
+		delay_ms: number;
+		error_status: number | null;
+		error: string;
+	};
+
 	// Message events - emitted when user sends a message
 	'message:sent': { sessionId: string };
 

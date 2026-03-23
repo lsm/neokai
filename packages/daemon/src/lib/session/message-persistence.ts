@@ -54,7 +54,7 @@ export class MessagePersistence {
 	 * 7. Emit 'message.persisted' event for downstream processing
 	 */
 	async persist(data: MessagePersistenceData): Promise<void> {
-		const { sessionId, messageId, content, images, deliveryMode = 'current_turn' } = data;
+		const { sessionId, messageId, content, images, deliveryMode = 'immediate' } = data;
 
 		const agentSession = await this.sessionCache.getAsync(sessionId);
 		if (!agentSession) {
@@ -112,20 +112,20 @@ export class MessagePersistence {
 			const isManualMode = session.config.queryMode === 'manual';
 
 			const effectiveDeliveryMode: MessageDeliveryMode =
-				deliveryMode === 'next_turn' && isAgentBusy ? 'next_turn' : 'current_turn';
-			const sendStatus: 'saved' | 'queued' | 'sent' = isManualMode
-				? 'saved'
-				: effectiveDeliveryMode === 'next_turn'
-					? 'saved'
+				deliveryMode === 'defer' && isAgentBusy ? 'defer' : 'immediate';
+			const sendStatus: 'deferred' | 'enqueued' | 'consumed' = isManualMode
+				? 'deferred'
+				: effectiveDeliveryMode === 'defer'
+					? 'deferred'
 					: isAgentBusy
-						? 'queued'
-						: 'sent';
-			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'current_turn';
+						? 'enqueued'
+						: 'consumed';
+			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'immediate';
 
 			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus);
 
 			// 6. Publish to UI immediately only when not currently in-flight.
-			// Busy-turn insertions are shown in the input overlay and rendered in chat once sent.
+			// Busy-turn insertions are shown in the input overlay and rendered in chat once consumed.
 			if (isManualMode || !isAgentBusy) {
 				try {
 					this.messageHub.event(

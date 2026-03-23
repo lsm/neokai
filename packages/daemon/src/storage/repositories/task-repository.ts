@@ -9,9 +9,13 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { NeoTask, TaskFilter, CreateTaskParams, UpdateTaskParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database';
 
 export class TaskRepository {
-	constructor(private db: BunDatabase) {}
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb: ReactiveDatabase
+	) {}
 
 	/**
 	 * Create a new task
@@ -21,8 +25,8 @@ export class TaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -36,9 +40,11 @@ export class TaskRepository {
 			params.taskType ?? 'coding',
 			params.assignedAgent ?? 'coder',
 			params.createdByTaskId ?? null,
+			now,
 			now
 		);
 
+		this.reactiveDb.notifyChange('tasks');
 		return this.getTask(id)!;
 	}
 
@@ -49,9 +55,12 @@ export class TaskRepository {
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
 		const result = this.db
 			.prepare(
-				`UPDATE tasks SET status = 'pending' WHERE created_by_task_id = ? AND status = 'draft'`
+				`UPDATE tasks SET status = 'pending', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
-			.run(createdByTaskId);
+			.run(Date.now(), createdByTaskId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 		return result.changes;
 	}
 
@@ -68,16 +77,16 @@ export class TaskRepository {
 
 	/**
 	 * List tasks for a room, optionally filtered.
-	 * By default, archived tasks (archived_at IS NOT NULL) are excluded.
+	 * By default, archived tasks (status = 'archived') are excluded.
 	 * Use filter.includeArchived = true to include archived tasks.
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
 		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
 
-		// Exclude archived tasks by default
+		// Exclude archived tasks by default (status is the source of truth for archival)
 		if (!filter?.includeArchived) {
-			query += ` AND archived_at IS NULL`;
+			query += ` AND status != 'archived'`;
 		}
 
 		if (filter?.status) {
@@ -88,7 +97,7 @@ export class TaskRepository {
 			query += ` AND priority = ?`;
 			params.push(filter.priority);
 		}
-		query += ` ORDER BY created_at DESC`;
+		query += ` ORDER BY updated_at DESC`;
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
@@ -125,6 +134,9 @@ export class TaskRepository {
 			) {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
+			} else if (params.status === 'archived') {
+				fields.push('archived_at = ?');
+				values.push(Date.now());
 			}
 		}
 		if (params.priority !== undefined) {
@@ -160,7 +172,8 @@ export class TaskRepository {
 			params.activeSession === undefined &&
 			(params.status === 'completed' ||
 				params.status === 'needs_attention' ||
-				params.status === 'cancelled')
+				params.status === 'cancelled' ||
+				params.status === 'archived')
 		) {
 			fields.push('active_session = ?');
 			values.push(null);
@@ -177,14 +190,21 @@ export class TaskRepository {
 			fields.push('pr_created_at = ?');
 			values.push(params.prCreatedAt ?? null);
 		}
+		if (params.archivedAt !== undefined) {
+			fields.push('archived_at = ?');
+			values.push(params.archivedAt ?? null);
+		}
 		if (params.inputDraft !== undefined) {
 			fields.push('input_draft = ?');
 			values.push(params.inputDraft ?? null);
 		}
 		if (fields.length > 0) {
+			fields.push('updated_at = ?');
+			values.push(Date.now());
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			this.reactiveDb.notifyChange('tasks');
 		}
 
 		return this.getTask(id);
@@ -195,17 +215,27 @@ export class TaskRepository {
 	 */
 	deleteTask(id: string): void {
 		const stmt = this.db.prepare(`DELETE FROM tasks WHERE id = ?`);
-		stmt.run(id);
+		const result = stmt.run(id);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 	}
 
 	/**
-	 * Archive a task by setting archived_at timestamp.
+	 * Archive a task by setting status to 'archived' and archived_at timestamp.
+	 * status = 'archived' is the canonical source of truth; archived_at is a derived timestamp.
 	 * Archived tasks are hidden from UI by default.
 	 * Returns the updated task or null if not found.
 	 */
 	archiveTask(id: string): NeoTask | null {
-		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ? WHERE id = ?`);
-		stmt.run(Date.now(), id);
+		const now = Date.now();
+		const stmt = this.db.prepare(
+			`UPDATE tasks SET status = 'archived', archived_at = ?, active_session = NULL, updated_at = ? WHERE id = ?`
+		);
+		const result = stmt.run(now, now, id);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 		return this.getTask(id);
 	}
 
@@ -214,7 +244,10 @@ export class TaskRepository {
 	 */
 	deleteTasksForRoom(roomId: string): void {
 		const stmt = this.db.prepare(`DELETE FROM tasks WHERE room_id = ?`);
-		stmt.run(roomId);
+		const result = stmt.run(roomId);
+		if (result.changes > 0) {
+			this.reactiveDb.notifyChange('tasks');
+		}
 	}
 
 	/**
@@ -229,11 +262,11 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Count all active (non-completed, non-needs_attention, non-cancelled) tasks for a room
+	 * Count all active (non-completed, non-needs_attention, non-cancelled, non-archived) tasks for a room
 	 */
 	countActiveTasks(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled')`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled', 'archived')`
 		);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;
@@ -279,6 +312,7 @@ export class TaskRepository {
 			prUrl: (row.pr_url as string | null) ?? undefined,
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
+			updatedAt: (row.updated_at as number | null) ?? (row.created_at as number),
 		};
 	}
 }

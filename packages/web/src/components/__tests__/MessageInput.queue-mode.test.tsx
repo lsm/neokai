@@ -20,10 +20,10 @@ function setQueueResponses({
 	saved?: Array<Record<string, unknown>>;
 }) {
 	mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
-		if (payload?.status === 'queued') {
+		if (payload?.status === 'enqueued') {
 			return { messages: queued };
 		}
-		if (payload?.status === 'saved') {
+		if (payload?.status === 'deferred') {
 			return { messages: saved };
 		}
 		return { messages: [] };
@@ -137,7 +137,7 @@ describe('MessageInput queue mode', () => {
 		});
 
 		expect(onSend).toHaveBeenCalledTimes(1);
-		expect(onSend).toHaveBeenCalledWith('follow-up for next turn', undefined, 'next_turn');
+		expect(onSend).toHaveBeenCalledWith('follow-up for next turn', undefined, 'defer');
 	});
 
 	it('sends immediately with Enter while agent is working', async () => {
@@ -153,7 +153,7 @@ describe('MessageInput queue mode', () => {
 		});
 
 		expect(onSend).toHaveBeenCalledTimes(1);
-		expect(onSend).toHaveBeenCalledWith('inject now', undefined, 'current_turn');
+		expect(onSend).toHaveBeenCalledWith('inject now', undefined, 'immediate');
 		expect(container.textContent).not.toContain('Agent is running. Press Enter to send now');
 	});
 
@@ -242,7 +242,7 @@ describe('MessageInput queue mode', () => {
 			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 		});
 
-		expect(onSend).toHaveBeenCalledWith('force send', undefined, 'current_turn');
+		expect(onSend).toHaveBeenCalledWith('force send', undefined, 'immediate');
 	});
 
 	it('does not send when disabled', async () => {
@@ -273,7 +273,7 @@ describe('MessageInput queue mode', () => {
 					uuid: 'msg-1',
 					text: 'saved on server',
 					timestamp: Date.now(),
-					status: 'saved',
+					status: 'deferred',
 				},
 			],
 		});
@@ -298,7 +298,7 @@ describe('MessageInput queue mode', () => {
 					uuid: 'msg-1',
 					text: 'queued for current turn',
 					timestamp: Date.now(),
-					status: 'queued',
+					status: 'enqueued',
 				},
 			],
 		});
@@ -324,7 +324,7 @@ describe('MessageInput queue mode', () => {
 					uuid: 'q1',
 					text: 'current-turn pending item',
 					timestamp: Date.now(),
-					status: 'queued',
+					status: 'enqueued',
 				},
 			],
 			saved: [
@@ -333,7 +333,7 @@ describe('MessageInput queue mode', () => {
 					uuid: 's1',
 					text: 'next-turn queued item',
 					timestamp: Date.now(),
-					status: 'saved',
+					status: 'deferred',
 				},
 			],
 		});
@@ -355,12 +355,30 @@ describe('MessageInput queue mode', () => {
 		mockAgentWorking.value = true;
 		setQueueResponses({
 			queued: [
-				{ dbId: 'db-q1', uuid: 'q1', text: 'first now', timestamp: Date.now(), status: 'queued' },
-				{ dbId: 'db-q2', uuid: 'q2', text: 'second now', timestamp: Date.now(), status: 'queued' },
+				{ dbId: 'db-q1', uuid: 'q1', text: 'first now', timestamp: Date.now(), status: 'enqueued' },
+				{
+					dbId: 'db-q2',
+					uuid: 'q2',
+					text: 'second now',
+					timestamp: Date.now(),
+					status: 'enqueued',
+				},
 			],
 			saved: [
-				{ dbId: 'db-s1', uuid: 's1', text: 'first next', timestamp: Date.now(), status: 'saved' },
-				{ dbId: 'db-s2', uuid: 's2', text: 'second next', timestamp: Date.now(), status: 'saved' },
+				{
+					dbId: 'db-s1',
+					uuid: 's1',
+					text: 'first next',
+					timestamp: Date.now(),
+					status: 'deferred',
+				},
+				{
+					dbId: 'db-s2',
+					uuid: 's2',
+					text: 'second next',
+					timestamp: Date.now(),
+					status: 'deferred',
+				},
 			],
 		});
 
@@ -387,7 +405,7 @@ describe('MessageInput queue mode', () => {
 						uuid: 'q2',
 						text: 'newly pending current-turn item',
 						timestamp: Date.now(),
-						status: 'queued',
+						status: 'enqueued',
 					},
 				],
 			});
@@ -403,7 +421,7 @@ describe('MessageInput queue mode', () => {
 			await Promise.resolve();
 		});
 
-		expect(onSend).toHaveBeenCalledWith('send now', undefined, 'current_turn');
+		expect(onSend).toHaveBeenCalledWith('send now', undefined, 'immediate');
 		expect(container.querySelector('[data-testid="queued-current-turn-bubble"]')).toBeTruthy();
 		expect(container.textContent).toContain('newly pending current-turn item');
 	});
@@ -417,7 +435,7 @@ describe('MessageInput queue mode', () => {
 					uuid: 'msg-1',
 					text: 'position check',
 					timestamp: Date.now(),
-					status: 'queued',
+					status: 'enqueued',
 				},
 			],
 		});
@@ -441,10 +459,10 @@ describe('MessageInput queue mode', () => {
 		mockAgentWorking.value = true;
 		setQueueResponses({
 			saved: [
-				{ dbId: 'db-1', uuid: 'u1', text: 'one', timestamp: Date.now(), status: 'saved' },
-				{ dbId: 'db-2', uuid: 'u2', text: 'two', timestamp: Date.now(), status: 'saved' },
-				{ dbId: 'db-3', uuid: 'u3', text: 'three', timestamp: Date.now(), status: 'saved' },
-				{ dbId: 'db-4', uuid: 'u4', text: 'four', timestamp: Date.now(), status: 'saved' },
+				{ dbId: 'db-1', uuid: 'u1', text: 'one', timestamp: Date.now(), status: 'deferred' },
+				{ dbId: 'db-2', uuid: 'u2', text: 'two', timestamp: Date.now(), status: 'deferred' },
+				{ dbId: 'db-3', uuid: 'u3', text: 'three', timestamp: Date.now(), status: 'deferred' },
+				{ dbId: 'db-4', uuid: 'u4', text: 'four', timestamp: Date.now(), status: 'deferred' },
 			],
 		});
 
@@ -455,7 +473,7 @@ describe('MessageInput queue mode', () => {
 			await Promise.resolve();
 		});
 
-		expect(container.textContent).toContain('+1 more queued');
+		expect(container.textContent).toContain('+1 more deferred');
 	});
 
 	it('polls server queue while active', async () => {
@@ -478,12 +496,12 @@ describe('MessageInput queue mode', () => {
 			expect(mockRequest.mock.calls.length).toBeGreaterThan(initialCalls);
 			expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
 				sessionId: 'session-1',
-				status: 'queued',
+				status: 'enqueued',
 				limit: 20,
 			});
 			expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
 				sessionId: 'session-1',
-				status: 'saved',
+				status: 'deferred',
 				limit: 20,
 			});
 		} finally {
@@ -497,7 +515,7 @@ describe('MessageInput queue mode', () => {
 			mockAgentWorking.value = true;
 			let queuedCalls = 0;
 			mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
-				if (payload?.status === 'queued') {
+				if (payload?.status === 'enqueued') {
 					queuedCalls++;
 					if (queuedCalls === 1) {
 						return {
@@ -507,7 +525,7 @@ describe('MessageInput queue mode', () => {
 									uuid: 'q1',
 									text: 'transient queued item',
 									timestamp: Date.now(),
-									status: 'queued',
+									status: 'enqueued',
 								},
 							],
 						};
@@ -544,7 +562,7 @@ describe('MessageInput queue mode', () => {
 			let queuedCalls = 0;
 			let savedCalls = 0;
 			mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
-				if (payload?.status === 'queued') {
+				if (payload?.status === 'enqueued') {
 					queuedCalls++;
 					if (queuedCalls >= 2) {
 						return {
@@ -554,14 +572,14 @@ describe('MessageInput queue mode', () => {
 									uuid: 'x1',
 									text: 'status transition item',
 									timestamp: Date.now(),
-									status: 'queued',
+									status: 'enqueued',
 								},
 							],
 						};
 					}
 					return { messages: [] };
 				}
-				if (payload?.status === 'saved') {
+				if (payload?.status === 'deferred') {
 					savedCalls++;
 					if (savedCalls === 1) {
 						return {
@@ -571,7 +589,7 @@ describe('MessageInput queue mode', () => {
 									uuid: 'x1',
 									text: 'status transition item',
 									timestamp: Date.now(),
-									status: 'saved',
+									status: 'deferred',
 								},
 							],
 						};

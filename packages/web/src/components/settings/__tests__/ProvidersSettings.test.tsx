@@ -20,12 +20,14 @@ const {
 	mockListProviderAuthStatus,
 	mockLoginProvider,
 	mockLogoutProvider,
+	mockRefreshProvider,
 	mockToastError,
 	mockToastSuccess,
 } = vi.hoisted(() => ({
 	mockListProviderAuthStatus: vi.fn(),
 	mockLoginProvider: vi.fn(),
 	mockLogoutProvider: vi.fn(),
+	mockRefreshProvider: vi.fn(),
 	mockToastError: vi.fn(),
 	mockToastSuccess: vi.fn(),
 }));
@@ -35,6 +37,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
 	listProviderAuthStatus: () => mockListProviderAuthStatus(),
 	loginProvider: (providerId: string) => mockLoginProvider(providerId),
 	logoutProvider: (providerId: string) => mockLogoutProvider(providerId),
+	refreshProvider: (providerId: string) => mockRefreshProvider(providerId),
 }));
 
 // Mock toast module
@@ -145,6 +148,8 @@ describe('ProvidersSettings', () => {
 		vi.clearAllMocks();
 		// Default mock for listProviderAuthStatus
 		mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+		// Default mock for refreshProvider
+		mockRefreshProvider.mockResolvedValue({ success: true });
 	});
 
 	afterEach(() => {
@@ -538,6 +543,126 @@ describe('ProvidersSettings', () => {
 
 			await waitFor(() => {
 				expect(mockToastError).toHaveBeenCalledWith('Failed to logout');
+			});
+		});
+
+		it('should show error toast when logoutProvider returns success: false', async () => {
+			const mockProviders = [
+				createMockProvider('anthropic', 'Anthropic', { isAuthenticated: true, method: 'api_key' }),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockLogoutProvider.mockResolvedValue({ success: false, error: 'Logout not supported' });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Anthropic');
+			});
+
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			logoutButton?.click();
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Logout not supported');
+				// Success toast must NOT be shown
+				expect(mockToastSuccess).not.toHaveBeenCalled();
+			});
+		});
+
+		it('should show fallback error message when logoutProvider returns success: false without error', async () => {
+			const mockProviders = [
+				createMockProvider('anthropic', 'Anthropic', { isAuthenticated: true, method: 'api_key' }),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockLogoutProvider.mockResolvedValue({ success: false });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Anthropic');
+			});
+
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			logoutButton?.click();
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Failed to logout from Anthropic');
+				expect(mockToastSuccess).not.toHaveBeenCalled();
+			});
+		});
+
+		it('should show both Refresh Login and Logout buttons when isAuthenticated and needsRefresh are true', async () => {
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI', {
+					isAuthenticated: true,
+					method: 'oauth',
+					needsRefresh: true,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('OpenAI');
+			});
+
+			const refreshButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Refresh Login')
+			);
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			expect(refreshButton).toBeDefined();
+			expect(logoutButton).toBeDefined();
+		});
+
+		it('should show Logout button after refresh failure even when isAuthenticated is false', async () => {
+			// refreshFailed path: needsRefresh: true, isAuthenticated: false → after refresh failure
+			// the condition (isAuthenticated || (needsRefresh && refreshFailed.has(id))) becomes true
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI', {
+					isAuthenticated: false,
+					needsRefresh: true,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockRefreshProvider.mockResolvedValue({ success: false, error: 'Token expired' });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('OpenAI');
+			});
+
+			// Initially no Logout button since isAuthenticated is false and refreshFailed is empty
+			expect(
+				Array.from(container.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Logout')
+				)
+			).toBeUndefined();
+
+			// Click Refresh Login to trigger a failed refresh (adds provider to refreshFailed)
+			const refreshButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Refresh Login')
+			);
+			refreshButton?.click();
+
+			await waitFor(() => {
+				expect(mockRefreshProvider).toHaveBeenCalledWith('openai');
+				expect(mockToastError).toHaveBeenCalledWith('Token expired');
+			});
+
+			// Logout button now visible because refreshFailed contains 'openai'
+			await waitFor(() => {
+				const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Logout')
+				);
+				expect(logoutButton).toBeDefined();
 			});
 		});
 	});

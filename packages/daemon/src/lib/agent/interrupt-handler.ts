@@ -12,7 +12,7 @@
  * - State transitions during interrupt
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
@@ -88,10 +88,14 @@ export class InterruptHandler {
 				this.ctx.queryAbortController = null;
 			}
 
+			// Capture snapshot before any await so interrupt() always targets the
+			// right object even if ctx.queryObject changes during async operations.
+			const queryObjectSnapshot = this.ctx.queryObject;
+
 			// STEP 2: Call SDK interrupt()
-			if (this.ctx.queryObject && typeof this.ctx.queryObject.interrupt === 'function') {
+			if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
 				try {
-					await this.ctx.queryObject.interrupt();
+					await queryObjectSnapshot.interrupt();
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
 					logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
@@ -110,10 +114,23 @@ export class InterruptHandler {
 				}
 			}
 
-			// STEP 4: Clear queryObject
+			// STEP 4: Close query — use live reference to avoid double-close.
+			// If runQuery()'s finally block ran during the STEP 3 await, it already
+			// called close() and nulled ctx.queryObject; skip close() in that case.
+			// Only close when the promise timed out and the subprocess is still alive.
+			if (this.ctx.queryObject) {
+				try {
+					this.ctx.queryObject.close();
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					logger.warn('SDK close() failed (may be expected):', errorMessage);
+				}
+			}
+
+			// STEP 5: Clear queryObject
 			this.ctx.queryObject = null;
 
-			// STEP 5: Stop the message queue
+			// STEP 6: Stop the message queue
 			messageQueue.stop();
 
 			// Publish interrupt event

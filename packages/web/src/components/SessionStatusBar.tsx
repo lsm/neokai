@@ -15,15 +15,59 @@
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
+import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import { useModal, getModelFamilyIcon, getProviderLabel, useMessageHub } from '../hooks';
+import {
+	useModal,
+	getModelFamilyIcon,
+	getProviderLabel,
+	groupModelsByProvider,
+	filterModelsForPicker,
+	useMessageHub,
+} from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+
+/**
+ * Brand-accurate provider dot colors (hex values outside Tailwind's palette).
+ * Keep in sync with PROVIDER_LABELS in packages/web/src/hooks/useModelSwitcher.ts —
+ * when a new provider is added there, add a matching entry here.
+ */
+const PROVIDER_DOT_COLORS: Record<string, { color: string; ring?: boolean }> = {
+	anthropic: { color: '#D97757' }, // Anthropic brand orange
+	'anthropic-copilot': { color: '#8957E5' }, // GitHub Copilot purple
+	'anthropic-codex': { color: '#FFFFFF', ring: true }, // OpenAI white (ring for visibility)
+	glm: { color: '#7DD3FC' }, // ChatGLM light blue
+	minimax: { color: '#FCA5A5' }, // MiniMax light red
+};
+
+/**
+ * ProviderBadge - Small colored dot indicating the provider next to the model name.
+ * Shows for all providers including Anthropic (orange dot).
+ * Returns null only when provider is undefined/unknown.
+ * The dot's title/aria-label provide the provider name for accessibility.
+ */
+function ProviderBadge({ provider }: { provider: string | undefined }) {
+	if (!provider) return null;
+	const config = PROVIDER_DOT_COLORS[provider];
+	const backgroundColor = config?.color ?? '#9CA3AF'; // gray-400 fallback
+	const label = getProviderLabel(provider);
+	return (
+		<span
+			class={`inline-block w-2 h-2 rounded-full flex-shrink-0${config?.ring ? ' ring-1 ring-gray-300' : ''}`}
+			style={{ backgroundColor }}
+			title={label}
+			aria-label={label}
+			role="img"
+			data-testid="provider-badge"
+		/>
+	);
+}
 
 /**
  * Thinking level display labels
@@ -144,7 +188,7 @@ interface SessionStatusBarProps {
 	availableModels: ModelInfo[];
 	modelSwitching: boolean;
 	modelLoading: boolean;
-	onModelSwitch: (modelId: string) => void;
+	onModelSwitch: (model: ModelInfo) => void;
 	// Auto-scroll
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
@@ -195,6 +239,31 @@ export default function SessionStatusBar({
 	// Get MessageHub for RPC calls
 	const { callIfConnected } = useMessageHub();
 
+	// Provider auth statuses for availability dots and model filtering in model picker
+	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
+		new Map()
+	);
+
+	useEffect(() => {
+		let cancelled = false;
+		callIfConnected('auth.providers', {})
+			.then((res) => {
+				if (cancelled) return;
+				const result = res as { providers?: ProviderAuthStatus[] } | null;
+				const statusMap = new Map<string, ProviderAuthStatus>();
+				for (const p of result?.providers ?? []) {
+					statusMap.set(p.id, p);
+				}
+				setProviderAuthStatuses(statusMap);
+			})
+			.catch(() => {
+				// Silently ignore — dots just stay gray
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [callIfConnected]);
+
 	// Dropdowns - only one can be open at a time
 	const modelDropdown = useModal();
 	const thinkingDropdown = useModal();
@@ -243,8 +312,8 @@ export default function SessionStatusBar({
 
 	// Model switch handler
 	const handleModelSwitch = useCallback(
-		async (modelId: string) => {
-			await onModelSwitch(modelId);
+		async (model: ModelInfo) => {
+			await onModelSwitch(model);
 			modelDropdown.close();
 		},
 		[onModelSwitch, modelDropdown]
@@ -352,52 +421,102 @@ export default function SessionStatusBar({
 					</Tooltip>
 				)}
 
-				{/* Model Switcher */}
-				<div class="relative">
-					<Tooltip
-						content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
-						position="top"
-						delay={300}
-					>
-						<button
-							class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-							onClick={toggleModelDropdown}
-							disabled={modelLoading || modelSwitching || coordinatorSwitching}
-							title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+				{/* Model Switcher + Provider Badge */}
+				<div class="flex items-center gap-1.5">
+					<div class="relative">
+						<Tooltip
+							content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
+							position="top"
+							delay={300}
 						>
-							{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
-						</button>
-					</Tooltip>
+							<button
+								class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+								onClick={toggleModelDropdown}
+								disabled={modelLoading || modelSwitching || coordinatorSwitching}
+								title={
+									currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
+								}
+							>
+								{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
+							</button>
+						</Tooltip>
 
-					{/* Model Dropdown */}
-					{modelDropdown.isOpen && (
-						<div
-							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn`}
-						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
-							{availableModels.map((model) => (
-								<button
-									key={model.id}
-									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-										model.id === currentModelInfo?.id ? 'text-blue-400' : 'text-gray-200'
-									}`}
-									onClick={() => handleModelSwitch(model.alias)}
-									disabled={modelSwitching}
-								>
-									<span class="text-base">{getModelFamilyIcon(model.family)}</span>
-									<span class="flex-1 truncate">{model.name}</span>
-									{model.provider !== 'anthropic' && (
-										<span class="text-gray-500 text-[10px]">
-											{getProviderLabel(model.provider)}
-										</span>
-									)}
-									{model.id === currentModelInfo?.id && (
-										<span class="text-blue-400 text-[10px]">(current)</span>
-									)}
-								</button>
-							))}
-						</div>
-					)}
+						{/* Model Dropdown */}
+						{modelDropdown.isOpen && (
+							<div
+								data-testid="model-dropdown"
+								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn`}
+							>
+								<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
+								{Array.from(
+									groupModelsByProvider(
+										filterModelsForPicker(
+											availableModels,
+											providerAuthStatuses,
+											currentModelInfo?.provider
+										)
+									).entries()
+								).map(([provider, models], groupIndex) => {
+									const authStatus = providerAuthStatuses.get(provider);
+									const isAuthenticated = authStatus?.isAuthenticated;
+									const needsRefresh = authStatus?.needsRefresh ?? false;
+									// Dot: gray = unknown, green = ok, yellow = expiring, red = unauthenticated (only current shown)
+									const dotClass =
+										isAuthenticated === undefined
+											? 'bg-gray-500'
+											: !isAuthenticated
+												? 'bg-red-500'
+												: needsRefresh
+													? 'bg-yellow-500'
+													: 'bg-green-500';
+									return (
+										<div key={provider} data-testid="provider-section">
+											{groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
+											<div class="px-3 py-1 flex items-center gap-1.5">
+												<span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
+												<span
+													data-testid="provider-group-header"
+													class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+												>
+													{getProviderLabel(provider)}
+												</span>
+												{needsRefresh && (
+													<span class="text-yellow-400 text-[10px]" title="Token expiring soon">
+														⚠
+													</span>
+												)}
+											</div>
+											{models.map((model) => {
+												const isCurrent =
+													model.id === currentModelInfo?.id &&
+													model.provider === currentModelInfo?.provider;
+												return (
+													<button
+														key={`${model.provider}:${model.id}`}
+														class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs flex items-center gap-2 ${
+															isCurrent ? 'text-blue-400' : 'text-gray-200'
+														}`}
+														onClick={() => handleModelSwitch(model)}
+														disabled={modelSwitching}
+													>
+														<span class="text-base">{getModelFamilyIcon(model.family)}</span>
+														<span class="flex-1 truncate">{model.name}</span>
+														{isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
+														{needsRefresh && (
+															<span class="text-yellow-400 text-[10px]" title="Token expiring">
+																⚠
+															</span>
+														)}
+													</button>
+												);
+											})}
+										</div>
+									);
+								})}
+							</div>
+						)}
+					</div>
+					<ProviderBadge provider={currentModelInfo?.provider} />
 				</div>
 
 				{/* Thinking Level */}

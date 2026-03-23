@@ -4,9 +4,9 @@
  *
  * Tests user message rendering including text, images, and special cases
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { render, fireEvent } from '@testing-library/preact';
+import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -33,6 +33,10 @@ import { toast } from '../../../lib/toast.ts';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+});
+
+afterEach(() => {
+	cleanup();
 });
 
 // Helper to create a valid UUID
@@ -390,7 +394,7 @@ describe('SDKUserMessage', () => {
 			expect(copyButton).toBeTruthy();
 		});
 
-		it('should show success toast when copy succeeds', async () => {
+		it('should show inline green check when copy succeeds', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(true);
 
 			const message = createTextMessage('Hello world');
@@ -402,11 +406,14 @@ describe('SDKUserMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+				// Button should now show "Copied!" title and green color
+				const copiedButton = container.querySelector('button[title="Copied!"]');
+				expect(copiedButton).toBeTruthy();
+				expect(copiedButton?.className).toContain('text-green-400');
 			});
 		});
 
-		it('should show error toast when copy fails', async () => {
+		it('should not show green check and show error toast when copy fails', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(false);
 
 			const message = createTextMessage('Hello world');
@@ -418,7 +425,43 @@ describe('SDKUserMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				// Button should remain showing "Copy message" (not switched to Copied!)
+				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				// Error toast should be shown
 				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
+			});
+		});
+
+		describe('auto-revert behavior', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it('should revert to copy icon after 1500ms', async () => {
+				vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+				const message = createTextMessage('Hello world');
+				const { container } = render(<SDKUserMessage message={message} />);
+
+				const copyButton = container.querySelector('button[title="Copy message"]');
+				fireEvent.click(copyButton!);
+
+				// Should show Copied! state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+				});
+
+				// Advance timer past 1500ms
+				vi.advanceTimersByTime(1500);
+
+				// Should revert to copy state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				});
 			});
 		});
 	});
@@ -490,6 +533,27 @@ describe('SDKUserMessage', () => {
 
 			const checkbox = container.querySelector('input[type="checkbox"]');
 			expect(checkbox).toBeFalsy();
+		});
+	});
+
+	describe('Send Status', () => {
+		it('should show "not delivered" badge when sendStatus is failed', () => {
+			const message = {
+				...createTextMessage('Hello world'),
+				sendStatus: 'failed',
+			};
+
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.textContent).toContain('not delivered');
+		});
+
+		it('should not show "not delivered" badge when sendStatus is absent', () => {
+			const message = createTextMessage('Hello world');
+
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.textContent).not.toContain('not delivered');
 		});
 	});
 

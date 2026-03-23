@@ -14,13 +14,14 @@
  * - Circuit breaker trip handling (error loop detection)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
-import type { MessageHub, Session, ContextInfo } from '@neokai/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
+	isSDKAPIRetryMessage,
 	isSDKAssistantMessage,
 	isSDKCompactBoundary,
 	isSDKResultSuccess,
@@ -61,10 +62,6 @@ export interface SDKMessageHandlerContext {
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
 
-	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
-	// When true, /context command queuing is skipped since the generator completes
-	// immediately after yielding the result message
-	isCustomQueryProvider: boolean;
 	// Whether to auto-queue /context after each turn (default: true)
 	contextAutoQueueEnabled: boolean;
 
@@ -87,7 +84,7 @@ export class SDKMessageHandler {
 	private internalContextCommandIds: Set<string> = new Set();
 
 	/**
-	 * Check if this message is the replay response for an internally queued /context command.
+	 * Check if this message is the replay response for an internally enqueued /context command.
 	 *
 	 * This is ID-based (not content-based) so loop prevention still works if SDK output format changes.
 	 */
@@ -127,8 +124,8 @@ export class SDKMessageHandler {
 		// Set up message yield callback - fires when generator yields to SDK
 		// This is the CORRECT moment to broadcast steered messages to UI
 		// and update their DB timestamp (T_consumed, not T_end)
-		ctx.messageQueue.onMessageYielded = (messageId: string, sentAt: number) => {
-			this.handleMessageYielded(messageId, sentAt);
+		ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
+			this.handleMessageYielded(messageId, consumedAt);
 		};
 	}
 
@@ -229,8 +226,8 @@ export class SDKMessageHandler {
 	 * Acknowledge a persisted user message when SDK replays it.
 	 *
 	 * For user messages already persisted in sdk_messages with send_status
-	 * (queued/saved), we should:
-	 * 1) transition send_status -> sent
+	 * (enqueued/deferred), we should:
+	 * 1) transition send_status -> consumed
 	 * 2) publish the user message to transcript
 	 * 3) avoid inserting a duplicate SDK message row
 	 */
@@ -240,19 +237,19 @@ export class SDKMessageHandler {
 			return false;
 		}
 
-		const queuedMessage = db
-			.getMessagesByStatus(session.id, 'queued')
-			.find((queued) => queued.uuid === message.uuid);
-		if (queuedMessage) {
-			db.updateMessageStatus([queuedMessage.dbId], 'sent');
+		const enqueuedMessage = db
+			.getMessagesByStatus(session.id, 'enqueued')
+			.find((enqueued) => enqueued.uuid === message.uuid);
+		if (enqueuedMessage) {
+			db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
 			// Update DB timestamp to now so the message's position in the DB matches
 			// where the SDK placed it in the conversation (after already-streamed
 			// assistant messages), not when the user originally typed it.
-			db.updateMessageTimestamp(queuedMessage.dbId);
+			db.updateMessageTimestamp(enqueuedMessage.dbId);
 			await daemonHub.emit('messages.statusChanged', {
 				sessionId: session.id,
-				messageIds: [queuedMessage.dbId],
-				status: 'sent',
+				messageIds: [enqueuedMessage.dbId],
+				status: 'consumed',
 			});
 			this.acknowledgedPersistedUserThisTurn = true;
 
@@ -276,16 +273,16 @@ export class SDKMessageHandler {
 			return true;
 		}
 
-		const savedMessage = db
-			.getMessagesByStatus(session.id, 'saved')
-			.find((saved) => saved.uuid === message.uuid);
-		if (savedMessage) {
-			db.updateMessageStatus([savedMessage.dbId], 'sent');
-			db.updateMessageTimestamp(savedMessage.dbId);
+		const deferredMessage = db
+			.getMessagesByStatus(session.id, 'deferred')
+			.find((deferred) => deferred.uuid === message.uuid);
+		if (deferredMessage) {
+			db.updateMessageStatus([deferredMessage.dbId], 'consumed');
+			db.updateMessageTimestamp(deferredMessage.dbId);
 			await daemonHub.emit('messages.statusChanged', {
 				sessionId: session.id,
-				messageIds: [savedMessage.dbId],
-				status: 'sent',
+				messageIds: [deferredMessage.dbId],
+				status: 'consumed',
 			});
 			this.acknowledgedPersistedUserThisTurn = true;
 
@@ -308,10 +305,10 @@ export class SDKMessageHandler {
 			return true;
 		}
 
-		const sentMessage = db
-			.getMessagesByStatus(session.id, 'sent')
-			.find((sent) => sent.uuid === message.uuid);
-		if (sentMessage) {
+		const consumedMessage = db
+			.getMessagesByStatus(session.id, 'consumed')
+			.find((consumed) => consumed.uuid === message.uuid);
+		if (consumedMessage) {
 			this.acknowledgedPersistedUserThisTurn = true;
 			return true;
 		}
@@ -321,32 +318,32 @@ export class SDKMessageHandler {
 
 	/**
 	 * Fallback acknowledgment when SDK doesn't replay user messages.
-	 * Marks ALL remaining queued user messages as sent at turn end.
+	 * Marks ALL remaining enqueued user messages as consumed at turn end.
 	 *
 	 * This is a safety net — ideally handleMessageYielded already handled
 	 * these at yield time. But if the generator didn't fire the callback
 	 * (e.g., internal messages, edge cases), this ensures messages don't
-	 * stay stuck in 'queued' status forever.
+	 * stay stuck in 'enqueued' status forever.
 	 */
 	private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
 		const { session, db, daemonHub, messageHub } = this.ctx;
-		const queuedUsers = db
-			.getMessagesByStatus(session.id, 'queued')
-			.filter((queued) => isSDKUserMessage(queued));
+		const enqueuedUsers = db
+			.getMessagesByStatus(session.id, 'enqueued')
+			.filter((enqueued) => isSDKUserMessage(enqueued));
 
-		for (const queuedUser of queuedUsers) {
-			db.updateMessageStatus([queuedUser.dbId], 'sent');
+		for (const enqueuedUser of enqueuedUsers) {
+			db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
 			// Don't update timestamp here — keep the original T1 timestamp
 			// since we don't know the exact T_consumed for these edge cases.
-			// The original timestamp (when user sent it) is a better approximation
+			// The original timestamp (when user consumed it) is a better approximation
 			// than turn-end time.
 			await daemonHub.emit('messages.statusChanged', {
 				sessionId: session.id,
-				messageIds: [queuedUser.dbId],
-				status: 'sent',
+				messageIds: [enqueuedUser.dbId],
+				status: 'consumed',
 			});
 
-			const { dbId: _dbId, timestamp, ...sdkUserMessage } = queuedUser;
+			const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
 			messageHub.event(
 				'state.sdkMessages.delta',
 				{
@@ -362,45 +359,45 @@ export class SDKMessageHandler {
 	/**
 	 * Handle message yielded by the generator to the SDK.
 	 *
-	 * This fires at the EXACT moment the SDK receives a queued user message
+	 * This fires at the EXACT moment the SDK receives a enqueued user message
 	 * (T_consumed). We update the DB and broadcast to UI here, so the message
 	 * appears at the correct position in the conversation — after any assistant
 	 * messages that were already streamed, and before the assistant's response
 	 * to the steering.
 	 */
-	private handleMessageYielded(messageId: string, sentAt: number): void {
+	private handleMessageYielded(messageId: string, consumedAt: number): void {
 		const { session, db, daemonHub, messageHub } = this.ctx;
 
-		// Find the queued message in DB by UUID
-		const queuedMessage = db
-			.getMessagesByStatus(session.id, 'queued')
-			.find((queued) => queued.uuid === messageId);
-		if (!queuedMessage) {
-			// Could be a 'saved' message being replayed
-			const savedMessage = db
-				.getMessagesByStatus(session.id, 'saved')
-				.find((saved) => saved.uuid === messageId);
-			if (!savedMessage) {
-				return; // Not a persisted user message (e.g., already sent)
+		// Find the enqueued message in DB by UUID
+		const enqueuedMessage = db
+			.getMessagesByStatus(session.id, 'enqueued')
+			.find((enqueued) => enqueued.uuid === messageId);
+		if (!enqueuedMessage) {
+			// Could be a 'deferred' message being replayed
+			const deferredMessage = db
+				.getMessagesByStatus(session.id, 'deferred')
+				.find((deferred) => deferred.uuid === messageId);
+			if (!deferredMessage) {
+				return; // Not a persisted user message (e.g., already consumed)
 			}
-			// Handle saved message the same way
-			db.updateMessageStatus([savedMessage.dbId], 'sent');
-			db.updateMessageTimestamp(savedMessage.dbId, sentAt);
+			// Handle deferred message the same way
+			db.updateMessageStatus([deferredMessage.dbId], 'consumed');
+			db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
 			daemonHub
 				.emit('messages.statusChanged', {
 					sessionId: session.id,
-					messageIds: [savedMessage.dbId],
-					status: 'sent',
+					messageIds: [deferredMessage.dbId],
+					status: 'consumed',
 				})
 				.catch(() => {});
 			this.acknowledgedPersistedUserThisTurn = true;
 
-			const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = savedMessage;
+			const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = deferredMessage;
 			messageHub.event(
 				'state.sdkMessages.delta',
 				{
-					added: [{ ...sdkMessage, timestamp: sentAt }],
-					timestamp: sentAt,
+					added: [{ ...sdkMessage, timestamp: consumedAt }],
+					timestamp: consumedAt,
 					version: ++this.sdkMessageDeltaVersion,
 				},
 				{ channel: `session:${session.id}` }
@@ -408,22 +405,22 @@ export class SDKMessageHandler {
 			daemonHub
 				.emit('sdk.message', {
 					sessionId: session.id,
-					message: { ...sdkMessage, timestamp: sentAt },
+					message: { ...sdkMessage, timestamp: consumedAt },
 				})
 				.catch(() => {});
 			return;
 		}
 
 		// Update status and timestamp in DB
-		db.updateMessageStatus([queuedMessage.dbId], 'sent');
-		db.updateMessageTimestamp(queuedMessage.dbId, sentAt);
+		db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
+		db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
 
 		// Emit status change event (for queue overlay polling)
 		daemonHub
 			.emit('messages.statusChanged', {
 				sessionId: session.id,
-				messageIds: [queuedMessage.dbId],
-				status: 'sent',
+				messageIds: [enqueuedMessage.dbId],
+				status: 'consumed',
 			})
 			.catch(() => {});
 
@@ -432,12 +429,12 @@ export class SDKMessageHandler {
 
 		// Broadcast to UI with the correct timestamp
 		// Strip DB-only fields before broadcasting
-		const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = queuedMessage;
+		const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = enqueuedMessage;
 		messageHub.event(
 			'state.sdkMessages.delta',
 			{
-				added: [{ ...sdkMessage, timestamp: sentAt }],
-				timestamp: sentAt,
+				added: [{ ...sdkMessage, timestamp: consumedAt }],
+				timestamp: consumedAt,
 				version: ++this.sdkMessageDeltaVersion,
 			},
 			{ channel: `session:${session.id}` }
@@ -448,7 +445,7 @@ export class SDKMessageHandler {
 		daemonHub
 			.emit('sdk.message', {
 				sessionId: session.id,
-				message: { ...sdkMessage, timestamp: sentAt },
+				message: { ...sdkMessage, timestamp: consumedAt },
 			})
 			.catch(() => {});
 	}
@@ -471,39 +468,81 @@ export class SDKMessageHandler {
 			return;
 		}
 
+		// Handle API retry messages: emit event for UI to display retry progress, but do not save to DB.
+		// These carry operational metadata (attempt count, delay, error) that is useful for
+		// debugging and user feedback but should not appear in the transcript.
+		if (isSDKAPIRetryMessage(message)) {
+			this.logger.warn(
+				`API retry: attempt ${message.attempt}/${message.max_retries}, ` +
+					`delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +
+					`error ${message.error}`
+			);
+			// Emit event for UI to show retry progress
+			await this.ctx.daemonHub.emit('session.retryAttempt', {
+				sessionId: session.id,
+				attempt: message.attempt,
+				max_retries: message.max_retries,
+				delay_ms: message.retry_delay_ms,
+				error_status: message.error_status,
+				error: message.error,
+			});
+			return;
+		}
+
 		// Automatically update phase based on message type
 		await stateManager.detectPhaseFromMessage(message);
 
 		// First, correlate internal /context replay by message UUID.
 		// This avoids relying on brittle content markers that may change across SDK versions.
 		if (this.isInternalContextResponse(message)) {
-			await this.handleContextResponse(message);
-			// Skip:
-			// 1. Queuing another /context for the paired result
-			// 2. Saving/broadcasting this internal replay message
-			this.lastMessageWasContextResponse = true;
+			// UUID matches an internally enqueued /context command.
+			// Try to parse the context data from this message.
+			//
+			// NEW SDK behaviour (claude binary >= ~1.0.53): the user replay message
+			// contains only the original '/context' text (not the output). The actual
+			// context output arrives as a SEPARATE assistant message via sc8(). In that
+			// case parseContextResponse returns null here and the content-based check
+			// below catches the assistant message on the next iteration.
+			//
+			// OLD SDK behaviour: the user replay message itself contains the context
+			// output wrapped in <local-command-stdout> tags.
+			const parsed = await this.handleContextResponseIfParseable(message);
 
-			const userMsg = message as { uuid?: string };
-			if (userMsg.uuid) {
-				this.internalContextCommandIds.delete(userMsg.uuid);
+			if (parsed) {
+				// Successfully parsed: this message IS the context output.
+				this.lastMessageWasContextResponse = true;
+				const userMsg = message as { uuid?: string };
+				if (userMsg.uuid) {
+					this.internalContextCommandIds.delete(userMsg.uuid);
+				}
 			}
+			// Whether parsed or not, suppress saving/broadcasting this internal message
 			return;
 		}
 
-		// Check if this is a /context response BEFORE saving/emitting
-		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
+		// Check if this is a /context response BEFORE saving/emitting.
+		// Handles both:
+		//   - Old format: user message with isReplay=true + <local-command-stdout>
+		//   - New format: assistant message (from sc8()) with raw markdown content
+		// /context responses should be processed for context tracking but NOT deferred to DB or shown in UI
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
 		if (isContextResponse) {
-			await this.handleContextResponse(message);
+			const parsed = await this.handleContextResponseIfParseable(message);
+			if (!parsed) {
+				// Content-based detection said it looks like context data, but parsing
+				// failed — log a warning so the failure is visible.
+				this.logger.warn('Failed to parse /context response');
+			}
 			// Set flag to skip:
 			// 1. Queuing another /context for the next result
 			// 2. Saving the result message that follows this context response
 			this.lastMessageWasContextResponse = true;
 
-			// Clean up the tracked ID if this is the response
-			const userMsg = message as { uuid?: string };
-			if (userMsg.uuid && this.internalContextCommandIds.has(userMsg.uuid)) {
-				this.internalContextCommandIds.delete(userMsg.uuid);
+			// Clean up the tracked ID if this message carries the same UUID
+			// (only possible in old format where the replay IS the output)
+			const msg = message as { uuid?: string };
+			if (msg.uuid && this.internalContextCommandIds.has(msg.uuid)) {
+				this.internalContextCommandIds.delete(msg.uuid);
 			}
 
 			// IMPORTANT: Return early to skip saving and emitting this message
@@ -525,11 +564,16 @@ export class SDKMessageHandler {
 		if (message.type === 'result' && this.lastMessageWasContextResponse) {
 			// Reset the flag - we've now handled both the context response AND its result
 			this.lastMessageWasContextResponse = false;
+			// Clear any pending internal context command IDs. In the new SDK format the
+			// assistant message that carries context data does NOT match the enqueued UUID,
+			// so the UUID stays in the set after the user-replay is processed. Without this
+			// clear the stale UUID would prevent auto-queuing /context on subsequent turns.
+			this.internalContextCommandIds.clear();
 			// Return early - don't save or broadcast this result
 			return;
 		}
 
-		// For persisted user messages, mark sent + publish now and skip duplicate DB inserts.
+		// For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
 		if (await this.acknowledgePersistedUserMessage(message)) {
 			return;
 		}
@@ -541,9 +585,9 @@ export class SDKMessageHandler {
 
 		// Save to DB FIRST before broadcasting to clients
 		// This ensures we only broadcast messages that are successfully persisted
-		const savedSuccessfully = db.saveSDKMessage(session.id, message);
+		const deferredSuccessfully = db.saveSDKMessage(session.id, message);
 
-		if (!savedSuccessfully) {
+		if (!deferredSuccessfully) {
 			// Log warning but continue - message is already in SDK's memory
 			this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
 			// Don't broadcast to clients if DB save failed
@@ -599,7 +643,9 @@ export class SDKMessageHandler {
 
 		// Capture SDK's internal session ID if we don't have it yet
 		// This enables session resumption after daemon restart
-		if (!session.sdkSessionId && message.session_id) {
+		// Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
+		// that also carry session_id cannot accidentally overwrite this field.
+		if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id) {
 			// Update in-memory session
 			session.sdkSessionId = message.session_id;
 
@@ -692,20 +738,11 @@ export class SDKMessageHandler {
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
 		// Note: flag is reset when we process the result message (see early return above)
-		//
-		// SKIP for custom query providers (pi-mono based) because:
-		// - Their generator completes immediately after yielding the result message
-		// - Nothing will consume the queued /context command
-		// - This would cause a deadlock where session state never transitions to idle
-		//
-		// INSTEAD for custom providers: build ContextInfo directly from result usage
-		// since they already include full usage data in the result message
 		const isZeroTokenResult = this.isZeroTokenResult(message);
 		if (
 			!this.lastMessageWasContextResponse &&
 			!isZeroTokenResult &&
 			this.internalContextCommandIds.size === 0 &&
-			!this.ctx.isCustomQueryProvider &&
 			this.ctx.contextAutoQueueEnabled
 		) {
 			// Fire-and-forget: don't await the enqueue. Awaiting blocks
@@ -720,14 +757,6 @@ export class SDKMessageHandler {
 				this.internalContextCommandIds.delete(contextMessageId);
 				this.logger.warn('Failed to queue /context:', error);
 			});
-		} else if (
-			!this.lastMessageWasContextResponse &&
-			!isZeroTokenResult &&
-			this.ctx.isCustomQueryProvider
-		) {
-			// For custom query providers, build ContextInfo directly from result usage
-			// since /context command cannot be used (generator completes immediately)
-			await this.updateContextInfoFromUsage(message, session.metadata?.totalTokens || 0);
 		}
 
 		// Mark successful API interaction - resets circuit breaker error tracking
@@ -738,8 +767,8 @@ export class SDKMessageHandler {
 			this.circuitBreaker.markSuccess();
 		}
 
-		// If SDK didn't replay the queued user message this turn, acknowledge one
-		// queued user message at turn end to keep status and transcript in sync.
+		// If SDK didn't replay the enqueued user message this turn, acknowledge one
+		// enqueued user message at turn end to keep status and transcript in sync.
 		if (!this.acknowledgedPersistedUserThisTurn) {
 			await this.acknowledgeOldestQueuedUserOnTurnEnd();
 		}
@@ -755,12 +784,12 @@ export class SDKMessageHandler {
 		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
 		await stateManager.setIdle();
 
-		// Auto-dispatch saved messages in immediate mode (next-turn queue replay)
+		// Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
 		if (session.config.queryMode !== 'manual') {
 			try {
 				await daemonHub.emit('query.trigger', { sessionId: session.id });
 			} catch (error) {
-				this.logger.warn('Failed to dispatch saved messages on turn end:', error);
+				this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
 			}
 		}
 	}
@@ -824,98 +853,25 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Update ContextInfo directly from result message usage for custom query providers.
+	 * Attempt to parse and handle a /context response.
 	 *
-	 * Custom providers (pi-mono based) cannot use the /context command because their
-	 * generator completes immediately after yielding the result message. Instead, we
-	 * build a ContextInfo directly from the usage data in the result message.
+	 * Returns true if the message was successfully parsed as context data.
+	 * Returns false if the message did not contain parseable context data
+	 * (e.g. it is a plain user acknowledgment of the /context command rather
+	 * than the actual output — which happens in the new SDK format where a
+	 * user replay carries the original '/context' text, not the output).
 	 */
-	private async updateContextInfoFromUsage(
-		message: SDKMessage,
-		_cumulativeTokens: number
-	): Promise<void> {
-		if (!isSDKResultSuccess(message)) return;
-
-		const { session, daemonHub, contextTracker, db } = this.ctx;
-		const usage = message.usage;
-
-		// Get model context info if available (pi-mono provides this)
-		const modelUsage = message.modelUsage;
-		const modelUsageKeys = modelUsage ? Object.keys(modelUsage) : [];
-		const firstModelUsage = modelUsageKeys.length > 0 ? modelUsage[modelUsageKeys[0]!] : undefined;
-		const contextWindow = firstModelUsage?.contextWindow || 200000;
-
-		// Calculate context usage based on current turn input tokens
-		const currentTurnInput = usage.input_tokens;
-
-		// Build a simplified breakdown from usage data
-		// Custom providers don't have the detailed breakdown that /context provides,
-		// but we can show the key metrics
-		const contextInfo: ContextInfo = {
-			model: session.config.model || 'unknown',
-			totalUsed: currentTurnInput,
-			totalCapacity: contextWindow,
-			percentUsed: (currentTurnInput / contextWindow) * 100,
-			breakdown: {
-				'Input Tokens': {
-					tokens: usage.input_tokens,
-					percent: (usage.input_tokens / contextWindow) * 100,
-				},
-				'Output Tokens': {
-					tokens: usage.output_tokens,
-					percent: (usage.output_tokens / contextWindow) * 100,
-				},
-			},
-			apiUsage: {
-				inputTokens: usage.input_tokens,
-				outputTokens: usage.output_tokens,
-				cacheReadTokens: usage.cache_read_input_tokens,
-				cacheCreationTokens: usage.cache_creation_input_tokens,
-			},
-			lastUpdated: Date.now(),
-			source: 'context-command', // Treat same as /context for UI display
-		};
-
-		// Update ContextTracker - persists to session metadata
-		contextTracker.updateWithDetailedBreakdown(contextInfo);
-
-		// Emit context update event via DaemonHub
-		// StateManager will broadcast this via state.session channel
-		await daemonHub.emit('context.updated', {
-			sessionId: session.id,
-			contextInfo,
-		});
-
-		// Persist to database
-		session.metadata = {
-			...session.metadata,
-			lastContextInfo: contextInfo,
-		};
-		db.updateSession(session.id, {
-			metadata: session.metadata,
-		});
-
-		this.logger.debug(
-			`Updated context info for custom provider: ${usage.input_tokens} input / ${contextWindow} capacity`
-		);
-	}
-
-	/**
-	 * Handle /context response
-	 * Parse the detailed breakdown and update context tracker
-	 */
-	private async handleContextResponse(message: SDKMessage): Promise<void> {
+	private async handleContextResponseIfParseable(message: SDKMessage): Promise<boolean> {
 		const { session, daemonHub, contextTracker } = this.ctx;
 
 		const parsedContext = this.contextFetcher.parseContextResponse(message);
 		if (!parsedContext) {
-			this.logger.warn('Failed to parse /context response');
-			return;
+			return false;
 		}
 
 		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
 
-		// Update ContextTracker - persists to session metadata
+		// Persist to session metadata
 		contextTracker.updateWithDetailedBreakdown(contextInfo);
 
 		// Emit context update event via DaemonHub
@@ -924,5 +880,6 @@ export class SDKMessageHandler {
 			sessionId: session.id,
 			contextInfo,
 		});
+		return true;
 	}
 }

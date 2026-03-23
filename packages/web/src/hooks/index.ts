@@ -18,6 +18,8 @@ export {
 	getModelFamilyIcon,
 	PROVIDER_LABELS,
 	getProviderLabel,
+	groupModelsByProvider,
+	filterModelsForPicker,
 } from './useModelSwitcher';
 export {
 	useMessageHub,
@@ -44,3 +46,9 @@ export {
 	type UseAutoScrollOptions,
 	type UseAutoScrollResult,
 } from './useAutoScroll';
+export {
+	useGroupMessages,
+	type SessionGroupMessage,
+	type UseGroupMessagesResult,
+} from './useGroupMessages';
+export { useRoomLiveQuery } from './useRoomLiveQuery';

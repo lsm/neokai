@@ -71,12 +71,6 @@ const METHOD_TABLE_MAP: Record<string, string> = {
 	blockInboxItem: 'inbox_items',
 	deleteInboxItem: 'inbox_items',
 	deleteInboxItemsForRepository: 'inbox_items',
-	// Goal operations
-	createGoal: 'goals',
-	updateGoal: 'goals',
-	deleteGoal: 'goals',
-	linkTaskToGoal: 'goals',
-	unlinkTaskFromGoal: 'goals',
 };
 
 export function createReactiveDatabase(db: Database): ReactiveDatabase {
@@ -136,7 +130,10 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
 			const table = METHOD_TABLE_MAP[prop];
 			if (!table) {
-				return value;
+				// Bind to original target so methods that access private fields (e.g.
+				// Database#rawDb or BunDatabase's internal Statement constructor) work
+				// correctly when called through the proxy.
+				return (value as (...args: unknown[]) => unknown).bind(target);
 			}
 
 			// Wrap the write method to emit change events on success

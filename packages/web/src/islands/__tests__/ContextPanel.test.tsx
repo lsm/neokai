@@ -118,6 +118,12 @@ vi.mock('../../lib/design-tokens.ts', () => ({
 			default: 'border-dark-700',
 		},
 	},
+	tokens: {
+		transition: {
+			quick: 'transition-all duration-150 ease-out',
+			smooth: 'transition-all duration-250 ease-out',
+		},
+	},
 }));
 
 // Mock the settings components

@@ -255,7 +255,7 @@ export function RoomSettings({
 						Max Planning Retries
 					</label>
 					<p class="text-xs text-gray-500 mb-2">
-						How many times the room will retry planning a goal after failure before escalating to
+						How many times the room will retry planning a mission after failure before escalating to
 						human review. 0 means no automatic retries.
 					</p>
 					<input
@@ -507,7 +507,7 @@ export function RoomSettings({
 									<div class="min-w-0">
 										<p class="text-sm font-medium text-gray-200">Delete this room</p>
 										<p class="text-xs text-gray-500 mt-0.5">
-											Permanently remove this room and all sessions, tasks, goals, and messages.
+											Permanently remove this room and all sessions, tasks, missions, and messages.
 											Cannot be undone.
 										</p>
 									</div>

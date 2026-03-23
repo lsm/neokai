@@ -20,7 +20,6 @@
 
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
-import net from 'net';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
@@ -32,8 +31,9 @@ import {
 
 export interface DaemonServerOptions {
 	/**
-	 * Port for the daemon server
-	 * Default: random port in 19400-20400 range
+	 * Port for the daemon server.
+	 * Default: 0 (OS-assigned). The actual port is read back from the server
+	 * after startup (via server.port for in-process, stdout parsing for spawned).
 	 */
 	port?: number;
 
@@ -213,37 +213,6 @@ function installSharedDevProxyExitHook(): void {
 	});
 }
 
-async function isTcpPortOpen(port: number, host = '127.0.0.1', timeoutMs = 1000): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket = net.createConnection({ port, host });
-		const done = (result: boolean) => {
-			socket.removeAllListeners();
-			socket.destroy();
-			resolve(result);
-		};
-
-		socket.setTimeout(timeoutMs);
-		socket.once('connect', () => done(true));
-		socket.once('timeout', () => done(false));
-		socket.once('error', () => done(false));
-	});
-}
-
-async function waitForTcpPortOpen(
-	port: number,
-	host = '127.0.0.1',
-	timeoutMs = 4000
-): Promise<boolean> {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		if (await isTcpPortOpen(port, host, 500)) {
-			return true;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-	return false;
-}
-
 async function acquireDevProxyLease(
 	shouldUseDevProxy: boolean,
 	devProxyOptions?: DevProxyOptions
@@ -284,36 +253,34 @@ async function acquireDevProxyLease(
 		};
 	}
 
-	let devProxy: DevProxyController | null = createDevProxyController({
+	const devProxy: DevProxyController = createDevProxyController({
 		// Daemon helper explicitly sets env vars for both in-process and spawned modes.
 		// Keep proxy lifecycle independent from parent-process env mutation.
 		setEnvVars: false,
 		...devProxyOptions,
 	});
-	let startedByHelper = false;
 
 	try {
+		// start() will adopt an existing proxy (isExternal=true) rather than failing
+		// when a devproxy instance is already listening on the port.
 		await devProxy.start();
-		startedByHelper = true;
 	} catch (error) {
-		devProxy = null;
 		const errorMessage = error instanceof Error ? error.message : String(error);
-		// If another worker/process just started Dev Proxy, give it extra time to bind.
-		const readyTimeout = errorMessage.includes('already running') ? 12000 : 3000;
-		const proxyAlreadyRunning = await waitForTcpPortOpen(devProxyPort, '127.0.0.1', readyTimeout);
-		if (!proxyAlreadyRunning) {
-			throw new Error(
-				`Dev Proxy is required for this test run but is unavailable on ${devProxyBaseUrl}. ` +
-					`Startup error: ${errorMessage}`
-			);
-		}
-		console.warn(
-			`Warning: Could not start Dev Proxy controller, using existing proxy at ${devProxyBaseUrl}. ` +
+		throw new Error(
+			`Dev Proxy is required for this test run but failed to start on ${devProxyBaseUrl}. ` +
 				`Error: ${errorMessage}`
 		);
 	}
 
-	if (reuse && startedByHelper && devProxy) {
+	// For reuse mode, only register as shared controller when we own the proxy
+	// process.  External instances are intentionally not pooled in
+	// sharedDevProxyController: the exit hook (installSharedDevProxyExitHook)
+	// unconditionally runs `devproxy stop` on process exit, which would kill a
+	// proxy that belongs to another session.  With external instances each
+	// acquireDevProxyLease call creates a lightweight controller that performs a
+	// TCP probe on start and a no-op on stop — cheap enough that skipping the
+	// pool is acceptable.
+	if (reuse && !devProxy.isExternal) {
 		sharedDevProxyController = devProxy;
 		sharedDevProxyPort = devProxyPort;
 		sharedDevProxyRefCount = 1;
@@ -332,10 +299,9 @@ async function acquireDevProxyLease(
 	return {
 		controller: devProxy,
 		release: async () => {
-			if (devProxy && startedByHelper) {
-				await devProxy.stop();
-				devProxy.restoreEnv();
-			}
+			// stop() is a no-op for external instances, so it's always safe to call.
+			await devProxy.stop();
+			devProxy.restoreEnv();
 		},
 	};
 }
@@ -348,7 +314,7 @@ async function acquireDevProxyLease(
  */
 async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<DaemonServerContext> {
 	const {
-		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		port: userPort = 0, // Use port 0 for OS-assigned port; actual port parsed from stdout
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
@@ -390,9 +356,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		detached: false,
 	});
 
-	// Wait for the server to be ready
+	// Wait for the server to be ready and parse the actual port from stdout
 	let stderrOutput = '';
 	let stdoutOutput = '';
+	let actualPort = userPort;
 	await new Promise<void>((resolve, reject) => {
 		const timeout = setTimeout(() => reject(new Error('Daemon server startup timeout')), 20000);
 
@@ -403,7 +370,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 			if (process.env.TEST_VERBOSE) {
 				console.error(`[DAEMON-PROCESS] ${output.trim()}`);
 			}
-			if (output.includes('Running on port')) {
+			// Parse actual port from "Running on port XXXX" output
+			const portMatch = output.match(/Running on port (\d+)/);
+			if (portMatch) {
+				actualPort = Number.parseInt(portMatch[1], 10);
 				clearTimeout(timeout);
 				daemonProcess.stdout!.off('data', onData);
 				daemonProcess.stderr!.off('data', onData);
@@ -430,7 +400,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	});
 
 	// Create WebSocket client to communicate with the daemon
-	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
+	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
 	const transport = new WebSocketClientTransport({
 		url: wsUrl,
 		autoReconnect: false, // Don't auto-reconnect in tests
@@ -461,7 +431,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	return {
 		pid: daemonProcess.pid!,
 		messageHub,
-		baseUrl: `http://127.0.0.1:${userPort}`,
+		baseUrl: `http://127.0.0.1:${actualPort}`,
 		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
@@ -499,7 +469,7 @@ async function createInProcessDaemonServer(
 	options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext & { daemonContext: DaemonAppContext }> {
 	const {
-		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		port: userPort = 0, // Use port 0 for OS-assigned port to avoid collisions in CI
 		env: customEnv = {},
 		devProxy: devProxyOptions,
 		useDevProxy = false,
@@ -517,6 +487,12 @@ async function createInProcessDaemonServer(
 	const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
 	const devProxy = devProxyLease.controller;
 
+	// Save originals for all custom env keys so they can be restored on teardown
+	const originalCustomEnv: Record<string, string | undefined> = {};
+	for (const key of Object.keys(customEnv)) {
+		originalCustomEnv[key] = process.env[key];
+	}
+
 	// Apply custom env vars
 	for (const [key, value] of Object.entries(customEnv)) {
 		process.env[key] = value;
@@ -530,6 +506,7 @@ async function createInProcessDaemonServer(
 
 	// Online tests do real provider calls and often need longer startup windows in CI.
 	// Keep production default unchanged; override only in test daemon helper.
+	process.env.NODE_ENV = 'test';
 	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
 		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
 	}
@@ -556,8 +533,24 @@ async function createInProcessDaemonServer(
 		standalone: false,
 	});
 
+	// Optional CI/test optimization: disable sandbox by default for sessions created
+	// in online tests. This avoids requiring bubblewrap/socat on Linux runners for
+	// test shards that only exercise message/query flows, not sandbox enforcement.
+	if (process.env.NEOKAI_TEST_DISABLE_SANDBOX === '1') {
+		const current = daemonContext.settingsManager.getGlobalSettings();
+		daemonContext.settingsManager.updateGlobalSettings({
+			sandbox: {
+				...(current.sandbox ?? {}),
+				enabled: false,
+			},
+		});
+	}
+
+	// Read back the actual port from the server (handles port 0 / OS-assigned ports)
+	const actualPort = daemonContext.server.port;
+
 	// Connect to the daemon's WebSocket server (just like a real client)
-	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
+	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
 	const transport = new WebSocketClientTransport({
 		url: wsUrl,
 		autoReconnect: false, // Don't auto-reconnect in tests
@@ -594,7 +587,7 @@ async function createInProcessDaemonServer(
 	return {
 		pid: process.pid, // Same process
 		messageHub,
-		baseUrl: `http://127.0.0.1:${userPort}`,
+		baseUrl: `http://127.0.0.1:${actualPort}`,
 		daemonContext, // Expose for advanced usage
 		devProxy,
 		kill: () => {
@@ -652,6 +645,15 @@ async function createInProcessDaemonServer(
 					delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 				} else {
 					process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOauthToken;
+				}
+			}
+
+			// Restore custom env vars (always, not just in dev proxy mode)
+			for (const [key, original] of Object.entries(originalCustomEnv)) {
+				if (original === undefined) {
+					delete process.env[key];
+				} else {
+					process.env[key] = original;
 				}
 			}
 		},

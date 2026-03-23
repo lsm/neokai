@@ -8,7 +8,13 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
+import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
+import type { SettingsManager } from '../../settings-manager';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import { ROOM_TICK } from '../../job-queue-constants';
+import { createRoomTickHandler } from '../../job-handlers/room-tick.handler';
 import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -24,10 +30,12 @@ import { TaskManager } from '../managers/task-manager';
 import { GoalManager } from '../managers/goal-manager';
 import { AgentSession } from '../../agent/agent-session';
 import { createRoomAgentMcpServer } from '../tools/room-agent-tools';
+import { buildRoomChatSystemPrompt } from '../agents/room-chat-agent';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from '../managers/room-manager';
 import { WorktreeManager } from '../../worktree-manager';
+import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 
 const log = new Logger('room-runtime-service');
@@ -41,6 +49,22 @@ export interface RoomRuntimeServiceConfig {
 	sessionManager: SessionManager;
 	defaultWorkspacePath: string;
 	defaultModel: string;
+	/** Get current global settings including fallbackModels for auto-fallback on rate limits */
+	getGlobalSettings: () => GlobalSettings;
+	/** Settings manager for reading project-configured MCP servers */
+	settingsManager: SettingsManager;
+	/** Reactive database wrapper for change event emission */
+	reactiveDb: ReactiveDatabase;
+	/**
+	 * Job queue passed to each RoomRuntime so scheduleTick() enqueues room.tick jobs
+	 * instead of using in-process timers.
+	 */
+	jobQueue?: JobQueueRepository;
+	/**
+	 * Job processor used to register the room.tick handler.
+	 * Must be provided for the job-queue-based tick loop to function.
+	 */
+	jobProcessor?: JobQueueProcessor;
 }
 
 export class RoomRuntimeService {
@@ -52,6 +76,14 @@ export class RoomRuntimeService {
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
 
 	async start(): Promise<void> {
+		// Register the room.tick handler synchronously before any async work so that
+		// no pending tick job is dequeued without a handler when jobProcessor starts.
+		if (this.ctx.jobProcessor && this.ctx.jobQueue) {
+			this.ctx.jobProcessor.register(
+				ROOM_TICK,
+				createRoomTickHandler((roomId) => this.runtimes.get(roomId) ?? null, this.ctx.jobQueue)
+			);
+		}
 		this.subscribeToEvents();
 		await this.initializeExistingRooms();
 		log.info('RoomRuntimeService started');
@@ -92,10 +124,22 @@ export class RoomRuntimeService {
 		return agentModels?.worker ?? room.defaultModel ?? this.ctx.defaultModel;
 	}
 
+	/**
+	 * Get an active AgentSession by ID from the runtime session pool.
+	 *
+	 * Room worker/leader sessions are stored here (not in SessionManager's cache),
+	 * so this must be used when routing question responses to the correct instance.
+	 * Returns undefined if the session is not currently active in this service.
+	 */
+	getAgentSession(sessionId: string): AgentSession | undefined {
+		return this.agentSessions.get(sessionId);
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.pause();
+		this.persistRuntimePreference(roomId, 'paused');
 		return true;
 	}
 
@@ -103,6 +147,7 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.resume();
+		this.persistRuntimePreference(roomId, 'running');
 		return true;
 	}
 
@@ -110,6 +155,9 @@ export class RoomRuntimeService {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
 		runtime.stop();
+		this.runtimes.delete(roomId);
+		this.observers.delete(roomId);
+		this.persistRuntimePreference(roomId, 'stopped');
 		return true;
 	}
 
@@ -133,6 +181,7 @@ export class RoomRuntimeService {
 
 		// Create a fresh runtime - autoStart=true starts it immediately
 		this.createOrGetRuntime(room, /* autoStart */ true);
+		this.persistRuntimePreference(roomId, 'running');
 		return true;
 	}
 
@@ -151,13 +200,35 @@ export class RoomRuntimeService {
 		log.info('RoomRuntimeService stopped');
 	}
 
+	private getPersistedRuntimePreference(room: Room): RuntimeState {
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		const state = config.runtimeState;
+		if (state === 'running' || state === 'paused' || state === 'stopped') {
+			return state;
+		}
+		return 'running';
+	}
+
+	private persistRuntimePreference(roomId: string, state: RuntimeState): void {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return;
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		if (config.runtimeState === state) return;
+		this.ctx.roomManager.updateRoom(roomId, {
+			config: {
+				...config,
+				runtimeState: state,
+			},
+		});
+	}
+
 	private createSessionFactory(): SessionFactory {
 		const ctx = this.ctx;
 		const agentSessions = this.agentSessions;
 		const worktreeManager = new WorktreeManager();
 
 		return {
-			createAndStartSession: async (init, _role) => {
+			createAndStartSession: async (init, role) => {
 				const session = AgentSession.fromInit(
 					init,
 					ctx.db,
@@ -167,7 +238,12 @@ export class RoomRuntimeService {
 					ctx.defaultModel
 				);
 				agentSessions.set(init.sessionId, session);
-				await session.startStreamingQuery();
+				// Leader sessions are started lazily: injectMessage() calls ensureQueryStarted()
+				// before enqueuing the first message. Starting eagerly here would trigger the
+				// 15s SDK startup timeout because the leader has no queued message yet.
+				if (role !== 'leader') {
+					await session.startStreamingQuery();
+				}
 			},
 			injectMessage: async (sessionId, message, opts) => {
 				const session = agentSessions.get(sessionId);
@@ -175,7 +251,7 @@ export class RoomRuntimeService {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
 
-				const deliveryMode = opts?.deliveryMode ?? 'current_turn';
+				const deliveryMode = opts?.deliveryMode ?? 'immediate';
 				const state = session.getProcessingState();
 				const isBusy = state.status === 'processing' || state.status === 'queued';
 
@@ -191,11 +267,11 @@ export class RoomRuntimeService {
 					},
 				};
 
-				// Queue-mode semantics:
-				// - next_turn + busy => persist as 'saved' (replayed after current turn)
-				// - otherwise => enqueue now ('queued') so worker can start ASAP when idle
-				if (deliveryMode === 'next_turn' && isBusy) {
-					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
+				// Defer-mode semantics:
+				// - defer + busy => persist as 'deferred' (replayed after current turn)
+				// - otherwise => enqueue now ('enqueued') so worker can start ASAP when idle
+				if (deliveryMode === 'defer' && isBusy) {
+					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred');
 					return;
 				}
 
@@ -203,7 +279,7 @@ export class RoomRuntimeService {
 				// restart, restored sessions are in cache but haven't started
 				// their query yet (lazy start to avoid startup timeout).
 				await session.ensureQueryStarted();
-				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
+				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
 				await session.messageQueue.enqueueWithId(messageId, message);
 			},
 			hasSession: (sessionId) => {
@@ -246,6 +322,15 @@ export class RoomRuntimeService {
 				// started lazily when injectMessage() is called. Eagerly starting
 				// without a queued message causes a 15s startup timeout because the
 				// SDK waits for user input that never arrives.
+				return true;
+			},
+			startSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return false;
+				// Eagerly start the SDK query for waiting_for_input sessions so the
+				// SDK re-encounters the pending AskUserQuestion in its session file
+				// and re-calls canUseTool, re-establishing the pendingResolver.
+				await session.ensureQueryStarted();
 				return true;
 			},
 			setSessionMcpServers: (sessionId, mcpServers) => {
@@ -337,9 +422,9 @@ export class RoomRuntimeService {
 		if (existing) return existing;
 
 		const rawDb = this.ctx.db.getDatabase();
-		const groupRepo = new SessionGroupRepository(rawDb);
-		const taskManager = new TaskManager(rawDb, room.id);
-		const goalManager = new GoalManager(rawDb, room.id);
+		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
+		const taskManager = new TaskManager(rawDb, room.id, this.ctx.reactiveDb);
+		const goalManager = new GoalManager(rawDb, room.id, this.ctx.reactiveDb);
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
@@ -390,6 +475,8 @@ export class RoomRuntimeService {
 			getRoom: (roomId) => this.ctx.roomManager.getRoom(roomId),
 			getTask: (taskId) => taskManager.getTask(taskId),
 			getGoal: (goalId) => goalManager.getGoal(goalId),
+			getGlobalSettings: this.ctx.getGlobalSettings,
+			jobQueue: this.ctx.jobQueue,
 		});
 
 		this.runtimes.set(room.id, runtime);
@@ -426,18 +513,55 @@ export class RoomRuntimeService {
 		// DaemonHub subscriptions and duplicate query execution.
 		void this.ctx.sessionManager
 			.getSessionAsync(roomChatSessionId)
-			.then((roomChatSession) => {
+			.then(async (roomChatSession) => {
 				if (!roomChatSession) {
 					log.warn(`Room chat session not found for room ${room.id}`);
 					return;
 				}
+
+				// Sync room chat session model with the room's current defaultModel.
+				// This fixes stale sessions created when the room had a different model
+				// (e.g., glm-5-turbo) that is no longer configured or accessible.
+				const currentModel = room.defaultModel ?? this.ctx.defaultModel;
+				const sessionData = roomChatSession.getSessionData();
+				const sessionModel = sessionData.config.model;
+				if (currentModel && sessionModel !== currentModel) {
+					try {
+						const newProvider = inferProviderForModel(currentModel);
+						await this.ctx.sessionManager.updateSession(roomChatSessionId, {
+							config: { ...sessionData.config, model: currentModel, provider: newProvider },
+						});
+						log.info(
+							`Synced room chat session ${roomChatSessionId}: model ${sessionModel} → ${currentModel} (${newProvider})`
+						);
+					} catch (err) {
+						log.warn(`Failed to sync room chat session model for room ${room.id}:`, err);
+					}
+				}
+
+				// Merge user/project-configured MCP servers with the room-agent-tools server so the
+				// room agent can use GitHub MCP, etc. for coordination tasks.
+				// room-agent-tools is placed last to ensure it always takes precedence.
+				const enabledMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
 				roomChatSession.setRuntimeMcpServers({
+					...enabledMcpServers,
 					'room-agent-tools': roomAgentMcpServer,
 				});
+				// Inject the room chat system prompt so the agent knows the proper
+				// goal → plan → approval → task workflow and never creates tasks
+				// prematurely when a goal is created.
+				roomChatSession.setRuntimeSystemPrompt(this.buildRoomSystemPrompt(room));
 			})
 			.catch((error) => {
 				log.error(`Failed to attach room MCP tools for room ${room.id}:`, error);
 			});
+	}
+
+	private buildRoomSystemPrompt(room: Room): string {
+		return buildRoomChatSystemPrompt({
+			background: room.background,
+			instructions: room.instructions,
+		});
 	}
 
 	private subscribeToEvents(): void {
@@ -460,6 +584,19 @@ export class RoomRuntimeService {
 					const room = this.ctx.roomManager.getRoom(event.roomId);
 					if (room) {
 						runtime.updateRoom(room);
+						// Re-apply the room chat system prompt so it reflects the latest
+						// room background/instructions (e.g. after room.update changes them).
+						const roomChatSessionId = `room:chat:${room.id}`;
+						void this.ctx.sessionManager
+							.getSessionAsync(roomChatSessionId)
+							.then((session) => {
+								if (session) {
+									session.setRuntimeSystemPrompt(this.buildRoomSystemPrompt(room));
+								}
+							})
+							.catch((error) => {
+								log.warn(`Failed to update room chat system prompt for room ${room.id}:`, error);
+							});
 					}
 				}
 			},
@@ -483,17 +620,26 @@ export class RoomRuntimeService {
 	private async initializeExistingRooms(): Promise<void> {
 		const rooms = this.ctx.roomManager.listRooms();
 
-		// Recover all rooms in parallel for faster startup
+		// Initialize all rooms in parallel for faster startup
 		await Promise.all(
 			rooms.map(async (room) => {
 				try {
-					// Don't auto-start - wait until after recovery completes to prevent
-					// zombie detection from injecting duplicate continuation messages
+					const runtimePreference = this.getPersistedRuntimePreference(room);
+					if (runtimePreference === 'stopped') {
+						log.info(`Room ${room.id}: runtime preference is stopped; skipping auto-start`);
+						return;
+					}
+
+					// Don't auto-start - wait until after state reattach completes.
 					const runtime = this.createOrGetRuntime(room, /* autoStart */ false);
 					const observer = this.observers.get(room.id)!;
-					await this.recoverRoomRuntime(room.id, runtime, observer);
-					// Start the runtime tick loop after recovery is complete
-					runtime.start();
+					const resumeAgents = runtimePreference === 'running';
+					await this.recoverRoomRuntime(room.id, runtime, observer, resumeAgents);
+
+					if (runtimePreference === 'running') {
+						// Start the runtime tick loop after reattach is complete.
+						runtime.start();
+					}
 				} catch (error) {
 					log.error(`Failed to initialize runtime for room ${room.id}:`, error);
 				}
@@ -504,11 +650,12 @@ export class RoomRuntimeService {
 	private async recoverRoomRuntime(
 		roomId: string,
 		runtime: RoomRuntime,
-		observer: SessionObserver
+		observer: SessionObserver,
+		resumeAgents = true
 	): Promise<void> {
 		const rawDb = this.ctx.db.getDatabase();
-		const groupRepo = new SessionGroupRepository(rawDb);
-		const taskManager = new TaskManager(rawDb, roomId);
+		const groupRepo = new SessionGroupRepository(rawDb, this.ctx.reactiveDb);
+		const taskManager = new TaskManager(rawDb, roomId, this.ctx.reactiveDb);
 		const sessionFactory = this.createSessionFactory();
 
 		const checker: SessionStateChecker = {
@@ -545,16 +692,33 @@ export class RoomRuntimeService {
 				const activeGroups = groupRepo.getActiveGroups(roomId);
 				for (const group of activeGroups) {
 					try {
+						// Re-attach runtime-only sdk.message listeners before any continuation
+						// message is injected (rate-limit detection and compatibility hooks).
+						runtime.restoreRecoveredGroupMirroring(group);
+
 						// Restore MCP servers (planner-tools, leader-agent-tools)
 						await runtime.restoreMcpServersForGroup(group);
 
-						// Inject continuation message to resume work
-						// Groups awaiting human review don't need a message — human will provide one
-						if (!group.submittedForReview) {
+						if (!resumeAgents) {
+							continue;
+						}
+
+						// Resume work after restart.
+						// - Groups awaiting human review: no message needed, human will provide one.
+						// - Groups waiting for a question answer: start the SDK query so it
+						//   re-encounters the pending AskUserQuestion tool call and re-establishes
+						//   pendingResolver. Injecting a user message would corrupt the conversation
+						//   by adding an orphaned turn after the unanswered tool use.
+						// - All other groups: inject a continuation message to resume work.
+						if (!group.submittedForReview && !group.waitingForQuestion) {
 							await sessionFactory.injectMessage(
 								group.workerSessionId,
 								'The system was restarted. Continue working on the task.'
 							);
+						} else if (group.waitingForQuestion) {
+							const sessionId =
+								group.waitingSession === 'leader' ? group.leaderSessionId : group.workerSessionId;
+							await sessionFactory.startSession(sessionId);
 						}
 					} catch (error) {
 						log.error(`Failed to restore/inject continuation for group ${group.id}:`, error);

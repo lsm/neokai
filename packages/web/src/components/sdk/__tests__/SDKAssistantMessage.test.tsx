@@ -170,6 +170,36 @@ function createTaskToolMessage(): Extract<SDKMessage, { type: 'assistant' }> {
 	} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
 }
 
+function createAgentToolMessage(): Extract<SDKMessage, { type: 'assistant' }> {
+	return {
+		type: 'assistant',
+		message: {
+			id: 'msg_test',
+			type: 'message',
+			role: 'assistant',
+			content: [
+				{
+					type: 'tool_use',
+					id: 'toolu_agent123',
+					name: 'Agent',
+					input: {
+						subagent_type: 'Plan',
+						description: 'Plan the implementation',
+						prompt: 'Create a plan for this feature',
+					},
+				},
+			],
+			model: 'claude-3-5-sonnet-20241022',
+			stop_reason: 'tool_use',
+			stop_sequence: null,
+			usage: { input_tokens: 10, output_tokens: 20 },
+		},
+		parent_tool_use_id: null,
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+}
+
 function createErrorMessage(): Extract<SDKMessage, { type: 'assistant' }> {
 	return {
 		type: 'assistant',
@@ -267,6 +297,15 @@ describe('SDKAssistantMessage', () => {
 			// SubagentBlock should show the subagent type
 			expect(container.textContent).toContain('Explore');
 		});
+
+		it('should render Agent tool as SubagentBlock (SDK 0.2.76+ renamed Task to Agent)', () => {
+			const message = createAgentToolMessage();
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			// SubagentBlock should show the subagent type and description
+			expect(container.textContent).toContain('Plan');
+			expect(container.textContent).toContain('Plan the implementation');
+		});
 	});
 
 	describe('Thinking Blocks', () => {
@@ -327,7 +366,7 @@ describe('SDKAssistantMessage', () => {
 			expect(copyButton).toBeTruthy();
 		});
 
-		it('should show success toast when copy succeeds', async () => {
+		it('should show inline green check when copy succeeds', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(true);
 
 			const message = createTextOnlyMessage('Hello world');
@@ -339,11 +378,14 @@ describe('SDKAssistantMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+				// Button should now show "Copied!" title and green color
+				const copiedButton = container.querySelector('button[title="Copied!"]');
+				expect(copiedButton).toBeTruthy();
+				expect(copiedButton?.className).toContain('text-green-400');
 			});
 		});
 
-		it('should show error toast when copy fails', async () => {
+		it('should not show green check and show error toast when copy fails', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(false);
 
 			const message = createTextOnlyMessage('Hello world');
@@ -355,6 +397,9 @@ describe('SDKAssistantMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				// Button should remain showing "Copy message" (not switched to Copied!)
+				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				// Error toast should be shown
 				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
 			});
 		});
@@ -375,7 +420,41 @@ describe('SDKAssistantMessage', () => {
 				expect(copyToClipboard).toHaveBeenCalledWith(
 					'I will read the file.\nThe file has been read.'
 				);
-				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+				// Button should switch to "Copied!" state
+				expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+			});
+		});
+
+		describe('auto-revert behavior', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it('should revert to copy icon after 1500ms', async () => {
+				vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+				const message = createTextOnlyMessage('Hello world');
+				const { container } = render(<SDKAssistantMessage message={message} />);
+
+				const copyButton = container.querySelector('button[title="Copy message"]');
+				fireEvent.click(copyButton!);
+
+				// Should show Copied! state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+				});
+
+				// Advance timer past 1500ms
+				vi.advanceTimersByTime(1500);
+
+				// Should revert to copy state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				});
 			});
 		});
 	});

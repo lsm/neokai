@@ -12,6 +12,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { CreateRoomParams, WorkspacePath } from '@neokai/shared';
 
@@ -23,8 +24,9 @@ describe('RoomManager', () => {
 		// Use an anonymous in-memory database for each test
 		// This ensures complete isolation between tests
 		db = new Database(':memory:');
-		await db.initialize();
-		roomManager = new RoomManager(db.getDatabase());
+		const reactiveDb = createReactiveDatabase(db);
+		await db.initialize(reactiveDb);
+		roomManager = new RoomManager(db.getDatabase(), reactiveDb);
 	});
 
 	afterEach(() => {

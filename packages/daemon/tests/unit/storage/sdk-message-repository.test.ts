@@ -270,10 +270,10 @@ describe('SDKMessageRepository', () => {
 			expect(hasMore).toBe(true); // Can't know for sure, so assume there might be more
 		});
 
-		it('should exclude unsent user messages from transcript query', () => {
-			repository.saveUserMessage('session-1', createUserMessage('Saved user message'), 'saved');
-			repository.saveUserMessage('session-1', createUserMessage('Queued user message'), 'queued');
-			repository.saveUserMessage('session-1', createUserMessage('Sent user message'), 'sent');
+		it('should exclude unconsumed user messages from transcript query', () => {
+			repository.saveUserMessage('session-1', createUserMessage('Saved user message'), 'deferred');
+			repository.saveUserMessage('session-1', createUserMessage('Queued user message'), 'enqueued');
+			repository.saveUserMessage('session-1', createUserMessage('Sent user message'), 'consumed');
 			repository.saveSDKMessage('session-1', createAssistantMessage('Assistant response'));
 
 			const { messages } = repository.getSDKMessages('session-1');
@@ -365,10 +365,10 @@ describe('SDKMessageRepository', () => {
 			expect(count).toBe(0);
 		});
 
-		it('should not count unsent user messages', () => {
-			repository.saveUserMessage('session-1', createUserMessage('Saved'), 'saved');
-			repository.saveUserMessage('session-1', createUserMessage('Queued'), 'queued');
-			repository.saveUserMessage('session-1', createUserMessage('Sent'), 'sent');
+		it('should not count unconsumed user messages', () => {
+			repository.saveUserMessage('session-1', createUserMessage('Saved'), 'deferred');
+			repository.saveUserMessage('session-1', createUserMessage('Queued'), 'enqueued');
+			repository.saveUserMessage('session-1', createUserMessage('Sent'), 'consumed');
 
 			const count = repository.getSDKMessageCount('session-1');
 			expect(count).toBe(1);
@@ -376,32 +376,32 @@ describe('SDKMessageRepository', () => {
 	});
 
 	describe('saveUserMessage', () => {
-		it('should save user message with sent status by default', () => {
+		it('should save user message with consumed status by default', () => {
 			const message = createUserMessage('Test message');
 
 			const id = repository.saveUserMessage('session-1', message);
 
 			expect(id).toBeDefined();
-			const savedMessages = repository.getMessagesByStatus('session-1', 'sent');
-			expect(savedMessages.length).toBe(1);
+			const deferredMessages = repository.getMessagesByStatus('session-1', 'consumed');
+			expect(deferredMessages.length).toBe(1);
 		});
 
 		it('should save user message with specified status', () => {
 			const message = createUserMessage('Test message');
 
-			repository.saveUserMessage('session-1', message, 'saved');
+			repository.saveUserMessage('session-1', message, 'deferred');
 
-			const savedMessages = repository.getMessagesByStatus('session-1', 'saved');
-			expect(savedMessages.length).toBe(1);
+			const deferredMessages = repository.getMessagesByStatus('session-1', 'deferred');
+			expect(deferredMessages.length).toBe(1);
 		});
 
-		it('should save user message with queued status', () => {
+		it('should save user message with enqueued status', () => {
 			const message = createUserMessage('Test message');
 
-			repository.saveUserMessage('session-1', message, 'queued');
+			repository.saveUserMessage('session-1', message, 'enqueued');
 
-			const queuedMessages = repository.getMessagesByStatus('session-1', 'queued');
-			expect(queuedMessages.length).toBe(1);
+			const enqueuedMessages = repository.getMessagesByStatus('session-1', 'enqueued');
+			expect(enqueuedMessages.length).toBe(1);
 		});
 
 		it('should return unique message ID', () => {
@@ -419,24 +419,24 @@ describe('SDKMessageRepository', () => {
 		it('should return messages with specified status', () => {
 			const msg1 = createUserMessage('Saved message');
 			const msg2 = createUserMessage('Sent message');
-			repository.saveUserMessage('session-1', msg1, 'saved');
-			repository.saveUserMessage('session-1', msg2, 'sent');
+			repository.saveUserMessage('session-1', msg1, 'deferred');
+			repository.saveUserMessage('session-1', msg2, 'consumed');
 
-			const savedMessages = repository.getMessagesByStatus('session-1', 'saved');
-			const sentMessages = repository.getMessagesByStatus('session-1', 'sent');
+			const deferredMessages = repository.getMessagesByStatus('session-1', 'deferred');
+			const consumedMessages = repository.getMessagesByStatus('session-1', 'consumed');
 
-			expect(savedMessages.length).toBe(1);
-			expect(sentMessages.length).toBe(1);
+			expect(deferredMessages.length).toBe(1);
+			expect(consumedMessages.length).toBe(1);
 		});
 
 		it('should return messages in chronological order', async () => {
-			repository.saveUserMessage('session-1', createUserMessage('First'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('First'), 'deferred');
 			await new Promise((r) => setTimeout(r, 5));
-			repository.saveUserMessage('session-1', createUserMessage('Second'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Second'), 'deferred');
 			await new Promise((r) => setTimeout(r, 5));
-			repository.saveUserMessage('session-1', createUserMessage('Third'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Third'), 'deferred');
 
-			const messages = repository.getMessagesByStatus('session-1', 'saved');
+			const messages = repository.getMessagesByStatus('session-1', 'deferred');
 
 			expect(messages.length).toBe(3);
 			// Chronological order means oldest first
@@ -458,9 +458,9 @@ describe('SDKMessageRepository', () => {
 		});
 
 		it('should include dbId and timestamp in returned messages', () => {
-			repository.saveUserMessage('session-1', createUserMessage('Test'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
 
-			const messages = repository.getMessagesByStatus('session-1', 'saved');
+			const messages = repository.getMessagesByStatus('session-1', 'deferred');
 
 			expect(messages.length).toBe(1);
 			expect(messages[0].dbId).toBeDefined();
@@ -468,58 +468,58 @@ describe('SDKMessageRepository', () => {
 		});
 
 		it('should return empty array for non-matching status', () => {
-			repository.saveUserMessage('session-1', createUserMessage('Test'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
 
-			const queuedMessages = repository.getMessagesByStatus('session-1', 'queued');
+			const enqueuedMessages = repository.getMessagesByStatus('session-1', 'enqueued');
 
-			expect(queuedMessages).toEqual([]);
+			expect(enqueuedMessages).toEqual([]);
 		});
 	});
 
 	describe('updateMessageStatus', () => {
 		it('should update status for specified message IDs', () => {
-			const id1 = repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'saved');
-			const id2 = repository.saveUserMessage('session-1', createUserMessage('Msg 2'), 'saved');
+			const id1 = repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'deferred');
+			const id2 = repository.saveUserMessage('session-1', createUserMessage('Msg 2'), 'deferred');
 
-			repository.updateMessageStatus([id1, id2], 'queued');
+			repository.updateMessageStatus([id1, id2], 'enqueued');
 
-			const queuedMessages = repository.getMessagesByStatus('session-1', 'queued');
-			expect(queuedMessages.length).toBe(2);
+			const enqueuedMessages = repository.getMessagesByStatus('session-1', 'enqueued');
+			expect(enqueuedMessages.length).toBe(2);
 		});
 
 		it('should not throw when given empty array', () => {
-			expect(() => repository.updateMessageStatus([], 'sent')).not.toThrow();
+			expect(() => repository.updateMessageStatus([], 'consumed')).not.toThrow();
 		});
 
-		it('should transition from saved to queued to sent', () => {
-			const id = repository.saveUserMessage('session-1', createUserMessage('Test'), 'saved');
+		it('should transition from deferred to enqueued to consumed', () => {
+			const id = repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
 
-			repository.updateMessageStatus([id], 'queued');
-			expect(repository.getMessagesByStatus('session-1', 'queued').length).toBe(1);
+			repository.updateMessageStatus([id], 'enqueued');
+			expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(1);
 
-			repository.updateMessageStatus([id], 'sent');
-			expect(repository.getMessagesByStatus('session-1', 'sent').length).toBe(1);
-			expect(repository.getMessagesByStatus('session-1', 'queued').length).toBe(0);
+			repository.updateMessageStatus([id], 'consumed');
+			expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
+			expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
 		});
 	});
 
 	describe('getMessageCountByStatus', () => {
 		it('should return count of messages with specified status', () => {
-			repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'saved');
-			repository.saveUserMessage('session-1', createUserMessage('Msg 2'), 'saved');
-			repository.saveUserMessage('session-1', createUserMessage('Msg 3'), 'sent');
+			repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'deferred');
+			repository.saveUserMessage('session-1', createUserMessage('Msg 2'), 'deferred');
+			repository.saveUserMessage('session-1', createUserMessage('Msg 3'), 'consumed');
 
-			const savedCount = repository.getMessageCountByStatus('session-1', 'saved');
-			const sentCount = repository.getMessageCountByStatus('session-1', 'sent');
+			const deferredCount = repository.getMessageCountByStatus('session-1', 'deferred');
+			const consumedCount = repository.getMessageCountByStatus('session-1', 'consumed');
 
-			expect(savedCount).toBe(2);
-			expect(sentCount).toBe(1);
+			expect(deferredCount).toBe(2);
+			expect(consumedCount).toBe(1);
 		});
 
 		it('should return 0 for non-matching status', () => {
-			repository.saveUserMessage('session-1', createUserMessage('Test'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
 
-			const count = repository.getMessageCountByStatus('session-1', 'queued');
+			const count = repository.getMessageCountByStatus('session-1', 'enqueued');
 
 			expect(count).toBe(0);
 		});

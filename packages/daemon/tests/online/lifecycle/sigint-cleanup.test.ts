@@ -38,14 +38,14 @@ describe('SDK SIGINT Cleanup (Online)', () => {
 	}, 30000);
 
 	afterEach(async () => {
-		// Kill the daemon server after each test
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
-		// Reset spawned mode flag
+		// Always reset spawned mode flag (even if daemon is undefined)
 		delete process.env.DAEMON_TEST_SPAWN;
-	});
+		if (!daemon) return;
+		// Kill the daemon server after each test
+		// Spawned mode graceful shutdown may take longer than in-process
+		daemon.kill('SIGTERM');
+		await daemon.waitForExit();
+	}, 30_000);
 
 	describe('SIGINT during active SDK query', () => {
 		test(

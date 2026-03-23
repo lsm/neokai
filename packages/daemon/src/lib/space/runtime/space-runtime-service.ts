@@ -1,0 +1,132 @@
+/**
+ * SpaceRuntimeService
+ *
+ * Manages SpaceRuntime lifecycle and provides per-space access to the
+ * underlying workflow execution engine.
+ *
+ * Design: One shared SpaceRuntime handles all spaces in a single tick loop.
+ * SpaceRuntimeService provides lifecycle management (start/stop) and a
+ * per-space API surface for RPC handlers and DaemonAppContext.
+ */
+
+import type { Database as BunDatabase } from 'bun:sqlite';
+import type { SpaceManager } from '../managers/space-manager';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NotificationSink } from './notification-sink';
+import type { TaskAgentManager } from './task-agent-manager';
+import { SpaceRuntime } from './space-runtime';
+import { Logger } from '../../logger';
+
+const log = new Logger('space-runtime-service');
+
+export interface SpaceRuntimeServiceConfig {
+	db: BunDatabase;
+	spaceManager: SpaceManager;
+	spaceAgentManager: SpaceAgentManager;
+	spaceWorkflowManager: SpaceWorkflowManager;
+	workflowRunRepo: SpaceWorkflowRunRepository;
+	taskRepo: SpaceTaskRepository;
+	/**
+	 * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
+	 *
+	 * When provided, the tick loop delegates task workflow execution to Task Agent
+	 * sessions instead of calling advance() directly. If not provided at construction
+	 * time (e.g. due to circular dependency resolution), use setTaskAgentManager()
+	 * after both objects have been created.
+	 */
+	taskAgentManager?: TaskAgentManager;
+	tickIntervalMs?: number;
+}
+
+export class SpaceRuntimeService {
+	private readonly runtime: SpaceRuntime;
+	private started = false;
+
+	constructor(private readonly config: SpaceRuntimeServiceConfig) {
+		this.runtime = new SpaceRuntime(config);
+	}
+
+	/**
+	 * Wire a TaskAgentManager into the underlying SpaceRuntime after construction.
+	 *
+	 * Resolves the circular dependency: SpaceRuntimeService must exist before
+	 * TaskAgentManager (which takes it as a constructor argument), so the manager
+	 * is injected back here once both are created.
+	 *
+	 * Mirrors the setNotificationSink() pattern.
+	 */
+	setTaskAgentManager(manager: TaskAgentManager): void {
+		this.runtime.setTaskAgentManager(manager);
+	}
+
+	/** Start the underlying SpaceRuntime tick loop. */
+	start(): void {
+		if (this.started) return;
+		this.started = true;
+		this.runtime.start();
+		log.info('SpaceRuntimeService started');
+	}
+
+	/** Stop the underlying SpaceRuntime tick loop. */
+	stop(): void {
+		if (!this.started) return;
+		this.started = false;
+		this.runtime.stop();
+		log.info('SpaceRuntimeService stopped');
+	}
+
+	/**
+	 * Returns the SpaceRuntime for the given space, starting it if needed.
+	 *
+	 * The underlying runtime is shared — one SpaceRuntime handles all spaces.
+	 * This method validates that the space exists and ensures the runtime is
+	 * running before returning it.
+	 *
+	 * Throws if the space does not exist.
+	 */
+	async createOrGetRuntime(spaceId: string): Promise<SpaceRuntime> {
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${spaceId}`);
+		}
+		if (!this.started) {
+			this.start();
+		}
+		return this.runtime;
+	}
+
+	/**
+	 * Returns the shared SpaceRuntime without space validation.
+	 * For system-level access (e.g. Global Spaces Agent) where no specific space context exists.
+	 */
+	getSharedRuntime(): SpaceRuntime {
+		if (!this.started) {
+			this.start();
+		}
+		return this.runtime;
+	}
+
+	/**
+	 * Wire a notification sink into the underlying SpaceRuntime.
+	 *
+	 * Called after construction once the Space Agent session has been provisioned,
+	 * since SpaceRuntimeService is instantiated before the global agent session exists.
+	 * Delegates directly to the shared SpaceRuntime instance.
+	 */
+	setNotificationSink(sink: NotificationSink): void {
+		this.runtime.setNotificationSink(sink);
+	}
+
+	/**
+	 * Release the runtime for a given space.
+	 *
+	 * Currently a no-op — the shared runtime handles all spaces together.
+	 * Reserved for future per-space runtime isolation.
+	 */
+	stopRuntime(_spaceId: string): void {
+		// No-op: shared runtime handles all spaces; use stop() to stop entirely.
+	}
+}

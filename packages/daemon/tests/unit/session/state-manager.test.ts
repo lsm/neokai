@@ -266,6 +266,52 @@ describe('StateManager', () => {
 			expect(result).toHaveProperty('error');
 			expect(result).toHaveProperty('timestamp');
 		});
+
+		it('should prefer processingStateCache over ghost session in-memory state', async () => {
+			// Simulate a room leader/worker session where the SessionCache has a "ghost"
+			// (an AgentSession loaded from DB) with stale idle state. The live session
+			// in RoomRuntimeService has transitioned to waiting_for_input, which was
+			// propagated to processingStateCache via session.updated event.
+			const pendingQuestion = {
+				toolUseId: 'tool-use-123',
+				questions: [
+					{
+						question: 'Which approach?',
+						header: 'Architecture',
+						options: [{ label: 'Option A', description: 'First option' }],
+						multiSelect: false,
+					},
+				],
+				askedAt: Date.now(),
+			};
+
+			// Ghost session loaded from DB has stale idle state
+			const ghostAgentSession = {
+				getSessionData: mock(() => ({ id: 'leader-session-id', title: 'Leader' })),
+				getProcessingState: mock(() => ({ status: 'idle' as const })),
+				getSlashCommands: mock(async () => []),
+				getContextInfo: mock(() => null),
+			};
+			(mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+				ghostAgentSession
+			);
+
+			// Simulate session.updated event from ProcessingStateManager populating the cache
+			const updateHandler = eventHandlers.get('session.updated');
+			await updateHandler!({
+				sessionId: 'leader-session-id',
+				processingState: { status: 'waiting_for_input', pendingQuestion },
+			});
+
+			// The state.session RPC should return cached waiting_for_input, not ghost's idle
+			const handler = requestHandlers.get(STATE_CHANNELS.SESSION);
+			const result = await handler!({ sessionId: 'leader-session-id' });
+
+			expect(result.agentState.status).toBe('waiting_for_input');
+			expect(result.agentState.pendingQuestion).toEqual(pendingQuestion);
+			// Confirm the ghost's getProcessingState was NOT used as the final value
+			expect(ghostAgentSession.getProcessingState).toHaveBeenCalledTimes(0);
+		});
 	});
 
 	describe('getSessionSnapshot', () => {
@@ -572,7 +618,8 @@ describe('StateManager', () => {
 				expect(eventHandlers.has('room.overview')).toBe(true);
 				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
 				expect(eventHandlers.has('goal.created')).toBe(true);
-				expect(eventHandlers.has('goal.updated')).toBe(true);
+				// goal.updated was removed in PR #695 (emitGoalUpdated dropped from goal handlers)
+				expect(eventHandlers.has('goal.updated')).toBe(false);
 				expect(eventHandlers.has('goal.completed')).toBe(true);
 				expect(eventHandlers.has('goal.progressUpdated')).toBe(true);
 			});
@@ -673,22 +720,11 @@ describe('StateManager', () => {
 			});
 
 			describe('goal.updated', () => {
-				it('should forward goal updates to room channel', () => {
-					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
-
-					const handler = eventHandlers.get('goal.updated');
-					const data = {
-						sessionId: 'room:room-123',
-						roomId: 'room-123',
-						goalId: 'goal-1',
-						goal: { title: 'Updated Goal 1' },
-					};
-
-					handler!(data);
-
-					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.updated', data, {
-						channel: 'room:room-123',
-					});
+				it('is not forwarded via eventBus (removed in PR #695 — goal.updated is no longer emitted by goal RPC handlers)', () => {
+					// goal.updated was removed when emitGoalUpdated was dropped from goal handlers.
+					// Verify no handler is registered for this event so CI fails loudly if it
+					// is re-introduced without a corresponding test update.
+					expect(eventHandlers.has('goal.updated')).toBe(false);
 				});
 			});
 
@@ -912,6 +948,279 @@ describe('StateManager', () => {
 			// Each channel should have its own version starting at 1
 			expect(calls[0][1].version).toBe(1);
 			expect(calls[1][1].version).toBe(1);
+		});
+	});
+
+	describe('space event bridge', () => {
+		it('should register all space event handlers on initialization', () => {
+			// Broad space events (global channel)
+			expect(eventHandlers.has('space.created')).toBe(true);
+			expect(eventHandlers.has('space.updated')).toBe(true);
+			expect(eventHandlers.has('space.archived')).toBe(true);
+			expect(eventHandlers.has('space.deleted')).toBe(true);
+			// Space task events
+			expect(eventHandlers.has('space.task.created')).toBe(true);
+			expect(eventHandlers.has('space.task.updated')).toBe(true);
+			// Space workflow run events
+			expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
+			expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
+			// Space agent events (space-scoped channel)
+			expect(eventHandlers.has('spaceAgent.created')).toBe(true);
+			expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
+			expect(eventHandlers.has('spaceAgent.deleted')).toBe(true);
+			// Space session group events (space-scoped channel)
+			expect(eventHandlers.has('spaceSessionGroup.created')).toBe(true);
+			expect(eventHandlers.has('spaceSessionGroup.memberAdded')).toBe(true);
+			expect(eventHandlers.has('spaceSessionGroup.memberUpdated')).toBe(true);
+			expect(eventHandlers.has('spaceSessionGroup.deleted')).toBe(true);
+			// Space workflow definition events
+			expect(eventHandlers.has('spaceWorkflow.created')).toBe(true);
+			expect(eventHandlers.has('spaceWorkflow.updated')).toBe(true);
+			expect(eventHandlers.has('spaceWorkflow.deleted')).toBe(true);
+		});
+
+		describe('space lifecycle events (global channel)', () => {
+			it('should forward space.created to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'global', spaceId: 's-1', space: { id: 's-1' } };
+				eventHandlers.get('space.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.created', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward space.updated to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'global', spaceId: 's-1', space: { name: 'Updated' } };
+				eventHandlers.get('space.updated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.updated', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward space.archived to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					space: { id: 's-1', status: 'archived' },
+				};
+				eventHandlers.get('space.archived')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.archived', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward space.deleted to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'global', spaceId: 's-1' };
+				eventHandlers.get('space.deleted')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.deleted', data, {
+					channel: 'global',
+				});
+			});
+		});
+
+		describe('space task events (global channel)', () => {
+			it('should forward space.task.created to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					taskId: 't-1',
+					task: { id: 't-1', title: 'Task 1' },
+				};
+				eventHandlers.get('space.task.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.task.created', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward space.task.updated to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					taskId: 't-1',
+					task: { id: 't-1', status: 'in_progress' },
+				};
+				eventHandlers.get('space.task.updated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.task.updated', data, {
+					channel: 'global',
+				});
+			});
+		});
+
+		describe('space workflow run events (global channel)', () => {
+			it('should forward space.workflowRun.created to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					runId: 'run-1',
+					run: { id: 'run-1', status: 'pending' },
+				};
+				eventHandlers.get('space.workflowRun.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.workflowRun.created', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward space.workflowRun.updated to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					runId: 'run-1',
+					run: { status: 'running' },
+				};
+				eventHandlers.get('space.workflowRun.updated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('space.workflowRun.updated', data, {
+					channel: 'global',
+				});
+			});
+		});
+
+		describe('spaceAgent events (space-scoped channel)', () => {
+			it('should forward spaceAgent.created to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					agent: { id: 'a-1', name: 'Agent 1' },
+				};
+				eventHandlers.get('spaceAgent.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceAgent.created', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceAgent.updated to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					agent: { id: 'a-1', name: 'Updated Agent' },
+				};
+				eventHandlers.get('spaceAgent.updated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceAgent.updated', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceAgent.deleted to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'space:s-1', spaceId: 's-1', agentId: 'a-1' };
+				eventHandlers.get('spaceAgent.deleted')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceAgent.deleted', data, {
+					channel: 'space:s-1',
+				});
+			});
+		});
+
+		describe('spaceSessionGroup events (space-scoped channel)', () => {
+			it('should forward spaceSessionGroup.created to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					taskId: 't-1',
+					group: { id: 'g-1', name: 'task:t-1' },
+				};
+				eventHandlers.get('spaceSessionGroup.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.created', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceSessionGroup.memberAdded to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					groupId: 'g-1',
+					member: {
+						id: 'm-1',
+						groupId: 'g-1',
+						sessionId: 'sess-1',
+						role: 'coder',
+						status: 'active',
+						orderIndex: 0,
+					},
+				};
+				eventHandlers.get('spaceSessionGroup.memberAdded')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.memberAdded', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceSessionGroup.memberUpdated to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'space:s-1',
+					spaceId: 's-1',
+					groupId: 'g-1',
+					memberId: 'm-1',
+					member: {
+						id: 'm-1',
+						groupId: 'g-1',
+						sessionId: 'sess-1',
+						role: 'coder',
+						status: 'completed',
+						orderIndex: 0,
+					},
+				};
+				eventHandlers.get('spaceSessionGroup.memberUpdated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.memberUpdated', data, {
+					channel: 'space:s-1',
+				});
+			});
+
+			it('should forward spaceSessionGroup.deleted to space channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'space:s-1', spaceId: 's-1', groupId: 'g-1' };
+				eventHandlers.get('spaceSessionGroup.deleted')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceSessionGroup.deleted', data, {
+					channel: 'space:s-1',
+				});
+			});
+		});
+
+		describe('spaceWorkflow events (global channel)', () => {
+			it('should forward spaceWorkflow.created to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					workflow: { id: 'wf-1', name: 'Workflow 1' },
+				};
+				eventHandlers.get('spaceWorkflow.created')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceWorkflow.created', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward spaceWorkflow.updated to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = {
+					sessionId: 'global',
+					spaceId: 's-1',
+					workflow: { id: 'wf-1', name: 'Updated Workflow' },
+				};
+				eventHandlers.get('spaceWorkflow.updated')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceWorkflow.updated', data, {
+					channel: 'global',
+				});
+			});
+
+			it('should forward spaceWorkflow.deleted to global channel', () => {
+				(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+				const data = { sessionId: 'global', spaceId: 's-1', workflowId: 'wf-1' };
+				eventHandlers.get('spaceWorkflow.deleted')!(data);
+				expect(mockMessageHub.event).toHaveBeenCalledWith('spaceWorkflow.deleted', data, {
+					channel: 'global',
+				});
+			});
 		});
 	});
 });

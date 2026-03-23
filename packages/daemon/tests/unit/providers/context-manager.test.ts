@@ -11,6 +11,8 @@ import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { ProviderContextManager } from '../../../src/lib/providers/context-manager';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
+import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 // Mock provider for testing
 class MockProvider implements Provider {
@@ -123,6 +125,60 @@ class AnthropicMockProvider extends MockProvider {
 	translateModelIdForSdk = undefined;
 }
 
+// Anthropic Copilot provider mock (same model IDs as anthropic)
+class AnthropicCopilotMockProvider extends MockProvider {
+	readonly id = 'anthropic-copilot' as const;
+	readonly displayName = 'Anthropic Copilot';
+
+	constructor(available: boolean = true) {
+		super('anthropic-copilot', 'Anthropic Copilot', available, 'claude-');
+	}
+
+	ownsModel(modelId: string): boolean {
+		return modelId.toLowerCase().startsWith('claude-');
+	}
+
+	buildSdkConfig(
+		_modelId: string,
+		sessionConfig?: { apiKey?: string; baseUrl?: string }
+	): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || 'https://copilot.api.com',
+				ANTHROPIC_AUTH_TOKEN: sessionConfig?.apiKey || 'copilot-token',
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
+// Anthropic Codex provider mock (gpt- and claude- models)
+class AnthropicCodexMockProvider extends MockProvider {
+	readonly id = 'anthropic-codex' as const;
+	readonly displayName = 'Anthropic Codex';
+
+	constructor(available: boolean = true) {
+		super('anthropic-codex', 'Anthropic Codex', available, 'gpt-');
+	}
+
+	ownsModel(modelId: string): boolean {
+		return modelId.toLowerCase().startsWith('gpt-') || modelId.toLowerCase().startsWith('claude-');
+	}
+
+	buildSdkConfig(
+		_modelId: string,
+		sessionConfig?: { apiKey?: string; baseUrl?: string }
+	): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || 'https://codex.api.com',
+				ANTHROPIC_AUTH_TOKEN: sessionConfig?.apiKey || 'codex-token',
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
 // GLM-like provider
 class GlmMockProvider extends MockProvider {
 	readonly id = 'glm' as const;
@@ -193,7 +249,7 @@ describe('ProviderContextManager', () => {
 			expect(context.modelId).toBe('glm-4');
 		});
 
-		it('should detect provider from model ID', () => {
+		it('should create context for anthropic session with explicit provider', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -205,6 +261,7 @@ describe('ProviderContextManager', () => {
 					model: 'claude-3-opus',
 					maxTokens: 8192,
 					temperature: 1.0,
+					provider: 'anthropic',
 				},
 				metadata: {
 					messageCount: 0,
@@ -221,35 +278,7 @@ describe('ProviderContextManager', () => {
 			expect(context.provider.id).toBe('anthropic');
 		});
 
-		it('should default to anthropic for unknown model', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'unknown-model',
-					maxTokens: 8192,
-					temperature: 1.0,
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
-
-			const context = manager.createContext(session);
-
-			expect(context.provider.id).toBe('anthropic');
-		});
-
-		it('should use "default" model ID when not specified', () => {
+		it('should use "default" model ID when model not specified', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -260,6 +289,7 @@ describe('ProviderContextManager', () => {
 				config: {
 					maxTokens: 8192,
 					temperature: 1.0,
+					provider: 'anthropic',
 				} as Session['config'],
 				metadata: {
 					messageCount: 0,
@@ -276,7 +306,7 @@ describe('ProviderContextManager', () => {
 			expect(context.modelId).toBe('default');
 		});
 
-		it('should fall back to detection when explicit provider not found', () => {
+		it('should throw when the stored provider ID is not registered', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -300,15 +330,12 @@ describe('ProviderContextManager', () => {
 				},
 			};
 
-			const context = manager.createContext(session);
-
-			// Falls back to detection, which finds anthropic
-			expect(context.provider.id).toBe('anthropic');
+			expect(() => manager.createContext(session)).toThrow(
+				"Provider 'nonexistent' (requested by session 'test-session') is not registered."
+			);
 		});
 
-		it('should throw when no provider available', () => {
-			registry.clear(); // Remove all providers
-
+		it('should fall back to Anthropic when no provider is stored (legacy pre-#466 session)', () => {
 			const session: Session = {
 				id: 'test-session',
 				title: 'Test',
@@ -331,7 +358,9 @@ describe('ProviderContextManager', () => {
 				},
 			};
 
-			expect(() => manager.createContext(session)).toThrow('No provider available');
+			// Legacy sessions without a stored provider fall back to Anthropic
+			const context = manager.createContext(session);
+			expect(context.provider.id).toBe('anthropic');
 		});
 
 		it('should include session provider config', () => {
@@ -541,87 +570,49 @@ describe('ProviderContextManager', () => {
 	});
 
 	describe('requiresQueryRestart', () => {
-		it('should return true for cross-provider switch', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-3-opus',
-					maxTokens: 8192,
-					temperature: 1.0,
-					provider: 'anthropic',
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
+		const anthropicSession: Session = {
+			id: 'test-session',
+			title: 'Test',
+			workspacePath: '/test',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: {
+				model: 'claude-3-opus',
+				maxTokens: 8192,
+				temperature: 1.0,
+				provider: 'anthropic',
+			},
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+			},
+		};
 
-			const requires = manager.requiresQueryRestart(session, 'glm-4');
+		it('should return true for cross-provider switch', () => {
+			const requires = manager.requiresQueryRestart(anthropicSession, 'glm-4', 'glm');
 			expect(requires).toBe(true);
 		});
 
 		it('should return false for same-provider switch', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-3-opus',
-					maxTokens: 8192,
-					temperature: 1.0,
-					provider: 'anthropic',
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
-
-			const requires = manager.requiresQueryRestart(session, 'claude-3-sonnet');
+			const requires = manager.requiresQueryRestart(
+				anthropicSession,
+				'claude-3-sonnet',
+				'anthropic'
+			);
 			expect(requires).toBe(false);
 		});
 
-		it('should return true when new provider cannot be detected', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-3-opus',
-					maxTokens: 8192,
-					temperature: 1.0,
-					provider: 'anthropic',
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
-
-			const requires = manager.requiresQueryRestart(session, 'unknown-model-xyz');
+		it('should return true when the new provider is not registered', () => {
+			const requires = manager.requiresQueryRestart(
+				anthropicSession,
+				'unknown-model-xyz',
+				'unknown-provider-xyz'
+			);
 			expect(requires).toBe(true);
 		});
 	});
@@ -635,23 +626,6 @@ describe('ProviderContextManager', () => {
 
 		it('should return undefined for unknown provider', () => {
 			const provider = manager.getProvider('unknown' as unknown as ProviderId);
-			expect(provider).toBeUndefined();
-		});
-	});
-
-	describe('detectProvider', () => {
-		it('should detect provider from model ID', () => {
-			const provider = manager.detectProvider('claude-3-opus');
-			expect(provider?.id).toBe('anthropic');
-		});
-
-		it('should detect GLM provider', () => {
-			const provider = manager.detectProvider('glm-4');
-			expect(provider?.id).toBe('glm');
-		});
-
-		it('should return undefined for unknown model', () => {
-			const provider = manager.detectProvider('unknown-model-xyz');
 			expect(provider).toBeUndefined();
 		});
 	});
@@ -686,6 +660,328 @@ describe('ProviderContextManager', () => {
 		});
 	});
 
+	describe('createContext — anthropic-copilot provider', () => {
+		beforeEach(() => {
+			resetProviderRegistry();
+			resetProviderFactory();
+			registry = new ProviderRegistry();
+			registry.register(new AnthropicMockProvider(true));
+			registry.register(new AnthropicCopilotMockProvider(true));
+			manager = new ProviderContextManager(registry);
+		});
+
+		it('should create context for session with explicit anthropic-copilot provider', () => {
+			const session: Session = {
+				id: 'copilot-session',
+				title: 'Copilot Session',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+
+			expect(context.provider.id).toBe('anthropic-copilot');
+			expect(context.modelId).toBe('claude-sonnet-4.6');
+		});
+
+		it('should select anthropic-copilot over anthropic when provider explicitly set', () => {
+			// Both anthropic and anthropic-copilot own claude- models.
+			// With explicit provider set, the copilot should be selected.
+			const copilotSession: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-opus-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+			const anthropicSession: Session = {
+				...copilotSession,
+				config: { ...copilotSession.config, provider: 'anthropic' },
+			};
+
+			expect(manager.createContext(copilotSession).provider.id).toBe('anthropic-copilot');
+			expect(manager.createContext(anthropicSession).provider.id).toBe('anthropic');
+		});
+
+		it('should build sdk options with copilot env vars', async () => {
+			const session: Session = {
+				id: 'copilot-sdk',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+			const options = await context.buildSdkOptions({ maxTokens: 4096 });
+
+			expect(options.env).toBeDefined();
+			expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://copilot.api.com');
+			expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('copilot-token');
+		});
+
+		it('should return false for requiresQueryRestart within anthropic-copilot', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Same provider → no restart needed
+			expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic-copilot')).toBe(
+				false
+			);
+		});
+
+		it('should return true for requiresQueryRestart when switching from copilot to anthropic', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Cross-provider switch → restart required
+			expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic')).toBe(true);
+		});
+	});
+
+	describe('createContext — anthropic-codex provider', () => {
+		beforeEach(() => {
+			resetProviderRegistry();
+			resetProviderFactory();
+			registry = new ProviderRegistry();
+			registry.register(new AnthropicMockProvider(true));
+			registry.register(new AnthropicCodexMockProvider(true));
+			manager = new ProviderContextManager(registry);
+		});
+
+		it('should create context for session with explicit anthropic-codex provider', () => {
+			const session: Session = {
+				id: 'codex-session',
+				title: 'Codex Session',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+
+			expect(context.provider.id).toBe('anthropic-codex');
+			expect(context.modelId).toBe('gpt-5.3-codex');
+		});
+
+		it('should select anthropic-codex over anthropic for claude- models when explicitly set', () => {
+			// anthropic-codex also owns claude- models but explicit provider wins
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-opus-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			expect(manager.createContext(session).provider.id).toBe('anthropic-codex');
+		});
+
+		it('should build sdk options with codex env vars', async () => {
+			const session: Session = {
+				id: 'codex-sdk',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+			const options = await context.buildSdkOptions({ maxTokens: 4096 });
+
+			expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://codex.api.com');
+			expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('codex-token');
+		});
+
+		it('should return true for requiresQueryRestart when switching from codex to anthropic', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic')).toBe(true);
+		});
+
+		it('should return false for requiresQueryRestart within anthropic-codex', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Same provider → no restart
+			expect(manager.requiresQueryRestart(session, 'gpt-5.3-codex-mini', 'anthropic-codex')).toBe(
+				false
+			);
+		});
+	});
+
 	describe('getAvailableProviders', () => {
 		it('should return available providers', async () => {
 			const providers = await manager.getAvailableProviders();
@@ -705,5 +1001,80 @@ describe('ProviderContextManager', () => {
 			expect(providers.length).toBe(1);
 			expect(providers[0].id).toBe('anthropic');
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// No-Anthropic-model-leak invariant — real provider buildSdkConfig()
+//
+// These tests use the actual provider classes (not mocks) to assert that
+// ANTHROPIC_DEFAULT_HAIKU_MODEL never contains a claude-* model name.
+//
+// Root cause of the original bug: without ANTHROPIC_DEFAULT_*_MODEL being set
+// to bridge-compatible model IDs, the Claude Agent SDK subprocess falls back to
+// its built-in defaults (e.g. claude-haiku-4-5-20251001) for background calls
+// such as summarisation and compaction.
+//
+// The invariant differs per provider:
+//   Codex bridge:   all three tier slots must be gpt-* model IDs — the bridge
+//                   rejects any claude-* name with "model does not exist".
+//   Copilot bridge: all three tier slots must be set to the same resolved model ID
+//                   so the SDK's internal haiku/opus calls also go through a real
+//                   Copilot model.  The SDK's default claude-haiku-4-5-20251001
+//                   is an Anthropic API ID that the Copilot bridge cannot serve.
+// ---------------------------------------------------------------------------
+
+describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()', () => {
+	// Use a shared let so afterEach can clean up even when assertions throw.
+	let codexProvider: AnthropicToCodexBridgeProvider | undefined;
+
+	afterEach(() => {
+		codexProvider?.stopAllBridgeServers();
+		codexProvider = undefined;
+	});
+
+	it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+		codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+		const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
+			workspacePath: '/tmp/ws-codex-leak',
+		});
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+	});
+
+	it('Codex provider: all three DEFAULT_*_MODEL slots are non-Anthropic model names', () => {
+		codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+		const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
+			workspacePath: '/tmp/ws-codex-all',
+		});
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).not.toMatch(/^claude-/);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).not.toMatch(/^claude-/);
+	});
+
+	it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		// Inject a fake server URL — buildSdkConfig() requires the embedded server to be
+		// started, but for this assertion we only care about the env var values it returns.
+		(p as unknown as Record<string, unknown>)['serverCache'] = {
+			url: 'http://127.0.0.1:54321',
+			stop: async () => {},
+		};
+		const cfg = p.buildSdkConfig('copilot-anthropic-sonnet');
+		// All three tiers must use the same resolved model ID so that every SDK-internal
+		// call (summarisation, compaction, etc.) routes through the real Copilot model
+		// the user selected, rather than a hardcoded fallback that might be unavailable.
+		// This prevents the original bug where the haiku slot defaulted to
+		// claude-haiku-4-5-20251001, which is an Anthropic API ID that the Copilot bridge
+		// cannot serve.
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
+			cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
+		);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe(
+			cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
+		);
+		// The resolved model must NOT be the SDK's default haiku fallback.
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toBe('claude-haiku-4-5-20251001');
+		// p.shutdown() intentionally omitted: serverCache.stop is a no-op and no
+		// real embedded server was started, so there is nothing to clean up.
 	});
 });

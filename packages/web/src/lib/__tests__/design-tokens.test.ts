@@ -11,7 +11,9 @@ import {
 	messageColors,
 	customColors,
 	borderColors,
+	tokens,
 } from '../design-tokens';
+import designTokensDefault from '../design-tokens';
 
 describe('messageSpacing', () => {
 	describe('user', () => {
@@ -356,5 +358,74 @@ describe('Type safety', () => {
 		expect(messageColors).toBeDefined();
 		expect(customColors).toBeDefined();
 		expect(borderColors).toBeDefined();
+	});
+});
+
+describe('tokens (unified namespace)', () => {
+	it('should be exported as named export', () => {
+		expect(tokens).toBeDefined();
+		expect(typeof tokens).toBe('object');
+	});
+
+	it('should be exported as default export', () => {
+		expect(designTokensDefault).toBeDefined();
+		expect(designTokensDefault).toBe(tokens);
+	});
+
+	describe('tokens.color', () => {
+		it('should have accent color', () => {
+			expect(tokens.color.accent).toBe('bg-indigo-500');
+		});
+
+		it('should have surface tokens', () => {
+			expect(tokens.color.surface.app).toBe('bg-dark-950');
+			expect(tokens.color.surface.panel).toBe('bg-dark-900');
+			expect(tokens.color.surface.card).toBe('bg-dark-800');
+		});
+
+		it('should have text tokens', () => {
+			expect(tokens.color.text.primary).toBe('text-gray-100');
+			expect(tokens.color.text.secondary).toBe('text-gray-400');
+			expect(tokens.color.text.muted).toBe('text-gray-500');
+		});
+
+		it('should have border tokens derived from borderColors.ui', () => {
+			expect(tokens.color.border.default).toBe(borderColors.ui.default);
+			expect(tokens.color.border.subtle).toBe(borderColors.ui.secondary);
+		});
+
+		it('should have status tokens', () => {
+			expect(tokens.color.status.success).toBe('text-green-400');
+			expect(tokens.color.status.warning).toBe('text-amber-400');
+			expect(tokens.color.status.error).toBe('text-red-400');
+			expect(tokens.color.status.info).toBe('text-indigo-400');
+		});
+	});
+
+	describe('tokens.spacing', () => {
+		it('should have chatMaxWidth', () => {
+			expect(tokens.spacing.chatMaxWidth).toBe('max-w-4xl');
+		});
+	});
+
+	describe('tokens.radius', () => {
+		it('should consolidate borderRadius entries', () => {
+			expect(tokens.radius.message.bubble).toBe(borderRadius.message.bubble);
+			expect(tokens.radius.message.tool).toBe(borderRadius.message.tool);
+		});
+
+		it('should add panel radius', () => {
+			expect(tokens.radius.panel).toBe('rounded-xl');
+		});
+	});
+
+	describe('tokens.transition', () => {
+		it('should have quick transition', () => {
+			expect(tokens.transition.quick).toBe('transition-all duration-150 ease-out');
+		});
+
+		it('should have smooth transition', () => {
+			expect(tokens.transition.smooth).toBe('transition-all duration-250 ease-out');
+		});
 	});
 });

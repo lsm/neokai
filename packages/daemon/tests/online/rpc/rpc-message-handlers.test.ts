@@ -25,11 +25,12 @@ describe('Message RPC Handlers', () => {
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, 30_000);
 
 	afterEach(async () => {
+		if (!daemon) return;
 		await daemon.waitForExit();
-	});
+	}, 15_000);
 
 	async function createSession(workspacePath: string): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {

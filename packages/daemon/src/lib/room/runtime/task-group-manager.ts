@@ -2,8 +2,8 @@
  * TaskGroupManager - Creates and manages (Worker, Leader) session groups
  *
  * Orchestrates the lifecycle of session groups:
- * 1. Spawns worker session immediately, defers leader creation until needed
- * 2. Routes worker terminal output to Leader for review (lazy-starts leader)
+ * 1. Spawns worker and leader sessions together (eager initialization)
+ * 2. Routes worker terminal output to Leader for review
  * 3. Routes Leader feedback back to worker
  * 4. Handles group completion and failure
  *
@@ -18,16 +18,15 @@ import { Logger } from '../../logger';
 import type {
 	SessionGroupRepository,
 	SessionGroup,
-	DeferredLeaderConfig,
+	LeaderBootstrapConfig,
 } from '../state/session-group-repository';
 import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { TaskManager } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
+import type { DaemonHub } from '../../daemon-hub';
 import type { LeaderToolCallbacks } from '../agents/leader-agent';
 import { createLeaderAgentInit } from '../agents/leader-agent';
 import type { LeaderAgentConfig, ReviewContext } from '../agents/leader-agent';
-import type { DaemonHub } from '../../daemon-hub';
-import type { RoomRuntime } from './room-runtime';
 
 /**
  * Convert a task title to a git branch name slug.
@@ -78,10 +77,22 @@ export interface SessionFactory {
 	createWorktree(basePath: string, sessionId: string, branchName?: string): Promise<string | null>;
 	/**
 	 * Restore a session from DB after daemon restart.
-	 * Adds it to the in-memory cache and starts the streaming query.
+	 * Adds it to the in-memory cache but does NOT start the streaming query
+	 * (lazy start via injectMessage or startSession).
 	 * Returns true if successful, false if session not found in DB.
 	 */
 	restoreSession(sessionId: string): Promise<boolean>;
+	/**
+	 * Start the SDK streaming query for a restored session without injecting a message.
+	 *
+	 * Used for sessions in waiting_for_input state after daemon restart: the SDK
+	 * will re-encounter the pending AskUserQuestion tool call in its session file
+	 * and re-call canUseTool, re-establishing the pendingResolver so the user can
+	 * answer the question via question.respond RPC.
+	 *
+	 * Returns true if successful, false if the session is not in the cache.
+	 */
+	startSession(sessionId: string): Promise<boolean>;
 	/**
 	 * Set runtime MCP servers on a restored session.
 	 * MCP servers are non-serializable and lost on restart — must be re-created.
@@ -143,20 +154,20 @@ export interface TaskGroupManagerConfig {
 	workspacePath: string;
 	/** Leader model */
 	model?: string;
+	/** Leader provider (auto-detected from model if omitted) */
+	provider?: string;
 	/** Worker model (defaults to model if not set) */
 	workerModel?: string;
+	/** Worker provider (auto-detected from workerModel if omitted) */
+	workerProvider?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID. Used to get CURRENT task data at route time. */
 	getTask: (taskId: string) => Promise<NeoTask | null>;
 	/** Fetch goal from DB by ID. Used to get CURRENT goal data at route time. */
 	getGoal: (goalId: string) => Promise<RoomGoal | null>;
-	/** DaemonHub for emitting events (used for UI notifications) */
+	/** Used to emit task update events when leader modifies tasks */
 	daemonHub?: DaemonHub;
-	/** Runtime service for runtime operations (task cancellation, etc.) */
-	runtimeService?: {
-		getRuntime(roomId: string): RoomRuntime | null;
-	};
 }
 
 export class TaskGroupManager {
@@ -168,13 +179,12 @@ export class TaskGroupManager {
 	private readonly getRoom: (roomId: string) => Room | null;
 	private readonly getTaskById: (taskId: string) => Promise<NeoTask | null>;
 	private readonly getGoalById: (goalId: string) => Promise<RoomGoal | null>;
+	private readonly daemonHub?: DaemonHub;
 	readonly workspacePath: string;
 	private _model?: string;
+	private _provider?: string;
 	readonly workerModel?: string;
-	private readonly daemonHub?: DaemonHub;
-	private readonly runtimeService?: {
-		getRuntime(roomId: string): RoomRuntime | null;
-	};
+	readonly workerProvider?: string;
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.groupRepo = config.groupRepo;
@@ -187,9 +197,10 @@ export class TaskGroupManager {
 		this.getGoalById = config.getGoal;
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
+		this._provider = config.provider;
 		this.workerModel = config.workerModel;
+		this.workerProvider = config.workerProvider;
 		this.daemonHub = config.daemonHub;
-		this.runtimeService = config.runtimeService;
 	}
 
 	/** Get the current model for leader sessions */
@@ -197,9 +208,15 @@ export class TaskGroupManager {
 		return this._model;
 	}
 
-	/** Update the model for new leader sessions (e.g., when room settings change) */
-	updateModel(model: string | undefined): void {
+	/** Get the current provider for leader sessions */
+	get provider(): string | undefined {
+		return this._provider;
+	}
+
+	/** Update the model and provider for new leader sessions (e.g., when room settings change) */
+	updateModel(model: string | undefined, provider?: string): void {
 		this._model = model;
+		this._provider = provider;
 	}
 
 	/**
@@ -215,12 +232,18 @@ export class TaskGroupManager {
 	 *
 	 * Flow:
 	 * 1. Create worktree for task isolation (ALL roles get an isolated worktree)
-	 * 2. Create worker session via workerConfig and start it immediately
-	 * 3. Build leader init but DEFER creation until first review round
-	 * 4. Create session_groups DB record (active group with submittedForReview=false)
-	 * 5. Set task status to in_progress
-	 * 6. Observe worker session for terminal state
-	 * 7. Kick off worker (inject initial message)
+	 * 2. Create session_groups DB record (active group with submittedForReview=false)
+	 * 3. Persist leader bootstrap config in DB metadata (for restart recovery + leaderTaskContext)
+	 * 4. Set task status to in_progress
+	 * 5. Create and start worker session immediately
+	 * 6. Create and start leader session immediately (eager initialization)
+	 * 7. Observe worker session for terminal state BEFORE injecting message (prevents race condition)
+	 * 8. Observe leader session for terminal state
+	 * 9. Kick off worker (inject initial message)
+	 *
+	 * Both sessions are created eagerly so the leader is ready when the worker completes.
+	 * The worker observer is set up before injection to prevent a race where the worker
+	 * completes before the observer fires.
 	 */
 	async spawn(
 		room: Room,
@@ -228,7 +251,7 @@ export class TaskGroupManager {
 		goal: RoomGoal | null,
 		onWorkerTerminal: (groupId: string, state: TerminalState) => void,
 		onLeaderTerminal: (groupId: string, state: TerminalState) => void,
-		_leaderCallbacksFactory: LeaderCallbacksFactory,
+		leaderCallbacksFactory: LeaderCallbacksFactory,
 		workerConfig: WorkerConfig,
 		reviewContext?: ReviewContext
 	): Promise<SessionGroup> {
@@ -265,35 +288,68 @@ export class TaskGroupManager {
 			groupWorkspacePath
 		);
 
-		// Persist deferred Leader bootstrap config in DB metadata.
-		// This survives daemon restart, unlike in-memory maps.
-		const deferredLeader: DeferredLeaderConfig = {
+		// Persist leader bootstrap config in DB metadata.
+		// Survives daemon restart (used by recoverZombieGroups to recreate leader if lost)
+		// and stores leaderTaskContext for the routing message injected when worker completes.
+		// eagerlyCreated=true signals that the leader session was created here in spawn(),
+		// not deferred — this lets recoverZombieGroups skip injecting "continue reviewing"
+		// when feedbackIteration==0 (the leader has no work to review yet on first restore).
+		const deferredLeader: LeaderBootstrapConfig = {
 			roomId: room.id,
 			goalId: goal?.id ?? null,
 			reviewContext,
 			leaderTaskContext: workerConfig.leaderTaskContext,
+			eagerlyCreated: true,
 		};
 		this.groupRepo.setDeferredLeader(group.id, deferredLeader);
 
 		// Set task status to in_progress
 		await this.taskManager.startTask(task.id);
 
-		// Create and start ONLY the worker session
+		// Create and start worker session
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
-		// Kick off worker so the SDK streaming loop starts processing immediately.
-		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
+		// Create and start leader session eagerly alongside the worker.
+		// This ensures the leader is ready when the worker completes and routing is triggered.
+		// Previously the leader was lazily created in routeWorkerToLeader(), but this caused
+		// routing to be skipped when the observer event fired before lazy init ran.
+		const leaderCallbacks = leaderCallbacksFactory(group.id);
+		const leaderConfig: LeaderAgentConfig = {
+			task,
+			goal,
+			room,
+			sessionId: leaderSessionId,
+			workspacePath: groupWorkspacePath,
+			groupId: group.id,
+			model: this._model,
+			provider: this._provider,
+			reviewContext,
+			goalManager: this.goalManager,
+			taskManager: this.taskManager,
+			groupRepo: this.groupRepo,
+			daemonHub: this.daemonHub,
+		};
+		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
+		await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
+		log.info(
+			`[spawn] Group ${group.id}: leader session ${leaderSessionId} created eagerly alongside worker`
+		);
 
-		// Observe worker session for terminal state
+		// Observe worker session for terminal state BEFORE injecting the initial message.
+		// This prevents a race where the worker processes and completes synchronously before
+		// the observer is registered, causing the terminal event to be missed entirely.
 		this.observer.observe(workerSessionId, (state) => {
 			onWorkerTerminal(group.id, state);
 		});
 
-		// Observe leader session proactively (even before it's created).
-		// SessionObserver filters by sessionId and callback will fire once leader starts.
+		// Observe leader session for terminal state
 		this.observer.observe(leaderSessionId, (state) => {
 			onLeaderTerminal(group.id, state);
 		});
+
+		// Kick off worker so the SDK streaming loop starts processing immediately.
+		// Observer is already registered above — no race window.
+		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
 
 		return group;
 	}
@@ -301,12 +357,16 @@ export class TaskGroupManager {
 	/**
 	 * Route worker terminal output to Leader for review.
 	 *
-	 * Lazy-starts the leader session on first call (deferred from spawn).
+	 * The leader session is created eagerly in spawn(), so this method normally just
+	 * injects the worker output into the already-running leader session.
+	 * If the leader is missing (e.g., after a daemon restart where restore failed),
+	 * falls back to recreating it using the deferredLeader bootstrap config.
+	 *
 	 * Increments feedbackIteration to track review rounds (1-based).
 	 *
 	 * Called when worker reaches a terminal state (idle, waiting_for_input, interrupted).
 	 *
-	 * @param leaderCallbacksFactory - Factory to create leader tool callbacks
+	 * @param leaderCallbacksFactory - Factory to create leader tool callbacks (used only for restart recovery)
 	 */
 	async routeWorkerToLeader(
 		groupId: string,
@@ -319,8 +379,10 @@ export class TaskGroupManager {
 			return null;
 		}
 
-		// Lazy-start leader session if this is the first review round.
-		// Deferred bootstrap data is persisted in DB metadata so restart is safe.
+		// Restart-recovery fallback: re-create the leader session from persisted bootstrap config.
+		// In the normal code path the leader is created eagerly in spawn(), so leaderAlreadyExists
+		// will be true and this block is skipped. This only runs after a daemon restart where the
+		// in-memory session cache was cleared.
 		const deferredLeader = group.deferredLeader;
 		let shouldClearDeferredLeader = false;
 
@@ -382,12 +444,12 @@ export class TaskGroupManager {
 				workspacePath: group.workspacePath ?? this.workspacePath,
 				groupId: group.id,
 				model: this.model,
+				provider: this._provider,
 				reviewContext: deferredLeader.reviewContext,
 				goalManager: this.goalManager,
 				taskManager: this.taskManager,
 				groupRepo: this.groupRepo,
 				daemonHub: this.daemonHub,
-				runtimeService: this.runtimeService,
 			};
 			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
@@ -413,6 +475,9 @@ export class TaskGroupManager {
 		log.debug(
 			`[routeWorkerToLeader] Group ${groupId}: injecting worker output into leader session`
 		);
+		// Mark leader as having work before injecting so onLeaderTerminalState won't drop
+		// the resulting idle event even if the leader completes synchronously.
+		this.groupRepo.setLeaderHasWork(groupId);
 		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
 		log.info(
 			`[routeWorkerToLeader] Group ${groupId}: worker output injected into leader session successfully`
@@ -456,6 +521,26 @@ export class TaskGroupManager {
 			this.groupRepo.setHumanInterrupted(groupId, false);
 		}
 
+		// Ensure worker session is alive before attempting to route feedback.
+		// If the worker session is not in the runtime cache (e.g., after daemon restart
+		// or session eviction), restore it from DB.
+		// injectMessage will lazily start the SDK query via ensureQueryStarted().
+		if (!this.sessionFactory.hasSession(group.workerSessionId)) {
+			const restored = await this.sessionFactory.restoreSession(group.workerSessionId);
+			if (restored) {
+				log.info(
+					`[routeLeaderToWorker] Group ${groupId}: restored worker session ${group.workerSessionId} from DB`
+				);
+			} else {
+				log.error(
+					`[routeLeaderToWorker] Group ${groupId}: failed to restore worker session ` +
+						`${group.workerSessionId} — session not found in DB`
+				);
+				await this.fail(groupId, 'Worker session lost during restart; task will be re-queued');
+				return null;
+			}
+		}
+
 		// If worker is waiting for input (AskUserQuestion), answer the question.
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
@@ -477,6 +562,16 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
+		// Safety net: clean up any other stale active groups for this task BEFORE completing
+		// the canonical group. This ensures we aren't racing against the unique index, and
+		// any stale duplicates are resolved before the primary group transitions.
+		const staleCount = this.groupRepo.cleanupStaleGroupsForTask(group.taskId, groupId);
+		if (staleCount > 0) {
+			log.warn(
+				`[complete] Task ${group.taskId}: cleaned up ${staleCount} stale active group(s) before completion`
+			);
+		}
+
 		// Complete the group
 		const updated = this.groupRepo.completeGroup(groupId, group.version);
 		if (!updated) return null;
@@ -488,8 +583,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 
 		return updated;
 	}
@@ -503,6 +597,16 @@ export class TaskGroupManager {
 	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
+
+		// Safety net: clean up any other stale active groups for this task BEFORE failing
+		// the canonical group. This ensures stale duplicates are resolved before the
+		// primary group transitions.
+		const staleCount = this.groupRepo.cleanupStaleGroupsForTask(group.taskId, groupId);
+		if (staleCount > 0) {
+			log.warn(
+				`[fail] Task ${group.taskId}: cleaned up ${staleCount} stale active group(s) before failure`
+			);
+		}
 
 		// Fail the group
 		const updated = this.groupRepo.failGroup(groupId, group.version);
@@ -589,6 +693,8 @@ export class TaskGroupManager {
 
 		// Inject into leader first. If this fails, caller can safely rollback
 		// task status/approval without restoring group metadata.
+		// Mark before inject so the resulting terminal event is not dropped.
+		this.groupRepo.setLeaderHasWork(groupId);
 		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 
 		// Reset group metadata for the new cycle (same as resumeWorkerFromHuman).
@@ -641,8 +747,7 @@ export class TaskGroupManager {
 		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
-			// Already terminal - cleanup worktree if not done
-			await this.cleanupWorktree(group);
+			// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 			return group;
 		}
 
@@ -652,8 +757,7 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// Worktree preserved for potential reactivation — only archiveGroup() cleans up
 
 		return updated;
 	}

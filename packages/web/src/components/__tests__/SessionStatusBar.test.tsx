@@ -9,19 +9,34 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@neokai/shared';
 import SessionStatusBar from '../SessionStatusBar';
+import { getProviderLabel } from '../../hooks';
+
+// Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
+// Individual tests can call mockGetHubIfConnected.mockReturnValue({ request: ... }) to
+// simulate an authenticated connection.
+const mockGetHubIfConnected = vi.fn(() => null);
+
+vi.mock('../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHubIfConnected: () => mockGetHubIfConnected(),
+		onConnection: vi.fn(() => () => {}),
+	},
+}));
 
 describe('SessionStatusBar', () => {
 	const mockOnModelSwitch = vi.fn(() => Promise.resolve());
 	const mockOnAutoScrollChange = vi.fn(() => {});
 	const mockOnCoordinatorModeChange = vi.fn(() => {});
+	const mockOnSandboxModeChange = vi.fn(() => {});
 
 	const mockModelInfo: ModelInfo = {
 		id: 'sonnet',
 		name: 'Sonnet 4.5',
 		family: 'sonnet',
+		provider: 'anthropic',
 		isDefault: true,
 	};
 
@@ -31,6 +46,7 @@ describe('SessionStatusBar', () => {
 			alias: 'opus',
 			name: 'Opus 4.5',
 			family: 'opus',
+			provider: 'anthropic',
 			isDefault: false,
 		},
 		{
@@ -38,6 +54,7 @@ describe('SessionStatusBar', () => {
 			alias: 'sonnet',
 			name: 'Sonnet 4.5',
 			family: 'sonnet',
+			provider: 'anthropic',
 			isDefault: true,
 		},
 		{
@@ -45,6 +62,7 @@ describe('SessionStatusBar', () => {
 			alias: 'haiku',
 			name: 'Haiku 4.5',
 			family: 'haiku',
+			provider: 'anthropic',
 			isDefault: false,
 		},
 	];
@@ -75,6 +93,8 @@ describe('SessionStatusBar', () => {
 		coordinatorMode: true,
 		coordinatorSwitching: false,
 		onCoordinatorModeChange: mockOnCoordinatorModeChange,
+		sandboxEnabled: false,
+		onSandboxModeChange: mockOnSandboxModeChange,
 	};
 
 	beforeEach(() => {
@@ -82,6 +102,9 @@ describe('SessionStatusBar', () => {
 		mockOnModelSwitch.mockClear();
 		mockOnAutoScrollChange.mockClear();
 		mockOnCoordinatorModeChange.mockClear();
+		mockOnSandboxModeChange.mockClear();
+		// Reset hub to null (no connection) between tests — individual tests can override
+		mockGetHubIfConnected.mockReturnValue(null);
 	});
 
 	afterEach(() => {
@@ -409,7 +432,7 @@ describe('SessionStatusBar', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
-			expect(container.textContent).toContain('(current)');
+			expect(container.textContent).toContain('✓');
 		});
 
 		it('should call onModelSwitch when a model is selected', async () => {
@@ -425,7 +448,9 @@ describe('SessionStatusBar', () => {
 			const opusButton = buttons.find((btn) => btn.textContent?.includes('Opus 4.5'));
 			fireEvent.click(opusButton!);
 
-			expect(mockOnModelSwitch).toHaveBeenCalledWith('opus');
+			expect(mockOnModelSwitch).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'opus', family: 'opus' })
+			);
 		});
 
 		it('should close model dropdown when clicking it again', () => {
@@ -662,6 +687,7 @@ describe('SessionStatusBar', () => {
 				name: 'Claude Opus 4',
 				family: 'opus',
 				isDefault: false,
+				provider: 'anthropic',
 			};
 			const { container } = render(
 				<SessionStatusBar {...defaultProps} currentModelInfo={opusModelInfo} />
@@ -677,6 +703,7 @@ describe('SessionStatusBar', () => {
 				name: 'Claude Haiku 3',
 				family: 'haiku',
 				isDefault: false,
+				provider: 'anthropic',
 			};
 			const { container } = render(
 				<SessionStatusBar {...defaultProps} currentModelInfo={haikuModelInfo} />
@@ -763,6 +790,254 @@ describe('SessionStatusBar', () => {
 				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
 			);
 			expect(coordinatorButton?.className).toContain('border-gray-600');
+		});
+	});
+
+	describe('Provider Badge (colored dot)', () => {
+		it('should show orange dot for Anthropic provider', () => {
+			const anthropicModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={anthropicModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Anthropic');
+			expect(badge?.getAttribute('aria-label')).toBe('Anthropic');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#D97757');
+		});
+
+		it('should not show provider badge when provider is undefined', () => {
+			const noProviderModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: undefined,
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={noProviderModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should show purple dot for anthropic-copilot provider', () => {
+			const copilotModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-copilot',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={copilotModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Copilot');
+			expect(badge?.getAttribute('aria-label')).toBe('Copilot');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#8957E5');
+		});
+
+		it('should show white dot with ring for anthropic-codex provider', () => {
+			const codexModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-codex',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={codexModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Codex');
+			expect(badge?.getAttribute('aria-label')).toBe('Codex');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FFFFFF');
+			expect(badge?.className).toContain('ring-1');
+		});
+
+		it('should show light blue dot for glm provider', () => {
+			const glmModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'glm',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={glmModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('GLM');
+			expect(badge?.getAttribute('aria-label')).toBe('GLM');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#7DD3FC');
+		});
+
+		it('should show light red dot for minimax provider', () => {
+			const minimaxModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'minimax',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={minimaxModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('MiniMax');
+			expect(badge?.getAttribute('aria-label')).toBe('MiniMax');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FCA5A5');
+		});
+
+		it('should show gray dot for unknown provider using getProviderLabel fallback', () => {
+			const unknownProvider = 'some-unknown-provider';
+			const unknownModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: unknownProvider,
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={unknownModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			const expectedLabel = getProviderLabel(unknownProvider);
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe(expectedLabel);
+			expect(badge?.getAttribute('aria-label')).toBe(expectedLabel);
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#9CA3AF');
+		});
+
+		it('should have explicit dot color for every known provider', () => {
+			const knownProviders = [
+				'anthropic',
+				'anthropic-copilot',
+				'anthropic-codex',
+				'glm',
+				'minimax',
+			];
+			for (const provider of knownProviders) {
+				const modelInfo: ModelInfo = { ...mockModelInfo, provider };
+				const { container, unmount } = render(
+					<SessionStatusBar {...defaultProps} currentModelInfo={modelInfo} />
+				);
+				const badge = container.querySelector('[data-testid="provider-badge"]');
+				expect(
+					(badge as HTMLElement)?.style.backgroundColor,
+					`${provider} should have explicit brand color, not fallback gray`
+				).not.toBe('#9CA3AF');
+				unmount();
+			}
+		});
+
+		it('should render as a dot with no text content', () => {
+			const copilotModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-copilot',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={copilotModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge?.textContent).toBe('');
+			expect(badge?.className).toContain('rounded-full');
+		});
+	});
+
+	describe('Model Dropdown — provider group headers', () => {
+		it('should render provider group header label when dropdown is open', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// All mock models belong to 'anthropic' → label "Anthropic" should appear
+			expect(container.textContent).toContain('Anthropic');
+		});
+
+		it('should render one provider group header per distinct provider', () => {
+			const multiProviderModels: ModelInfo[] = [
+				{ id: 'opus', alias: 'opus', name: 'Opus 4.5', family: 'opus', provider: 'anthropic' },
+				{
+					id: 'copilot-sonnet',
+					alias: 'copilot-sonnet',
+					name: 'Sonnet (Copilot)',
+					family: 'sonnet',
+					provider: 'anthropic-copilot',
+				},
+			];
+
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} availableModels={multiProviderModels} />
+			);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			expect(container.textContent).toContain('Anthropic');
+			expect(container.textContent).toContain('Copilot');
+		});
+
+		it('should render an availability dot for each provider group', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// Provider availability dots have flex-shrink-0 to distinguish them from
+			// the connection status dot (which does not have that class)
+			const providerDots = Array.from(
+				container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+			);
+			expect(providerDots.length).toBeGreaterThan(0);
+		});
+
+		it('should show gray availability dot when provider is not authenticated', () => {
+			// No hub → auth.providers returns null → isAuthenticated defaults to false → gray dot
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			const providerDots = Array.from(
+				container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+			);
+			expect(providerDots.length).toBeGreaterThan(0);
+			expect(providerDots[0].className).toContain('bg-gray-500');
+		});
+
+		it('should show green availability dot when provider is authenticated', async () => {
+			// Configure hub to return authenticated status for 'anthropic'
+			mockGetHubIfConnected.mockReturnValue({
+				request: vi.fn().mockImplementation((method: string) => {
+					if (method === 'auth.providers') {
+						return Promise.resolve({
+							providers: [{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true }],
+						});
+					}
+					return Promise.resolve(null);
+				}),
+				onEvent: vi.fn(() => () => {}),
+				onConnection: vi.fn(() => () => {}),
+				isConnected: vi.fn(() => true),
+			});
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			// Wait for the auth.providers effect to resolve
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			const providerDots = Array.from(
+				container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+			);
+			expect(providerDots.length).toBeGreaterThan(0);
+			expect(providerDots[0].className).toContain('bg-green-500');
 		});
 	});
 });
