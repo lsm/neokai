@@ -468,7 +468,9 @@ test.describe('Visual Workflow Editor', () => {
 
 		// First add a regular node so we have something to select and potentially delete
 		await editor.getByTestId('add-step-button').click();
-		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+
+		// Should have 2 nodes: Task Agent pinned node + 1 regular node
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(2, {
 			timeout: 3000,
 		});
 
@@ -492,19 +494,22 @@ test.describe('Visual Workflow Editor', () => {
 
 		const editor = page.getByTestId('visual-workflow-editor');
 
-		// The Task Agent node should already be visible
+		// The Task Agent node should already be visible (1 node)
 		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
 		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// Count nodes before adding (should be 1 - just the Task Agent pinned node)
+		let nodes = editor.locator('[data-testid^="workflow-node-"]');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
 
 		// Add a new node via "Add Step" button
 		await editor.getByTestId('add-step-button').click();
 
-		// Wait for the node to appear
-		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+		// Wait for the new node to appear - should now be 2 nodes (Task Agent + new node)
+		await expect(nodes).toHaveCount(2, { timeout: 3000 });
 
-		// Click the new node to select it and open the config panel
-		await nodes.first().click();
+		// Click the new node (second one, not the Task Agent) to select it and open the config panel
+		await nodes.nth(1).click();
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 
 		// The ChannelTopologyBadge should show a channel to/from Task Agent
@@ -544,25 +549,28 @@ test.describe('Visual Workflow Editor', () => {
 
 		const editor = page.getByTestId('visual-workflow-editor');
 
+		// Task Agent pinned node should already be visible (1 node)
+		let nodes = editor.locator('[data-testid^="workflow-node-"]');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
 		// Add a node that will have a Task Agent channel
 		await editor.getByTestId('add-step-button').click();
 
-		// Wait for node and select it to open config panel
-		const nodes = editor.locator('[data-testid^="workflow-node-"]');
-		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+		// Should now have 2 nodes: Task Agent + 1 regular node
+		await expect(nodes).toHaveCount(2, { timeout: 3000 });
 
-		// Configure the node with an agent first
-		await nodes.first().click();
+		// Configure the first regular node (nth(1), not Task Agent at nth(0)) with an agent
+		await nodes.nth(1).click();
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 		await editor.getByTestId('agent-select').selectOption({ index: 1 });
 		await editor.getByTestId('close-button').click();
 
-		// Now add a second node
+		// Now add a second regular node
 		await editor.getByTestId('add-step-button').click();
-		await expect(nodes).toHaveCount(2, { timeout: 3000 });
+		await expect(nodes).toHaveCount(3, { timeout: 3000 });
 
-		// Select the second node
-		await nodes.nth(1).click();
+		// Select the second regular node (nth(2), Task Agent is nth(0))
+		await nodes.nth(2).click();
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 
 		// Verify Task Agent channel exists in the badge
