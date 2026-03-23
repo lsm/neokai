@@ -11,14 +11,14 @@
  *   spaceImport.execute   { spaceId, bundle, conflictResolution? }     → ImportExecuteResult
  *
  * Cross-reference rules:
- * - Exported workflow steps store the agent's display **name** (`agentRef`), not UUID.
+ * - Exported workflow nodes store the agent's display **name** (`agentRef`), not UUID.
  * - On import, agent names are resolved to UUIDs by checking:
  *     1. Agents being imported in the same bundle (by original bundle name)
  *     2. Agents already present in the target space (by name)
  * - If a name cannot be resolved, preview flags it as a validation error;
  *   execute throws and aborts import of that workflow.
- * - Rule `appliesTo` lists step **names** in the exported format and are
- *   remapped to new step UUIDs on import.
+ * - Rule `appliesTo` lists node **names** in the exported format and are
+ *   remapped to new node UUIDs on import.
  *
  * Atomicity:
  * - `spaceImport.execute` wraps all DB mutations in a single SQLite transaction.
@@ -48,7 +48,7 @@ import type {
 	SpaceWorkflow,
 	CreateSpaceAgentParams,
 	CreateSpaceWorkflowParams,
-	WorkflowStepInput,
+	WorkflowNodeInput,
 	WorkflowTransitionInput,
 	WorkflowRuleInput,
 	SpaceExportBundle,
@@ -149,10 +149,10 @@ function buildAgentCreateParams(
  * Convert an `ExportedSpaceWorkflow` into `CreateSpaceWorkflowParams` suitable
  * for `SpaceWorkflowManager.createWorkflow()`.
  *
- * Step names are assigned fresh UUIDs; rule `appliesTo` arrays are remapped from
- * step names to those new UUIDs; agent refs are resolved via the two lookup maps.
+ * Node names are assigned fresh UUIDs; rule `appliesTo` arrays are remapped from
+ * node names to those new UUIDs; agent refs are resolved via the two lookup maps.
  *
- * @returns params ready for the manager, the step-name→UUID map (for rule
+ * @returns params ready for the manager, the node-name→UUID map (for rule
  *          appliesTo remapping), and any warnings about unresolved agent refs.
  */
 function buildWorkflowCreateParams(
@@ -161,29 +161,29 @@ function buildWorkflowCreateParams(
 	exported: ExportedSpaceWorkflow,
 	importedAgentNameToId: Map<string, string>,
 	existingAgentNameToId: Map<string, string>
-): { params: CreateSpaceWorkflowParams; stepNameToId: Map<string, string>; warnings: string[] } {
+): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
 	const warnings: string[] = [];
 
-	// Assign fresh UUIDs to each step (provides stable cross-reference within this import)
-	const stepNameToId = new Map<string, string>();
-	for (const step of exported.steps) {
-		stepNameToId.set(step.name, generateUUID());
+	// Assign fresh UUIDs to each node (provides stable cross-reference within this import)
+	const nodeNameToId = new Map<string, string>();
+	for (const node of exported.nodes) {
+		nodeNameToId.set(node.name, generateUUID());
 	}
 
-	// Build WorkflowStepInput list — resolve agentRef names → UUIDs
-	const steps: WorkflowStepInput[] = exported.steps.map((exportedStep) => {
-		const step: WorkflowStepInput = {
-			id: stepNameToId.get(exportedStep.name)!,
-			name: exportedStep.name,
+	// Build WorkflowNodeInput list — resolve agentRef names → UUIDs
+	const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
+		const node: WorkflowNodeInput = {
+			id: nodeNameToId.get(exportedNode.name)!,
+			name: exportedNode.name,
 		};
 
-		if (exportedStep.agents && exportedStep.agents.length > 0) {
-			// Multi-agent step: resolve each agentRef name → UUID
-			step.agents = exportedStep.agents.map((a) => {
+		if (exportedNode.agents && exportedNode.agents.length > 0) {
+			// Multi-agent node: resolve each agentRef name → UUID
+			node.agents = exportedNode.agents.map((a) => {
 				const agentId =
 					importedAgentNameToId.get(a.agentRef) ?? existingAgentNameToId.get(a.agentRef) ?? null;
 				if (!agentId) {
-					warnings.push(`step "${exportedStep.name}" references unknown agent "${a.agentRef}"`);
+					warnings.push(`node "${exportedNode.name}" references unknown agent "${a.agentRef}"`);
 				}
 				// agentId ?? '' is a placeholder for unresolved refs — warnings.length > 0 will
 				// cause a throw before createWorkflow is called, so '' never reaches the DB.
@@ -192,27 +192,27 @@ function buildWorkflowCreateParams(
 				return entry;
 			});
 		} else {
-			// Single-agent step (backward compat): resolve scalar agentRef → agentId
-			const agentRef = exportedStep.agentRef ?? '';
+			// Single-agent node (backward compat): resolve scalar agentRef → agentId
+			const agentRef = exportedNode.agentRef ?? '';
 			const agentId =
 				importedAgentNameToId.get(agentRef) ?? existingAgentNameToId.get(agentRef) ?? null;
 			if (!agentId && agentRef) {
-				warnings.push(`step "${exportedStep.name}" references unknown agent "${agentRef}"`);
+				warnings.push(`node "${exportedNode.name}" references unknown agent "${agentRef}"`);
 			}
-			step.agentId = agentId ?? '';
+			node.agentId = agentId ?? '';
 		}
 
-		if (exportedStep.instructions !== undefined) step.instructions = exportedStep.instructions;
-		if (exportedStep.channels && exportedStep.channels.length > 0)
-			step.channels = exportedStep.channels;
-		return step;
+		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;
+		if (exportedNode.channels && exportedNode.channels.length > 0)
+			node.channels = exportedNode.channels;
+		return node;
 	});
 
-	// Build WorkflowTransitionInput list — remap step names → new step UUIDs
+	// Build WorkflowTransitionInput list — remap node names → new node UUIDs
 	const transitions: WorkflowTransitionInput[] = exported.transitions.map((t) => {
 		const tr: WorkflowTransitionInput = {
-			from: stepNameToId.get(t.fromStep) ?? t.fromStep,
-			to: stepNameToId.get(t.toStep) ?? t.toStep,
+			from: nodeNameToId.get(t.fromNode) ?? t.fromNode,
+			to: nodeNameToId.get(t.toNode) ?? t.toNode,
 		};
 		if (t.condition !== undefined) tr.condition = t.condition;
 		if (t.order !== undefined) tr.order = t.order;
@@ -220,17 +220,17 @@ function buildWorkflowCreateParams(
 		return tr;
 	});
 
-	// Resolve startStep name → new UUID
-	const startStepId = stepNameToId.get(exported.startStep);
+	// Resolve startNode name → new UUID
+	const startNodeId = nodeNameToId.get(exported.startNode);
 
 	// Build WorkflowRuleInput list — remap appliesTo step names → new step UUIDs
 	const rules: WorkflowRuleInput[] = exported.rules.map((rule) => {
 		const ruleOut: WorkflowRuleInput = { name: rule.name, content: rule.content };
 		if (rule.appliesTo?.length) {
-			const stepIds = rule.appliesTo
-				.map((stepName) => stepNameToId.get(stepName))
+			const nodeIds = rule.appliesTo
+				.map((nodeName) => nodeNameToId.get(nodeName))
 				.filter((id): id is string => id !== undefined);
-			if (stepIds.length > 0) ruleOut.appliesTo = stepIds;
+			if (nodeIds.length > 0) ruleOut.appliesTo = nodeIds;
 		}
 		return ruleOut;
 	});
@@ -238,16 +238,16 @@ function buildWorkflowCreateParams(
 	const params: CreateSpaceWorkflowParams = {
 		spaceId,
 		name,
-		steps,
+		nodes,
 		transitions,
 		rules,
 		tags: exported.tags,
 	};
-	if (startStepId) params.startStepId = startStepId;
+	if (startNodeId) params.startNodeId = startNodeId;
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.config !== undefined) params.config = exported.config;
 
-	return { params, stepNameToId, warnings };
+	return { params, nodeNameToId, warnings };
 }
 
 /**
@@ -255,9 +255,9 @@ function buildWorkflowCreateParams(
  * Returns a list of human-readable error strings (empty = valid).
  *
  * Validates:
- * 1. Agent refs in steps: each agentRef must resolve to a known agent name.
+ * 1. Agent refs in nodes: each agentRef must resolve to a known agent name.
  * 2. Channel role refs: roles referenced in channel `from`/`to` must match the roles
- *    of agents assigned to the step (`'*'` wildcard is always valid).
+ *    of agents assigned to the node (`'*'` wildcard is always valid).
  *
  * Note: condition expression validation is intentionally omitted here — it is
  * already enforced by the Zod schema in validateExportBundle(), so any bundle
@@ -275,46 +275,46 @@ function validateWorkflowForPreview(
 ): string[] {
 	const errors: string[] = [];
 
-	for (const step of exported.steps) {
+	for (const node of exported.nodes) {
 		// ── 1. Agent ref validation ───────────────────────────────────────────
-		const stepAgentRefs: string[] = [];
-		if (step.agents && step.agents.length > 0) {
-			// Multi-agent step: validate each agent ref
-			for (const a of step.agents) {
+		const nodeAgentRefs: string[] = [];
+		if (node.agents && node.agents.length > 0) {
+			// Multi-agent node: validate each agent ref
+			for (const a of node.agents) {
 				if (!importedAgentNames.has(a.agentRef) && !existingAgentNameToId.has(a.agentRef)) {
 					errors.push(
-						`step "${step.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
+						`node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
 					);
 				}
-				stepAgentRefs.push(a.agentRef);
+				nodeAgentRefs.push(a.agentRef);
 			}
 		} else {
-			// Single-agent step: validate scalar agentRef
-			const agentRef = step.agentRef ?? '';
+			// Single-agent node: validate scalar agentRef
+			const agentRef = node.agentRef ?? '';
 			if (agentRef && !importedAgentNames.has(agentRef) && !existingAgentNameToId.has(agentRef)) {
 				errors.push(
-					`step "${step.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
+					`node "${node.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
 				);
 			}
-			if (agentRef) stepAgentRefs.push(agentRef);
+			if (agentRef) nodeAgentRefs.push(agentRef);
 		}
 
 		// ── 2. Channel role validation ────────────────────────────────────────
-		if (step.channels && step.channels.length > 0) {
-			// Collect the set of roles for agents assigned to this step
-			const stepRoles = new Set<string>();
-			for (const agentRef of stepAgentRefs) {
+		if (node.channels && node.channels.length > 0) {
+			// Collect the set of roles for agents assigned to this node
+			const nodeRoles = new Set<string>();
+			for (const agentRef of nodeAgentRefs) {
 				const role = agentNameToRole.get(agentRef);
-				if (role) stepRoles.add(role);
+				if (role) nodeRoles.add(role);
 			}
 
-			for (const channel of step.channels) {
+			for (const channel of node.channels) {
 				const toRoles = Array.isArray(channel.to) ? channel.to : [channel.to];
 				const rolesToCheck = [channel.from, ...toRoles];
 				for (const role of rolesToCheck) {
-					if (role !== '*' && !stepRoles.has(role)) {
+					if (role !== '*' && !nodeRoles.has(role)) {
 						errors.push(
-							`step "${step.name}" channel references role "${role}" which is not matched by any agent in the step`
+							`node "${node.name}" channel references role "${role}" which is not matched by any agent in the node`
 						);
 					}
 				}
@@ -377,11 +377,11 @@ export function setupSpaceExportImportHandlers(
 
 		const referencedNames = new Set<string>();
 		for (const wf of full.workflows) {
-			for (const step of wf.steps) {
-				if (step.agents && step.agents.length > 0) {
-					for (const a of step.agents) referencedNames.add(a.agentRef);
-				} else if (step.agentRef) {
-					referencedNames.add(step.agentRef);
+			for (const node of wf.nodes) {
+				if (node.agents && node.agents.length > 0) {
+					for (const a of node.agents) referencedNames.add(a.agentRef);
+				} else if (node.agentRef) {
+					referencedNames.add(node.agentRef);
 				}
 			}
 		}
