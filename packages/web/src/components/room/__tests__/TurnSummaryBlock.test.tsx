@@ -230,6 +230,13 @@ describe('TurnSummaryBlock', () => {
 			const root = container.querySelector('[data-testid="turn-block"]');
 			expect(root!.className).not.toContain('ring-blue-500');
 		});
+
+		it('does NOT apply ring when isSelected prop is omitted (default=false)', () => {
+			const turn = makeTurn();
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).not.toContain('ring-blue-500');
+		});
 	});
 
 	// ── Error state ───────────────────────────────────────────────────────────
@@ -252,6 +259,18 @@ describe('TurnSummaryBlock', () => {
 			const turn = makeTurn({ isError: false, errorMessage: null });
 			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
 			// No red text anywhere
+			expect(container.querySelector('.text-red-400')).toBeNull();
+		});
+
+		it('applies red border but no error message div when isError=true and errorMessage=null', () => {
+			// This edge case is reachable: useTurnBlocks can set isError=true with errorMessage=null
+			// when error detection fires but no text is extractable.
+			const turn = makeTurn({ isError: true, errorMessage: null });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			// Border-red-800 class still applied
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-red-800');
+			// But no red message div rendered (guarded by turn.isError && turn.errorMessage)
 			expect(container.querySelector('.text-red-400')).toBeNull();
 		});
 	});
@@ -314,6 +333,7 @@ describe('TurnSummaryBlock', () => {
 			['human', 'text-green-400'],
 			['craft', 'text-blue-400'],
 			['lead', 'text-purple-400'],
+			['system', 'text-gray-500'],
 		];
 
 		it.each(roles)('applies correct label color for role=%s', (role, expectedClass) => {
@@ -339,6 +359,16 @@ describe('TurnSummaryBlock', () => {
 			const nameEl = container.querySelector('[data-testid="turn-block-agent-name"]');
 			expect(nameEl!.textContent).toBe('custom-agent');
 		});
+
+		it('falls back to agentRole when agentLabel is empty string (system role quirk)', () => {
+			// ROLE_COLORS['system'].label is '' — useTurnBlocks propagates this as agentLabel.
+			// The component uses `turn.agentLabel || turn.agentRole`, so the empty agentLabel
+			// causes the agentRole string 'system' to be rendered instead.
+			const turn = makeTurn({ agentRole: 'system', agentLabel: '' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const nameEl = container.querySelector('[data-testid="turn-block-agent-name"]');
+			expect(nameEl!.textContent).toBe('system');
+		});
 	});
 
 	// ── Duration formatting ────────────────────────────────────────────────────
@@ -360,6 +390,71 @@ describe('TurnSummaryBlock', () => {
 			const turn = makeTurn({ startTime: 0, endTime: 125_000 });
 			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
 			expect(container.textContent).toContain('2m 5s');
+		});
+
+		it('shows 0s for zero duration', () => {
+			const turn = makeTurn({ startTime: 1_000_000, endTime: 1_000_000 });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			expect(container.textContent).toContain('0s');
+		});
+	});
+
+	// ── Accessibility ─────────────────────────────────────────────────────────
+
+	describe('accessibility', () => {
+		it('has role="button" on the root element', () => {
+			const { container } = render(<TurnSummaryBlock turn={makeTurn()} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root?.getAttribute('role')).toBe('button');
+		});
+
+		it('has tabIndex=0 for keyboard navigation', () => {
+			const { container } = render(<TurnSummaryBlock turn={makeTurn()} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]') as HTMLElement;
+			expect(root?.tabIndex).toBe(0);
+		});
+
+		it('does NOT call onClick for non-Enter/Space key presses', () => {
+			const onClickMock = vi.fn();
+			const turn = makeTurn();
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={onClickMock} />);
+			const root = container.querySelector('[data-testid="turn-block"]') as HTMLElement;
+			fireEvent.keyDown(root, { key: 'Escape' });
+			fireEvent.keyDown(root, { key: 'Tab' });
+			fireEvent.keyDown(root, { key: 'ArrowDown' });
+			expect(onClickMock).not.toHaveBeenCalled();
+		});
+
+		it('active indicator has aria-label="Active turn"', () => {
+			const turn = makeTurn({ isActive: true, endTime: null });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const indicator = container.querySelector('[data-testid="turn-block-active"]');
+			expect(indicator?.getAttribute('aria-label')).toBe('Active turn');
+		});
+	});
+
+	// ── Border class ──────────────────────────────────────────────────────────
+
+	describe('border class', () => {
+		it('applies role border class from ROLE_COLORS for coder', () => {
+			const turn = makeTurn({ agentRole: 'coder' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-l-blue-500');
+		});
+
+		it('applies role border class for leader', () => {
+			const turn = makeTurn({ agentRole: 'leader' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-l-purple-500');
+		});
+
+		it('falls back to gray border for unknown role', () => {
+			const turn = makeTurn({ agentRole: 'unknown-role', agentLabel: 'Unknown' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-l-gray-500');
 		});
 	});
 });
