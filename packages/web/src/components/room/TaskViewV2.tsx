@@ -424,7 +424,11 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 							) : (
 								turnBlocks.map((item) => {
 									if (item.type === 'turn') {
-										return <AgentTurnBlock key={item.turn.id} turn={item.turn} />;
+										return (
+											<div key={item.turn.id} class="mb-4">
+												<AgentTurnBlock turn={item.turn} />
+											</div>
+										);
 									}
 									return <RuntimeMessageRenderer key={item.index} message={item} />;
 								})
