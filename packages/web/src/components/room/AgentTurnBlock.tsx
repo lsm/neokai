@@ -192,6 +192,10 @@ function NestedMessageRenderer({
 
 	// Handle user messages (typically tool results)
 	if (message.type === 'user') {
+		// Skip synthetic user messages - these are sub-agent prompts that duplicate Task tool input
+		const userMessage = message as { isSynthetic?: boolean };
+		if (userMessage.isSynthetic) return null;
+
 		const apiMessage = message.message;
 		const content = apiMessage.content;
 
