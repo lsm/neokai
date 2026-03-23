@@ -7,7 +7,7 @@
  * - Expandable via "Show more" button at bottom edge
  */
 
-import { useState, useRef, useLayoutEffect, useMemo } from 'preact/hooks';
+import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
 interface ThinkingBlockProps {
@@ -36,9 +36,7 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 	const [needsTruncation, setNeedsTruncation] = useState(false);
 	const contentRef = useRef<HTMLPreElement>(null);
 
-	// In compact mode, always truncate to first line
-	const previewLineCount = compact ? 1 : PREVIEW_LINE_COUNT;
-	const previewMaxHeight = previewLineCount * LINE_HEIGHT_PX;
+	const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
 	// Check if content exceeds preview height
 	useLayoutEffect(() => {
@@ -47,14 +45,6 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 			setNeedsTruncation(scrollHeight > previewMaxHeight);
 		}
 	}, [content, previewMaxHeight]);
-
-	// In compact mode, truncate content to first line with "..."
-	const displayContent = useMemo(() => {
-		if (!compact) return content;
-		const firstLineEnd = content.indexOf('\n');
-		if (firstLineEnd === -1) return content;
-		return content.slice(0, firstLineEnd);
-	}, [content, compact]);
 
 	const charCount = content.length;
 
@@ -90,18 +80,28 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 				<div
 					class={cn(
 						'p-3 bg-white dark:bg-gray-900',
-						!isExpanded && needsTruncation && 'overflow-hidden'
+						!compact && !isExpanded && needsTruncation && 'overflow-hidden'
 					)}
-					style={!isExpanded && needsTruncation ? { maxHeight: `${previewMaxHeight + 24}px` } : {}}
+					style={
+						!compact && !isExpanded && needsTruncation
+							? { maxHeight: `${previewMaxHeight + 24}px` }
+							: {}
+					}
 				>
-					<pre ref={contentRef} class={cn('text-sm whitespace-pre-wrap font-mono', colors.text)}>
-						{displayContent}
-						{compact && content.indexOf('\n') !== -1 ? '...' : ''}
+					<pre
+						ref={contentRef}
+						class={cn(
+							'text-sm font-mono',
+							colors.text,
+							compact ? 'whitespace-normal break-words line-clamp-1' : 'whitespace-pre-wrap'
+						)}
+					>
+						{content}
 					</pre>
 				</div>
 
 				{/* Gradient fade overlay when truncated and not expanded (hidden in compact mode) */}
-				{needsTruncation && !isExpanded && !compact && (
+				{!compact && needsTruncation && !isExpanded && (
 					<div
 						class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
 						aria-hidden="true"
@@ -109,7 +109,7 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 				)}
 
 				{/* Expand/Collapse button at bottom edge (hidden in compact mode) */}
-				{needsTruncation && !compact && (
+				{!compact && needsTruncation && (
 					<div
 						class={cn('flex justify-center py-2 border-t bg-white dark:bg-gray-900', colors.border)}
 					>
