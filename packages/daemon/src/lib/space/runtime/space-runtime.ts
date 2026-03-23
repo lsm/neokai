@@ -362,7 +362,7 @@ export class SpaceRuntime {
 		// Resolve channel topology for the start step and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
-		this.storeResolvedChannels(run.id, space.id, startStep);
+		this.resolveAndStoreChannels(run.id, space.id, startStep);
 
 		return { run, tasks };
 	}
@@ -780,7 +780,7 @@ export class SpaceRuntime {
 			} else {
 				// Resolve channel topology for the new step.
 				// TODO: Milestone 6: pass to session group creation instead of run config.
-				this.storeResolvedChannels(runId, meta.spaceId, newStep);
+				this.resolveAndStoreChannels(runId, meta.spaceId, newStep);
 			}
 		} catch (err) {
 			if (!(err instanceof WorkflowTransitionError)) {
@@ -1000,29 +1000,83 @@ export class SpaceRuntime {
 	 * TODO Milestone 6: pass resolvedChannels to session group metadata in
 	 * TaskAgentManager.spawnTaskAgent() instead of storing in run config.
 	 *
-	 * Steps with no `channels` declaration store an empty array, clearing any
-	 * previously stored topology from prior steps. This prevents stale topology
-	 * from a channel-declaring step from leaking into subsequent steps that have
-	 * no channels — which would cause list_group_members to report incorrect
-	 * permittedTargets and channelTopologyDeclared=true for the wrong step.
+	 * Default task-agent channels:
+	 * When a step has node agents, bidirectional channels are auto-created between
+	 * 'task-agent' and each node agent role. These defaults are added in addition
+	 * to any user-declared channels, ensuring the Task Agent can always reach peers.
+	 * Duplicates are avoided: if the user explicitly declares a task-agent channel,
+	 * it is not re-added.
+	 *
+	 * Steps with no `channels` declaration still get default task-agent channels,
+	 * so the Task Agent always has peer communication ability.
 	 */
-	private storeResolvedChannels(runId: string, spaceId: string, step: WorkflowStep): void {
+	resolveAndStoreChannels(runId: string, spaceId: string, step: WorkflowStep): void {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 
 		const config = (run.config ?? {}) as Record<string, unknown>;
 
-		// No channels declared: clear any previously stored topology so list_group_members
-		// does not return stale topology from a prior step.
-		if (!step.channels || step.channels.length === 0) {
-			this.config.workflowRunRepo.updateRun(runId, {
-				config: { ...config, _resolvedChannels: [] },
-			});
-			return;
+		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
+
+		// Resolve user-declared channels (empty array if none declared)
+		const userResolved = resolveStepChannels(step, allAgents);
+
+		// Auto-generate default bidirectional channels between task-agent and each node agent role.
+		// These are added regardless of whether user-declared channels exist, ensuring the
+		// Task Agent can always communicate with step agents.
+		const stepAgents = resolveStepAgents(step);
+		// Deduplicate roles — a step may have multiple agents with the same role,
+		// but we only need one bidirectional channel pair per unique role.
+		const nodeRoles = [
+			...new Set(
+				stepAgents
+					.map((sa) => {
+						const spaceAgent = allAgents.find((a) => a.id === sa.agentId);
+						return spaceAgent?.role ?? null;
+					})
+					.filter((role): role is string => role !== null)
+			),
+		];
+
+		// Build a set of existing channel pairs (fromRole→toRole) to avoid duplicates
+		const existingPairs = new Set<string>();
+		for (const ch of userResolved) {
+			existingPairs.add(`${ch.fromRole}→${ch.toRole}`);
 		}
 
-		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-		const resolved = resolveStepChannels(step, allAgents);
+		// Generate default task-agent ↔ node bidirectional channels.
+		// agentId fields use the role string as a placeholder — ChannelResolver.canSend()
+		// only checks fromRole/toRole, so the actual agentId value does not affect routing.
+		// If agentId enforcement is added in the future, this placeholder should be replaced
+		// with the actual agent's ID (and this comment updated).
+		const defaultChannels: typeof userResolved = [];
+
+		for (const nodeRole of nodeRoles) {
+			// task-agent → node (if not already declared)
+			if (!existingPairs.has(`task-agent→${nodeRole}`)) {
+				defaultChannels.push({
+					fromRole: 'task-agent',
+					toRole: nodeRole,
+					fromAgentId: 'task-agent',
+					toAgentId: nodeRole,
+					direction: 'one-way',
+					isHubSpoke: false,
+				});
+			}
+			// node → task-agent (if not already declared)
+			if (!existingPairs.has(`${nodeRole}→task-agent`)) {
+				defaultChannels.push({
+					fromRole: nodeRole,
+					toRole: 'task-agent',
+					fromAgentId: nodeRole,
+					toAgentId: 'task-agent',
+					direction: 'one-way',
+					isHubSpoke: false,
+				});
+			}
+		}
+
+		const resolved = [...userResolved, ...defaultChannels];
 
 		this.config.workflowRunRepo.updateRun(runId, {
 			config: { ...config, _resolvedChannels: resolved },

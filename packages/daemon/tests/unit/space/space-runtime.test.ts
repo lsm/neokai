@@ -2095,23 +2095,78 @@ describe('SpaceRuntime', () => {
 			expect((resolvedChannels as unknown[]).length).toBeGreaterThan(0);
 		});
 
-		test('storeResolvedChannels: step without channels stores an empty array (clears stale topology)', async () => {
+		test('storeResolvedChannels: step without channels stores default task-agent channels', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'No Channels', agentId: AGENT_CODER },
 			]);
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Run config should have _resolvedChannels set to [] — this prevents stale
-			// topology from a prior step from leaking into the current step.
+			// Run config should have _resolvedChannels set to default task-agent bidirectional channels
+			// (auto-added even when no user-declared channels exist). This ensures the Task Agent
+			// can always reach node agents.
 			const updatedRun = workflowRunRepo.getRun(run.id)!;
 			const resolvedChannels = (updatedRun.config as Record<string, unknown> | undefined)
-				?._resolvedChannels;
-			expect(resolvedChannels).toEqual([]);
+				?._resolvedChannels as Array<Record<string, unknown>>;
+			expect(Array.isArray(resolvedChannels)).toBe(true);
+			expect(resolvedChannels.length).toBeGreaterThan(0);
+			// Default task-agent ↔ coder channels should be present
+			const taskAgentToCoder = resolvedChannels.find(
+				(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+			);
+			expect(taskAgentToCoder).toBeDefined();
+			const coderToTaskAgent = resolvedChannels.find(
+				(ch) => ch.fromRole === 'coder' && ch.toRole === 'task-agent'
+			);
+			expect(coderToTaskAgent).toBeDefined();
 		});
 
-		test('storeResolvedChannels: advancing from channel step to no-channel step clears topology', async () => {
-			// Step A has channels; Step B does not. After advancing, topology should be cleared.
+		test('storeResolvedChannels: deduplicates channels when step has multiple agents with the same role', async () => {
+			// When a step has two agents that share the same role (e.g., two coder agents),
+			// resolveAndStoreChannels should generate only ONE bidirectional task-agent↔coder
+			// channel pair, not two duplicate pairs.
+			const AGENT_CODER_2 = 'agent-coder-2-duplicate-role';
+			seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2', 'coder');
+
+			const stepId = `step-dedup-${Date.now()}`;
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Duplicate Role Test',
+				steps: [
+					{
+						id: stepId,
+						name: 'Two Coders Same Role',
+						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_CODER_2 }],
+					},
+				],
+				transitions: [],
+				startStepId: stepId,
+				rules: [],
+			});
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			const updatedRun = workflowRunRepo.getRun(run.id)!;
+			const resolvedChannels = (updatedRun.config as Record<string, unknown> | undefined)
+				?._resolvedChannels as Array<Record<string, unknown>>;
+			expect(Array.isArray(resolvedChannels)).toBe(true);
+
+			// Should have exactly ONE task-agent→coder channel (not two)
+			const taskAgentToCoderChannels = resolvedChannels.filter(
+				(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+			);
+			expect(taskAgentToCoderChannels).toHaveLength(1);
+
+			// Should have exactly ONE coder→task-agent channel (not two)
+			const coderToTaskAgentChannels = resolvedChannels.filter(
+				(ch) => ch.fromRole === 'coder' && ch.toRole === 'task-agent'
+			);
+			expect(coderToTaskAgentChannels).toHaveLength(1);
+		});
+
+		test('storeResolvedChannels: advancing from channel step to no-channel step replaces topology', async () => {
+			// Step A has channels; Step B does not. After advancing, Step B's default
+			// task-agent channels replace the prior step's channels.
 			const AGENT_REVIEWER = 'agent-reviewer-topo';
 			seedAgentRow(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer', 'reviewer');
 
@@ -2138,10 +2193,10 @@ describe('SpaceRuntime', () => {
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// After start, Step A's channels should be stored
+			// After start, Step A's channels + default task-agent channels should be stored
 			const runAfterStart = workflowRunRepo.getRun(run.id)!;
 			const channelsAfterStart = (runAfterStart.config as Record<string, unknown>)
-				?._resolvedChannels as unknown[];
+				?._resolvedChannels as Array<Record<string, unknown>>;
 			expect(channelsAfterStart.length).toBeGreaterThan(0);
 
 			// Mark step A tasks as completed so we can advance
@@ -2156,11 +2211,16 @@ describe('SpaceRuntime', () => {
 			// path that calls storeResolvedChannels() after a successful advance.
 			await runtime.executeTick();
 
-			// After advancing, topology should be cleared to []
+			// After advancing, Step B's default task-agent channels replace the prior topology
 			const runAfterAdvance = workflowRunRepo.getRun(run.id)!;
 			const channelsAfterAdvance = (runAfterAdvance.config as Record<string, unknown>)
-				?._resolvedChannels;
-			expect(channelsAfterAdvance).toEqual([]);
+				?._resolvedChannels as Array<Record<string, unknown>>;
+			// Step B has a single agent (coder) — it gets default task-agent ↔ coder channels
+			expect(channelsAfterAdvance.length).toBeGreaterThan(0);
+			const taskAgentToCoder = channelsAfterAdvance.find(
+				(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+			);
+			expect(taskAgentToCoder).toBeDefined();
 		});
 	});
 });

@@ -20,6 +20,7 @@
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
  *   - list_group_members    — List all group members with session IDs and permitted channels
+ *   - send_message          — Send a message to peer step agents via channel topology
  *
  * ## Content interpolation
  * All operator-supplied content (space.backgroundContext, space.instructions,
@@ -209,6 +210,12 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`\`permittedTargets\` (which roles they can message per the declared channel topology). ` +
 			`Use this to discover active sub-sessions and their communication permissions.`
 	);
+	sections.push(
+		`- **send_message** — Send a message directly to one or more peer step agents via declared channel topology. ` +
+			`Supports point-to-point (\`coder\`), broadcast (\`*\`), and multicast (\`[coder, reviewer]\`). ` +
+			`The Task Agent has default bidirectional channels to all node agents, so it can always ` +
+			`message any peer step agent. Use \`list_group_members\` to see permitted targets.`
+	);
 
 	// ---- step_result vs report_result status ---------------------------------
 	sections.push(`\n## Result Fields: \`step_result\` vs \`report_result.status\`\n`);
@@ -291,7 +298,12 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`Channel topology is enforced uniformly across all agents. ` +
-			`(Note: peer messaging via \`send_message\` will be added in a follow-up task.)\n`
+			`The Task Agent uses \`send_message\` for all inter-agent communication with step agents.\n`
+	);
+	sections.push(
+		`Default channels: the Task Agent has default bidirectional channels to all node agent roles, ` +
+			`so it can always reach any peer step agent. If a user removes a Task Agent channel, ` +
+			`the Task Agent can no longer message that node until the channel is restored.\n`
 	);
 
 	// ---- Task context -------------------------------------------------------
