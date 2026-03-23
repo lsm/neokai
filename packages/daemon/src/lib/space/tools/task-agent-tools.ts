@@ -1,12 +1,13 @@
 /**
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
- * These handlers implement the business logic for the 5 Task Agent tools:
+ * These handlers implement the business logic for the 6 Task Agent tools:
  *   spawn_step_agent      — Spawn a sub-session for a workflow step's assigned agent
  *   check_step_status     — Poll the status of a running step agent sub-session
  *   advance_workflow      — Advance the workflow to the next step after current step completes
  *   report_result         — Mark the task as completed/failed and record the result
  *   request_human_input   — Pause execution and surface a question to the human user
+ *   list_group_members    — List all members of the current task's session group
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
@@ -44,7 +45,6 @@ import {
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
-	RelayMessageSchema,
 } from './task-agent-tool-schemas';
 import { resolveStepAgents } from '@neokai/shared';
 import type {
@@ -54,7 +54,6 @@ import type {
 	ReportResultInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
-	RelayMessageInput,
 } from './task-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
@@ -156,7 +155,6 @@ export interface TaskAgentToolsConfig {
 	/**
 	 * Injects a message into an existing sub-session as a user turn.
 	 * Called after spawn to deliver the step's task context message.
-	 * Also used by relay_message to forward messages between group members.
 	 */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
 	/**
@@ -167,7 +165,7 @@ export interface TaskAgentToolsConfig {
 	onSubSessionComplete: (stepId: string, sessionId: string) => Promise<void>;
 	/**
 	 * Session group repository for looking up group members.
-	 * Required by list_group_members and relay_message tools.
+	 * Required by list_group_members tool.
 	 * The fast in-memory taskGroupIds map in TaskAgentManager is used to find the group ID,
 	 * then the repo provides the member list.
 	 */
@@ -750,7 +748,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * If no channels are declared, `permittedTargets` is empty for all members.
 		 *
 		 * The Task Agent itself is listed as a member (role: 'task-agent').
-		 * Use `relay_message` to send messages to any member regardless of topology.
 		 */
 		async list_group_members(_args: ListGroupMembersInput): Promise<ToolResult> {
 			const groupId = getGroupId();
@@ -793,87 +790,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				message:
 					`Group has ${members.length} member(s). ` +
 					(resolver.isEmpty()
-						? 'No channel topology declared — use relay_message to communicate freely.'
-						: `Channel topology is active. Task Agent can still relay to any member via relay_message.`),
-			});
-		},
-
-		/**
-		 * Relay a message to a target sub-session as a user turn.
-		 *
-		 * The Task Agent is NOT constrained by channel topology — it can relay to
-		 * any member in the same group. This enables routing, arbitration, and
-		 * feedback delivery that step agents cannot do directly.
-		 *
-		 * Cross-group messaging is rejected: the target session must belong to
-		 * the same session group as this Task Agent (verified via DB lookup).
-		 *
-		 * The message is injected via messageInjector, which serializes writes
-		 * per-session so concurrent injections are safely queued.
-		 */
-		async relay_message(args: RelayMessageInput): Promise<ToolResult> {
-			const { target_session_id, message } = args;
-
-			// Validate that the target belongs to this group (DB lookup for restart safety).
-			const groupId = getGroupId();
-			if (!groupId) {
-				return jsonResult({
-					success: false,
-					error:
-						`No session group found for task ${taskId}. ` +
-						`Cannot validate relay target without a group.`,
-				});
-			}
-
-			const group = sessionGroupRepo.getGroup(groupId);
-			if (!group) {
-				return jsonResult({
-					success: false,
-					error: `Session group ${groupId} not found.`,
-				});
-			}
-
-			// Check that the target session is a member of this group
-			const targetMember = group.members.find((m) => m.sessionId === target_session_id);
-			if (!targetMember) {
-				return jsonResult({
-					success: false,
-					error:
-						`Target session ${target_session_id} is not a member of group ${groupId}. ` +
-						`Cross-group messaging is not permitted. ` +
-						`Use list_group_members to see valid targets.`,
-				});
-			}
-
-			// Reject self-relay (Task Agent → its own session). The Task Agent is a group
-			// member with role 'task-agent'. Injecting a user-turn into its own session would
-			// produce a spurious conversation turn in the running Task Agent conversation.
-			if (targetMember.role === 'task-agent') {
-				return jsonResult({
-					success: false,
-					error:
-						`Cannot relay a message to the Task Agent's own session (role: 'task-agent'). ` +
-						`relay_message is for communicating with step agent sub-sessions only.`,
-				});
-			}
-
-			// Inject the message into the target session.
-			// messageInjector serializes writes per-session; concurrent calls queue safely.
-			try {
-				await messageInjector(target_session_id, message);
-			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err);
-				return jsonResult({
-					success: false,
-					error: `Failed to inject message into session ${target_session_id}: ${msg}`,
-				});
-			}
-
-			return jsonResult({
-				success: true,
-				targetSessionId: target_session_id,
-				targetRole: targetMember.role,
-				message: `Message relayed to ${targetMember.role} (session ${target_session_id}).`,
+						? 'No channel topology declared — all messaging is unrestricted.'
+						: `Channel topology is active and enforced.`),
 			});
 		},
 
@@ -1001,14 +919,6 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'Use this to discover which sub-sessions are active and what messaging channels are declared.',
 			ListGroupMembersSchema.shape,
 			(args) => handlers.list_group_members(args)
-		),
-		tool(
-			'relay_message',
-			'Relay a message to a target sub-session as a user turn. ' +
-				'The Task Agent is not constrained by channel topology and can relay to any group member. ' +
-				'Cross-group messaging is rejected. Use list_group_members to find valid target session IDs.',
-			RelayMessageSchema.shape,
-			(args) => handlers.relay_message(args)
 		),
 	];
 

@@ -1,14 +1,13 @@
 /**
  * Unit tests for createTaskAgentToolHandlers()
  *
- * Covers all 7 Task Agent tools:
+ * Covers all 6 Task Agent tools:
  *   spawn_step_agent    — creates sub-session, registers callback, injects message
  *   check_step_status   — polling detection of sub-session completion
  *   advance_workflow    — delegates to WorkflowExecutor.advance(), handles gate errors
  *   report_result       — transitions main task to final status
  *   request_human_input — pauses execution, marks task needs_attention
  *   list_group_members  — lists group members with session IDs and channel info
- *   relay_message       — injects a message into a target group member's session
  *
  * Tests use a real SQLite database (via runMigrations) and mock SubSessionFactory
  * so no real agent sessions are created.
@@ -1605,14 +1604,13 @@ describe('createTaskAgentMcpServer', () => {
 		expect(server.name).toBe('task-agent');
 	});
 
-	test('registers all 7 expected tools', async () => {
+	test('registers all 6 expected tools', async () => {
 		const { server } = await makeServerCtx();
 		const registered = Object.keys(server.instance._registeredTools).sort();
 		expect(registered).toEqual([
 			'advance_workflow',
 			'check_step_status',
 			'list_group_members',
-			'relay_message',
 			'report_result',
 			'request_human_input',
 			'spawn_step_agent',
@@ -1725,9 +1723,9 @@ describe('createTaskAgentMcpServer', () => {
 
 		// Each call returns a distinct server instance
 		expect(server1.instance).not.toBe(server2.instance);
-		// Both register all 7 tools
-		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(7);
-		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(7);
+		// Both register all 6 tools
+		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(6);
+		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(6);
 	});
 });
 
@@ -1893,265 +1891,5 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 
 		const reviewerMember = parsed.members.find((m: { role: string }) => m.role === 'reviewer');
 		expect(reviewerMember.permittedTargets).toEqual([]); // reviewer cannot send to coder (one-way)
-	});
-});
-
-// ===========================================================================
-// relay_message tests
-// ===========================================================================
-
-describe('createTaskAgentToolHandlers — relay_message', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('returns error when no group ID is available', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		const result = await handlers.relay_message({
-			target_session_id: 'any-session',
-			message: 'hello',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('No session group found');
-	});
-
-	test('returns error when target session is not in group', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'known-session', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: group.id })
-		);
-
-		const result = await handlers.relay_message({
-			target_session_id: 'unknown-session-from-another-group',
-			message: 'hello',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('not a member of group');
-	});
-
-	test('successfully relays a message to a group member', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session-relay', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				groupId: group.id,
-				messageInjector: async (sessionId, message) => {
-					injectedMessages.push({ sessionId, message });
-				},
-			})
-		);
-
-		const result = await handlers.relay_message({
-			target_session_id: 'coder-session-relay',
-			message: 'Please fix the tests.',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(parsed.targetSessionId).toBe('coder-session-relay');
-		expect(parsed.targetRole).toBe('coder');
-
-		// Verify the injector was called with correct args
-		expect(injectedMessages).toHaveLength(1);
-		expect(injectedMessages[0].sessionId).toBe('coder-session-relay');
-		expect(injectedMessages[0].message).toBe('Please fix the tests.');
-	});
-
-	test('returns error when message injection fails', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'failing-session', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				groupId: group.id,
-				messageInjector: async () => {
-					throw new Error('Session is not available');
-				},
-			})
-		);
-
-		const result = await handlers.relay_message({
-			target_session_id: 'failing-session',
-			message: 'hello',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('Session is not available');
-	});
-
-	test('rejects self-relay when target is the task-agent member', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		// Add Task Agent itself as a group member (matching production setup)
-		ctx.sessionGroupRepo.addMember(group.id, 'task-agent-session-self', {
-			role: 'task-agent',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, { groupId: group.id })
-		);
-
-		// Attempt to relay to its own session — should be rejected
-		const result = await handlers.relay_message({
-			target_session_id: 'task-agent-session-self',
-			message: 'This would create a spurious turn.',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('task-agent');
-	});
-
-	test('relay to a completed group member calls injector (failure handled by injector)', async () => {
-		// By design, relay_message does not pre-check member status — the messageInjector
-		// handles failures (e.g., session no longer active). This test documents the behavior:
-		// if the injector throws, relay_message returns success: false with the error.
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'completed-session', {
-			role: 'coder',
-			status: 'completed', // already done
-		});
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				groupId: group.id,
-				// Simulate injector throwing because session is gone
-				messageInjector: async () => {
-					throw new Error('Sub-session not found: completed-session');
-				},
-			})
-		);
-
-		const result = await handlers.relay_message({
-			target_session_id: 'completed-session',
-			message: 'Are you still there?',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		// Injector threw → relay_message returns failure
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('Sub-session not found');
-	});
-
-	test('relay is not constrained by channel topology', async () => {
-		// Even with one-way channels only coder→reviewer, Task Agent can relay reviewer→coder
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		// Channels: only coder → reviewer (one-way)
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: {
-				_resolvedChannels: [
-					{
-						fromRole: 'coder',
-						toRole: 'reviewer',
-						fromAgentId: ctx.agentId,
-						toAgentId: 'agent-reviewer',
-						direction: 'one-way',
-						isHubSpoke: false,
-					},
-				],
-			},
-		});
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
-
-		const injectedMessages: string[] = [];
-		const factory = makeMockSessionFactory();
-		// Task Agent relays from reviewer back to coder (not in declared topology)
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				groupId: group.id,
-				messageInjector: async (_sid, msg) => {
-					injectedMessages.push(msg);
-				},
-			})
-		);
-
-		// This should succeed — Task Agent is unrestricted
-		const result = await handlers.relay_message({
-			target_session_id: 'coder-session',
-			message: 'Feedback from reviewer: please update the API docs.',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(injectedMessages[0]).toBe('Feedback from reviewer: please update the API docs.');
 	});
 });

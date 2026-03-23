@@ -20,7 +20,6 @@
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
  *   - list_group_members    — List all group members with session IDs and permitted channels
- *   - relay_message         — Inject a user-turn message into any group member (unrestricted)
  *
  * ## Content interpolation
  * All operator-supplied content (space.backgroundContext, space.instructions,
@@ -208,14 +207,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`- **list_group_members** — List all members of the current task's session group. ` +
 			`Returns each member's \`sessionId\`, \`role\`, \`agentId\`, \`status\`, and ` +
 			`\`permittedTargets\` (which roles they can message per the declared channel topology). ` +
-			`Use this to discover active sub-sessions before calling \`relay_message\`.`
-	);
-	sections.push(
-		`- **relay_message** — Inject a user-turn message into any group member's session. ` +
-			`Pass \`target_session_id\` (from \`list_group_members\`) and the \`message\` string. ` +
-			`You are NOT constrained by channel topology — you can relay to any member. ` +
-			`Cross-group messaging is rejected. Use this to route feedback, questions, or context ` +
-			`between step agents that cannot communicate directly.`
+			`Use this to discover active sub-sessions and their communication permissions.`
 	);
 
 	// ---- step_result vs report_result status ---------------------------------
@@ -290,32 +282,16 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`workflow explicitly defines parallel steps. Follow the linear execution loop above.`
 	);
 
-	// ---- Channel topology and relay capabilities ----------------------------
-	sections.push(`\n## Channel Topology and Message Relay\n`);
+	// ---- Channel topology ----------------------------------------------------
+	sections.push(`\n## Channel Topology\n`);
 	sections.push(
 		`Workflow steps may declare a channel topology that governs which agent roles can communicate ` +
 			`with each other. Use \`list_group_members\` to see the active members and their ` +
 			`\`permittedTargets\` — roles they are allowed to message per the declared topology.\n`
 	);
 	sections.push(
-		`**You are NOT constrained by the channel topology.** As the Task Agent coordinator, ` +
-			`you can relay messages to any group member using \`relay_message\`, regardless of which ` +
-			`channels are declared. This allows you to:\n` +
-			`- Route feedback from a reviewer agent to a coder agent\n` +
-			`- Forward context or questions between parallel sub-sessions\n` +
-			`- Intervene when the declared topology does not cover a needed communication path\n`
-	);
-	sections.push(
-		`**Cross-group messaging is always rejected.** You can only relay to sessions that are ` +
-			`members of the same group as this task. Attempting to relay to a session in a different ` +
-			`group will return an error.\n`
-	);
-	sections.push(
-		`**When to use relay_message:**\n` +
-			`- A step agent produces output that another step agent needs as input\n` +
-			`- A reviewer step identifies issues that should be sent back to the coder step\n` +
-			`- You need to inject context or instructions mid-execution into a running sub-session\n` +
-			`- The channel topology does not permit direct communication between two agents\n`
+		`All agents (including the Task Agent) use \`send_message\` for peer communication. ` +
+			`Channel topology is enforced uniformly — no agent has a special bypass.\n`
 	);
 
 	// ---- Task context -------------------------------------------------------

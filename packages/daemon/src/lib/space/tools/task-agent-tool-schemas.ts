@@ -152,26 +152,6 @@ export const ListGroupMembersSchema = z.object({});
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
 // ---------------------------------------------------------------------------
-// relay_message
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `relay_message` input.
- * Injects a user-turn message into a target sub-session in the same group.
- * The Task Agent is not constrained by channel topology — it can relay to any member.
- */
-export const RelayMessageSchema = z.object({
-	/** Session ID of the target sub-session to relay the message to. */
-	target_session_id: z
-		.string()
-		.describe('Session ID of the target sub-session to send the message to'),
-	/** The message to inject as a user turn in the target session. */
-	message: z.string().describe('The message content to inject into the target session'),
-});
-
-export type RelayMessageInput = z.infer<typeof RelayMessageSchema>;
-
-// ---------------------------------------------------------------------------
 // Aggregate export for MCP server factory (Milestone 3)
 // ---------------------------------------------------------------------------
 
@@ -186,7 +166,6 @@ export const TASK_AGENT_TOOL_SCHEMAS = {
 	report_result: ReportResultSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
-	relay_message: RelayMessageSchema,
 } as const;
 
 export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;

@@ -43,7 +43,6 @@ import {
 	createStepAgentToolHandlers,
 	type StepAgentToolsConfig,
 } from '../../../src/lib/space/tools/step-agent-tools.ts';
-import { createTaskAgentToolHandlers } from '../../../src/lib/space/tools/task-agent-tools.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -185,58 +184,6 @@ function makeStepConfig(
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Task agent relay helper (minimal config)
-// ---------------------------------------------------------------------------
-
-function makeTaskAgentRelayHandlers(
-	tdb: TestDb,
-	taskAgentSessionId: string,
-	groupId: string,
-	injector: (sessionId: string, message: string) => Promise<void>
-) {
-	// createTaskAgentToolHandlers requires a large config, but these tests only call
-	// relay_message. Fields accessed by relay_message: taskId, sessionGroupRepo, getGroupId,
-	// messageInjector. All other fields are stubs that will throw at the application layer
-	// (returning {success:false}) if unexpectedly called — not silently succeeding.
-	// Safe to call through this helper: relay_message only.
-	// DO NOT call: spawn_step_agent, list_group_members, advance_workflow, or any tool
-	// that accesses runtime/workflowManager/taskRepo/agentManager/taskManager/sessionFactory.
-	const minimalConfig = {
-		taskId: 'task-integration-test',
-		space: {
-			id: tdb.spaceId,
-			name: 'Test Space',
-			workspacePath: '/tmp',
-			description: '',
-			backgroundContext: '',
-			instructions: '',
-			allowedModels: [],
-			sessionIds: [],
-			status: 'active' as const,
-			agents: [],
-			workflows: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
-		},
-		workflowRunId: 'run-unused',
-		workspacePath: '/tmp',
-		runtime: {} as never, // not used by relay_message
-		workflowManager: {} as never, // not used by relay_message
-		taskRepo: {} as never, // not used by relay_message
-		workflowRunRepo: tdb.workflowRunRepo,
-		agentManager: {} as never, // not used by relay_message
-		taskManager: {} as never, // not used by relay_message
-		sessionFactory: {} as never, // not used by relay_message
-		messageInjector: injector,
-		onSubSessionComplete: async () => {},
-		sessionGroupRepo: tdb.sessionGroupRepo,
-		getGroupId: () => groupId,
-	};
-
-	return createTaskAgentToolHandlers(minimalConfig as never);
-}
-
 // ===========================================================================
 // Test Suite 1: Cross-Group Isolation
 // ===========================================================================
@@ -251,94 +198,6 @@ describe('cross-group isolation', () => {
 	afterEach(() => {
 		tdb.db.close();
 		rmSync(tdb.dir, { recursive: true, force: true });
-	});
-
-	test('relay_message from group A task agent is rejected for group B member', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		// Group A — task agent + coder
-		const groupA = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-a',
-			taskId: 'task-a',
-		});
-		sessionGroupRepo.addMember(groupA.id, 'session-ta-a', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(groupA.id, 'session-coder-a', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		// Group B — task agent + coder
-		const groupB = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-b',
-			taskId: 'task-b',
-		});
-		sessionGroupRepo.addMember(groupB.id, 'session-ta-b', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(groupB.id, 'session-coder-b', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		const { messages, injector } = makeMessageCapture();
-
-		// Task Agent A tries to relay to Group B member
-		const handlersA = makeTaskAgentRelayHandlers(tdb, 'session-ta-a', groupA.id, injector);
-
-		const result = await handlersA.relay_message({
-			target_session_id: 'session-coder-b',
-			message: 'hello from group A',
-		});
-
-		const data = JSON.parse(result.content[0].text);
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('not a member of group');
-		expect(data.error).toContain('Cross-group messaging is not permitted');
-		expect(messages).toHaveLength(0);
-	});
-
-	test('relay_message within same group succeeds', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-c',
-			taskId: 'task-c',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-ta-c', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-coder-c', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		const { messages, injector } = makeMessageCapture();
-		const handlers = makeTaskAgentRelayHandlers(tdb, 'session-ta-c', group.id, injector);
-
-		const result = await handlers.relay_message({
-			target_session_id: 'session-coder-c',
-			message: 'task context for coder',
-		});
-
-		const data = JSON.parse(result.content[0].text);
-		expect(data.success).toBe(true);
-		expect(data.targetRole).toBe('coder');
-		expect(messages).toHaveLength(1);
-		expect(messages[0].sessionId).toBe('session-coder-c');
 	});
 
 	test('send_message never reaches group B members (group scoping)', async () => {
@@ -1164,53 +1023,6 @@ describe('concurrent message injection — both messages delivered', () => {
 		expect(spokeYMessages).toHaveLength(1);
 		expect(spokeYMessages[0].message).toContain('task for Y');
 	});
-
-	test('relay_message concurrent delivery to multiple members', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		const group = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-relay-concurrent',
-			taskId: 'task-relay-concurrent',
-		});
-		sessionGroupRepo.addMember(group.id, 'session-ta-relay', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-worker-1', {
-			role: 'worker-1',
-			status: 'active',
-			orderIndex: 1,
-		});
-		sessionGroupRepo.addMember(group.id, 'session-worker-2', {
-			role: 'worker-2',
-			status: 'active',
-			orderIndex: 2,
-		});
-
-		const { messages, injector } = makeMessageCapture();
-		const handlers = makeTaskAgentRelayHandlers(tdb, 'session-ta-relay', group.id, injector);
-
-		// Task agent relays to both workers in parallel
-		const [r1, r2] = await Promise.all([
-			handlers.relay_message({
-				target_session_id: 'session-worker-1',
-				message: 'task context for worker 1',
-			}),
-			handlers.relay_message({
-				target_session_id: 'session-worker-2',
-				message: 'task context for worker 2',
-			}),
-		]);
-
-		expect(JSON.parse(r1.content[0].text).success).toBe(true);
-		expect(JSON.parse(r2.content[0].text).success).toBe(true);
-
-		expect(messages).toHaveLength(2);
-		expect(messages.find((m) => m.sessionId === 'session-worker-1')).toBeDefined();
-		expect(messages.find((m) => m.sessionId === 'session-worker-2')).toBeDefined();
-	});
 });
 
 // ===========================================================================
@@ -1350,61 +1162,6 @@ describe('data reload and DB-based validation', () => {
 		expect(messages[0].message).toContain('post-reload check');
 	});
 
-	test('relay_message correctly rejects cross-group target after DB reload', async () => {
-		const { sessionGroupRepo } = tdb;
-
-		// Create two groups
-		const groupA = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-reload-a',
-			taskId: 'task-reload-a',
-		});
-		sessionGroupRepo.addMember(groupA.id, 'session-ta-ra', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(groupA.id, 'session-coder-ra', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		const groupB = sessionGroupRepo.createGroup({
-			spaceId: tdb.spaceId,
-			name: 'group-reload-b',
-			taskId: 'task-reload-b',
-		});
-		sessionGroupRepo.addMember(groupB.id, 'session-ta-rb', {
-			role: 'task-agent',
-			status: 'active',
-			orderIndex: 0,
-		});
-		sessionGroupRepo.addMember(groupB.id, 'session-coder-rb', {
-			role: 'coder',
-			status: 'active',
-			orderIndex: 1,
-		});
-
-		const { messages, injector } = makeMessageCapture();
-
-		// Uses a relay-only stub — see makeTaskAgentRelayHandlers for safe-call contract.
-		// The repo inside uses tdb.sessionGroupRepo which holds the same DB connection,
-		// simulating the same isolation guarantee after a restart.
-		const handlers = makeTaskAgentRelayHandlers(tdb, 'session-ta-ra', groupA.id, injector);
-
-		// Group A task agent tries to relay to Group B member
-		const result = await handlers.relay_message({
-			target_session_id: 'session-coder-rb',
-			message: 'cross-group attempt after reload',
-		});
-
-		const data = JSON.parse(result.content[0].text);
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('not a member of group');
-		expect(messages).toHaveLength(0);
-	});
-
 	test('getGroupsByTask resolves correct group after lookup by taskId', async () => {
 		const { sessionGroupRepo } = tdb;
 
@@ -1509,54 +1266,5 @@ describe('error paths — missing group ID', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('No session group found');
-	});
-
-	test('relay_message returns structured error when getGroupId returns undefined', async () => {
-		const { messages, injector } = makeMessageCapture();
-
-		// Use makeTaskAgentRelayHandlers but override getGroupId to return undefined
-		// by constructing the config manually
-		const minimalConfig = {
-			taskId: 'task-nogroup',
-			space: {
-				id: tdb.spaceId,
-				name: 'Test Space',
-				workspacePath: '/tmp',
-				description: '',
-				backgroundContext: '',
-				instructions: '',
-				allowedModels: [],
-				sessionIds: [],
-				status: 'active' as const,
-				agents: [],
-				workflows: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-			},
-			workflowRunId: 'run-unused',
-			workspacePath: '/tmp',
-			runtime: {} as never,
-			workflowManager: {} as never,
-			taskRepo: {} as never,
-			workflowRunRepo: tdb.workflowRunRepo,
-			agentManager: {} as never,
-			taskManager: {} as never,
-			sessionFactory: {} as never,
-			messageInjector: injector,
-			onSubSessionComplete: async () => {},
-			sessionGroupRepo: tdb.sessionGroupRepo,
-			getGroupId: () => undefined, // <-- the tested path
-		};
-
-		const handlers = createTaskAgentToolHandlers(minimalConfig as never);
-		const result = await handlers.relay_message({
-			target_session_id: 'session-any',
-			message: 'hello',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('No session group found');
-		expect(messages).toHaveLength(0);
 	});
 });
