@@ -1301,18 +1301,31 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		expect(tasks).toHaveLength(2);
 
 		// storeResolvedChannels called for start step (space-runtime.ts:365)
+		// User-declared channels are stored plus default task-agent bidirectional channels
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
 		const config = (updatedRun.config ?? {}) as Record<string, unknown>;
 		const resolvedChannels = config._resolvedChannels as Array<Record<string, unknown>> | undefined;
 
 		expect(resolvedChannels).toBeDefined();
-		expect(resolvedChannels).toHaveLength(1);
-		expect(resolvedChannels![0]).toMatchObject({
+		// User-declared channel: coder → reviewer
+		const userChannel = resolvedChannels!.find(
+			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
+		);
+		expect(userChannel).toMatchObject({
 			fromRole: 'coder',
 			toRole: 'reviewer',
 			direction: 'one-way',
 			label: 'review-request',
 		});
+		// Default task-agent bidirectional channels are auto-added
+		const taskAgentToCoder = resolvedChannels!.find(
+			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+		);
+		expect(taskAgentToCoder).toBeDefined();
+		const coderToTaskAgent = resolvedChannels!.find(
+			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'task-agent'
+		);
+		expect(coderToTaskAgent).toBeDefined();
 	});
 
 	test('channels for non-start step are stored in run config after executeTick() advances', async () => {
@@ -1336,17 +1349,24 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Step A has no channels — _resolvedChannels is cleared to [] (not undefined)
-		// because storeResolvedChannels always writes the field to prevent stale topology.
+		// Step A has no user-declared channels but gets default task-agent bidirectional channels
+		// (auto-added by storeResolvedChannels even when no channels are declared).
 		const runAfterStart = workflowRunRepo.getRun(run.id)!;
 		const configAfterStart = (runAfterStart.config ?? {}) as Record<string, unknown>;
-		expect(configAfterStart._resolvedChannels).toEqual([]);
+		const channelsAfterStart = configAfterStart._resolvedChannels as Array<Record<string, unknown>>;
+		// Default task-agent ↔ planner channels are auto-added
+		expect(channelsAfterStart.length).toBeGreaterThan(0);
+		const taskAgentToPlanner = channelsAfterStart.find(
+			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'planner'
+		);
+		expect(taskAgentToPlanner).toBeDefined();
 
 		// Advance to Step B (which has channels)
 		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });
 		await runtime.executeTick();
 
 		// storeResolvedChannels called for step B (space-runtime.ts:783)
+		// User-declared channels are stored plus default task-agent bidirectional channels
 		const runAfterAdvance = workflowRunRepo.getRun(run.id)!;
 		const configAfterAdvance = (runAfterAdvance.config ?? {}) as Record<string, unknown>;
 		const resolvedChannels = configAfterAdvance._resolvedChannels as
@@ -1354,12 +1374,20 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			| undefined;
 
 		expect(resolvedChannels).toBeDefined();
-		expect(resolvedChannels).toHaveLength(1);
-		expect(resolvedChannels![0]).toMatchObject({
+		// User-declared channel: coder → reviewer
+		const userChannel = resolvedChannels!.find(
+			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
+		);
+		expect(userChannel).toMatchObject({
 			fromRole: 'coder',
 			toRole: 'reviewer',
 			direction: 'one-way',
 			label: 'feedback',
 		});
+		// Default task-agent bidirectional channels for step B's agents
+		const taskAgentToCoder = resolvedChannels!.find(
+			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+		);
+		expect(taskAgentToCoder).toBeDefined();
 	});
 });

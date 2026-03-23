@@ -1,13 +1,14 @@
 /**
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
- * These handlers implement the business logic for the 6 Task Agent tools:
+ * These handlers implement the business logic for the 7 Task Agent tools:
  *   spawn_step_agent      — Spawn a sub-session for a workflow step's assigned agent
  *   check_step_status     — Poll the status of a running step agent sub-session
  *   advance_workflow      — Advance the workflow to the next step after current step completes
  *   report_result         — Mark the task as completed/failed and record the result
  *   request_human_input   — Pause execution and surface a question to the human user
  *   list_group_members    — List all members of the current task's session group
+ *   send_message          — Send a message to peer step agents via channel topology
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
@@ -46,6 +47,7 @@ import {
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
 } from './task-agent-tool-schemas';
+import { SendMessageSchema } from './step-agent-tool-schemas';
 import { resolveStepAgents } from '@neokai/shared';
 import type {
 	SpawnStepAgentInput,
@@ -55,6 +57,7 @@ import type {
 	RequestHumanInputInput,
 	ListGroupMembersInput,
 } from './task-agent-tool-schemas';
+import type { SendMessageInput } from './step-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -796,6 +799,161 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
+		 * Send a message directly to one or more peer step agents.
+		 *
+		 * Validates the requested direction(s) against the declared channel topology
+		 * before routing. The Task Agent uses `send_message` for all inter-agent
+		 * communication with step agents.
+		 *
+		 * Target forms:
+		 *   - `target: 'coder'` — point-to-point to a single role
+		 *   - `target: '*'` — broadcast to all permitted targets
+		 *   - `target: ['coder', 'reviewer']` — multicast to multiple roles
+		 *
+		 * The Task Agent's role is `'task-agent'`. Default bidirectional channels
+		 * are auto-created between the Task Agent and all node agent roles at
+		 * step-start, so the Task Agent can reach all peers by default.
+		 */
+		async send_message(args: SendMessageInput): Promise<ToolResult> {
+			const { target, message } = args;
+
+			const groupId = getGroupId();
+			if (!groupId) {
+				return jsonResult({
+					success: false,
+					error:
+						`No session group found for task ${taskId}. ` +
+						`The group may not have been created yet — try after spawn_step_agent.`,
+				});
+			}
+
+			const group = sessionGroupRepo.getGroup(groupId);
+			if (!group) {
+				return jsonResult({
+					success: false,
+					error: `Session group ${groupId} not found in the database.`,
+				});
+			}
+
+			const run = workflowRunRepo.getRun(workflowRunId);
+			const resolver = ChannelResolver.fromRunConfig(
+				run?.config as Record<string, unknown> | undefined
+			);
+
+			// When no channel topology is declared, all send_message calls fail.
+			if (resolver.isEmpty()) {
+				return jsonResult({
+					success: false,
+					error:
+						`No channel topology declared for this step. ` +
+						`Direct messaging via send_message is not available.`,
+				});
+			}
+
+			// Resolve target roles from the target argument
+			let targetRoles: string[];
+
+			if (target === '*') {
+				// Broadcast: expand to all permitted targets
+				const permitted = resolver.getPermittedTargets('task-agent');
+				if (permitted.length === 0) {
+					return jsonResult({
+						success: false,
+						error:
+							`No permitted targets for role 'task-agent' in the declared channel topology. ` +
+							`Broadcast ('*') requires at least one permitted outgoing channel.`,
+						availableTargets: [],
+					});
+				}
+				targetRoles = permitted;
+			} else if (Array.isArray(target)) {
+				// Multicast: validate each requested role
+				targetRoles = target;
+			} else {
+				// Point-to-point: single role
+				targetRoles = [target];
+			}
+
+			// Validate all requested target roles against channel topology
+			const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend('task-agent', role));
+			if (unauthorizedRoles.length > 0) {
+				const permittedTargets = resolver.getPermittedTargets('task-agent');
+				return jsonResult({
+					success: false,
+					error:
+						`Channel topology does not permit 'task-agent' to send to: ${unauthorizedRoles.join(', ')}. ` +
+						`Permitted targets: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`,
+					unauthorizedRoles,
+					permittedTargets,
+				});
+			}
+
+			// Find the Task Agent's own session ID from the group (to exclude from delivery)
+			const taskAgentMember = group.members.find((m) => m.role === 'task-agent');
+			const mySessionId = taskAgentMember?.sessionId;
+
+			// Find peer sessions for each target role (exclude self and task-agent)
+			const peers = group.members.filter(
+				(m) => m.sessionId !== mySessionId && m.role !== 'task-agent'
+			);
+			const delivered: Array<{ role: string; sessionId: string }> = [];
+			const notFound: string[] = [];
+			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
+
+			// Best-effort delivery: attempt all targets, aggregate errors.
+			for (const targetRole of targetRoles) {
+				const targetSessions = peers.filter((m) => m.role === targetRole);
+				if (targetSessions.length === 0) {
+					notFound.push(targetRole);
+					continue;
+				}
+				for (const targetMember of targetSessions) {
+					const prefixedMessage = `[Message from task-agent]: ${message}`;
+					try {
+						await messageInjector(targetMember.sessionId, prefixedMessage);
+						delivered.push({ role: targetRole, sessionId: targetMember.sessionId });
+					} catch (err) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						failed.push({ role: targetRole, sessionId: targetMember.sessionId, error: errMsg });
+					}
+				}
+			}
+
+			if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
+				return jsonResult({
+					success: false,
+					error:
+						`No active sessions found for target role(s): ${notFound.join(', ')}. ` +
+						`Use list_group_members to check which peers are currently active.`,
+					notFoundRoles: notFound,
+				});
+			}
+
+			if (failed.length > 0) {
+				return jsonResult({
+					success: delivered.length > 0 ? 'partial' : false,
+					delivered,
+					failed,
+					notFoundRoles: notFound.length > 0 ? notFound : undefined,
+					message:
+						delivered.length > 0
+							? `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`
+							: `Message delivery failed for all ${failed.length} target(s).`,
+				});
+			}
+
+			return jsonResult({
+				success: true,
+				delivered,
+				notFoundRoles: notFound.length > 0 ? notFound : undefined,
+				message:
+					`Message delivered to ${delivered.length} peer(s): ` +
+					delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
+					'.',
+			});
+		},
+
+		/**
 		 * Pause workflow execution and surface a question to the human user.
 		 *
 		 * Updates the main task status to `needs_attention` and stores the question
@@ -919,6 +1077,15 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'Use this to discover which sub-sessions are active and what messaging channels are declared.',
 			ListGroupMembersSchema.shape,
 			(args) => handlers.list_group_members(args)
+		),
+		tool(
+			'send_message',
+			'Send a message directly to one or more peer step agents via declared channel topology. ' +
+				"Supports point-to-point ('coder'), broadcast ('*'), and multicast (['coder','reviewer']). " +
+				'Validates against declared channels — returns an error with available channels if unauthorized. ' +
+				'The Task Agent has default bidirectional channels to all node agents.',
+			SendMessageSchema.shape,
+			(args) => handlers.send_message(args)
 		),
 	];
 

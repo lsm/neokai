@@ -1,13 +1,14 @@
 /**
  * Unit tests for createTaskAgentToolHandlers()
  *
- * Covers all 6 Task Agent tools:
+ * Covers all 7 Task Agent tools:
  *   spawn_step_agent    — creates sub-session, registers callback, injects message
  *   check_step_status   — polling detection of sub-session completion
  *   advance_workflow    — delegates to WorkflowExecutor.advance(), handles gate errors
  *   report_result       — transitions main task to final status
  *   request_human_input — pauses execution, marks task needs_attention
  *   list_group_members  — lists group members with session IDs and channel info
+ *   send_message        — sends message to peer step agents via channel topology
  *
  * Tests use a real SQLite database (via runMigrations) and mock SubSessionFactory
  * so no real agent sessions are created.
@@ -1604,7 +1605,7 @@ describe('createTaskAgentMcpServer', () => {
 		expect(server.name).toBe('task-agent');
 	});
 
-	test('registers all 6 expected tools', async () => {
+	test('registers all 7 expected tools', async () => {
 		const { server } = await makeServerCtx();
 		const registered = Object.keys(server.instance._registeredTools).sort();
 		expect(registered).toEqual([
@@ -1613,6 +1614,7 @@ describe('createTaskAgentMcpServer', () => {
 			'list_group_members',
 			'report_result',
 			'request_human_input',
+			'send_message',
 			'spawn_step_agent',
 		]);
 	});
@@ -1723,9 +1725,9 @@ describe('createTaskAgentMcpServer', () => {
 
 		// Each call returns a distinct server instance
 		expect(server1.instance).not.toBe(server2.instance);
-		// Both register all 6 tools
-		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(6);
-		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(6);
+		// Both register all 7 tools
+		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(7);
+		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(7);
 	});
 });
 
@@ -1813,7 +1815,7 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 		expect(coderMember.agentId).toBe(ctx.agentId);
 	});
 
-	test('channelTopologyDeclared is false when no channels in run config', async () => {
+	test('default task-agent channels are auto-added to run config', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 
@@ -1821,6 +1823,10 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 			spaceId: ctx.spaceId,
 			name: `task:${mainTask.id}`,
 			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'task-agent-session', {
+			role: 'task-agent',
+			status: 'active',
 		});
 		ctx.sessionGroupRepo.addMember(group.id, 'session-a', {
 			role: 'coder',
@@ -1835,9 +1841,13 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		expect(parsed.channelTopologyDeclared).toBe(false);
-		// permittedTargets should be empty when no channels declared
-		expect(parsed.members[0].permittedTargets).toEqual([]);
+		// Default task-agent channels are auto-added by storeResolvedChannels,
+		// so channelTopologyDeclared is true even with no user-declared channels
+		expect(parsed.channelTopologyDeclared).toBe(true);
+		// The coder member should have task-agent as a permitted target
+		// (default bidirectional channel: coder can reply to task-agent)
+		const coderMember = parsed.members.find((m: { role: string }) => m.role === 'coder');
+		expect(coderMember.permittedTargets).toContain('task-agent');
 	});
 
 	test('returns permitted targets based on resolved channels in run config', async () => {

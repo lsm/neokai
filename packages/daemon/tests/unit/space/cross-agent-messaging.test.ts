@@ -1006,3 +1006,516 @@ describe('send_message — sender attribution prefix', () => {
 		expect(cfg.injectedMessages[0].message).toBe('[Message from coder]: Here is my patch');
 	});
 });
+
+// ===========================================================================
+// 11. Task Agent send_message — channel validation and target modes
+// ===========================================================================
+
+describe('Task Agent send_message — point-to-point (target: role)', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('succeeds when channel is declared', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Set up channel: task-agent → coder (one-way)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello coder' }));
+		expect(result.success).toBe(true);
+		expect(injectedMessages).toHaveLength(1);
+		expect(injectedMessages[0].sessionId).toBe('coder-session');
+		expect(injectedMessages[0].message).toContain('[Message from task-agent]');
+		expect(injectedMessages[0].message).toContain('Hello coder');
+	});
+
+	test('denied when channel is not declared (task-agent → coder missing)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Set up channel: coder → task-agent only (reverse direction)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('coder', 'task-agent')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
+		expect(result.success).toBe(false);
+		expect(result.unauthorizedRoles).toEqual(['coder']);
+	});
+
+	test('fails when no channels declared (empty topology)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// No channels declared
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Should fail' }));
+		expect(result.success).toBe(false);
+		expect((result.error as string).toLowerCase()).toContain('no channel topology');
+	});
+});
+
+describe('Task Agent send_message — broadcast (target: "*")', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('delivers to all permitted targets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// task-agent can send to both coder and reviewer
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder'), ch('task-agent', 'reviewer')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
+			role: 'reviewer',
+			status: 'active',
+		});
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
+		expect(result.success).toBe(true);
+		const delivered = result.delivered as Array<{ sessionId: string }>;
+		expect(delivered.length).toBe(2);
+		const deliveredIds = delivered.map((d) => d.sessionId).sort();
+		expect(deliveredIds).toEqual(['coder-session', 'reviewer-session'].sort());
+	});
+
+	test('fails when task-agent has no permitted targets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Only coder can send to task-agent, not the other way around
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('coder', 'task-agent')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+			})
+		);
+
+		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
+		expect(result.success).toBe(false);
+		expect(result.availableTargets).toEqual([]);
+	});
+});
+
+describe('Task Agent send_message — multicast (target: [role1, role2])', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('delivers to all listed roles when all are permitted', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder'), ch('task-agent', 'reviewer')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
+			role: 'reviewer',
+			status: 'active',
+		});
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		const result = parse(
+			await handlers.send_message({ target: ['coder', 'reviewer'], message: 'Multicast' })
+		);
+		expect(result.success).toBe(true);
+		const delivered = result.delivered as Array<{ sessionId: string }>;
+		expect(delivered.length).toBe(2);
+	});
+
+	test('fails when any listed role is not in permitted targets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Only task-agent → coder declared, not → reviewer
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
+			role: 'reviewer',
+			status: 'active',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+			})
+		);
+
+		const result = parse(
+			await handlers.send_message({ target: ['coder', 'reviewer'], message: 'Multicast' })
+		);
+		expect(result.success).toBe(false);
+		expect((result.unauthorizedRoles as string[]).includes('reviewer')).toBe(true);
+	});
+});
+
+describe('Task Agent send_message — default task-agent channels', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('task-agent has default bidirectional channels to all node agents', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Simulate storeResolvedChannels behavior: default bidirectional channels
+		// between task-agent and all node agents are auto-added
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [
+					// Default task-agent → coder
+					{
+						fromRole: 'task-agent',
+						toRole: 'coder',
+						fromAgentId: 'task-agent',
+						toAgentId: 'coder',
+						direction: 'one-way',
+						isHubSpoke: false,
+					},
+					// Default coder → task-agent
+					{
+						fromRole: 'coder',
+						toRole: 'task-agent',
+						fromAgentId: 'coder',
+						toAgentId: 'task-agent',
+						direction: 'one-way',
+						isHubSpoke: false,
+					},
+				],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+				messageInjector: async (sessionId, message) => {
+					injectedMessages.push({ sessionId, message });
+				},
+			})
+		);
+
+		// Task Agent can send to coder via default channel
+		const result = parse(
+			await handlers.send_message({ target: 'coder', message: 'Default channel works' })
+		);
+		expect(result.success).toBe(true);
+		expect(injectedMessages).toHaveLength(1);
+		expect(injectedMessages[0].sessionId).toBe('coder-session');
+	});
+
+	test('removing task-agent channel prevents messaging (no bypass)', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// User explicitly removes task-agent → coder channel
+		// Only coder → task-agent is declared (not the default task-agent → coder)
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [
+					// Only coder can message task-agent, not the other way
+					{
+						fromRole: 'coder',
+						toRole: 'task-agent',
+						fromAgentId: 'coder',
+						toAgentId: 'task-agent',
+						direction: 'one-way',
+						isHubSpoke: false,
+					},
+				],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+			})
+		);
+
+		// Task Agent cannot send to coder because the channel was removed
+		const result = parse(
+			await handlers.send_message({ target: 'coder', message: 'Should be blocked' })
+		);
+		expect(result.success).toBe(false);
+		expect(result.unauthorizedRoles).toEqual(['coder']);
+	});
+});
+
+describe('Task Agent send_message — error cases', () => {
+	let ctx: TaskCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error when no group exists for task', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// No groupId - getGroupId returns undefined
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory())
+		);
+
+		const result = parse(await handlers.send_message({ target: 'coder', message: 'Hello' }));
+		expect(result.success).toBe(false);
+		expect(result.error as string).toContain('No session group found');
+	});
+
+	test('fails when any multicast target is not in permitted targets', async () => {
+		ctx = makeTaskCtx();
+		const wf = buildSingleStepWf(ctx);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Channel only allows task-agent → coder
+		ctx.workflowRunRepo.updateRun(run.id, {
+			config: {
+				_resolvedChannels: [ch('task-agent', 'coder')],
+			},
+		});
+
+		const group = ctx.sessionGroupRepo.createGroup({
+			spaceId: ctx.spaceId,
+			name: `task:${mainTask.id}`,
+			taskId: mainTask.id,
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
+			role: 'task-agent',
+			status: 'active',
+		});
+		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
+			role: 'coder',
+			agentId: ctx.agentId,
+			status: 'active',
+		});
+
+		const handlers = createTaskAgentToolHandlers(
+			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
+				groupId: group.id,
+			})
+		);
+
+		// Multicast to coder (permitted) and ghost (not permitted)
+		const result = parse(
+			await handlers.send_message({ target: ['coder', 'ghost'], message: 'Test' })
+		);
+		// ghost is not in permitted targets → entire request fails
+		expect(result.success).toBe(false);
+		expect(result.unauthorizedRoles).toEqual(['ghost']);
+	});
+});
