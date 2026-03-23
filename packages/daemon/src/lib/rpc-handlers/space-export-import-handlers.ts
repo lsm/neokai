@@ -223,7 +223,7 @@ function buildWorkflowCreateParams(
 	// Resolve startNode name → new UUID
 	const startNodeId = nodeNameToId.get(exported.startNode);
 
-	// Build WorkflowRuleInput list — remap appliesTo step names → new step UUIDs
+	// Build WorkflowRuleInput list — remap appliesTo node names → new node UUIDs
 	const rules: WorkflowRuleInput[] = exported.rules.map((rule) => {
 		const ruleOut: WorkflowRuleInput = { name: rule.name, content: rule.content };
 		if (rule.appliesTo?.length) {
@@ -640,7 +640,7 @@ export function setupSpaceExportImportHandlers(
 						);
 					}
 
-					// workflowManager.createWorkflow validates steps/transitions/conditions and writes to DB
+					// workflowManager.createWorkflow validates nodes/transitions/conditions and writes to DB
 					const created = workflowManager.createWorkflow(createParams);
 					const wfItem: ImportedItem = { name: finalName, id: created.id, action };
 					if (action === 'replaced' && typeof replacedOldId !== 'undefined') {

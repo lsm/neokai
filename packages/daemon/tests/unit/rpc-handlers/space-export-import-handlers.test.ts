@@ -4,7 +4,7 @@
  * Tests for:
  * - spaceExport.agents, spaceExport.workflows, spaceExport.bundle
  * - spaceImport.preview (conflict detection, validation, cross-ref checking)
- * - spaceImport.execute (all conflict resolutions, agent name→UUID mapping, step ID remapping)
+ * - spaceImport.execute (all conflict resolutions, agent name→UUID mapping, node ID remapping)
  *
  * Uses in-memory SQLite with real repositories and managers so the full
  * business-logic path (including SpaceWorkflowManager validation) is exercised.
@@ -471,8 +471,8 @@ describe('Space Export/Import RPC Handlers', () => {
 			});
 
 			const wf = bundle.workflows[0];
-			expect(wf.transitions[0].fromStep).toBe('First');
-			expect(wf.transitions[0].toStep).toBe('Second');
+			expect(wf.transitions[0].fromNode).toBe('First');
+			expect(wf.transitions[0].toNode).toBe('Second');
 		});
 	});
 
@@ -711,7 +711,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				// Workflow should still be importable and reference the existing agent UUID
 				expect(result.workflows[0].action).toBe('created');
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(existing.id);
+				expect(wf.nodes[0].agentId).toBe(existing.id);
 			});
 
 			it('skips conflicting workflow', async () => {
@@ -862,7 +862,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				const importedAgentId = result.agents[0].id;
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(importedAgentId);
+				expect(wf.nodes[0].agentId).toBe(importedAgentId);
 			});
 
 			it('resolves agent name→UUID from existing space agents (not in bundle)', async () => {
@@ -880,7 +880,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				});
 
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(existing.id);
+				expect(wf.nodes[0].agentId).toBe(existing.id);
 			});
 
 			it('prefers bundle agent over existing space agent of same name', async () => {
@@ -900,7 +900,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				// When Agent is skipped, bundle cross-ref maps to the existing agent UUID
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(existingAgent.id);
+				expect(wf.nodes[0].agentId).toBe(existingAgent.id);
 			});
 
 			it('throws when agent ref cannot be resolved', async () => {
@@ -1751,7 +1751,7 @@ describe('multi-agent step import', () => {
 type BundleAgent = { name: string; role: string; systemPrompt?: string; model?: string };
 type BundleWorkflow = {
 	name: string;
-	steps: Array<{ agentRef: string; name: string; instructions?: string }>;
+	nodes: Array<{ agentRef: string; name: string; instructions?: string }>;
 };
 
 function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object {
@@ -1771,13 +1771,13 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 			version: 1,
 			type: 'workflow',
 			name: w.name,
-			steps: w.steps.map((s) => ({
+			nodes: w.nodes.map((s) => ({
 				agentRef: s.agentRef,
 				name: s.name,
 				...(s.instructions ? { instructions: s.instructions } : {}),
 			})),
 			transitions: [],
-			startStep: w.steps[0]?.name ?? '',
+			startNode: w.nodes[0]?.name ?? '',
 			rules: [],
 			tags: [],
 		})),
@@ -1796,18 +1796,18 @@ function makeBundleWithCondition(type: string, expression: string | undefined): 
 				version: 1,
 				type: 'workflow',
 				name: 'ConditionWF',
-				steps: [
+				nodes: [
 					{ agentRef: 'A', name: 'S1' },
 					{ agentRef: 'A', name: 'S2' },
 				],
 				transitions: [
 					{
-						fromStep: 'S1',
-						toStep: 'S2',
+						fromNode: 'S1',
+						toNode: 'S2',
 						condition: expression !== undefined ? { type, expression } : { type },
 					},
 				],
-				startStep: 'S1',
+				startNode: 'S1',
 				rules: [],
 				tags: [],
 			},
@@ -1827,14 +1827,14 @@ function makeBundleWithRules(): object {
 				version: 1,
 				type: 'workflow',
 				name: 'RulesWF',
-				steps: [{ agentRef: 'Coder', name: 'Code' }],
+				nodes: [{ agentRef: 'Coder', name: 'Code' }],
 				transitions: [],
-				startStep: 'Code',
+				startNode: 'Code',
 				rules: [
 					{
 						name: 'No hacks',
 						content: 'Do not write hacks.',
-						appliesTo: ['Code'], // step name — should be remapped to step UUID
+						appliesTo: ['Code'], // node name — should be remapped to node UUID
 					},
 				],
 				tags: [],
@@ -1858,12 +1858,12 @@ function makeTwoStepBundle(): object {
 				version: 1,
 				type: 'workflow',
 				name: 'CodingPipeline',
-				steps: [
+				nodes: [
 					{ agentRef: 'Coder', name: 'Code' },
 					{ agentRef: 'Reviewer', name: 'Review' },
 				],
-				transitions: [{ fromStep: 'Code', toStep: 'Review' }],
-				startStep: 'Code',
+				transitions: [{ fromNode: 'Code', toNode: 'Review' }],
+				startNode: 'Code',
 				rules: [],
 				tags: [],
 			},
@@ -1894,7 +1894,7 @@ function makeMultiAgentBundle(
 	agents: BundleAgent[],
 	workflows: Array<{
 		name: string;
-		steps: MultiAgentStepEntry[];
+		nodes: MultiAgentStepEntry[];
 	}>
 ): object {
 	return {
@@ -1911,7 +1911,7 @@ function makeMultiAgentBundle(
 			version: 1,
 			type: 'workflow',
 			name: w.name,
-			steps: w.steps.map((s) => {
+			nodes: w.nodes.map((s) => {
 				if ('multiAgentStep' in s) {
 					const ms = s.multiAgentStep;
 					const step: Record<string, unknown> = {
@@ -1929,10 +1929,10 @@ function makeMultiAgentBundle(
 				};
 			}),
 			transitions: [],
-			startStep: w.steps[0]
-				? 'multiAgentStep' in w.steps[0]
-					? w.steps[0].multiAgentStep.name
-					: w.steps[0].name
+			startNode: w.nodes[0]
+				? 'multiAgentStep' in w.nodes[0]
+					? w.nodes[0].multiAgentStep.name
+					: w.nodes[0].name
 				: '',
 			rules: [],
 			tags: [],
@@ -1952,9 +1952,9 @@ function makeSingleAgentBundle(agentName: string, agentRole: string, stepName: s
 				version: 1,
 				type: 'workflow',
 				name: 'Legacy Workflow',
-				steps: [{ agentRef: agentName, name: stepName }],
+				nodes: [{ agentRef: agentName, name: stepName }],
 				transitions: [],
-				startStep: stepName,
+				startNode: stepName,
 				rules: [],
 				tags: [],
 			},
