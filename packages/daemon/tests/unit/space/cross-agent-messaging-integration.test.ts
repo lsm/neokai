@@ -14,8 +14,8 @@
  *              survives daemon restart (the only suite that cannot be replaced by unit tests).
  *   - Suite 8: getGroupId() → undefined edge case not covered in existing tests.
  *   - Suite 9: Task Agent participation in channel topology — via list_group_members and
- *              send_message to 'task-agent' target. Note: send_message to task-agent fails
- *              with "no active sessions" even when channel is declared (task-agent is
+ *              send_message to 'task-agent' target. By design, send_message to task-agent
+ *              fails with "no active sessions" even when channel is declared (task-agent is
  *              filtered from delivery targets). list_group_members correctly shows the
  *              channel in permittedTargets for both the sender and Task Agent.
  *
@@ -50,6 +50,7 @@ import {
 	createStepAgentToolHandlers,
 	type StepAgentToolsConfig,
 } from '../../../src/lib/space/tools/step-agent-tools.ts';
+import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -1306,7 +1307,6 @@ describe('Task Agent channel participation', () => {
 		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
 		const reloadedRun = freshRunRepo.getRun(workflowRunId);
 
-		const { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.canSend('coder', 'task-agent')).toBe(true);
@@ -1321,7 +1321,6 @@ describe('Task Agent channel participation', () => {
 		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
 		const reloadedRun = freshRunRepo.getRun(workflowRunId);
 
-		const { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.canSend('coder', 'task-agent')).toBe(false);
@@ -1335,7 +1334,6 @@ describe('Task Agent channel participation', () => {
 		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
 		const reloadedRun = freshRunRepo.getRun(workflowRunId);
 
-		const { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		const permitted = resolver.getPermittedTargets('reviewer');
@@ -1350,7 +1348,6 @@ describe('Task Agent channel participation', () => {
 		const freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
 		const reloadedRun = freshRunRepo.getRun(workflowRunId);
 
-		const { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		const resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		const permitted = resolver.getPermittedTargets('task-agent');
@@ -1391,6 +1388,46 @@ describe('Task Agent channel participation', () => {
 		expect(messages).toHaveLength(0);
 	});
 
+	test('send_message to task-agent fails even when task-agent member is in group (filter exercised)', async () => {
+		// This test exercises the explicit filter in send_message that removes task-agent
+		// from delivery targets, even when task-agent IS a group member with an active session.
+		const { sessionGroupRepo } = tdb;
+
+		const group = sessionGroupRepo.createGroup({
+			spaceId: tdb.spaceId,
+			name: 'group-task-agent-filter',
+		});
+		sessionGroupRepo.addMember(group.id, 'session-coder', {
+			role: 'coder',
+			status: 'active',
+			orderIndex: 0,
+		});
+		sessionGroupRepo.addMember(group.id, 'session-task-agent', {
+			role: 'task-agent',
+			status: 'active',
+			orderIndex: 1,
+		});
+
+		// Channel coder→task-agent is declared
+		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
+			makeResolvedChannel('coder', 'task-agent'),
+		]);
+
+		const { messages, injector } = makeMessageCapture();
+		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, workflowRunId, injector);
+		const handlers = createStepAgentToolHandlers(config);
+
+		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
+		const data = JSON.parse(result.content[0].text);
+
+		// The channel resolver check passes (channel is declared), but send_message
+		// explicitly filters out task-agent from delivery targets, so no message is delivered.
+		// This exercises the filter at step-agent-tools.ts: .filter((m) => m.role !== 'task-agent')
+		expect(data.success).toBe(false);
+		expect((data.error as string).toLowerCase()).toContain('no active sessions');
+		expect(messages).toHaveLength(0);
+	});
+
 	test('removing channel to task-agent updates getPermittedTargets', async () => {
 		const { sessionGroupRepo } = tdb;
 
@@ -1417,7 +1454,6 @@ describe('Task Agent channel participation', () => {
 		let freshRunRepo = new SpaceWorkflowRunRepository(tdb.db);
 		let reloadedRun = freshRunRepo.getRun(workflowRunId);
 
-		let { ChannelResolver } = await import('../../../src/lib/space/runtime/channel-resolver.ts');
 		let resolver = ChannelResolver.fromRunConfig(reloadedRun!.config as Record<string, unknown>);
 
 		expect(resolver.getPermittedTargets('coder')).toContain('task-agent');

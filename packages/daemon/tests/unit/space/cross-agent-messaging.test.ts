@@ -870,8 +870,8 @@ describe('list_group_members — Task Agent group view', () => {
 // Note: Task Agent does not have a send_message tool. When a step agent calls
 // send_message targeting 'task-agent', the channel resolver check passes (if channel
 // declared), but the task-agent is filtered from delivery targets, so the message
-// is never delivered. This is a known gap - the topology is visible but messaging
-// to Task Agent via send_message is not yet implemented.
+// is never delivered. This is by design — Task Agent communicates via its own mechanisms,
+// not by receiving injected messages.
 
 describe('Task Agent in channel topology — via list_group_members', () => {
 	let ctx: TaskCtx;
