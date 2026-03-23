@@ -842,6 +842,56 @@ describe('useGroupMessages', () => {
 			expect(result.current.hasOlder).toBe(false);
 		});
 
+		it('delta-added child with createdAt in hidden region is placed in hidden region, not visible window', () => {
+			// 5 top-level messages, pageSize=2 → hidden=[1,2,3], visible=[4,5].
+			// A subagent child arrives via delta with createdAt between msg2 and msg3,
+			// so it sorts into the hidden region. The visible window must stay [4,5].
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+
+			// Late-arriving child: createdAt=1_000_002 + 0.5 → between msg2 and msg3.
+			// We approximate with createdAt=1_000_002 (ties with msg2; string id sorts it after).
+			// The key point is it falls before the boundary (msg4 at 1_000_004).
+			const lateChild: SessionGroupMessage = {
+				id: 'late-child',
+				groupId: 'group-1',
+				sessionId: null,
+				role: 'assistant',
+				messageType: 'text',
+				content: 'late-child',
+				createdAt: 1_000_002, // before boundary msg4 (1_000_004)
+				parentToolUseId: 'tool-use-id-2',
+			};
+
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					added: [lateChild],
+					version: 2,
+				});
+			});
+
+			// Visible window must still be [4, 5] — late child sorted into hidden region.
+			// hiddenOlderCount was re-anchored to the identity of msg4.
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+			// hasOlder still true — hidden region now has [1, 2, late-child, 3]
+			expect(result.current.hasOlder).toBe(true);
+		});
+
 		it('hasOlder is false when all messages are subagent children of a single visible parent', () => {
 			// 1 top-level parent + 20 children — all fit in pageSize=5 top-level (only 1 TL)
 			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 5 }));

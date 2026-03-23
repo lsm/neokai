@@ -118,9 +118,16 @@ function isTopLevel(msg: SessionGroupMessage): boolean {
  * The cut always falls on a top-level message boundary so subagent blocks are
  * never split across pages — all children of a hidden parent are also hidden.
  *
- * Returns 0 when there are fewer than `pageSize` top-level messages (show all).
+ * Assumption: children always have a `createdAt` strictly greater than their
+ * parent's, which holds because the subagent can only run after the tool_use
+ * message is recorded. The secondary sort by string `id` does not reflect
+ * insertion order, so this assumption must hold at the timestamp level.
+ *
+ * Returns 0 when there are fewer than `pageSize` top-level messages (show all)
+ * or when `pageSize <= 0` (degenerate — treat as show all).
  */
 function topLevelCutoffIndex(msgs: SessionGroupMessage[], pageSize: number): number {
+	if (pageSize <= 0) return 0;
 	let tlCount = 0;
 	for (let i = msgs.length - 1; i >= 0; i--) {
 		if (isTopLevel(msgs[i])) {
@@ -135,7 +142,11 @@ function topLevelCutoffIndex(msgs: SessionGroupMessage[], pageSize: number): num
 
 /** Counts top-level messages in `msgs`. */
 function countTopLevel(msgs: SessionGroupMessage[]): number {
-	return msgs.reduce((n, m) => (isTopLevel(m) ? n + 1 : n), 0);
+	let n = 0;
+	for (const m of msgs) {
+		if (isTopLevel(m)) n++;
+	}
+	return n;
 }
 
 function paginationReducer(state: PaginationState, action: PaginationAction): PaginationState {
@@ -180,9 +191,30 @@ function paginationReducer(state: PaginationState, action: PaginationAction): Pa
 			}
 
 			if (action.added && action.added.length > 0) {
-				// New messages are appended to the end — hiddenOlderCount does not grow
-				// so they are always visible immediately. hiddenTopLevelCount is unaffected.
+				// Record the boundary message's identity before sorting so we can find
+				// its new position after the sort. This prevents the visible window from
+				// silently shifting when a late-arriving added message (e.g. a backdated
+				// subagent child) sorts into the hidden region and pushes the boundary
+				// forward without hiddenOlderCount being updated.
+				const boundaryId = hidden > 0 ? String(msgs[hidden].id) : null;
+
 				msgs = [...msgs, ...action.added];
+				const sorted = sortMessages(msgs);
+
+				if (boundaryId !== null) {
+					const newHidden = sorted.findIndex((m) => String(m.id) === boundaryId);
+					if (newHidden >= 0) {
+						hidden = newHidden;
+					}
+					// Recompute hiddenTopLevelCount from the updated hidden slice.
+					hiddenTL = countTopLevel(sorted.slice(0, hidden));
+				}
+
+				return {
+					allMessages: sorted,
+					hiddenOlderCount: hidden,
+					hiddenTopLevelCount: hiddenTL,
+				};
 			}
 
 			return {
