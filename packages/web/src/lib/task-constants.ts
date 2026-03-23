@@ -1,3 +1,14 @@
+export const TASK_STATUS_COLORS: Record<string, string> = {
+	pending: 'text-gray-400',
+	in_progress: 'text-yellow-400',
+	completed: 'text-green-400',
+	needs_attention: 'text-red-400',
+	review: 'text-purple-400',
+	draft: 'text-gray-500',
+	cancelled: 'text-gray-500',
+	archived: 'text-gray-600',
+};
+
 export const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
 	planner: { border: 'border-l-teal-500', label: 'Planner', labelColor: 'text-teal-400' },
 	coder: { border: 'border-l-blue-500', label: 'Coder', labelColor: 'text-blue-400' },
