@@ -123,6 +123,127 @@ function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null
 	);
 }
 
+// ---- Channel edge computation ----
+
+/**
+ * Compute channel edges from workflow nodes.
+ *
+ * Collects all WorkflowChannel declarations from all nodes and resolves
+ * channel endpoints to node IDs:
+ * - Intra-node channels (agents within the same node) are skipped - they don't
+ *   need cross-node edges since all agents in a node share the same canvas space.
+ * - Inter-node channels (including Task Agent channels) are resolved to
+ *   actual node IDs and returned as ResolvedWorkflowChannel objects.
+ *
+ * Task Agent channels use 'task-agent' as the special source identifier.
+ * Other channels resolve agent roles to their containing node IDs using the
+ * SpaceAgent.agents array which has role information.
+ */
+export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflowChannel[] {
+	const result: ResolvedWorkflowChannel[] = [];
+
+	// Track seen (fromStepId, toStepId) pairs to avoid duplicates
+	const seenEdges = new Set<string>();
+
+	// Build a map of agent role -> node localId for quick lookup
+	// This is used to resolve channel endpoints that reference agent roles
+	const agentRoleToNodeId = new Map<string, string>();
+	for (const node of nodes) {
+		// node.agents is SpaceAgent[] which has .role
+		if (node.agents) {
+			for (const agent of node.agents) {
+				agentRoleToNodeId.set(agent.role, node.step.localId);
+			}
+		}
+	}
+
+	for (const node of nodes) {
+		const channels = node.step.channels;
+		if (!channels) continue;
+
+		for (const channel of channels) {
+			// Determine if this is an inter-node channel
+			let fromNodeId: string | null = null;
+
+			// Resolve 'from' endpoint
+			if (channel.from === 'task-agent') {
+				fromNodeId = 'task-agent';
+			} else if (channel.from === '*') {
+				// Wildcard: from the node itself
+				fromNodeId = node.step.localId;
+			} else {
+				// Resolve agent role to node ID
+				fromNodeId = agentRoleToNodeId.get(channel.from) ?? null;
+			}
+
+			// Resolve 'to' endpoints (can be a string or array of strings)
+			const toTargets: (string | null)[] =
+				typeof channel.to === 'string'
+					? [resolveToTarget(channel.to, node, agentRoleToNodeId)]
+					: channel.to.map((t) => resolveToTarget(t, node, agentRoleToNodeId));
+
+			// Skip if we couldn't resolve the 'from' endpoint
+			if (!fromNodeId) continue;
+
+			for (const toNodeId of toTargets) {
+				if (!toNodeId) continue;
+
+				// Skip intra-node channels (both endpoints resolve to the same node)
+				if (fromNodeId === toNodeId) continue;
+
+				// Check for duplicate edges
+				const edgeKey = `${fromNodeId}:${toNodeId}`;
+				if (seenEdges.has(edgeKey)) continue;
+				seenEdges.add(edgeKey);
+
+				// For task-agent channels, we always render from task-agent to the other node
+				if (fromNodeId === 'task-agent' && toNodeId !== 'task-agent') {
+					result.push({
+						fromStepId: 'task-agent',
+						toStepId: toNodeId,
+						direction: channel.direction,
+					});
+				} else if (toNodeId === 'task-agent' && fromNodeId !== 'task-agent') {
+					// Also add edge when task-agent is the target (channel is defined on another node)
+					result.push({
+						fromStepId: fromNodeId,
+						toStepId: 'task-agent',
+						direction: channel.direction,
+					});
+				} else if (fromNodeId !== 'task-agent' && toNodeId !== 'task-agent') {
+					// Regular inter-node channel between two non-task-agent nodes
+					result.push({
+						fromStepId: fromNodeId,
+						toStepId: toNodeId,
+						direction: channel.direction,
+					});
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Resolve a 'to' target string to a node ID.
+ */
+function resolveToTarget(
+	toValue: string,
+	node: WorkflowNodeData,
+	agentRoleToNodeId: Map<string, string>
+): string | null {
+	if (toValue === 'task-agent') {
+		return 'task-agent';
+	}
+	if (toValue === '*') {
+		// Wildcard: to the node itself
+		return node.step.localId;
+	}
+	// Resolve agent role to node ID
+	return agentRoleToNodeId.get(toValue) ?? null;
+}
+
 // ============================================================================
 // WorkflowCanvas
 // ============================================================================
@@ -189,6 +310,13 @@ export function WorkflowCanvas({
 		}
 		return result;
 	}, [nodes, nodePositions]);
+
+	// ---- Channel edges ----
+	// Compute channel edges from nodes' channel declarations.
+	// Also merges with any explicitly passed channels prop (for backward compatibility).
+	const computedChannelEdges = useMemo(() => computeChannelEdges(nodes), [nodes]);
+	const effectiveChannels =
+		channels.length > 0 ? [...computedChannelEdges, ...channels] : computedChannelEdges;
 
 	// Clear selection if the selected node is removed externally (e.g. parent deletes it
 	// from the nodes array). Without this, a node re-added with the same stepId would
@@ -304,7 +432,7 @@ export function WorkflowCanvas({
 					selectedEdgeId={selectedEdgeId}
 					onEdgeSelect={handleEdgeSelect}
 					onEdgeDelete={handleEdgeDelete}
-					channels={channels}
+					channels={effectiveChannels}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
@@ -313,7 +441,7 @@ export function WorkflowCanvas({
 		),
 		[
 			transitions,
-			channels,
+			effectiveChannels,
 			effectiveNodePositions,
 			selectedEdgeId,
 			handleEdgeSelect,
