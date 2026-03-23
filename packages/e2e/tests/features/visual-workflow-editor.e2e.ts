@@ -37,7 +37,6 @@ import {
 	resetEditorModeStorage,
 	openNewWorkflowEditor,
 	switchToVisualMode,
-	setupMultiAgentStep,
 	getDefaultAgentId,
 } from '../helpers/workflow-editor-helpers';
 
@@ -547,7 +546,7 @@ test.describe('Visual Workflow Editor', () => {
 
 		// The ChannelTopologyBadge on the canvas node should show a channel to/from Task Agent
 		// "task-agent" is 10 chars; the 8-char truncation limit produces "task-age…"
-		// So we look for the truncated form. Also verify on the node card itself.
+		// so we look for the truncated form.
 		const nodeCard = nodes.nth(1);
 		await expect(nodeCard.locator('[data-testid="channel-topology-badge"]')).toBeVisible({
 			timeout: 2000,
@@ -606,16 +605,19 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(nodes).toHaveCount(3, { timeout: 3000 });
 
 		// Select the second regular node (nth(2), Task Agent is nth(0))
+		// NOTE: DOM ordering assumes Task Agent pinned node is always nth(0). This
+		// assumption should be verified when the feature is implemented.
 		await nodes.nth(2).click();
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 
 		// Put node in multi-agent mode (channels-section only renders with 2+ agents)
-		// Use index-based selection since agent names are dynamically created in test spaces
+		// Use index-based selection: index 1 for first agent, then index 0 for second
+		// (after selecting index 1, the remaining agent is at index 0 in the dropdown)
 		const panel = editor.getByTestId('node-config-panel');
 		await panel.getByTestId('agent-select').selectOption({ index: 1 });
 		await panel.getByTestId('add-agent-button').click();
 		await expect(panel.getByTestId('agents-list')).toBeVisible({ timeout: 3000 });
-		await panel.getByTestId('add-agent-select').selectOption({ index: 2 });
+		await panel.getByTestId('add-agent-select').selectOption({ index: 0 });
 		await expect(panel.getByTestId('agents-list').getByTestId('agent-entry')).toHaveCount(2, {
 			timeout: 3000,
 		});
