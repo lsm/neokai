@@ -57,6 +57,11 @@ export interface WorkflowCanvasProps {
 	/** Edges to render between nodes. Also used for duplicate detection during connection drag. */
 	transitions?: WorkflowTransition[];
 	/**
+	 * Task Agent channel edges to render (from task-agent to step).
+	 * Rendered with a distinct dashed gray style.
+	 */
+	channelEdges?: ChannelEdge[];
+	/**
 	 * Explicit node positions including width/height for edge port computation.
 	 * When omitted, positions are derived from nodes with DEFAULT_NODE_WIDTH/HEIGHT.
 	 */
@@ -73,6 +78,17 @@ export interface WorkflowCanvasProps {
 	onEdgeSelect?: (transitionId: string | null) => void;
 	/** Called when Delete/Backspace is pressed with an edge selected. */
 	onDeleteEdge?: (transitionId: string) => void;
+}
+
+/**
+ * A channel edge represents a messaging channel between Task Agent and a step.
+ * The 'task-agent' is a virtual hub, so we store the target step ID.
+ */
+export interface ChannelEdge {
+	/** Fixed identifier for the Task Agent source */
+	fromStepId: 'task-agent';
+	/** The target step localId */
+	toStepId: string;
 }
 
 // ---- Ghost edge rendering ----
@@ -121,6 +137,77 @@ function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null
 	);
 }
 
+// ---- ChannelEdgeRenderer ----
+
+/** Color for Task Agent channel edges */
+const CHANNEL_EDGE_COLOR = '#9ca3af'; // gray-400
+
+/**
+ * Render Task Agent channel edges as dashed bezier paths from a fixed Task Agent
+ * hub position (left side of canvas) to each target node.
+ *
+ * Task Agent is rendered as a vertical "rail" on the left side of the canvas,
+ * and channel edges emanate from this rail to each connected node.
+ */
+function ChannelEdgeRenderer({
+	channelEdges,
+	nodePositions,
+}: {
+	channelEdges: ChannelEdge[];
+	nodePositions: NodePosition;
+}) {
+	if (channelEdges.length === 0) return null;
+
+	// Task Agent hub position: fixed on the left side
+	const TASK_AGENT_X = 60;
+
+	return (
+		<>
+			{channelEdges.map((edge) => {
+				const toPos = nodePositions[edge.toStepId];
+				if (!toPos) return null;
+
+				// Source: Task Agent hub (left side, vertical position based on target)
+				const sx = TASK_AGENT_X;
+				const sy = toPos.y + toPos.height / 2;
+
+				// Target: top-center of the target node
+				const tx = toPos.x + toPos.width / 2;
+				const ty = toPos.y;
+
+				// Bezier control points
+				const dx = Math.abs(tx - sx);
+				const cpOffset = Math.max(40, dx * 0.5);
+				const cp1x = sx + cpOffset;
+				const cp1y = sy;
+				const cp2x = tx - cpOffset;
+				const cp2y = ty;
+
+				const d = `M ${sx} ${sy} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${tx} ${ty}`;
+
+				return (
+					<g key={`channel-${edge.toStepId}`} data-channel-edge="true">
+						{/* Channel edges are informational — no click interaction yet */}
+						<path d={d} stroke="transparent" strokeWidth={12} fill="none" />
+						{/* Visible dashed edge */}
+						<path
+							d={d}
+							stroke={CHANNEL_EDGE_COLOR}
+							strokeWidth={1.5}
+							strokeDasharray="6 4"
+							strokeOpacity={0.7}
+							fill="none"
+							style={{ pointerEvents: 'none' }}
+						/>
+						{/* Small circle at source (Task Agent end) */}
+						<circle cx={sx} cy={sy} r={4} fill={CHANNEL_EDGE_COLOR} opacity={0.7} />
+					</g>
+				);
+			})}
+		</>
+	);
+}
+
 // ============================================================================
 // WorkflowCanvas
 // ============================================================================
@@ -130,6 +217,7 @@ export function WorkflowCanvas({
 	viewportState,
 	onViewportChange,
 	transitions = [],
+	channelEdges = [],
 	nodePositions,
 	onNodeSelect,
 	onDeleteNode,
@@ -291,7 +379,7 @@ export function WorkflowCanvas({
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	// ---- Edge layer: committed edges (EdgeRenderer) + ghost edge during drag ----
+	// ---- Edge layer: committed edges (EdgeRenderer) + ghost edge during drag + channel edges ----
 	const edgeLayer = useCallback(
 		(_vp: ViewportState): ComponentChildren => (
 			<>
@@ -302,6 +390,7 @@ export function WorkflowCanvas({
 					onEdgeSelect={handleEdgeSelect}
 					onEdgeDelete={handleEdgeDelete}
 				/>
+				<ChannelEdgeRenderer channelEdges={channelEdges} nodePositions={effectiveNodePositions} />
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
 				)}
@@ -309,6 +398,7 @@ export function WorkflowCanvas({
 		),
 		[
 			transitions,
+			channelEdges,
 			effectiveNodePositions,
 			selectedEdgeId,
 			handleEdgeSelect,

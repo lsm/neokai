@@ -35,9 +35,17 @@ interface GateConfigProps {
 	label: string;
 	/** Message shown when the gate is not configurable (first/last step boundary) */
 	terminalMessage?: string;
+	/** Optional test ID for the gate type select */
+	testId?: string;
 }
 
-export function GateConfig({ condition, onChange, label, terminalMessage }: GateConfigProps) {
+export function GateConfig({
+	condition,
+	onChange,
+	label,
+	terminalMessage,
+	testId,
+}: GateConfigProps) {
 	return (
 		<div class="space-y-1.5">
 			<label class="text-xs font-medium text-gray-400">{label}</label>
@@ -46,6 +54,7 @@ export function GateConfig({ condition, onChange, label, terminalMessage }: Gate
 			) : (
 				<>
 					<select
+						data-testid={testId}
 						value={condition.type}
 						onChange={(e) => {
 							const type = (e.currentTarget as HTMLSelectElement).value as WorkflowConditionType;

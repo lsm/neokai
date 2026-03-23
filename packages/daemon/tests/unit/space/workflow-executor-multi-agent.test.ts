@@ -1301,7 +1301,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		expect(tasks).toHaveLength(2);
 
 		// storeResolvedChannels called for start step (space-runtime.ts:365)
-		// User-declared channels are stored plus default task-agent bidirectional channels
+		// User-declared channels are stored; no auto-generated task-agent channels
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
 		const config = (updatedRun.config ?? {}) as Record<string, unknown>;
 		const resolvedChannels = config._resolvedChannels as Array<Record<string, unknown>> | undefined;
@@ -1317,15 +1317,11 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			direction: 'one-way',
 			label: 'review-request',
 		});
-		// Default task-agent bidirectional channels are auto-added
+		// No auto-generated task-agent channels (M3 auto-generation removed)
 		const taskAgentToCoder = resolvedChannels!.find(
 			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
 		);
-		expect(taskAgentToCoder).toBeDefined();
-		const coderToTaskAgent = resolvedChannels!.find(
-			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'task-agent'
-		);
-		expect(coderToTaskAgent).toBeDefined();
+		expect(taskAgentToCoder).toBeUndefined();
 	});
 
 	test('channels for non-start step are stored in run config after executeTick() advances', async () => {
@@ -1349,24 +1345,21 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Step A has no user-declared channels but gets default task-agent bidirectional channels
-		// (auto-added by storeResolvedChannels even when no channels are declared).
+		// Step A has no user-declared channels — no channels stored
 		const runAfterStart = workflowRunRepo.getRun(run.id)!;
 		const configAfterStart = (runAfterStart.config ?? {}) as Record<string, unknown>;
-		const channelsAfterStart = configAfterStart._resolvedChannels as Array<Record<string, unknown>>;
-		// Default task-agent ↔ planner channels are auto-added
-		expect(channelsAfterStart.length).toBeGreaterThan(0);
-		const taskAgentToPlanner = channelsAfterStart.find(
-			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'planner'
-		);
-		expect(taskAgentToPlanner).toBeDefined();
+		const channelsAfterStart = configAfterStart._resolvedChannels as
+			| Array<Record<string, unknown>>
+			| undefined;
+		// No channels auto-generated (M3 auto-generation removed)
+		expect(channelsAfterStart.length).toBe(0);
 
 		// Advance to Step B (which has channels)
 		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });
 		await runtime.executeTick();
 
 		// storeResolvedChannels called for step B (space-runtime.ts:783)
-		// User-declared channels are stored plus default task-agent bidirectional channels
+		// User-declared channels are stored; no auto-generated task-agent channels
 		const runAfterAdvance = workflowRunRepo.getRun(run.id)!;
 		const configAfterAdvance = (runAfterAdvance.config ?? {}) as Record<string, unknown>;
 		const resolvedChannels = configAfterAdvance._resolvedChannels as
@@ -1384,10 +1377,10 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			direction: 'one-way',
 			label: 'feedback',
 		});
-		// Default task-agent bidirectional channels for step B's agents
+		// No auto-generated task-agent channels (M3 auto-generation removed)
 		const taskAgentToCoder = resolvedChannels!.find(
 			(ch: Record<string, unknown>) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
 		);
-		expect(taskAgentToCoder).toBeDefined();
+		expect(taskAgentToCoder).toBeUndefined();
 	});
 });

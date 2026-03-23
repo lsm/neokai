@@ -70,10 +70,26 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
+	/**
+	 * Auto-create Task Agent channels for a step that just got agents assigned.
+	 * Called from event handlers (agent dropdown onChange, addAgent) to avoid
+	 * mount-time side effects that corrupt existing workflow data.
+	 */
+	function buildTaskAgentChannels(agentsToChannel: WorkflowStepAgent[]): WorkflowChannel[] {
+		return agentsToChannel.map((sa) => {
+			const agentInfo = agents.find((a) => a.id === sa.agentId);
+			const role = agentInfo?.role ?? sa.agentId;
+			return { from: 'task-agent', to: role, direction: 'bidirectional' };
+		});
+	}
+
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		if (stepAgents.some((a) => a.agentId === agentId)) return;
-		updateAgents([...stepAgents, { agentId }]);
+		const next = [...stepAgents, { agentId }];
+		// Merge agents + channels into a single onUpdate call to avoid stale-reference overwrites
+		const newChannels = step.channels === undefined ? buildTaskAgentChannels(next) : step.channels;
+		onUpdate({ ...step, agents: next, agentId: '', channels: newChannels });
 	}
 
 	function removeAgent(agentId: string) {
@@ -120,9 +136,20 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				<select
 					data-testid="agent-select"
 					value={step.agentId}
-					onChange={(e) =>
-						onUpdate({ ...step, agentId: (e.currentTarget as HTMLSelectElement).value })
-					}
+					onChange={(e) => {
+						const newAgentId = (e.currentTarget as HTMLSelectElement).value;
+						const nextStep = { ...step, agentId: newAgentId };
+						// Auto-create task-agent channel when a single agent is assigned
+						if (newAgentId && step.channels === undefined) {
+							const agentInfo = agents.find((a) => a.id === newAgentId);
+							if (agentInfo) {
+								nextStep.channels = [
+									{ from: 'task-agent', to: agentInfo.role, direction: 'bidirectional' },
+								];
+							}
+						}
+						onUpdate(nextStep);
+					}}
 					class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
 				>
 					<option value="">— Select agent —</option>
@@ -519,8 +546,8 @@ export function NodeConfigPanel({
 				{/* Agent(s) */}
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
-				{/* Channels (shown only in multi-agent mode) */}
-				{isMultiAgentStep(step) && (
+				{/* Channels (shown when node has agents or has existing channels) */}
+				{(!!step.agentId || isMultiAgentStep(step) || step.channels) && (
 					<ChannelsPanelSection step={step} agents={agents} onUpdate={onUpdate} />
 				)}
 
@@ -530,6 +557,7 @@ export function NodeConfigPanel({
 					condition={entryCondition ?? { type: 'always' }}
 					onChange={onUpdateEntryCondition}
 					terminalMessage={isFirstStep ? 'Workflow starts here' : undefined}
+					testId="entry-gate-select"
 				/>
 
 				{/* Exit Gate */}
@@ -538,6 +566,7 @@ export function NodeConfigPanel({
 					condition={exitCondition ?? { type: 'always' }}
 					onChange={onUpdateExitCondition}
 					terminalMessage={isLastStep ? 'Workflow ends here' : undefined}
+					testId="exit-gate-select"
 				/>
 
 				{/* Instructions */}

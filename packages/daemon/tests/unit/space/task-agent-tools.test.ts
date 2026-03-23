@@ -1815,7 +1815,7 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 		expect(coderMember.agentId).toBe(ctx.agentId);
 	});
 
-	test('default task-agent channels are auto-added to run config', async () => {
+	test('no auto-added task-agent channels when no user-declared channels exist', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 
@@ -1841,13 +1841,12 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
-		// Default task-agent channels are auto-added by storeResolvedChannels,
-		// so channelTopologyDeclared is true even with no user-declared channels
-		expect(parsed.channelTopologyDeclared).toBe(true);
-		// The coder member should have task-agent as a permitted target
-		// (default bidirectional channel: coder can reply to task-agent)
+		// No channels are declared, so channelTopologyDeclared is false
+		expect(parsed.channelTopologyDeclared).toBe(false);
+		// The coder member should NOT have task-agent as a permitted target
+		// (no auto-generated channels after M3 auto-generation removal)
 		const coderMember = parsed.members.find((m: { role: string }) => m.role === 'coder');
-		expect(coderMember.permittedTargets).toContain('task-agent');
+		expect(coderMember.permittedTargets).not.toContain('task-agent');
 	});
 
 	test('returns permitted targets based on resolved channels in run config', async () => {
