@@ -110,6 +110,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// useAutoScroll fires its initial-load scroll path.
 	const [isFirstLoad, setIsFirstLoad] = useState(true);
 
+	// True while TaskConversationRenderer is prepending older messages via loadEarlier().
+	// Passed to useAutoScroll so it skips the auto-scroll-to-bottom during that operation,
+	// preventing a race with the scroll-position restoration in TaskConversationRenderer.
+	const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+
 	// Refs for scroll container
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -120,6 +125,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		enabled: autoScrollEnabled,
 		messageCount,
 		isInitialLoad: isFirstLoad,
+		loadingOlder: isLoadingOlder,
 	});
 
 	// Reset conversation scroll state whenever the rendered conversation changes.
@@ -128,6 +134,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setIsFirstLoad(true);
 		setMessageCount(0);
 		setAutoScrollEnabled(true);
+		// Reset isLoadingOlder so auto-scroll is not permanently suppressed if the child
+		// unmounts (key change) while a load-earlier operation was in flight. The child's
+		// onLoadingOlderChange?.(false) will never fire after unmount, so we clear it here.
+		setIsLoadingOlder(false);
 	}, [rendererKey]);
 
 	// Mark initial load done after first messages arrive
@@ -353,7 +363,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 			{/* Conversation timeline — scroll container owned here for autoscroll support */}
 			<div class="flex-1 relative min-h-0">
-				<div ref={messagesContainerRef} class="absolute inset-0 overflow-y-auto flex flex-col">
+				<div
+					ref={messagesContainerRef}
+					class="absolute inset-0 overflow-y-auto flex flex-col"
+					data-testid="task-messages-container"
+				>
 					{group ? (
 						<TaskConversationRenderer
 							key={`${group.id}-${conversationKey}`}
@@ -361,6 +375,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							leaderSessionId={group.leaderSessionId}
 							workerSessionId={group.workerSessionId}
 							onMessageCountChange={setMessageCount}
+							scrollContainerRef={messagesContainerRef}
+							onLoadingOlderChange={setIsLoadingOlder}
 						/>
 					) : (
 						<div class="flex-1 flex items-center justify-center text-center p-8">

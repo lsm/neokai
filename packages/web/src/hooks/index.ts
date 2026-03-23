@@ -48,7 +48,9 @@ export {
 } from './useAutoScroll';
 export {
 	useGroupMessages,
+	DEFAULT_PAGE_SIZE,
 	type SessionGroupMessage,
+	type UseGroupMessagesOptions,
 	type UseGroupMessagesResult,
 } from './useGroupMessages';
 export { useRoomLiveQuery } from './useRoomLiveQuery';

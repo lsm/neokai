@@ -8,7 +8,8 @@
  * which agent produced it. Role transitions show a small divider label.
  */
 
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { RefObject } from 'preact';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { SessionInfo } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
@@ -45,6 +46,17 @@ interface TaskConversationRendererProps {
 	workerSessionId?: string;
 	/** Called whenever the message list length changes, so the parent can drive autoscroll */
 	onMessageCountChange?: (count: number) => void;
+	/**
+	 * Ref to the scroll container in the parent (TaskView). Used to restore scroll position
+	 * after older messages are prepended via "Load earlier messages".
+	 */
+	scrollContainerRef?: RefObject<HTMLDivElement>;
+	/**
+	 * Called with `true` when a "load earlier" operation starts and `false` when the scroll
+	 * position has been restored. The parent passes this to `useAutoScroll` as `loadingOlder`
+	 * so auto-scroll-to-bottom is suppressed while older messages are being prepended.
+	 */
+	onLoadingOlderChange?: (loading: boolean) => void;
 }
 
 function getTaskMeta(msg: SDKMessage): TaskMeta | null {
@@ -57,6 +69,8 @@ export function TaskConversationRenderer({
 	leaderSessionId,
 	workerSessionId,
 	onMessageCountChange,
+	scrollContainerRef,
+	onLoadingOlderChange,
 }: TaskConversationRendererProps) {
 	const { request } = useMessageHub();
 
@@ -65,8 +79,62 @@ export function TaskConversationRenderer({
 	const leaderQuestionState = useSessionQuestionState(leaderSessionId);
 	const workerQuestionState = useSessionQuestionState(workerSessionId);
 
-	// Subscribe to group messages via LiveQuery (handles initial snapshot + live deltas)
-	const { messages: rawMessages, isLoading, isReconnecting } = useGroupMessages(groupId);
+	// Subscribe to group messages via LiveQuery (handles initial snapshot + live deltas).
+	// Only the newest DEFAULT_PAGE_SIZE messages are shown; older ones are revealed via loadEarlier.
+	const {
+		messages: rawMessages,
+		isLoading,
+		isReconnecting,
+		hasOlder,
+		loadEarlier,
+	} = useGroupMessages(groupId);
+
+	// Scroll position snapshot taken just before loadEarlier() is called.
+	// The useEffect below restores the position after the DOM updates.
+	const scrollRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+
+	const handleLoadEarlier = useCallback(() => {
+		if (scrollContainerRef?.current) {
+			// Snapshot scroll state and signal loading only when the container is mounted.
+			// onLoadingOlderChange?.(true) must be paired with a later ?.(false) call.
+			// The pairing is guaranteed via scrollRestoreRef: the effect below only calls
+			// ?.(false) when scrollRestoreRef.current is non-null, and scrollRestoreRef is
+			// only set here. Calling ?.(true) without setting scrollRestoreRef would leave
+			// isLoadingOlder permanently stuck true if the container ref is null at effect time.
+			scrollRestoreRef.current = {
+				scrollHeight: scrollContainerRef.current.scrollHeight,
+				scrollTop: scrollContainerRef.current.scrollTop,
+			};
+			onLoadingOlderChange?.(true);
+		}
+		loadEarlier();
+	}, [loadEarlier, scrollContainerRef, onLoadingOlderChange]);
+
+	// After rawMessages changes (triggered by loadEarlier), restore scroll position
+	// so older prepended messages don't cause a jarring jump to the top.
+	// IMPORTANT: onLoadingOlderChange?.(false) must be called on ALL exit paths so
+	// isLoadingOlder never gets stuck true (which would permanently disable auto-scroll).
+	useEffect(() => {
+		if (!scrollRestoreRef.current) return;
+		if (!scrollContainerRef?.current) {
+			// Container unmounted between handleLoadEarlier and this effect — clear the flag.
+			scrollRestoreRef.current = null;
+			onLoadingOlderChange?.(false);
+			return;
+		}
+		const { scrollHeight, scrollTop } = scrollRestoreRef.current;
+		scrollRestoreRef.current = null;
+		requestAnimationFrame(() => {
+			if (!scrollContainerRef.current) {
+				// Container unmounted between rAF scheduling and rAF execution — clear the flag.
+				onLoadingOlderChange?.(false);
+				return;
+			}
+			const newScrollHeight = scrollContainerRef.current.scrollHeight;
+			scrollContainerRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
+			onLoadingOlderChange?.(false);
+		});
+	}, [rawMessages, scrollContainerRef, onLoadingOlderChange]);
 
 	const messages = useMemo(
 		() => rawMessages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null),
@@ -195,6 +263,27 @@ export function TaskConversationRenderer({
 
 	return (
 		<div class="px-4 py-3 space-y-0.5">
+			{/* Load earlier messages button — shown at the top when there are older hidden messages */}
+			{hasOlder && (
+				<div class="flex items-center justify-center py-3">
+					<button
+						type="button"
+						onClick={handleLoadEarlier}
+						class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 bg-dark-800 hover:bg-dark-700 border border-dark-600 hover:border-dark-500 rounded-full transition-colors"
+						data-testid="load-earlier-messages"
+					>
+						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M5 15l7-7 7 7"
+							/>
+						</svg>
+						Load earlier messages
+					</button>
+				</div>
+			)}
 			{messages.map((msg, i) => {
 				const meta = getTaskMeta(msg);
 				const role = meta?.authorRole ?? 'system';

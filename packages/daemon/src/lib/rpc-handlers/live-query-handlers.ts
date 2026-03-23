@@ -102,6 +102,7 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
 	const iteration = Number(row.iteration ?? 0);
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
+	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
 
 	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
@@ -134,6 +135,7 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
 		messageType,
 		content,
 		createdAt,
+		parentToolUseId,
 	};
 }
 
@@ -232,7 +234,8 @@ SELECT
   sm.message_type               AS messageType,
   sm.sdk_message                AS content,
   CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration
+  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
+  json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
 FROM target_group tg
 JOIN session_group_members gm ON gm.group_id = tg.id
 JOIN sdk_messages sm ON sm.session_id = gm.session_id
@@ -255,7 +258,8 @@ SELECT
     ELSE COALESCE(json_extract(e.payload_json, '$.text'), e.kind)
   END                           AS content,
   e.created_at                  AS createdAt,
-  0                             AS iteration
+  0                             AS iteration,
+  NULL                          AS parentToolUseId
 FROM target_group tg
 JOIN task_group_events e ON e.group_id = tg.id
 ORDER BY createdAt ASC, id ASC
