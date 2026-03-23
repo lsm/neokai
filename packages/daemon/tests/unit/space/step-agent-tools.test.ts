@@ -1,9 +1,9 @@
 /**
  * Unit tests for createStepAgentToolHandlers()
  *
- * Covers all 3 step agent peer communication tools:
+ * Covers all step agent peer communication tools:
  *   list_peers          — list peers excluding self and task-agent
- *   send_message       — channel-validated direct messaging
+ *   send_message        — channel-validated direct messaging (renamed from send_feedback)
  *   request_peer_input  — Task Agent mediated async fallback
  *
  * Tests use a real SQLite database (via runMigrations) and mock message
