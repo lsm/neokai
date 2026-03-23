@@ -1449,6 +1449,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							leaderSessionId={group.leaderSessionId}
 							workerSessionId={group.workerSessionId}
 							onMessageCountChange={setMessageCount}
+							scrollContainerRef={messagesContainerRef}
 						/>
 					) : (
 						<div class="flex-1 flex items-center justify-center text-center p-8">

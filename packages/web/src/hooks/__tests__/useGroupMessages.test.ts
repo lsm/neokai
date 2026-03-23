@@ -752,4 +752,173 @@ describe('useGroupMessages', () => {
 			expect(id).toBe('group-messages-g-1');
 		});
 	});
+
+	describe('pagination (hasOlder / loadEarlier)', () => {
+		it('hasOlder is false when snapshot has fewer messages than pageSize', () => {
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 5 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(false);
+			expect(result.current.messages).toHaveLength(3);
+		});
+
+		it('hasOlder is false when snapshot has exactly pageSize messages', () => {
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 3 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(false);
+			expect(result.current.messages).toHaveLength(3);
+		});
+
+		it('hasOlder is true when snapshot has more messages than pageSize', () => {
+			// pageSize=2, snapshot has 5 messages → oldest 3 are hidden
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(true);
+			// Only the newest 2 messages are visible
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+		});
+
+		it('loadEarlier reveals the previous page of messages', () => {
+			// 5 messages, pageSize=2 → shows [4,5], then after loadEarlier shows [2,3,4,5]
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.hasOlder).toBe(true);
+
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			// Now showing 4 messages: [2,3,4,5]
+			expect(result.current.messages).toHaveLength(4);
+			expect(result.current.messages[0].id).toBe(2);
+			expect(result.current.messages[3].id).toBe(5);
+		});
+
+		it('loadEarlier clamps to 0 — cannot hide negative messages', () => {
+			// 5 messages, pageSize=3 → first load shows [3,4,5]; then loadEarlier shows all
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 3 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			// All 5 messages visible, hasOlder = false
+			expect(result.current.messages).toHaveLength(5);
+			expect(result.current.hasOlder).toBe(false);
+
+			// Calling loadEarlier again is a no-op
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			expect(result.current.messages).toHaveLength(5);
+		});
+
+		it('new delta messages are always visible regardless of hiddenOlderCount', () => {
+			// pageSize=2, snapshot has 5 → shows [4,5], 3 hidden
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+
+			// New message arrives via delta
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					added: [makeMessage(6)],
+					version: 2,
+				});
+			});
+
+			// Still shows 2+1=3 messages (new one is always visible at end)
+			expect(result.current.messages).toHaveLength(3);
+			expect(result.current.messages[2].id).toBe(6);
+			expect(result.current.hasOlder).toBe(true); // older messages still hidden
+		});
+
+		it('hiddenOlderCount resets to 0 when groupId changes', () => {
+			// First group: 5 messages with pageSize=2
+			const { result, rerender } = renderHook(
+				({ groupId }: { groupId: string }) => useGroupMessages(groupId, { pageSize: 2 }),
+				{ initialProps: { groupId: 'group-1' } }
+			);
+
+			const subId1 = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId1,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(true);
+			expect(result.current.messages).toHaveLength(2);
+
+			// Switch to a new group
+			act(() => {
+				rerender({ groupId: 'group-2' });
+			});
+
+			// Messages cleared, hasOlder reset
+			expect(result.current.messages).toHaveLength(0);
+			expect(result.current.hasOlder).toBe(false);
+		});
+	});
 });
