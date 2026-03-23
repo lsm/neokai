@@ -135,10 +135,13 @@ function NestedMessageRenderer({
 
 				{/* Text blocks - rendered like thinking block: header + preview */}
 				{textBlocks.map((block, idx) => {
-					const text = (block as { text: string }).text.trim();
+					const rawText = (block as { text: string }).text;
+					const text = rawText.trim();
 					if (!text) return null;
 					// Skip if this text matches the input prompt (duplicate of User card)
-					if (inputText && text === inputText.trim()) return null;
+					// Normalize whitespace for comparison to handle formatting differences
+					const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
+					if (inputText && normalizeWS(text) === normalizeWS(inputText)) return null;
 					return (
 						<div
 							key={`text-${idx}`}
