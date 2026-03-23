@@ -12,8 +12,8 @@
  *   - Wildcard (`*`) and array `to` declarations are expanded per pair
  *
  * When no channels are declared for a step (empty array), all `canSend()` calls
- * return `false` (open/unrestricted mode is not assumed — Task Agent override handles
- * cross-member messaging outside the topology).
+ * return `false`. All agents (including the Task Agent) communicate via `send_message`,
+ * which enforces channel topology uniformly.
  */
 
 import type { ResolvedChannel } from '@neokai/shared';
@@ -59,7 +59,7 @@ export class ChannelResolver {
 	 * Returns true if the declared channel topology permits the sender to message the target.
 	 *
 	 * Matches by role string. When no channels are declared, always returns false —
-	 * the Task Agent can override this using `relay_message` (unrestricted).
+	 * all agents use `send_message` which is uniformly constrained by topology.
 	 */
 	canSend(fromRole: string, toRole: string): boolean {
 		return this.channels.some((ch) => ch.fromRole === fromRole && ch.toRole === toRole);

@@ -7,7 +7,6 @@
  *   send_message  — channel validation, target modes, fan-out, hub-spoke
  *   list_peers    — peer discovery with channel info
  *   list_group_members    — Task Agent group view
- *   relay_message         — Task Agent unrestricted relay, cross-group rejection
  *
  * Channel topology patterns tested end-to-end through tool handlers:
  *   A → B          one-way point-to-point
@@ -19,7 +18,7 @@
  * invalid-entry filtering) live in channel-resolver.test.ts.
  *
  * Group scoping is explicitly tested: messages must never cross task-group
- * boundaries (relay_message rejects out-of-group target session IDs).
+ * boundaries.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -753,7 +752,7 @@ describe('list_peers — peer discovery with channel info', () => {
 });
 
 // ===========================================================================
-// 7. list_group_members (Task Agent tool)
+// 6. list_group_members (Task Agent tool)
 // ===========================================================================
 
 describe('list_group_members — Task Agent group view', () => {
@@ -856,175 +855,10 @@ describe('list_group_members — Task Agent group view', () => {
 });
 
 // ===========================================================================
-// 8. relay_message (Task Agent tool) — unrestricted relay + cross-group rejection
-// ===========================================================================
-
-describe('relay_message — Task Agent unrestricted relay', () => {
-	let ctx: TaskCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('successfully relays to any group member (ignores channel topology)', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'coder-session', {
-			role: 'coder',
-			status: 'active',
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'reviewer-session', {
-			role: 'reviewer',
-			status: 'active',
-		});
-
-		// Store one-way channel: coder→reviewer only
-		ctx.workflowRunRepo.updateRun(run.id, {
-			config: { _resolvedChannels: [ch('coder', 'reviewer')] },
-		});
-
-		const injected: Array<{ sessionId: string; message: string }> = [];
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-				messageInjector: async (sid, msg) => injected.push({ sessionId: sid, message: msg }),
-			})
-		);
-
-		// Task Agent relays reviewer→coder even though channel is coder→reviewer only
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'coder-session',
-				message: 'Feedback from reviewer',
-			})
-		);
-		expect(result.success).toBe(true);
-		expect(injected).toHaveLength(1);
-		expect(injected[0].sessionId).toBe('coder-session');
-	});
-
-	test('rejects self-relay (task-agent targeting its own session)', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'ta-session', {
-			role: 'task-agent',
-			status: 'active',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
-		);
-
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'ta-session',
-				message: 'Self message',
-			})
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('task-agent');
-	});
-
-	test('relaying to a completed member calls injector (failure surfaced from injector)', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'completed-session', {
-			role: 'coder',
-			status: 'completed',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: group.id,
-				messageInjector: async () => {
-					throw new Error('Sub-session gone');
-				},
-			})
-		);
-
-		// relay_message does not pre-check member status; injector failure surfaces as error
-		const result = parse(
-			await handlers.relay_message({ target_session_id: 'completed-session', message: 'Hi' })
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('Sub-session gone');
-	});
-});
-
-// ===========================================================================
-// 9. Group scoping — cross-group message isolation
+// 7. Group scoping — cross-group message isolation
 // ===========================================================================
 
 describe('Group scoping — messages cannot leak between task groups', () => {
-	let ctx: TaskCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('relay_message rejects target session from a different group', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		// Group A (this Task Agent's group)
-		const groupA = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(groupA.id, 'session-in-A', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		// Group B (a different task's group, simulating another concurrent task)
-		const groupB = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: 'task:other-task',
-			taskId: 'other-task-id',
-		});
-		ctx.sessionGroupRepo.addMember(groupB.id, 'session-in-B', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: groupA.id })
-		);
-
-		// Try to relay to a session in group B (should be rejected)
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'session-in-B',
-				message: 'Cross-group message',
-			})
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('not a member of group');
-	});
-
 	test('send_message only delivers within the step agent own group', async () => {
 		// Two independent step contexts (different groups, different DBs)
 		const ctxA = makeStepCtx([
@@ -1061,7 +895,7 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 });
 
 // ===========================================================================
-// 10. Error cases — non-existent sessions, injection failures
+// 8. Error cases — non-existent sessions, injection failures
 // ===========================================================================
 
 describe('Error cases — non-existent targets and injection failures', () => {
@@ -1105,64 +939,7 @@ describe('Error cases — non-existent targets and injection failures', () => {
 });
 
 // ===========================================================================
-// 11. relay_message — cross-group rejection (Task Agent validation)
-// ===========================================================================
-
-describe('relay_message — cross-group rejection', () => {
-	let ctx: TaskCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('rejects session not in the Task Agent group', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const group = ctx.sessionGroupRepo.createGroup({
-			spaceId: ctx.spaceId,
-			name: `task:${mainTask.id}`,
-			taskId: mainTask.id,
-		});
-		ctx.sessionGroupRepo.addMember(group.id, 'known-session', {
-			role: 'coder',
-			status: 'active',
-		});
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), { groupId: group.id })
-		);
-
-		const result = parse(
-			await handlers.relay_message({
-				target_session_id: 'completely-unknown-session',
-				message: 'Hi',
-			})
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('not a member of group');
-	});
-
-	test('returns error when relay target group does not exist in DB', async () => {
-		ctx = makeTaskCtx();
-		const wf = buildSingleStepWf(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-
-		const handlers = createTaskAgentToolHandlers(
-			makeTaskConfig(ctx, mainTask.id, run.id, makeMockFactory(), {
-				groupId: 'nonexistent-group',
-			})
-		);
-
-		const result = parse(await handlers.relay_message({ target_session_id: 'any', message: 'Hi' }));
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('nonexistent-group');
-	});
-});
-
-// ===========================================================================
-// 12. Step with no channels declared — no messaging available
+// 9. Step with no channels declared — no messaging available
 // ===========================================================================
 
 describe('Step with no channels declared', () => {
@@ -1204,7 +981,7 @@ describe('Step with no channels declared', () => {
 });
 
 // ===========================================================================
-// 13. Message attribution — sender identity prefix
+// 10. Message attribution — sender identity prefix
 // ===========================================================================
 
 describe('send_message — sender attribution prefix', () => {
