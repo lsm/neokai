@@ -213,6 +213,7 @@ function expandChannel(
  * @param step   - The workflow step to validate.
  * @param agents - All `SpaceAgent` records in the Space.
  * @returns Array of human-readable error strings. Empty array means no errors.
+ * @public
  */
 export function validateStepChannels(step: WorkflowStep, agents: SpaceAgent[]): string[] {
 	const errors: string[] = [];

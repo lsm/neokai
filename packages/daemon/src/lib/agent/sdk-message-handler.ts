@@ -405,7 +405,8 @@ export class SDKMessageHandler {
 			daemonHub
 				.emit('sdk.message', {
 					sessionId: session.id,
-					message: { ...sdkMessage, timestamp: consumedAt },
+					// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+					message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 				})
 				.catch(() => {});
 			return;
@@ -445,7 +446,8 @@ export class SDKMessageHandler {
 		daemonHub
 			.emit('sdk.message', {
 				sessionId: session.id,
-				message: { ...sdkMessage, timestamp: consumedAt },
+				// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 			})
 			.catch(() => {});
 	}

@@ -26,6 +26,10 @@ export declare type AccountInfo = {
     subscriptionType?: string;
     tokenSource?: string;
     apiKeySource?: string;
+    /**
+     * Active API backend. Anthropic OAuth login only applies when "firstParty"; for 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.).
+     */
+    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry';
 };
 
 /**
@@ -138,6 +142,22 @@ export declare type CanUseTool = (toolName: string, input: Record<string, unknow
     blockedPath?: string;
     /** Explains why this permission request was triggered. */
     decisionReason?: string;
+    /**
+     * Full permission prompt sentence rendered by the bridge (e.g.
+     * "Claude wants to read foo.txt"). Use this as the primary prompt
+     * text when present instead of reconstructing from toolName+input.
+     */
+    title?: string;
+    /**
+     * Short noun phrase for the tool action (e.g. "Read file"), suitable
+     * for button labels or compact UI.
+     */
+    displayName?: string;
+    /**
+     * Human-readable subtitle from the bridge (e.g. "Claude will have
+     * read and write access to files in ~/Downloads").
+     */
+    description?: string;
     /**
      * Unique identifier for this specific tool call within the assistant message.
      * Multiple tool calls in the same assistant message will have different toolUseIDs.
@@ -276,6 +296,7 @@ declare namespace coreTypes {
         SetupHookInput,
         SetupHookSpecificOutput,
         SlashCommand,
+        StopFailureHookInput,
         StopHookInput,
         SubagentStartHookInput,
         SubagentStartHookSpecificOutput,
@@ -375,9 +396,9 @@ export declare type ElicitationResultHookSpecificOutput = {
     content?: Record<string, unknown>;
 };
 
-export declare const EXIT_REASONS: readonly ["clear", "logout", "prompt_input_exit", "other", "bypass_permissions_disabled"];
+export declare const EXIT_REASONS: readonly ["clear", "resume", "logout", "prompt_input_exit", "other", "bypass_permissions_disabled"];
 
-export declare type ExitReason = 'clear' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
+export declare type ExitReason = 'clear' | 'resume' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
 
 /**
  * Fast mode state: off, in cooldown after rate limit, or actively enabled.
@@ -464,7 +485,7 @@ export declare type GetSessionMessagesOptions = {
     offset?: number;
 };
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -483,9 +504,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -499,7 +520,7 @@ export declare type InstructionsLoadedHookInput = BaseHookInput & {
     hook_event_name: 'InstructionsLoaded';
     file_path: string;
     memory_type: 'User' | 'Project' | 'Local' | 'Managed';
-    load_reason: 'session_start' | 'nested_traversal' | 'path_glob_match' | 'include';
+    load_reason: 'session_start' | 'nested_traversal' | 'path_glob_match' | 'include' | 'compact';
     globs?: string[];
     trigger_file_path?: string;
     parent_file_path?: string;
@@ -1450,6 +1471,19 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>;
     /**
+     * Merge the provided settings into the flag settings layer, dynamically
+     * updating the active configuration. Top-level keys are shallow-merged
+     * across successive calls — a second call with `{permissions: {...}}`
+     * replaces the entire `permissions` object from a prior call. The resulting
+     * flag settings are then deep-merged with file-based settings at read time.
+     *
+     * Equivalent to passing an object to the `settings` option of `query()`,
+     * but applies mid-session. Only available in streaming input mode.
+     *
+     * @param settings - A partial settings object to merge into the flag settings
+     */
+    applyFlagSettings(settings: Settings): Promise<void>;
+    /**
      * Get the full initialization result, including supported commands, models,
      * account info, and output style configuration.
      *
@@ -1515,6 +1549,9 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param enabled - Whether the server should be enabled
      */
     toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
+
+
+
 
 
 
@@ -1590,6 +1627,8 @@ declare const SandboxFilesystemConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
     denyWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
     denyRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowManagedReadPathsOnly: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>>;
 
 export declare type SandboxIgnoreViolations = NonNullable<SandboxSettings['ignoreViolations']>;
@@ -1631,6 +1670,8 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         allowWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
         denyWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
         denyRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        allowRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        allowManagedReadPathsOnly: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strip>>;
     ignoreViolations: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodArray<z.ZodString>>>;
     enableWeakerNestedSandbox: z.ZodOptional<z.ZodBoolean>;
@@ -1641,6 +1682,21 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         args: z.ZodOptional<z.ZodArray<z.ZodString>>;
     }, z.core.$strip>>;
 }, z.core.$loose>;
+
+/**
+ * Emitted when an API request fails with a retryable error and will be retried after a delay. error_status is null for connection errors (e.g. timeouts) that had no HTTP response.
+ */
+export declare type SDKAPIRetryMessage = {
+    type: 'system';
+    subtype: 'api_retry';
+    attempt: number;
+    max_retries: number;
+    retry_delay_ms: number;
+    error_status: number | null;
+    error: SDKAssistantMessageError;
+    uuid: UUID;
+    session_id: string;
+};
 
 export declare type SDKAssistantMessage = {
     type: 'assistant';
@@ -1817,20 +1873,22 @@ declare type SDKControlPermissionRequest = {
     permission_suggestions?: coreTypes.PermissionUpdate[];
     blocked_path?: string;
     decision_reason?: string;
+    title?: string;
+    display_name?: string;
     tool_use_id: string;
     agent_id?: string;
     description?: string;
 };
 
-declare type SDKControlRequest = {
+export declare type SDKControlRequest = {
     type: 'control_request';
     request_id: string;
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
 
-declare type SDKControlResponse = {
+export declare type SDKControlResponse = {
     type: 'control_response';
     response: ControlResponse | ControlErrorResponse;
 };
@@ -2235,18 +2293,6 @@ export declare type SDKStatusMessage = {
     session_id: string;
 };
 
-export declare type SDKAPIRetryMessage = {
-    type: 'system';
-    subtype: 'api_retry';
-    attempt: number;
-    max_retries: number;
-    retry_delay_ms: number;
-    error_status: number | null;
-    error: SDKAssistantMessageError;
-    uuid: UUID;
-    session_id: string;
-};
-
 export declare type SDKSystemMessage = {
     type: 'system';
     subtype: 'init';
@@ -2307,6 +2353,7 @@ export declare type SDKTaskProgressMessage = {
     };
     last_tool_name?: string;
     summary?: string;
+
     uuid: UUID;
     session_id: string;
 };
@@ -2349,6 +2396,10 @@ export declare type SDKUserMessage = {
     isSynthetic?: boolean;
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
+    /**
+     * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
+     */
+    timestamp?: string;
     uuid?: UUID;
     session_id: string;
 };
@@ -2360,6 +2411,10 @@ export declare type SDKUserMessageReplay = {
     isSynthetic?: boolean;
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
+    /**
+     * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
+     */
+    timestamp?: string;
     uuid: UUID;
     session_id: string;
     isReplay: true;
@@ -2404,6 +2459,7 @@ export declare type SessionStartHookInput = BaseHookInput & {
 export declare type SessionStartHookSpecificOutput = {
     hookEventName: 'SessionStart';
     additionalContext?: string;
+    initialUserMessage?: string;
 };
 
 /**
@@ -2585,13 +2641,17 @@ export declare interface Settings {
              */
             hooks: ({
                 /**
-                 * Bash command hook type
+                 * Shell command hook type
                  */
                 type: 'command';
                 /**
                  * Shell command to execute
                  */
                 command: string;
+                /**
+                 * Shell interpreter. 'bash' uses your $SHELL (bash/zsh/sh); 'powershell' uses pwsh. Defaults to bash.
+                 */
+                shell?: 'bash' | 'powershell';
                 /**
                  * Timeout in seconds for this specific command
                  */
@@ -2714,6 +2774,10 @@ export declare interface Settings {
      */
     disableAllHooks?: boolean;
     /**
+     * Default shell for input-box ! commands. Defaults to 'bash' on all platforms (no Windows auto-flip).
+     */
+    defaultShell?: 'bash' | 'powershell';
+    /**
      * When true (and set in managed settings), only hooks from managed settings run. User, project, and local hooks are ignored.
      */
     allowManagedHooksOnly?: boolean;
@@ -2733,6 +2797,10 @@ export declare interface Settings {
      * When true (and set in managed settings), allowedMcpServers is only read from managed settings. deniedMcpServers still merges from all sources, so users can deny servers for themselves. Users can still add their own MCP servers, but only the admin-defined allowlist applies.
      */
     allowManagedMcpServersOnly?: boolean;
+    /**
+     * When set in managed settings, blocks non-plugin customization sources for the listed surfaces. Array form locks specific surfaces (e.g. ["skills", "hooks"]); `true` locks all four; `false` is an explicit no-op. Blocked: ~/.claude/{surface}/, .claude/{surface}/ (project), settings.json hooks, .mcp.json. NOT blocked: managed (policySettings) sources, plugin-provided customizations. Composes with strictKnownMarketplaces for end-to-end admin control — plugins gated by marketplace allowlist, everything else blocked here.
+     */
+    strictPluginOnlyCustomization?: boolean | ('skills' | 'agents' | 'hooks' | 'mcp')[];
     /**
      * Custom status line display configuration
      */
@@ -2835,6 +2903,116 @@ export declare interface Settings {
                  * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
                  */
                 pathPattern: string;
+            } | {
+                source: 'settings';
+                /**
+                 * Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.
+                 */
+                name: string;
+                /**
+                 * Plugin entries declared inline in settings.json
+                 */
+                plugins: {
+                    /**
+                     * Plugin name as it appears in the target repository
+                     */
+                    name: string;
+                    /**
+                     * Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.
+                     */
+                    source: string | {
+                        source: 'npm';
+                        /**
+                         * Package name (or url, or local path, or anything else that can be passed to `npm` as a package)
+                         */
+                        package: string;
+                        /**
+                         * Specific version or version range (e.g., ^1.0.0, ~2.1.0)
+                         */
+                        version?: string;
+                        /**
+                         * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
+                         */
+                        registry?: string;
+                    } | {
+                        source: 'pip';
+                        /**
+                         * Python package name as it appears on PyPI
+                         */
+                        package: string;
+                        /**
+                         * Version specifier (e.g., ==1.0.0, >=2.0.0, <3.0.0)
+                         */
+                        version?: string;
+                        /**
+                         * Custom PyPI registry URL (defaults to using system default, likely pypi.org)
+                         */
+                        registry?: string;
+                    } | {
+                        source: 'url';
+                        /**
+                         * Full git repository URL (https:// or git\@)
+                         */
+                        url: string;
+                        /**
+                         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                         */
+                        ref?: string;
+                        /**
+                         * Specific commit SHA to use
+                         */
+                        sha?: string;
+                    } | {
+                        source: 'github';
+                        /**
+                         * GitHub repository in owner/repo format
+                         */
+                        repo: string;
+                        /**
+                         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                         */
+                        ref?: string;
+                        /**
+                         * Specific commit SHA to use
+                         */
+                        sha?: string;
+                    } | {
+                        source: 'git-subdir';
+                        /**
+                         * Git repository: GitHub owner/repo shorthand, https://, or git\@ URL
+                         */
+                        url: string;
+                        /**
+                         * Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.
+                         */
+                        path: string;
+                        /**
+                         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                         */
+                        ref?: string;
+                        /**
+                         * Specific commit SHA to use
+                         */
+                        sha?: string;
+                    };
+                    description?: string;
+                    version?: string;
+                    strict?: boolean;
+                }[];
+                owner?: {
+                    /**
+                     * Display name of the plugin author or organization
+                     */
+                    name: string;
+                    /**
+                     * Contact email for support or feedback
+                     */
+                    email?: string;
+                    /**
+                     * Website, GitHub profile, or organization URL
+                     */
+                    url?: string;
+                };
             };
             /**
              * Local cache path where marketplace manifest is stored (auto-generated if not provided)
@@ -2927,6 +3105,116 @@ export declare interface Settings {
          * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
          */
         pathPattern: string;
+    } | {
+        source: 'settings';
+        /**
+         * Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.
+         */
+        name: string;
+        /**
+         * Plugin entries declared inline in settings.json
+         */
+        plugins: {
+            /**
+             * Plugin name as it appears in the target repository
+             */
+            name: string;
+            /**
+             * Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.
+             */
+            source: string | {
+                source: 'npm';
+                /**
+                 * Package name (or url, or local path, or anything else that can be passed to `npm` as a package)
+                 */
+                package: string;
+                /**
+                 * Specific version or version range (e.g., ^1.0.0, ~2.1.0)
+                 */
+                version?: string;
+                /**
+                 * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
+                 */
+                registry?: string;
+            } | {
+                source: 'pip';
+                /**
+                 * Python package name as it appears on PyPI
+                 */
+                package: string;
+                /**
+                 * Version specifier (e.g., ==1.0.0, >=2.0.0, <3.0.0)
+                 */
+                version?: string;
+                /**
+                 * Custom PyPI registry URL (defaults to using system default, likely pypi.org)
+                 */
+                registry?: string;
+            } | {
+                source: 'url';
+                /**
+                 * Full git repository URL (https:// or git\@)
+                 */
+                url: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'github';
+                /**
+                 * GitHub repository in owner/repo format
+                 */
+                repo: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'git-subdir';
+                /**
+                 * Git repository: GitHub owner/repo shorthand, https://, or git\@ URL
+                 */
+                url: string;
+                /**
+                 * Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.
+                 */
+                path: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            };
+            description?: string;
+            version?: string;
+            strict?: boolean;
+        }[];
+        owner?: {
+            /**
+             * Display name of the plugin author or organization
+             */
+            name: string;
+            /**
+             * Contact email for support or feedback
+             */
+            email?: string;
+            /**
+             * Website, GitHub profile, or organization URL
+             */
+            url?: string;
+        };
     })[];
     /**
      * Enterprise blocklist of marketplace sources. When set in managed settings, these exact sources are blocked from being added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem.
@@ -3009,6 +3297,116 @@ export declare interface Settings {
          * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
          */
         pathPattern: string;
+    } | {
+        source: 'settings';
+        /**
+         * Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.
+         */
+        name: string;
+        /**
+         * Plugin entries declared inline in settings.json
+         */
+        plugins: {
+            /**
+             * Plugin name as it appears in the target repository
+             */
+            name: string;
+            /**
+             * Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.
+             */
+            source: string | {
+                source: 'npm';
+                /**
+                 * Package name (or url, or local path, or anything else that can be passed to `npm` as a package)
+                 */
+                package: string;
+                /**
+                 * Specific version or version range (e.g., ^1.0.0, ~2.1.0)
+                 */
+                version?: string;
+                /**
+                 * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
+                 */
+                registry?: string;
+            } | {
+                source: 'pip';
+                /**
+                 * Python package name as it appears on PyPI
+                 */
+                package: string;
+                /**
+                 * Version specifier (e.g., ==1.0.0, >=2.0.0, <3.0.0)
+                 */
+                version?: string;
+                /**
+                 * Custom PyPI registry URL (defaults to using system default, likely pypi.org)
+                 */
+                registry?: string;
+            } | {
+                source: 'url';
+                /**
+                 * Full git repository URL (https:// or git\@)
+                 */
+                url: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'github';
+                /**
+                 * GitHub repository in owner/repo format
+                 */
+                repo: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'git-subdir';
+                /**
+                 * Git repository: GitHub owner/repo shorthand, https://, or git\@ URL
+                 */
+                url: string;
+                /**
+                 * Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.
+                 */
+                path: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            };
+            description?: string;
+            version?: string;
+            strict?: boolean;
+        }[];
+        owner?: {
+            /**
+             * Display name of the plugin author or organization
+             */
+            name: string;
+            /**
+             * Contact email for support or feedback
+             */
+            email?: string;
+            /**
+             * Website, GitHub profile, or organization URL
+             */
+            url?: string;
+        };
     })[];
     /**
      * Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing
@@ -3072,6 +3470,14 @@ export declare interface Settings {
              * Additional paths to deny reading within the sandbox. Merged with paths from Read(...) deny permission rules.
              */
             denyRead?: string[];
+            /**
+             * Paths to re-allow reading within denyRead regions. Takes precedence over denyRead for matching paths.
+             */
+            allowRead?: string[];
+            /**
+             * When true (set in managed settings), only allowRead paths from policySettings are used.
+             */
+            allowManagedReadPathsOnly?: boolean;
         };
         ignoreViolations?: {
             [k: string]: string[];
@@ -3142,6 +3548,10 @@ export declare interface Settings {
      */
     promptSuggestionEnabled?: boolean;
     /**
+     * When true, the plan-approval dialog offers a "clear context" option. Defaults to false.
+     */
+    showClearContextOnPlanAccept?: boolean;
+    /**
      * Name of an agent (built-in or custom) to use for the main thread. Applies the agent's system prompt, tool restrictions, and model.
      */
     agent?: string;
@@ -3203,6 +3613,10 @@ export declare interface Settings {
      * Custom directory path for auto-memory storage. Supports ~/ prefix for home directory expansion. Ignored if set in projectSettings (checked-in .claude/settings.json) for security. When unset, defaults to ~/.claude/projects/<sanitized-cwd>/memory/.
      */
     autoMemoryDirectory?: string;
+    /**
+     * Enable background memory consolidation (auto-dream). When set, overrides the server-side default.
+     */
+    autoDreamEnabled?: boolean;
     /**
      * Show thinking summaries in the transcript view (ctrl+o). Default: false.
      */
@@ -3350,6 +3764,13 @@ export declare interface SpawnOptions {
 }
 
 declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKStreamlinedTextMessage | coreTypes.SDKStreamlinedToolUseSummaryMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
+
+export declare type StopFailureHookInput = BaseHookInput & {
+    hook_event_name: 'StopFailure';
+    error: SDKAssistantMessageError;
+    error_details?: string;
+    last_assistant_message?: string;
+};
 
 export declare type StopHookInput = BaseHookInput & {
     hook_event_name: 'Stop';
