@@ -1,17 +1,22 @@
 /**
- * AgentTurnBlock Component - Compact turn summary with recent actions
+ * AgentTurnBlock Component - Always-expanded turn summary with inline action items
  *
  * Similar visual style to SubagentBlock but:
- * - Non-expandable (always shows collapsed preview)
- * - Shows only the 3 most recent actions/messages
- * - Each item shows: icon + type + brief content
- * - Does not render Result/Error blocks
+ * - Always expanded (no expand/collapse toggle)
+ * - Shows the 3 most recent action items inline
+ * - Each item shows: icon + action type + brief content
+ * - Does not render Result/Error blocks at the end
  */
 
 import type { JSX } from 'preact';
 import { cn } from '../../lib/utils.ts';
 import type { TurnBlock } from '../../hooks/useTurnBlocks';
-import { isTextBlock, isThinkingBlock, type ContentBlock } from '@neokai/shared/sdk/type-guards';
+import {
+	isTextBlock,
+	isThinkingBlock,
+	isToolUseBlock,
+	type ContentBlock,
+} from '@neokai/shared/sdk/type-guards';
 
 interface AgentTurnBlockProps {
 	turn: TurnBlock;
@@ -22,8 +27,8 @@ type ItemType = 'tool' | 'thinking' | 'assistant' | 'user' | 'system' | 'error';
 
 interface RenderItem {
 	type: ItemType;
-	label: string;
-	content: string;
+	actionLabel: string; // e.g., "Bash", "Read", "Thinking"
+	content: string; // e.g., "Get PR #12", "app/index.ts"
 	isError?: boolean;
 }
 
@@ -36,13 +41,7 @@ function getTypeIcon(type: ItemType): JSX.Element {
 						stroke-linecap="round"
 						stroke-linejoin="round"
 						stroke-width={2}
-						d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-					/>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+						d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
 					/>
 				</svg>
 			);
@@ -120,8 +119,34 @@ function truncate(text: string, maxLength: number): string {
 	return text.slice(0, maxLength - 3) + '...';
 }
 
+function getInputPreview(input: unknown): string {
+	if (!input || typeof input !== 'object') return '';
+	const obj = input as Record<string, unknown>;
+	// Try to get a meaningful preview from common tool input fields
+	if (obj.command && typeof obj.command === 'string') {
+		return truncate(obj.command, 40);
+	}
+	if (obj.path && typeof obj.path === 'string') {
+		return truncate(obj.path, 40);
+	}
+	if (obj.file_path && typeof obj.file_path === 'string') {
+		return truncate(obj.file_path, 40);
+	}
+	if (obj.url && typeof obj.url === 'string') {
+		return truncate(obj.url, 40);
+	}
+	if (obj.text && typeof obj.text === 'string') {
+		return truncate(obj.text, 40);
+	}
+	// Fallback to JSON stringification of small objects
+	const json = JSON.stringify(input);
+	if (json.length < 50) return json;
+	return truncate(json, 40);
+}
+
 /**
- * Extract items from turn messages for display
+ * Extract up to 3 recent action items from turn messages.
+ * Shows tool calls with name and args, thinking blocks, and assistant text.
  */
 function extractRenderItems(turn: TurnBlock): RenderItem[] {
 	const items: RenderItem[] = [];
@@ -130,71 +155,90 @@ function extractRenderItems(turn: TurnBlock): RenderItem[] {
 	if (turn.isError && turn.errorMessage) {
 		items.push({
 			type: 'error',
-			label: 'Error',
-			content: truncate(turn.errorMessage, 100),
+			actionLabel: 'Error',
+			content: truncate(turn.errorMessage, 60),
 			isError: true,
 		});
 	}
 
-	// Build items from preview messages (last 3)
-	// The preview shows the last message in the turn
-	if (turn.previewMessage && turn.previewMessage.type === 'assistant') {
-		const msg = turn.previewMessage as { type: 'assistant'; message: { content: unknown } };
-		const content = msg.message?.content;
-		if (content) {
-			if (typeof content === 'string') {
-				items.push({
-					type: 'assistant',
-					label: 'Assistant',
-					content: truncate(content, 60),
-				});
-			} else if (Array.isArray(content)) {
-				for (const block of content) {
-					if (typeof block === 'object' && block !== null) {
-						if (isThinkingBlock(block as ContentBlock)) {
-							items.push({
-								type: 'thinking',
-								label: 'Thinking',
-								content: truncate((block as { thinking: string }).thinking, 60),
-							});
-						} else if (isTextBlock(block as ContentBlock)) {
+	// Iterate through messages to extract items
+	// We go backwards to find most recent items
+	const messages = turn.messages;
+	for (let i = messages.length - 1; i >= 0 && items.length < 3; i--) {
+		const msg = messages[i];
+
+		if (msg.type === 'assistant') {
+			const assistantMsg = msg as {
+				type: 'assistant';
+				message: { content: ContentBlock[] };
+			};
+			const content = assistantMsg.message?.content;
+			if (Array.isArray(content)) {
+				for (let j = content.length - 1; j >= 0 && items.length < 3; j--) {
+					const block = content[j];
+
+					if (isToolUseBlock(block)) {
+						const toolBlock = block as {
+							type: 'tool_use';
+							name: string;
+							input: unknown;
+						};
+						const inputPreview = getInputPreview(toolBlock.input);
+						items.push({
+							type: 'tool',
+							actionLabel: toolBlock.name,
+							content: inputPreview || '(no input)',
+						});
+					} else if (isThinkingBlock(block)) {
+						const thinkingBlock = block as { thinking: string };
+						items.push({
+							type: 'thinking',
+							actionLabel: 'Thinking',
+							content: truncate(thinkingBlock.thinking, 50),
+						});
+					} else if (isTextBlock(block)) {
+						const textBlock = block as { text: string };
+						const text = textBlock.text.trim();
+						if (text.length > 0) {
 							items.push({
 								type: 'assistant',
-								label: 'Assistant',
-								content: truncate((block as { text: string }).text, 60),
+								actionLabel: 'Assistant',
+								content: truncate(text, 50),
 							});
 						}
 					}
 				}
 			}
+		} else if (msg.type === 'user') {
+			const userMsg = msg as {
+				type: 'user';
+				message: { content: unknown };
+			};
+			const content = userMsg.message?.content;
+			// Skip tool results (they're shown with tool_use blocks)
+			if (typeof content === 'string' && content.trim()) {
+				items.push({
+					type: 'user',
+					actionLabel: 'User',
+					content: truncate(content.trim(), 50),
+				});
+			}
 		}
 	}
 
-	// Add tool calls if present (last one)
-	if (turn.toolCallCount > 0) {
-		// We don't have the actual tool call details in TurnBlock preview,
-		// so we just indicate there were tool calls
-		items.push({
-			type: 'tool',
-			label: 'Tool',
-			content: `${turn.toolCallCount} tool call${turn.toolCallCount > 1 ? 's' : ''}`,
-		});
-	}
-
-	// Return only the last 3 items
-	return items.slice(-3);
+	// Reverse to show oldest first (so most recent is at the bottom visually)
+	// Actually, let's keep it as most recent first for now
+	return items.slice(0, 3);
 }
 
 export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps): JSX.Element {
 	const items = extractRenderItems(turn);
 	const hasError = turn.isError;
 
-	// Get role-based colors (reuse from ROLE_COLORS if available)
 	const roleConfig = {
 		bg: 'bg-gray-50 dark:bg-gray-900/20',
 		border: 'border-gray-200 dark:border-gray-700',
 		text: 'text-gray-700 dark:text-gray-300',
-		badge: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300',
 		icon: 'text-gray-600 dark:text-gray-400',
 	};
 
@@ -259,7 +303,7 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps): JSX.El
 				)}
 			</div>
 
-			{/* Items list */}
+			{/* Items list - always visible */}
 			{items.length > 0 && (
 				<div class="border-t border-gray-200 dark:border-gray-700 px-3 py-2 space-y-1.5">
 					{items.map((item, idx) => (
@@ -273,11 +317,15 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps): JSX.El
 							<span class="flex-shrink-0 mt-0.5">{getTypeIcon(item.type)}</span>
 							<span
 								class={cn(
-									'font-medium shrink-0',
-									item.isError ? 'text-red-700 dark:text-red-300' : ''
+									'font-semibold shrink-0',
+									item.type === 'tool' && 'text-blue-600 dark:text-blue-400',
+									item.type === 'thinking' && 'text-purple-600 dark:text-purple-400',
+									item.type === 'assistant' && 'text-green-600 dark:text-green-400',
+									item.type === 'user' && 'text-amber-600 dark:text-amber-400',
+									item.isError && 'text-red-600 dark:text-red-400'
 								)}
 							>
-								{item.label}:
+								{item.actionLabel}
 							</span>
 							<span class="truncate">{item.content}</span>
 						</div>
