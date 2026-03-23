@@ -768,7 +768,7 @@ describe('validateExportedWorkflow', () => {
 		}
 	});
 
-	test('rejects workflow with duplicate step names', () => {
+	test('rejects workflow with duplicate node names', () => {
 		const data = {
 			version: 1,
 			type: 'workflow',
@@ -785,7 +785,7 @@ describe('validateExportedWorkflow', () => {
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
-			expect(result.error).toContain('duplicate step name');
+			expect(result.error).toContain('duplicate node name');
 			expect(result.error).toContain('Step A');
 		}
 	});
@@ -1466,7 +1466,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
-			expect(result.error).toContain('step must have either agentRef or agents');
+			expect(result.error).toContain('node must have either agentRef or agents');
 		}
 	});
 
