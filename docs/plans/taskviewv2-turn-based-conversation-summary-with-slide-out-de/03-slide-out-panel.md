@@ -123,6 +123,7 @@ Write unit tests covering message loading isolation, panel open/close behavior, 
 4. Write test cases:
    - **Session isolation**: Verify that `sessionStore.select` is NEVER called when `ReadonlySessionChat` mounts — spy on `sessionStore.select` and confirm zero calls. Verify `sessionStore.activeSessionId` is not changed.
    - **Message loading**: Verify `ReadonlySessionChat` fetches messages via the correct RPC with the given `sessionId`.
+   - **Cross-session channel filter**: Emit a mock `state.sdkMessages.delta` event with a `context.channel` that does NOT match the component's `sessionId` (e.g., `session:other-id`). Verify that the foreign message is NOT added to the component's rendered message list. This tests the channel-filtering guard from Task 3.1 step 4.
    - **Closed state**: When `isOpen: false`, panel is not visible (has translate-x-full or similar).
    - **Open state**: When `isOpen: true` with a sessionId, panel is visible and `ReadonlySessionChat` is mounted with correct sessionId.
    - **Close button**: Clicking close button calls `onClose`.
