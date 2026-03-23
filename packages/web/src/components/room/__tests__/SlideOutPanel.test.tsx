@@ -58,7 +58,10 @@ vi.mock('../../../hooks/useMessageHub.ts', () => ({
 	useMessageHub: () => ({
 		request: mockRequest,
 		onEvent: mockOnEvent,
-		isConnected: mockIsConnected.value,
+		// Use a getter so tests can flip mockIsConnected.value after module load
+		get isConnected() {
+			return mockIsConnected.value;
+		},
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
 	}),
@@ -547,5 +550,38 @@ describe('ReadonlySessionChat', () => {
 		// Stale message must NOT appear
 		await waitFor(() => expect(container.textContent).toContain('No messages yet'));
 		expect(container.querySelector('[data-testid="msg-stale-msg-uuid"]')).toBeNull();
+	});
+
+	// --- Disconnected guard path ---
+
+	it('should not call joinRoom or fetch when isConnected is false', () => {
+		mockIsConnected.value = false;
+		render(<ReadonlySessionChat sessionId="disconnected-session" />);
+		expect(mockJoinRoom).not.toHaveBeenCalled();
+		expect(mockRequest).not.toHaveBeenCalled();
+	});
+
+	it('should not subscribe to delta events when isConnected is false', () => {
+		mockIsConnected.value = false;
+		render(<ReadonlySessionChat sessionId="disconnected-session" />);
+		expect(mockOnEvent).not.toHaveBeenCalled();
+	});
+
+	it('should fetch and join when isConnected transitions from false to true', async () => {
+		mockIsConnected.value = false;
+		const { rerender } = render(<ReadonlySessionChat sessionId="reconnect-session" />);
+		expect(mockJoinRoom).not.toHaveBeenCalled();
+		expect(mockRequest).not.toHaveBeenCalled();
+
+		// Simulate reconnection by toggling isConnected and re-rendering
+		mockIsConnected.value = true;
+		rerender(<ReadonlySessionChat sessionId="reconnect-session" />);
+
+		await waitFor(() => expect(mockJoinRoom).toHaveBeenCalledWith('session:reconnect-session'));
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('state.sdkMessages', {
+				sessionId: 'reconnect-session',
+			})
+		);
 	});
 });
