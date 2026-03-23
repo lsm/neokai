@@ -917,6 +917,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setIsFirstLoad(true);
 		setMessageCount(0);
 		setAutoScrollEnabled(true);
+		// Reset isLoadingOlder so auto-scroll is not permanently suppressed if the child
+		// unmounts (key change) while a load-earlier operation was in flight. The child's
+		// onLoadingOlderChange?.(false) will never fire after unmount, so we clear it here.
+		setIsLoadingOlder(false);
 	}, [rendererKey]);
 
 	// Mark initial load done after first messages arrive (fires after the render where
