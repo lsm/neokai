@@ -611,13 +611,13 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 
 		// Put node in multi-agent mode (channels-section only renders with 2+ agents)
-		// Use index-based selection: index 1 for first agent, then index 0 for second
-		// (after selecting index 1, the remaining agent is at index 0 in the dropdown)
+		// seedPresetAgents creates 4 agents (Coder, General, Planner, Reviewer).
+		// add-agent-select index 0 is the blank placeholder; real agents start at index 1.
 		const panel = editor.getByTestId('node-config-panel');
 		await panel.getByTestId('agent-select').selectOption({ index: 1 });
 		await panel.getByTestId('add-agent-button').click();
 		await expect(panel.getByTestId('agents-list')).toBeVisible({ timeout: 3000 });
-		await panel.getByTestId('add-agent-select').selectOption({ index: 0 });
+		await panel.getByTestId('add-agent-select').selectOption({ index: 1 });
 		await expect(panel.getByTestId('agents-list').getByTestId('agent-entry')).toHaveCount(2, {
 			timeout: 3000,
 		});
@@ -628,7 +628,8 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(channelsSection).toBeVisible({ timeout: 2000 });
 
 		// Find the channel entry that references task-agent
-		// "task-agent" is 10 chars; the 8-char truncation limit produces "task-age…"
+		// NodeConfigPanel does NOT truncate (unlike ChannelTopologyBadge); Playwright's
+		// text= does a case-insensitive substring match, so 'task-age' matches 'task-agent'
 		const taskAgentChannelEntry = channelsSection.locator('[data-testid="channel-entry"]').filter({
 			has: page.locator('text=task-age'),
 		});
