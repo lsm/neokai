@@ -100,17 +100,20 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 4. In the edge rendering:
    - Render edges between the Task Agent node and other nodes for each declared channel
    - These are distinct from workflow transition edges (different visual style -- dashed line or different color for communication channels vs execution flow)
-5. Run `bun run typecheck` and `bun run lint`.
-6. Write tests:
+5. **Remove M3 runtime auto-generation of Task Agent channels:** In `packages/daemon/src/lib/space/runtime/space-runtime.ts` (or equivalent), remove the logic added in Task 3.3 that auto-generates default bidirectional channels between the Task Agent and all node agents at workflow run start. Task Agent channels are now persisted as user-configurable `WorkflowChannel` entries created by the frontend (this task). The backend should read persisted channels only — no more runtime auto-generation. This prevents duplicate channels when both M3 and M4 are active.
+6. Run `bun run typecheck` and `bun run lint`.
+7. Write tests:
    - Test that adding a node auto-creates Task Agent channels
    - Test that removing a Task Agent channel works
    - Test that channel edges are rendered on the canvas
+   - Test that no duplicate Task Agent channels are created at runtime (runtime auto-generation removed)
 
 **Acceptance Criteria:**
 - Adding a new node automatically creates bidirectional Task Agent <-> node channels
 - Channels are visible in the channel config panel
 - Users can remove Task Agent channels
 - Channel edges are rendered on the canvas
+- M3 runtime auto-generation logic is removed — Task Agent channels are sourced exclusively from persisted workflow data
 
 **Dependencies:** Task 4.2
 

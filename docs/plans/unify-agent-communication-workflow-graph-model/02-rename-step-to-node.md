@@ -15,7 +15,7 @@ This is the largest mechanical change in the project. Key renames:
 - `startStepId` -> `startNodeId`
 - `currentStepId` -> `currentNodeId` in `SpaceWorkflowRun`, `CreateSpaceWorkflowRunParams`, `SpaceSessionGroup`
 - `workflow.steps` -> `workflow.nodes`
-- DB table `space_workflow_steps` -> `space_workflow_nodes` (via ALTER TABLE RENAME)
+- DB table `space_workflow_steps` -> `space_workflow_nodes` (via create-copy-drop-rename migration pattern)
 - DB columns `from_step_id`/`to_step_id` -> `from_node_id`/`to_node_id` in transitions
 - DB column `start_step_id` -> `start_node_id` in `space_workflows`
 - DB column `current_step_id` -> `current_node_id` in `space_workflow_runs` and `space_session_groups`
