@@ -1620,7 +1620,7 @@ export class RoomRuntime {
 	 * - Clears the group's completedAt so it becomes active again
 	 * - Restores agent sessions (they were stopped when the task failed)
 	 * - Re-registers terminal-state observers so the runtime hears when agents finish
-	 * - Injects the human message (leader first, worker as fallback)
+	 * - Injects the human message (respects target preference)
 	 *
 	 * On failure, undoes the group revive (re-sets completedAt) so the group is not
 	 * left in an orphaned active state without a running agent. The caller is
@@ -1628,8 +1628,15 @@ export class RoomRuntime {
 	 *
 	 * Returns true on success, false if the group cannot be found or sessions
 	 * cannot be restored / injected.
+	 *
+	 * @param target - Which agent should receive the message ('worker' or 'leader').
+	 *                 Defaults to 'leader' for backward compatibility.
 	 */
-	async reviveTaskForMessage(taskId: string, message: string): Promise<boolean> {
+	async reviveTaskForMessage(
+		taskId: string,
+		message: string,
+		target: 'worker' | 'leader' = 'leader'
+	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group) return false;
 
@@ -1678,25 +1685,49 @@ export class RoomRuntime {
 			await this.restoreMcpServersForGroup(group);
 		}
 
-		// Inject into leader first (preferred — leader orchestrates the workflow).
-		// Fall back to worker if leader is unavailable.
+		// Inject the message respecting the target preference.
+		// When target is 'worker': try worker first, fall back to leader if unavailable.
+		// When target is 'leader': try leader first (leader orchestrates the workflow),
+		// fall back to worker if leader is unavailable.
 		let injected = false;
-		if (leaderAvailable) {
-			try {
-				// Set leaderHasWork before injecting so the terminal event is not dropped.
-				this.groupRepo.setLeaderHasWork(group.id);
-				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
-				injected = true;
-			} catch (error) {
-				log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+		if (target === 'worker') {
+			// Prefer worker when human explicitly chose worker
+			if (workerAvailable) {
+				try {
+					await this.sessionFactory.injectMessage(group.workerSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+				}
 			}
-		}
-		if (!injected && workerAvailable) {
-			try {
-				await this.sessionFactory.injectMessage(group.workerSessionId, message);
-				injected = true;
-			} catch (error) {
-				log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+			if (!injected && leaderAvailable) {
+				try {
+					this.groupRepo.setLeaderHasWork(group.id);
+					await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+				}
+			}
+		} else {
+			// Prefer leader (default behavior for backward compatibility)
+			if (leaderAvailable) {
+				try {
+					// Set leaderHasWork before injecting so the terminal event is not dropped.
+					this.groupRepo.setLeaderHasWork(group.id);
+					await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+				}
+			}
+			if (!injected && workerAvailable) {
+				try {
+					await this.sessionFactory.injectMessage(group.workerSessionId, message);
+					injected = true;
+				} catch (error) {
+					log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+				}
 			}
 		}
 
