@@ -566,7 +566,7 @@ export function setupSpaceExportImportHandlers(
 						agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
 					} else {
 						// rename — create with a unique name; the original bundle name remains the
-						// cross-reference key so workflow steps still resolve correctly.
+						// cross-reference key so workflow nodes still resolve correctly.
 						const finalName = generateUniqueName(exportedAgent.name, usedAgentNames);
 						const created = agentRepo.create(
 							buildAgentCreateParams(spaceId, finalName, exportedAgent)
