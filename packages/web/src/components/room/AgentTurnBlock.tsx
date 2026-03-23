@@ -79,11 +79,13 @@ function NestedMessageRenderer({
 	toolResultsMap,
 	isLast = false,
 	inputText = null,
+	seenTexts = new Set<string>(),
 }: {
 	message: SDKMessage;
 	toolResultsMap?: Map<string, unknown>;
 	isLast?: boolean;
 	inputText?: string | null;
+	seenTexts?: Set<string>;
 }) {
 	// Handle assistant messages
 	if (message.type === 'assistant') {
@@ -208,15 +210,27 @@ function NestedMessageRenderer({
 			// Normalize whitespace for comparison
 			const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-			// Render non-tool-result content blocks, skipping duplicates of inputText
+			// Render non-tool-result content blocks, skipping:
+			// 1. Duplicates of inputText
+			// 2. Texts we've already rendered (for parallel sub-agent deduplication)
 			const textBlocks = content.filter((block) => {
 				const blockObj = block as Record<string, unknown>;
 				if (blockObj.type !== 'text' || typeof blockObj.text !== 'string') return false;
-				if (inputText && normalizeWS(blockObj.text) === normalizeWS(inputText)) return false;
+				const normalized = normalizeWS(blockObj.text);
+				if (inputText && normalized === normalizeWS(inputText)) return false;
+				if (seenTexts.has(normalized)) return false;
 				return true;
 			});
 
 			if (textBlocks.length === 0) return null;
+
+			// Add rendered texts to seenTexts for deduplication
+			textBlocks.forEach((block) => {
+				const blockObj = block as Record<string, unknown>;
+				if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
+					seenTexts.add(normalizeWS(blockObj.text));
+				}
+			});
 
 			return (
 				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
@@ -491,6 +505,8 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 							(acc, msg, idx) => (msg.type === 'assistant' ? idx : acc),
 							-1
 						);
+						// Track seen texts for deduplication across nested messages
+						const seenTexts = new Set<string>();
 						return (
 							<div class="border-b border-gray-200 dark:border-gray-700 p-3">
 								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -506,6 +522,7 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 												toolResultsMap={new Map()}
 												isLast={isLastAssistant}
 												inputText={inputText}
+												seenTexts={seenTexts}
 											/>
 										);
 									})}
