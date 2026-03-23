@@ -115,7 +115,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 29: Create all Space system tables (fully consolidated schema).
 	// All space tables and columns — including role, provider, inject_workflow_context,
 	// start_step_id, current_step_id, and space_workflow_transitions — are created here
-	// in a single idempotent migration.
+	// in a single idempotent migration. (Note: M45 renames step→node columns/tables.)
 	runMigration29(db);
 
 	// Migration 30: Add layout column to space_workflows for visual editor node positions.

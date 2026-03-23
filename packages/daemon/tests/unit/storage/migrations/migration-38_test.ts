@@ -122,7 +122,8 @@ describe('Migration 38: Add is_cyclic to space_workflow_transitions', () => {
 	// -------------------------------------------------------------------------
 
 	test('legacy DB: column is added to existing table that lacks it', () => {
-		// Create prerequisite tables and space_workflow_transitions as it existed before migration 38
+		// Create prerequisite tables as they existed before migration 38
+		// Note: M45 renames step→node columns/tables, so we include all tables M45 expects
 		db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -161,6 +162,7 @@ describe('Migration 38: Add is_cyclic to space_workflow_transitions', () => {
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
 				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
 				agent_id TEXT,
 				order_index INTEGER NOT NULL DEFAULT 0,
 				config TEXT,
@@ -180,6 +182,86 @@ describe('Migration 38: Add is_cyclic to space_workflow_transitions', () => {
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL,
 				FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_workflow_runs (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				workflow_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				current_step_index INTEGER NOT NULL DEFAULT 0,
+				current_step_id TEXT,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				completed_at INTEGER,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_tasks (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				task_type TEXT,
+				assigned_agent TEXT,
+				custom_agent_id TEXT,
+				workflow_run_id TEXT,
+				workflow_step_id TEXT,
+				created_by_task_id TEXT,
+				goal_id TEXT,
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				input_draft TEXT,
+				active_session TEXT,
+				task_agent_session_id TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_session_groups (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				description TEXT,
+				workflow_run_id TEXT,
+				current_step_id TEXT,
+				task_id TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_session_group_members (
+				id TEXT PRIMARY KEY,
+				group_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				order_index INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE
 			)
 		`);
 
