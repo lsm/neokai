@@ -66,6 +66,35 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentStep(step);
 	const stepAgents = step.agents ?? [];
 
+	// Auto-create Task Agent channels when an agent is assigned to a node that has no channels.
+	// This runs after the step updates, creating channels for single-agent and multi-agent nodes.
+	useEffect(() => {
+		// Only auto-create if there are agents but no channels
+		const hasSingleAgent = !!step.agentId && !step.agents;
+		const hasMultiAgent = step.agents && step.agents.length > 0;
+		if (!hasSingleAgent && !hasMultiAgent) return;
+		if (step.channels !== undefined) return; // channels already exist
+
+		if (hasSingleAgent) {
+			// Single-agent: create task-agent channel for the agent's role
+			const agentInfo = agents.find((a) => a.id === step.agentId);
+			if (!agentInfo) return;
+			const newChannels: WorkflowChannel[] = [
+				{ from: 'task-agent', to: agentInfo.role, direction: 'bidirectional' },
+			];
+			onUpdate({ ...step, channels: newChannels });
+		} else if (hasMultiAgent && step.agents) {
+			// Multi-agent: create task-agent channel for each agent's role
+			const newChannels: WorkflowChannel[] = step.agents.map((sa) => {
+				const agentInfo = agents.find((a) => a.id === sa.agentId);
+				const role = agentInfo?.role ?? sa.agentId;
+				return { from: 'task-agent', to: role, direction: 'bidirectional' };
+			});
+			onUpdate({ ...step, channels: newChannels });
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
 	function updateAgents(next: WorkflowStepAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
@@ -519,8 +548,8 @@ export function NodeConfigPanel({
 				{/* Agent(s) */}
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
-				{/* Channels (shown only in multi-agent mode) */}
-				{isMultiAgentStep(step) && (
+				{/* Channels (shown when node has agents or has existing channels) */}
+				{(!!step.agentId || isMultiAgentStep(step) || step.channels) && (
 					<ChannelsPanelSection step={step} agents={agents} onUpdate={onUpdate} />
 				)}
 

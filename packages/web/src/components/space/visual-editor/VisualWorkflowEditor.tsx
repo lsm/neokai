@@ -167,6 +167,40 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}, [edges, stepKeyToLocalId]);
 
 	// ------------------------------------------------------------------
+	// Derived: ChannelEdge[] for Task Agent channel connections
+	// Task Agent channels are stored on individual steps (step.channels).
+	// We extract edges from task-agent to each connected step.
+	// ------------------------------------------------------------------
+
+	const channelEdges = useMemo<{ fromStepId: 'task-agent'; toStepId: string }[]>(() => {
+		const result: { fromStepId: 'task-agent'; toStepId: string }[] = [];
+		for (const node of nodes) {
+			const channels = node.step.channels;
+			if (!channels) continue;
+			for (const channel of channels) {
+				// Handle bidirectional channels: task-agent -> node role
+				if (channel.direction === 'bidirectional') {
+					if (channel.from === 'task-agent') {
+						// task-agent -> node (use the node's localId as the target)
+						result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
+					} else if (channel.to === 'task-agent') {
+						// node -> task-agent (treat as task-agent is the source)
+						result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
+					}
+				}
+				// Handle one-way channels
+				if (channel.direction === 'one-way') {
+					if (channel.from === 'task-agent') {
+						result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
+					}
+					// Don't render edges where task-agent is the target (one-way from node to task-agent)
+				}
+			}
+		}
+		return result;
+	}, [nodes]);
+
+	// ------------------------------------------------------------------
 	// Helpers
 	// ------------------------------------------------------------------
 
@@ -728,6 +762,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					viewportState={viewportState}
 					onViewportChange={setViewportState}
 					transitions={transitions}
+					channelEdges={channelEdges}
 					onNodeSelect={handleNodeSelect}
 					onDeleteNode={handleDeleteNode}
 					onNodePositionChange={handleNodePositionChange}
