@@ -454,6 +454,26 @@ describe('NodeConfigPanel', () => {
 			expect(select.textContent).toContain('Coder');
 		});
 
+		it('auto-creates task-agent channels when adding an agent in multi-agent mode', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			// Should have 2 agents and 2 task-agent channels (one per agent)
+			expect(updatedStep.agents).toHaveLength(2);
+			expect(updatedStep.channels?.length).toBe(2);
+			expect(
+				updatedStep.channels?.every(
+					(c: { from: string; direction: string }) =>
+						c.from === 'task-agent' && c.direction === 'bidirectional'
+				)
+			).toBe(true);
+		});
+
 		it('shows channels section in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',

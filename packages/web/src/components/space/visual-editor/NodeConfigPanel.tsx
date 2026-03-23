@@ -75,22 +75,21 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	 * Called from event handlers (agent dropdown onChange, addAgent) to avoid
 	 * mount-time side effects that corrupt existing workflow data.
 	 */
-	function autoCreateChannelsForAgents(agentsToChannel: WorkflowStepAgent[]) {
-		if (step.channels !== undefined) return; // channels already exist
-		const newChannels: WorkflowChannel[] = agentsToChannel.map((sa) => {
+	function buildTaskAgentChannels(agentsToChannel: WorkflowStepAgent[]): WorkflowChannel[] {
+		return agentsToChannel.map((sa) => {
 			const agentInfo = agents.find((a) => a.id === sa.agentId);
 			const role = agentInfo?.role ?? sa.agentId;
 			return { from: 'task-agent', to: role, direction: 'bidirectional' };
 		});
-		onUpdate({ ...step, channels: newChannels });
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		if (stepAgents.some((a) => a.agentId === agentId)) return;
 		const next = [...stepAgents, { agentId }];
-		autoCreateChannelsForAgents(next);
-		updateAgents(next);
+		// Merge agents + channels into a single onUpdate call to avoid stale-reference overwrites
+		const newChannels = step.channels === undefined ? buildTaskAgentChannels(next) : step.channels;
+		onUpdate({ ...step, agents: next, agentId: '', channels: newChannels });
 	}
 
 	function removeAgent(agentId: string) {

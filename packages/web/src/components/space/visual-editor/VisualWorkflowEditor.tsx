@@ -173,22 +173,19 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	const channelEdges = useMemo<{ fromStepId: 'task-agent'; toStepId: string }[]>(() => {
-		const seen = new Set<string>();
 		const result: { fromStepId: 'task-agent'; toStepId: string }[] = [];
 		for (const node of nodes) {
 			const channels = node.step.channels;
 			if (!channels) continue;
-			// Only add one edge per node, regardless of how many channels it has
-			if (seen.has(node.step.localId)) continue;
 			for (const channel of channels) {
-				// Check if this channel involves task-agent
+				// Check if this channel involves task-agent (bidirectional only)
 				const hasTaskAgent =
 					(channel.from === 'task-agent' || channel.to === 'task-agent') &&
 					channel.direction === 'bidirectional';
 				if (hasTaskAgent) {
+					// Add one edge per node (break after first matching channel)
 					result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
-					seen.add(node.step.localId);
-					break; // only one edge per node
+					break;
 				}
 			}
 		}
