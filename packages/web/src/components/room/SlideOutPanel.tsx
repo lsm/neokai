@@ -6,18 +6,8 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
+import { ROLE_COLORS } from '../../lib/role-colors';
 import { ReadonlySessionChat } from './ReadonlySessionChat';
-
-const ROLE_COLORS: Record<string, { labelColor: string }> = {
-	planner: { labelColor: 'text-teal-400' },
-	coder: { labelColor: 'text-blue-400' },
-	general: { labelColor: 'text-slate-400' },
-	leader: { labelColor: 'text-purple-400' },
-	human: { labelColor: 'text-green-400' },
-	system: { labelColor: 'text-gray-500' },
-	craft: { labelColor: 'text-blue-400' },
-	lead: { labelColor: 'text-purple-400' },
-};
 
 interface Props {
 	isOpen: boolean;

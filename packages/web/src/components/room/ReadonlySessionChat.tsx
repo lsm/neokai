@@ -7,7 +7,7 @@
  *
  * Data loading:
  * - Joins channel `session:${sessionId}` and subscribes to `state.sdkMessages.delta`
- * - Initial fetch via `state.sdkMessages` RPC
+ * - Initial fetch via `state.sdkMessages` RPC (stale-fetch guarded by cancelled flag)
  * - Pagination via `message.sdkMessages` RPC (numeric `before` timestamp)
  * - Deduplicates by UUID on delta events (Safari reconnect replay guard)
  */
@@ -34,6 +34,7 @@ export function ReadonlySessionChat({ sessionId }: Props) {
 	const [hasMore, setHasMore] = useState(false);
 	const [isLoadingOlder, setIsLoadingOlder] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [paginationError, setPaginationError] = useState<string | null>(null);
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const didScrollRef = useRef(false);
@@ -69,10 +70,13 @@ export function ReadonlySessionChat({ sessionId }: Props) {
 		};
 	}, [sessionId, isConnected, onEvent, joinRoom, leaveRoom]);
 
-	// Initial fetch — re-runs when sessionId or isConnected changes
+	// Initial fetch — re-runs when sessionId or isConnected changes.
+	// Uses a cancelled flag to discard stale responses when sessionId changes
+	// or the component unmounts before the request resolves.
 	useEffect(() => {
 		if (!sessionId || !isConnected) return;
 
+		let cancelled = false;
 		setIsLoading(true);
 		setError(null);
 		setMessages([]);
@@ -81,15 +85,21 @@ export function ReadonlySessionChat({ sessionId }: Props) {
 
 		request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>('state.sdkMessages', { sessionId })
 			.then((result) => {
+				if (cancelled) return;
 				setMessages((result?.sdkMessages ?? []) as SDKMessageWithTimestamp[]);
 				setHasMore(result?.hasMore ?? false);
 			})
 			.catch((err: unknown) => {
+				if (cancelled) return;
 				setError(err instanceof Error ? err.message : 'Failed to load messages');
 			})
 			.finally(() => {
-				setIsLoading(false);
+				if (!cancelled) setIsLoading(false);
 			});
+
+		return () => {
+			cancelled = true;
+		};
 	}, [sessionId, isConnected, request]);
 
 	// Auto-scroll to bottom when new messages arrive
@@ -109,6 +119,7 @@ export function ReadonlySessionChat({ sessionId }: Props) {
 		if (!oldestTimestamp) return;
 
 		setIsLoadingOlder(true);
+		setPaginationError(null);
 		try {
 			const result = await request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>(
 				'message.sdkMessages',
@@ -123,8 +134,8 @@ export function ReadonlySessionChat({ sessionId }: Props) {
 					return [...deduped, ...prev];
 				});
 			}
-		} catch {
-			// Silently ignore pagination errors
+		} catch (err: unknown) {
+			setPaginationError(err instanceof Error ? err.message : 'Failed to load older messages');
 		} finally {
 			setIsLoadingOlder(false);
 		}
@@ -144,6 +155,9 @@ export function ReadonlySessionChat({ sessionId }: Props) {
 					>
 						{isLoadingOlder ? 'Loading…' : 'Load older messages'}
 					</button>
+					{paginationError && (
+						<div class="text-xs text-red-400 text-center mt-1">{paginationError}</div>
+					)}
 				</div>
 			)}
 

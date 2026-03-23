@@ -37,15 +37,18 @@ const mockOnEvent = vi.fn((eventName: string, handler: DeltaHandler) => {
 	};
 });
 
-const mockRequest = vi.fn(async (method: string) => {
-	if (method === 'state.sdkMessages') {
-		return { sdkMessages: [], hasMore: false };
+type MockRPCResponse = { sdkMessages: unknown[]; hasMore: boolean } | Record<string, never>;
+const mockRequest: ReturnType<typeof vi.fn> = vi.fn(
+	async (method: string): Promise<MockRPCResponse> => {
+		if (method === 'state.sdkMessages') {
+			return { sdkMessages: [], hasMore: false };
+		}
+		if (method === 'message.sdkMessages') {
+			return { sdkMessages: [], hasMore: false };
+		}
+		return {};
 	}
-	if (method === 'message.sdkMessages') {
-		return { sdkMessages: [], hasMore: false };
-	}
-	return {};
-});
+);
 
 const mockJoinRoom = vi.fn();
 const mockLeaveRoom = vi.fn();
@@ -330,6 +333,73 @@ describe('SlideOutPanel', () => {
 		render(<SlideOutPanel isOpen={true} sessionId="session-abc" onClose={() => {}} />);
 		await waitFor(() =>
 			expect(mockOnEvent).toHaveBeenCalledWith('state.sdkMessages.delta', expect.any(Function))
+		);
+	});
+
+	it('should call leaveRoom with the session channel on unmount', async () => {
+		const { unmount } = render(
+			<SlideOutPanel isOpen={true} sessionId="session-leave-test" onClose={() => {}} />
+		);
+		await waitFor(() => expect(mockJoinRoom).toHaveBeenCalledWith('session:session-leave-test'));
+		unmount();
+		expect(mockLeaveRoom).toHaveBeenCalledWith('session:session-leave-test');
+	});
+
+	// --- Pagination (load older) ---
+
+	it('should show load-older button when initial fetch returns hasMore=true', async () => {
+		mockRequest.mockImplementationOnce(async (method: string) => {
+			if (method === 'state.sdkMessages') {
+				return {
+					sdkMessages: [{ uuid: 'msg-old', type: 'assistant', timestamp: 1000 }],
+					hasMore: true,
+				};
+			}
+			return {};
+		});
+
+		const { container } = render(
+			<SlideOutPanel isOpen={true} sessionId="session-abc" onClose={() => {}} />
+		);
+		await waitFor(() => expect(container.querySelector('button[disabled]')).toBeNull());
+		await waitFor(() => expect(container.textContent).toContain('Load older messages'));
+	});
+
+	it('should call message.sdkMessages with numeric before timestamp when load-older clicked', async () => {
+		const oldTimestamp = 12345678;
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'state.sdkMessages') {
+				return {
+					sdkMessages: [{ uuid: 'msg-first', type: 'assistant', timestamp: oldTimestamp }],
+					hasMore: true,
+				};
+			}
+			if (method === 'message.sdkMessages') {
+				return { sdkMessages: [], hasMore: false };
+			}
+			return {};
+		});
+
+		const { container } = render(
+			<SlideOutPanel isOpen={true} sessionId="session-pg" onClose={() => {}} />
+		);
+
+		await waitFor(() => expect(container.textContent).toContain('Load older messages'));
+
+		// Find the "Load older" button specifically (not the close button)
+		const allButtons = container.querySelectorAll('button');
+		const loadBtn = Array.from(allButtons).find((b) =>
+			b.textContent?.includes('Load older')
+		) as HTMLButtonElement;
+		expect(loadBtn).toBeTruthy();
+		fireEvent.click(loadBtn);
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('message.sdkMessages', {
+				sessionId: 'session-pg',
+				before: oldTimestamp,
+				limit: 100,
+			})
 		);
 	});
 });
