@@ -5,6 +5,7 @@
  */
 
 import type {
+  SDKAPIRetryMessage,
   SDKMessage,
   SDKAssistantMessage,
   SDKAuthStatusMessage,
@@ -131,6 +132,15 @@ export function isSDKHookResponse(
   msg: SDKMessage,
 ): msg is SDKHookResponseMessage {
   return msg.type === "system" && (msg as SDKHookResponseMessage).subtype === "hook_response";
+}
+
+/**
+ * Check if message is an API retry message
+ */
+export function isSDKAPIRetryMessage(
+  msg: SDKMessage,
+): msg is SDKAPIRetryMessage {
+  return msg.type === "system" && (msg as SDKAPIRetryMessage).subtype === "api_retry";
 }
 
 /**
@@ -311,6 +321,10 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
     const hookMsg = msg as SDKHookResponseMessage;
     return `Hook Response: ${hookMsg.hook_name}`;
   }
+  if (isSDKAPIRetryMessage(msg)) {
+    const retryMsg = msg as SDKAPIRetryMessage;
+    return `API Retry: attempt ${retryMsg.attempt}/${retryMsg.max_retries}`;
+  }
   if (isSDKStreamEvent(msg)) {
     return "Streaming Event";
   }
@@ -330,8 +344,9 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
 export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should see: assistant, user, result, tool_progress, auth_status, user replays,
   // compact_boundary, and compacting status messages
-  // User should NOT see: stream events only
+  // User should NOT see: stream events or API retry messages
   if (isSDKStreamEvent(msg)) return false;
+  if (isSDKAPIRetryMessage(msg)) return false;
 
   return true;
 }

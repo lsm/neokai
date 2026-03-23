@@ -15,6 +15,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { RoomRepository } from '../../../storage/repositories/room-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	Room,
 	CreateRoomParams,
@@ -30,10 +31,10 @@ export class RoomManager {
 	private taskRepo: TaskRepository;
 	private sessionRepo: SessionRepository;
 
-	constructor(db: BunDatabase) {
+	constructor(db: BunDatabase, reactiveDb: ReactiveDatabase) {
 		this.db = db;
 		this.roomRepo = new RoomRepository(db);
-		this.taskRepo = new TaskRepository(db);
+		this.taskRepo = new TaskRepository(db, reactiveDb);
 		this.sessionRepo = new SessionRepository(db);
 	}
 
@@ -134,11 +135,13 @@ export class RoomManager {
 			status: task.status,
 			priority: task.priority,
 			progress: task.progress,
+			currentStep: task.currentStep,
 			dependsOn: task.dependsOn,
 			error: task.error,
 			activeSession: task.activeSession,
 			prUrl: task.prUrl,
 			prNumber: task.prNumber,
+			updatedAt: task.updatedAt,
 		});
 		const nonTerminal = tasks.filter(
 			(t) => t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'

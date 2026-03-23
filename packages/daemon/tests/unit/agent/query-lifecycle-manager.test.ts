@@ -9,7 +9,10 @@
  * - startQueryAndEnqueue: Starting query and enqueueing messages
  */
 
-import { describe, test, expect, beforeEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, mock, spyOn, afterEach } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	QueryLifecycleManager,
 	type QueryLifecycleManagerContext,
@@ -232,6 +235,97 @@ describe('QueryLifecycleManager', () => {
 
 			// Should not throw
 			await manager.stop();
+		});
+
+		test('calls close() on query object to terminate subprocess', async () => {
+			let closeCalled = false;
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					closeCalled = true;
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(closeCalled).toBe(true);
+		});
+
+		test('calls close() even when transport is not ready (firstMessageReceived=false)', async () => {
+			let closeCalled = false;
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					closeCalled = true;
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = false;
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(closeCalled).toBe(true);
+		});
+
+		test('handles close() errors gracefully', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					throw new Error('Close failed');
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			manager = new QueryLifecycleManager(mockContext);
+
+			// Should not throw
+			await manager.stop();
+		});
+
+		test('clears query references after close()', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(mockContext.queryObject).toBeNull();
+			expect(mockContext.queryPromise).toBeNull();
+		});
+
+		test('calls close() after query promise resolves', async () => {
+			const callOrder: string[] = [];
+			mockContext.queryObject = {
+				interrupt: mock(async () => {
+					callOrder.push('interrupt');
+				}),
+				close: mock(() => {
+					callOrder.push('close');
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = new Promise<void>((resolve) => {
+				setTimeout(() => {
+					callOrder.push('promise');
+					resolve();
+				}, 10);
+			});
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			const interruptIdx = callOrder.indexOf('interrupt');
+			const promiseIdx = callOrder.indexOf('promise');
+			const closeIdx = callOrder.indexOf('close');
+			expect(interruptIdx).not.toBe(-1);
+			expect(promiseIdx).not.toBe(-1);
+			expect(closeIdx).not.toBe(-1);
+			expect(interruptIdx).toBeLessThan(promiseIdx);
+			expect(promiseIdx).toBeLessThan(closeIdx);
 		});
 	});
 
@@ -844,6 +938,222 @@ describe('QueryLifecycleManager', () => {
 
 			// Should not throw
 			await manager.cleanup();
+		});
+	});
+
+	/**
+	 * Regression tests for the worktree path fix (PR #518).
+	 *
+	 * The SDK subprocess uses its CWD (worktree path for worktree sessions) to
+	 * determine where to write .jsonl session files. Before the fix, all 3 call
+	 * sites that validate/repair the SDK session file used session.workspacePath,
+	 * causing lookups to search the wrong directory and falsely clear sdkSessionId.
+	 *
+	 * Each method that calls validateAndRepairSDKSession gets its own sub-block.
+	 */
+	describe('SDK workspace path resolution', () => {
+		let tmpDir: string;
+
+		/**
+		 * Helper: create a valid (empty) JSONL fixture at the given path.
+		 * An empty file passes validateAndRepairSDKSession (no orphaned tool_results).
+		 */
+		function createSdkFile(basePath: string, sdkSessionId: string): void {
+			const projectKey = basePath.replace(/[/.]/g, '-');
+			const sessionDir = join(tmpDir, 'projects', projectKey);
+			mkdirSync(sessionDir, { recursive: true });
+			writeFileSync(join(sessionDir, `${sdkSessionId}.jsonl`), '');
+		}
+
+		beforeEach(() => {
+			tmpDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+			process.env.TEST_SDK_SESSION_DIR = tmpDir;
+		});
+
+		afterEach(() => {
+			delete process.env.TEST_SDK_SESSION_DIR;
+			rmSync(tmpDir, { recursive: true, force: true });
+		});
+
+		describe('restart()', () => {
+			test(
+				'uses worktreePath when session has worktree — preserves sdkSessionId',
+				async () => {
+					const sdkSessionId = 'sdk-restart-worktree';
+					const worktreePath = '/worktree/path';
+					createSdkFile(worktreePath, sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath,
+						branch: 'session/test',
+						mainRepoPath: '/test/workspace',
+					};
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.restart();
+
+					// File found at worktree path → sdkSessionId preserved
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'uses workspacePath when no worktree — preserves sdkSessionId',
+				async () => {
+					const sdkSessionId = 'sdk-restart-workspace';
+					createSdkFile('/test/workspace', sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					// No worktree set
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.restart();
+
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'clears sdkSessionId when file is at workspacePath but session has worktree (pre-fix bug scenario)',
+				async () => {
+					const sdkSessionId = 'sdk-restart-wrong-dir';
+					// File is at workspacePath, NOT at worktreePath
+					createSdkFile('/test/workspace', sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath: '/worktree/path',
+						branch: 'session/test',
+						mainRepoPath: '/test/workspace',
+					};
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.restart();
+
+					// File NOT found at worktree path → sdkSessionId cleared, fresh start
+					expect(mockContext.session.sdkSessionId).toBeUndefined();
+					expect(updateSessionSpy).toHaveBeenCalledWith(
+						'test-session',
+						expect.objectContaining({ sdkSessionId: undefined })
+					);
+				},
+				{ timeout: 5000 }
+			);
+		});
+
+		describe('reset()', () => {
+			test(
+				'uses worktreePath when session has worktree — preserves sdkSessionId',
+				async () => {
+					const sdkSessionId = 'sdk-reset-worktree';
+					const worktreePath = '/worktree/path';
+					createSdkFile(worktreePath, sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath,
+						branch: 'session/test',
+						mainRepoPath: '/test/workspace',
+					};
+					mockContext.queryObject = {
+						interrupt: mock(async () => {}),
+					} as unknown as QueryLifecycleManagerContext['queryObject'];
+					mockContext.queryPromise = Promise.resolve();
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.reset({ restartAfter: true });
+
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'clears sdkSessionId when file is at workspacePath but session has worktree (pre-fix bug scenario)',
+				async () => {
+					const sdkSessionId = 'sdk-reset-wrong-dir';
+					createSdkFile('/test/workspace', sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath: '/worktree/path',
+						branch: 'session/test',
+						mainRepoPath: '/test/workspace',
+					};
+					mockContext.queryObject = {
+						interrupt: mock(async () => {}),
+					} as unknown as QueryLifecycleManagerContext['queryObject'];
+					mockContext.queryPromise = Promise.resolve();
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.reset({ restartAfter: true });
+
+					expect(mockContext.session.sdkSessionId).toBeUndefined();
+					expect(updateSessionSpy).toHaveBeenCalledWith(
+						'test-session',
+						expect.objectContaining({ sdkSessionId: undefined })
+					);
+				},
+				{ timeout: 5000 }
+			);
+		});
+
+		describe('ensureQueryStarted()', () => {
+			test(
+				'uses worktreePath when session has worktree — preserves sdkSessionId',
+				async () => {
+					const sdkSessionId = 'sdk-ensure-worktree';
+					const worktreePath = '/worktree/path';
+					createSdkFile(worktreePath, sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath,
+						branch: 'session/test',
+						mainRepoPath: '/test/workspace',
+					};
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'clears sdkSessionId when file is at workspacePath but session has worktree (pre-fix bug scenario)',
+				async () => {
+					const sdkSessionId = 'sdk-ensure-wrong-dir';
+					createSdkFile('/test/workspace', sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath: '/worktree/path',
+						branch: 'session/test',
+						mainRepoPath: '/test/workspace',
+					};
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					expect(mockContext.session.sdkSessionId).toBeUndefined();
+					expect(updateSessionSpy).toHaveBeenCalledWith(
+						'test-session',
+						expect.objectContaining({ sdkSessionId: undefined })
+					);
+				},
+				{ timeout: 5000 }
+			);
 		});
 	});
 });

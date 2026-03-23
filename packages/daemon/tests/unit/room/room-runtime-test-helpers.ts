@@ -1,17 +1,21 @@
 import { Database } from 'bun:sqlite';
 import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
-import type { Room } from '@neokai/shared';
+import type { Room, GlobalSettings } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks';
 
 export function createMockDaemonHub() {
 	const handlers = new Map<string, Map<string | undefined, Array<(data: unknown) => void>>>();
+	const emittedEvents: Array<{ event: string; data: unknown }> = [];
 	return {
+		emittedEvents,
 		on(
 			event: string,
 			handler: (data: unknown) => void,
@@ -34,6 +38,9 @@ export function createMockDaemonHub() {
 				}
 			};
 		},
+		async emit(event: string, data: unknown): Promise<void> {
+			emittedEvents.push({ event, data });
+		},
 	};
 }
 
@@ -44,20 +51,29 @@ export function createMockSessionFactory() {
 		string,
 		'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input'
 	>();
+	/** Session IDs that should appear missing from cache — configurable in tests */
+	let missingSessionIds: Set<string> | undefined;
 	return {
 		calls,
 		processingStates,
+		get missingSessionIds() {
+			return missingSessionIds;
+		},
+		set missingSessionIds(v: Set<string> | undefined) {
+			missingSessionIds = v;
+		},
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
 		async injectMessage(
 			sessionId: string,
 			message: string,
-			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+			opts?: { deliveryMode?: 'immediate' | 'defer' }
 		) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
-		hasSession(_sessionId: string) {
+		hasSession(sessionId: string) {
+			if (missingSessionIds?.has(sessionId)) return false;
 			return true;
 		},
 		getProcessingState(
@@ -77,6 +93,8 @@ export function createMockSessionFactory() {
 		},
 		async restoreSession(sessionId: string) {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
+			// Sessions in missingSessionIds cannot be restored — simulate permanent loss
+			if (missingSessionIds?.has(sessionId)) return false;
 			return true;
 		},
 		async interruptSession(sessionId: string) {
@@ -84,6 +102,10 @@ export function createMockSessionFactory() {
 		},
 		async stopSession(sessionId: string) {
 			calls.push({ method: 'stopSession', args: [sessionId] });
+		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
+			return true;
 		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
@@ -119,7 +141,19 @@ const DB_SCHEMA = `
 		priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER DEFAULT 0,
 		linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
 		created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER,
-		planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0
+		planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+		mission_type TEXT NOT NULL DEFAULT 'one_shot'
+			CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+		autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+			CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+		schedule TEXT,
+		schedule_paused INTEGER NOT NULL DEFAULT 0,
+		next_run_at INTEGER,
+		structured_metrics TEXT,
+		max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+		max_planning_attempts INTEGER NOT NULL DEFAULT 0,
+		consecutive_failures INTEGER NOT NULL DEFAULT 0,
+		replan_count INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE TABLE tasks (
 		id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -135,7 +169,8 @@ const DB_SCHEMA = `
 		active_session TEXT,
 		pr_url TEXT,
 		pr_number INTEGER,
-		pr_created_at INTEGER
+		pr_created_at INTEGER,
+		updated_at INTEGER
 	);
 	CREATE TABLE session_groups (
 		id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
@@ -157,6 +192,42 @@ const DB_SCHEMA = `
 		payload_json TEXT,
 		created_at INTEGER NOT NULL
 	);
+	CREATE TABLE session_group_messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+		session_id TEXT,
+		role TEXT NOT NULL DEFAULT 'system',
+		message_type TEXT NOT NULL DEFAULT 'status',
+		content TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE mission_metric_history (
+		id TEXT PRIMARY KEY,
+		goal_id TEXT NOT NULL,
+		metric_name TEXT NOT NULL,
+		value REAL NOT NULL,
+		recorded_at INTEGER NOT NULL,
+		FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup
+		ON mission_metric_history(goal_id, metric_name, recorded_at);
+	CREATE TABLE mission_executions (
+		id TEXT PRIMARY KEY,
+		goal_id TEXT NOT NULL,
+		execution_number INTEGER NOT NULL,
+		started_at INTEGER,
+		completed_at INTEGER,
+		status TEXT NOT NULL DEFAULT 'running',
+		result_summary TEXT,
+		task_ids TEXT NOT NULL DEFAULT '[]',
+		planning_attempts INTEGER NOT NULL DEFAULT 0,
+		FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+		UNIQUE(goal_id, execution_number)
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running
+		ON mission_executions(goal_id) WHERE status = 'running';
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_one_active_per_task
+		ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair');
 `;
 
 export interface RuntimeTestContext {
@@ -167,6 +238,7 @@ export interface RuntimeTestContext {
 	groupRepo: SessionGroupRepository;
 	sessionFactory: ReturnType<typeof createMockSessionFactory>;
 	observer: SessionObserver;
+	hub: ReturnType<typeof createMockDaemonHub>;
 }
 
 export interface RuntimeTestContextOptions {
@@ -179,6 +251,8 @@ export interface RuntimeTestContextOptions {
 		sessionId: string,
 		afterMessageId: string | null
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
+	/** Get global settings for testing fallback model logic */
+	getGlobalSettings?: () => GlobalSettings;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -190,10 +264,10 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	);
 
 	const mockHub = createMockDaemonHub();
-	const groupRepo = new SessionGroupRepository(db as never);
+	const groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 	const observer = new SessionObserver(mockHub as unknown as DaemonHub);
-	const taskManager = new TaskManager(db as never, 'room-1');
-	const goalManager = new GoalManager(db as never, 'room-1');
+	const taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+	const goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 	const sessionFactory = createMockSessionFactory();
 	const room = makeRoom(opts?.room);
 
@@ -207,7 +281,6 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		workspacePath: '/workspace',
 		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
-		tickInterval: 60_000,
 		hookOptions:
 			opts?.hookOptions ??
 			({
@@ -218,9 +291,20 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),
 		getGoal: (goalId) => goalManager.getGoal(goalId),
+		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
+		daemonHub: mockHub as unknown as DaemonHub,
 	});
 
-	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
+	return {
+		db,
+		runtime,
+		taskManager,
+		goalManager,
+		groupRepo,
+		sessionFactory,
+		observer,
+		hub: mockHub,
+	};
 }
 
 export async function createGoalAndTask(

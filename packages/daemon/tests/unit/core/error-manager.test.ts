@@ -367,6 +367,8 @@ describe('ErrorManager', () => {
 				ErrorCategory.TIMEOUT,
 				ErrorCategory.PERMISSION,
 				ErrorCategory.RATE_LIMIT,
+				ErrorCategory.PROVIDER_AUTH_ERROR,
+				ErrorCategory.PROVIDER_UNAVAILABLE,
 			];
 
 			categories.forEach((category) => {
@@ -375,6 +377,111 @@ describe('ErrorManager', () => {
 				expect(structured.userMessage).toBeDefined();
 				expect(structured.userMessage.length).toBeGreaterThan(0);
 			});
+		});
+	});
+
+	describe('provider error categories', () => {
+		it('should generate correct user message for PROVIDER_AUTH_ERROR', () => {
+			const structured = errorManager.createError(
+				new Error('401 unauthorized'),
+				ErrorCategory.PROVIDER_AUTH_ERROR
+			);
+			expect(structured.category).toBe(ErrorCategory.PROVIDER_AUTH_ERROR);
+			expect(structured.userMessage).toContain('Authentication with the provider has expired');
+			expect(structured.userMessage).toContain('re-authenticate');
+		});
+
+		it('should generate correct user message for PROVIDER_UNAVAILABLE', () => {
+			const structured = errorManager.createError(
+				new Error('ECONNREFUSED bridge'),
+				ErrorCategory.PROVIDER_UNAVAILABLE
+			);
+			expect(structured.category).toBe(ErrorCategory.PROVIDER_UNAVAILABLE);
+			expect(structured.userMessage).toContain('temporarily unavailable');
+			expect(structured.userMessage).toContain('switch to another provider');
+		});
+
+		it('should include provider-specific recovery suggestions for PROVIDER_AUTH_ERROR', () => {
+			const structured = errorManager.createError(
+				new Error('token expired'),
+				ErrorCategory.PROVIDER_AUTH_ERROR
+			);
+			expect(structured.recoverySuggestions).toBeDefined();
+			expect(structured.recoverySuggestions?.length).toBeGreaterThan(0);
+			expect(structured.recoverySuggestions).toContain('Open Provider Settings to re-authenticate');
+			expect(structured.recoverySuggestions).toContain(
+				'Try switching to a different provider temporarily'
+			);
+		});
+
+		it('should include provider-specific recovery suggestions for PROVIDER_UNAVAILABLE', () => {
+			const structured = errorManager.createError(
+				new Error('service unavailable 503'),
+				ErrorCategory.PROVIDER_UNAVAILABLE
+			);
+			expect(structured.recoverySuggestions).toBeDefined();
+			expect(structured.recoverySuggestions?.length).toBeGreaterThan(0);
+			expect(structured.recoverySuggestions).toContain(
+				'Switch to a different provider (e.g. Anthropic) from the model picker'
+			);
+			expect(structured.recoverySuggestions).toContain(
+				'Check that the provider bridge server is running'
+			);
+		});
+
+		it('PROVIDER_AUTH_ERROR should be recoverable', () => {
+			const structured = errorManager.createError(
+				new Error('token expired'),
+				ErrorCategory.PROVIDER_AUTH_ERROR
+			);
+			expect(structured.recoverable).toBe(true);
+		});
+
+		it('PROVIDER_UNAVAILABLE should be recoverable', () => {
+			const structured = errorManager.createError(
+				new Error('ECONNREFUSED'),
+				ErrorCategory.PROVIDER_UNAVAILABLE
+			);
+			expect(structured.recoverable).toBe(true);
+		});
+
+		it('should track PROVIDER_UNAVAILABLE errors in API connection state', async () => {
+			// Generate enough provider unavailable errors to change connection status
+			for (let i = 0; i < 2; i++) {
+				const error = errorManager.createError(
+					new Error('bridge server unreachable'),
+					ErrorCategory.PROVIDER_UNAVAILABLE
+				);
+				await errorManager.broadcastError('test-session', error);
+			}
+
+			const state = errorManager.getApiConnectionState();
+			expect(state.status).toBe('degraded');
+		});
+
+		it('should use custom user message for provider auth errors', () => {
+			const customMessage = 'Authentication with Copilot has expired. Please re-authenticate.';
+			const structured = errorManager.createError(
+				new Error('401 unauthorized'),
+				ErrorCategory.PROVIDER_AUTH_ERROR,
+				customMessage
+			);
+			expect(structured.userMessage).toBe(customMessage);
+		});
+
+		it('should store provider metadata when provided', async () => {
+			const result = await errorManager.handleError(
+				'session-abc',
+				new Error('token expired'),
+				ErrorCategory.PROVIDER_AUTH_ERROR,
+				'Authentication with Copilot has expired.',
+				undefined,
+				{ providerId: 'anthropic-copilot', providerName: 'Copilot' }
+			);
+
+			expect(result.category).toBe(ErrorCategory.PROVIDER_AUTH_ERROR);
+			expect(result.metadata?.providerId).toBe('anthropic-copilot');
+			expect(result.metadata?.providerName).toBe('Copilot');
 		});
 	});
 

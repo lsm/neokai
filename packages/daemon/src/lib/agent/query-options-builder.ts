@@ -18,7 +18,7 @@
  * - Hooks (output limiter)
  */
 
-import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	Session,
 	ThinkingLevel,
@@ -32,7 +32,7 @@ import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { getProviderContextManager } from '../providers/factory.js';
-import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
+import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -158,9 +158,11 @@ export class QueryOptionsBuilder {
 			cwd: this.getCwd(),
 			additionalDirectories,
 			env: mergedEnv,
-			// In bundled binaries, process.execPath is the binary itself, not a JS runtime.
-			// Default to 'bun' so the SDK finds the runtime from PATH.
-			executable: config.executable ?? (isBundledBinary() ? 'bun' : undefined),
+			// When running under Bun (dev, test, or compiled binary), set the subprocess
+			// runtime to 'bun' so it shares the same Node.js compat layer (e.g. node:sqlite
+			// requires v22.5+ but is available in Bun). Without this, CI runners with an
+			// older Node.js on PATH would fail when spawning the SDK's cli.js subprocess.
+			executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
 			executableArgs: config.executableArgs,
 			pathToClaudeCodeExecutable: sdkCliPath,
 
@@ -183,13 +185,15 @@ export class QueryOptionsBuilder {
 		};
 
 		// ============ Room Session Restrictions ============
-		// Room chat sessions are orchestrators only — they must not
-		// have access to built-in file/shell tools or user-configured MCP servers.
+		// Room chat sessions are orchestrators — they have read tools, Bash for diagnostics,
+		// and explicitly configured MCP servers (room-agent-tools + project MCP servers).
+		// File editing tools (Write/Edit/NotebookEdit) are excluded.
 		if (this.ctx.session.type === 'room_chat') {
 			const roomAllowedBuiltinTools = [
 				'Read',
 				'Glob',
 				'Grep',
+				'Bash',
 				'WebFetch',
 				'WebSearch',
 				'ToolSearch',
@@ -200,7 +204,6 @@ export class QueryOptionsBuilder {
 				'Task',
 				'TaskOutput',
 				'TaskStop',
-				'Bash',
 				'Edit',
 				'Write',
 				'NotebookEdit',
@@ -216,20 +219,25 @@ export class QueryOptionsBuilder {
 				queryOptions.systemPrompt = undefined;
 			}
 
-			// Restrict room chat to a safe, read-oriented built-in tool set.
+			// Restrict room chat to coordinator-appropriate built-in tool set.
 			queryOptions.tools = roomAllowedBuiltinTools;
+
+			// Auto-allow all explicitly configured MCP server tools (room-agent-tools + project MCP servers).
+			const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
+				(name) => `${name}__*`
+			);
 			queryOptions.allowedTools = [
 				...new Set([
 					...(queryOptions.allowedTools ?? []),
 					...roomAllowedBuiltinTools,
-					'room-agent-tools__*',
+					...mcpServerWildcards,
 				]),
 			];
 
 			queryOptions.disallowedTools = [
 				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
 			];
-			// Prevent user-configured MCP servers from being merged in.
+			// Prevent user-configured MCP servers from being merged in (only runtime-injected servers allowed).
 			queryOptions.strictMcpConfig = true;
 			// Skip settings file loading so user's settings.json doesn't inject extra tools.
 			queryOptions.settingSources = [];

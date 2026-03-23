@@ -64,6 +64,11 @@ jobs:
         with:
           bun-version: 1.3.10
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Install dependencies
         run: bun install
 
@@ -122,12 +127,13 @@ jobs:
           - convo
           - features-1
           - features-2
+          - features-3
           - git
           - lifecycle
           - mcp
-          - providers-anthropic
-          - providers-openai
-          - providers-copilot
+          # Codex bridge tests disabled — requires OPENAI_API_KEY (real API, not mocked)
+          # - providers-anthropic-to-codex-bridge
+          - providers-anthropic-copilot
           - rewind
           # Room tests temporarily disabled during refactoring
           # - room-1
@@ -138,6 +144,7 @@ jobs:
           - rpc-1
           - rpc-2
           - rpc-3
+          - rpc-4
           - sdk
           - websocket
         include:
@@ -173,7 +180,12 @@ jobs:
               tests/online/features/message-delivery-mode-queue.test.ts
             mock_sdk: true
           - module: features-2
-            test_path: tests/online/features/message-persistence.test.ts
+            test_path: >-
+              tests/online/features/github-poll-job.test.ts
+              tests/online/features/message-persistence.test.ts
+            mock_sdk: true
+          - module: features-3
+            test_path: tests/online/features/job-queue-crash-recovery.test.ts
             mock_sdk: true
           - module: git
             test_path: tests/online/git
@@ -185,14 +197,11 @@ jobs:
           - module: mcp
             test_path: tests/online/mcp
             mock_sdk: true
-          - module: providers-anthropic
-            test_path: >-
-              tests/online/providers/anthropic-provider.test.ts
-              tests/online/providers/model-switch-system-init.test.ts
-          - module: providers-openai
-            test_path: tests/online/providers/openai-provider.test.ts
-          - module: providers-copilot
-            test_path: tests/online/providers/github-copilot-provider.test.ts
+          # - module: providers-anthropic-to-codex-bridge
+          #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
+          - module: providers-anthropic-copilot
+            test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
+            timeout: 15
           - module: rewind
             test_path: tests/online/rewind
             mock_sdk: true
@@ -215,36 +224,49 @@ jobs:
           # - module: room-reviewer
           #   test_path: tests/online/room/room-reviewer-flow.test.ts
           #   timeout: 10
+          # rpc-1: heaviest files (task-lifecycle ~647 + config-handlers ~573 lines ≈ 1 220)
           - module: rpc-1
             test_path: >-
-              tests/online/rpc/rpc-agent-handlers.test.ts
               tests/online/rpc/rpc-config-handlers.test.ts
+              tests/online/rpc/rpc-task-lifecycle.test.ts
+            mock_sdk: true
+          # rpc-2: settings + remove-output + message + agent (≈ 1 241 lines)
+          - module: rpc-2
+            test_path: >-
+              tests/online/rpc/rpc-agent-handlers.test.ts
+              tests/online/rpc/rpc-message-handlers.test.ts
+              tests/online/rpc/rpc-remove-output.test.ts
+              tests/online/rpc/rpc-settings-handlers.test.ts
+            mock_sdk: true
+          # rpc-3: session-extended + live-query + mcp + task-draft + rewind (≈ 1 356 lines)
+          - module: rpc-3
+            test_path: >-
+              tests/online/rpc/rpc-live-query.test.ts
+              tests/online/rpc/rpc-mcp-toggle.test.ts
+              tests/online/rpc/rpc-rewind-handlers.test.ts
+              tests/online/rpc/rpc-session-handlers-extended.test.ts
+              tests/online/rpc/rpc-task-draft-handlers.test.ts
+            mock_sdk: true
+          # rpc-4: remaining smaller files (≈ 1 382 lines)
+          - module: rpc-4
+            test_path: >-
               tests/online/rpc/rpc-draft-handlers.test.ts
               tests/online/rpc/rpc-file-handlers.test.ts
               tests/online/rpc/rpc-interrupt-handlers.test.ts
-              tests/online/rpc/rpc-mcp-toggle.test.ts
-              tests/online/rpc/rpc-task-draft-handlers.test.ts
-            mock_sdk: true
-          - module: rpc-2
-            test_path: >-
-              tests/online/rpc/rpc-message-handlers.test.ts
               tests/online/rpc/rpc-model-handlers.test.ts
               tests/online/rpc/rpc-model-switching.test.ts
-              tests/online/rpc/rpc-remove-output.test.ts
-              tests/online/rpc/rpc-rewind-handlers.test.ts
               tests/online/rpc/rpc-session-filtering.test.ts
-            mock_sdk: true
-          - module: rpc-3
-            test_path: >-
-              tests/online/rpc/rpc-session-handlers-extended.test.ts
               tests/online/rpc/rpc-session-workflow.test.ts
-              tests/online/rpc/rpc-settings-handlers.test.ts
               tests/online/rpc/rpc-state-sync.test.ts
               tests/online/rpc/session-handlers.test.ts
             mock_sdk: true
           - module: sdk
             test_path: tests/online/sdk
             mock_sdk: true
+          - module: space
+            test_path: tests/online/space
+            mock_sdk: true
+            enable_spaces_agent: true
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
@@ -256,6 +278,11 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -277,12 +304,18 @@ jobs:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          NEOKAI_ENABLE_SPACES_AGENT: ${{ matrix.enable_spaces_agent == true && '1' || '' }}
+          NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          OPENAI_API_KEY: ""
+          # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
+          # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
+          # If the secret is absent the env var is empty and the test FAILS (hard-fail, not skip — by design).
+          COPILOT_GITHUB_TOKEN: ${{ matrix.module == 'providers-anthropic-copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.
@@ -335,6 +368,11 @@ jobs:
         with:
           bun-version: 1.3.10
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -382,6 +420,11 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -431,6 +474,11 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -583,6 +631,11 @@ jobs:
         with:
           bun-version: 1.3.10
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -642,14 +695,23 @@ jobs:
             core/interrupt-button
             core/interrupt-error-bug
             core/context-features
+            core/model-selection
             features/archive
             features/file-operations
+            features/message-operations
             features/rewind-features
+            features/session-operations
+            features/slash-cmd
+            features/worktree-isolation
+            responsive/mobile
+            responsive/tablet
             settings/auto-title
           )
 
-          # Tests to exclude entirely (disabled, pending refactor)
+          # Tests to exclude entirely (disabled, pending stabilization)
           EXCLUDED_TESTS=(
+            features/space-export-import
+            features/space-workflow-rules
           )
 
           # Build lookup sets
@@ -712,6 +774,11 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -814,6 +881,11 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.3.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'

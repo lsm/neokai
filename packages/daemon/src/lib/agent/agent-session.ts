@@ -62,7 +62,7 @@
  * that continuously yields messages from a queue.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	AgentProcessingState,
 	MessageContent,
@@ -83,6 +83,7 @@ import type {
 	SelectiveRewindResult,
 	SystemPromptConfig,
 	McpServerConfig,
+	Provider,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';
@@ -122,6 +123,9 @@ export interface AgentSessionInit {
 
 	/** Model ID - defaults to default model */
 	model?: string;
+
+	/** Provider ID for this session — if omitted, auto-detected from model or falls back to Anthropic */
+	provider?: string;
 
 	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
 	coordinatorMode?: boolean;
@@ -217,10 +221,8 @@ export class AgentSession
 	queryAbortController: AbortController | null = null;
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+	startupTimeoutAutoRecoverAttempts = 0;
 	originalEnvVars: OriginalEnvVars = {};
-	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
-	// Set by QueryRunner when it detects a provider with createQuery method
-	isCustomQueryProvider = false;
 	// Whether to auto-queue /context after each turn (default: true)
 	// Disabled for room-managed agents to prevent interleaved messages after terminal state
 	contextAutoQueueEnabled = true;
@@ -306,13 +308,13 @@ export class AgentSession
 
 		// Recover orphaned messages
 		const recoveryHandler = new MessageRecoveryHandler(session, db, this.logger);
-		recoveryHandler.recoverOrphanedSentMessages();
+		recoveryHandler.recoverOrphanedConsumedMessages();
 
 		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
 		this.eventSubscriptionSetup.setup();
 
 		// Replay persisted pending messages after startup/recovery in immediate mode.
-		// Priority: queued/current-turn first, then saved/next-turn.
+		// Priority: enqueued/immediate first, then deferred/defer.
 		const restoredState = this.stateManager.getState();
 		if (session.config.queryMode !== 'manual' && restoredState.status !== 'waiting_for_input') {
 			queueMicrotask(() => {
@@ -472,6 +474,7 @@ export class AgentSession
 
 		const config: SessionConfig = {
 			model: init.model ?? defaultModel,
+			provider: init.provider as Provider | undefined,
 			maxTokens: 4096,
 			temperature: 1.0,
 			// Pass through system prompt from init
@@ -596,9 +599,10 @@ export class AgentSession
 	// ============================================================================
 
 	async handleModelSwitch(
-		newModel: string
+		newModel: string,
+		newProvider: string
 	): Promise<{ success: boolean; model: string; error?: string }> {
-		return this.modelSwitchHandler.switchModel(newModel);
+		return this.modelSwitchHandler.switchModel(newModel, newProvider);
 	}
 
 	getCurrentModel(): CurrentModelInfo {
@@ -643,6 +647,18 @@ export class AgentSession
 		this.session.config = {
 			...this.session.config,
 			mcpServers,
+		};
+	}
+
+	/**
+	 * Apply a runtime system prompt to in-memory session config only.
+	 * Used to inject context-specific instructions (e.g. room workflow guidance)
+	 * without persisting them to the database.
+	 */
+	setRuntimeSystemPrompt(systemPrompt: SystemPromptConfig): void {
+		this.session.config = {
+			...this.session.config,
+			systemPrompt,
 		};
 	}
 
@@ -705,6 +721,20 @@ export class AgentSession
 
 	async restartQuery(): Promise<void> {
 		await this.lifecycleManager.restartQuery();
+	}
+
+	/**
+	 * Force-restart the query, preserving the SDK session if possible.
+	 *
+	 * Unlike restartQuery() which defers restart if the queue isn't running,
+	 * this method always stops and restarts the query immediately.
+	 * Preserves pending messages and attempts to resume the SDK session.
+	 *
+	 * Use case: Manual restart from UI to apply model/provider changes
+	 * while preserving conversation history.
+	 */
+	async restart(): Promise<void> {
+		await this.lifecycleManager.restart();
 	}
 
 	// ============================================================================
@@ -771,6 +801,12 @@ export class AgentSession
 
 	async onMarkApiSuccess(): Promise<void> {
 		this.errorManager.markApiSuccess();
+	}
+
+	async onStartupTimeoutAutoRecover(): Promise<void> {
+		if (this.isCleaningUp()) return;
+		this.logger.warn('Auto-recovering after SDK startup timeout — starting fresh without resume.');
+		await this.startStreamingQuery();
 	}
 
 	// ============================================================================

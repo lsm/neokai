@@ -7,7 +7,7 @@
 import {
 	initializeModels,
 	getAvailableModels,
-	getModelInfo,
+	getModelInfoUnfiltered,
 	clearModelsCache,
 } from '../../src/lib/model-service';
 
@@ -27,8 +27,8 @@ async function testModelCache() {
 	console.log('\n=== Test 3: Legacy model ID lookup ===');
 	const legacyIds = ['sonnet', 'claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101'];
 	for (const id of legacyIds) {
-		const info = await getModelInfo(id, 'global');
-		console.log(`  getModelInfo('${id}') → ${info ? `Found: ${info.name}` : 'NULL'}`);
+		const info = await getModelInfoUnfiltered(id, 'global');
+		console.log(`  getModelInfoUnfiltered('${id}') → ${info ? `Found: ${info.name}` : 'NULL'}`);
 	}
 
 	console.log('\n=== Test 4: Clear cache (should return empty - no static fallback) ===');

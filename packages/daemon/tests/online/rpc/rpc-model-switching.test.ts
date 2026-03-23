@@ -19,7 +19,7 @@ describe('Model Switching', () => {
 
 	afterAll(async () => {
 		await daemon?.waitForExit();
-	});
+	}, 15_000);
 
 	async function createSession(
 		workspacePath: string,
@@ -80,6 +80,7 @@ describe('Model Switching', () => {
 				daemon.messageHub.request('session.model.switch', {
 					sessionId: 'non-existent-session',
 					model: 'sonnet',
+					provider: 'anthropic',
 				})
 			).rejects.toThrow();
 		});

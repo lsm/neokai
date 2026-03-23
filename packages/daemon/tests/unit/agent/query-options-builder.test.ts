@@ -32,6 +32,7 @@ describe('QueryOptionsBuilder', () => {
 				model: 'default',
 				maxTokens: 8192,
 				temperature: 1.0,
+				provider: 'anthropic',
 			},
 			metadata: {
 				messageCount: 0,
@@ -378,13 +379,14 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.settingSources).toEqual([]);
 		});
 
-		it('should enforce room built-in tool allowlist', async () => {
+		it('should enforce room built-in tool allowlist including Bash', async () => {
 			mockSession.type = 'room_chat';
 			const options = await builder.build();
 			expect(options.tools).toEqual([
 				'Read',
 				'Glob',
 				'Grep',
+				'Bash',
 				'WebFetch',
 				'WebSearch',
 				'ToolSearch',
@@ -396,13 +398,37 @@ describe('QueryOptionsBuilder', () => {
 					'Read',
 					'Glob',
 					'Grep',
+					'Bash',
 					'WebFetch',
 					'WebSearch',
 					'ToolSearch',
 					'AskUserQuestion',
 					'Skill',
-					'room-agent-tools__*',
 				])
+			);
+		});
+
+		it('should not include Write/Edit/NotebookEdit in room tool allowlist', async () => {
+			mockSession.type = 'room_chat';
+			const options = await builder.build();
+			expect(options.disallowedTools).toEqual(
+				expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
+			);
+			expect(options.tools).not.toContain('Edit');
+			expect(options.tools).not.toContain('Write');
+			expect(options.tools).not.toContain('NotebookEdit');
+		});
+
+		it('should auto-allow wildcards for all configured MCP servers', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'room-cmd' },
+				github: { command: 'github-cmd' },
+			};
+
+			const options = await builder.build();
+			expect(options.allowedTools).toEqual(
+				expect.arrayContaining(['room-agent-tools__*', 'github__*'])
 			);
 		});
 
@@ -410,6 +436,13 @@ describe('QueryOptionsBuilder', () => {
 			mockSession.type = 'room_chat';
 			const options = await builder.build();
 			expect(options.systemPrompt).toBeUndefined();
+		});
+
+		it('should preserve a custom string system prompt for room sessions', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.systemPrompt = 'You are the Room Agent.';
+			const options = await builder.build();
+			expect(options.systemPrompt).toBe('You are the Room Agent.');
 		});
 	});
 

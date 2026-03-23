@@ -71,7 +71,7 @@ describe('RoomRuntime leader tools', () => {
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Fix the tests',
-				mode: 'queue',
+				mode: 'defer',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
@@ -80,12 +80,12 @@ describe('RoomRuntime leader tools', () => {
 			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
 			expect(updatedGroup.submittedForReview).toBe(false);
 
-			// Should inject feedback into worker session using queue mode
+			// Should inject feedback into worker session using defer mode
 			const injectCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && (c.args[1] as string).includes('LEADER FEEDBACK')
 			);
 			expect(injectCalls.length).toBeGreaterThan(0);
-			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
+			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'defer' });
 		});
 
 		it('should reject complete_task when not yet submitted for review or approved', async () => {
@@ -578,6 +578,189 @@ describe('RoomRuntime leader tools', () => {
 			const allTasks = await ctx.taskManager.listTasks({});
 			const planningTasks = allTasks.filter((t) => t.taskType === 'planning');
 			expect(planningTasks).toHaveLength(0);
+		});
+	});
+
+	describe('submit_for_review stale PR cleanup', () => {
+		it('closes stale PR when submit_for_review is called with a different PR URL', async () => {
+			const ghCalls: Array<string[]> = [];
+			const ctx2 = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args) => {
+						ghCalls.push(args);
+						// Simulate successful gh pr close; fail everything else gracefully
+						if (args[0] === 'gh' && args[1] === 'pr' && args[2] === 'close') {
+							return { stdout: '', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			try {
+				const { task, group } = await spawnAndRouteToLeader(ctx2, { assignedAgent: 'coder' });
+
+				// Pre-set the task with an existing PR URL to simulate a second review cycle
+				await ctx2.taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/10');
+
+				// Leader calls submit_for_review with a NEW, different PR URL
+				const result = await ctx2.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+					pr_url: 'https://github.com/org/repo/pull/20',
+				});
+
+				const parsed = JSON.parse(result.content[0].text);
+				expect(parsed.success).toBe(true);
+
+				// Should have called gh pr close with the old PR URL
+				const closeCalls = ghCalls.filter((a) => a[1] === 'pr' && a[2] === 'close');
+				expect(closeCalls.length).toBe(1);
+				expect(closeCalls[0]).toContain('https://github.com/org/repo/pull/10');
+				expect(closeCalls[0]).toContain('Superseded by https://github.com/org/repo/pull/20');
+
+				// Task should now have the new PR URL
+				const updatedTask = await ctx2.taskManager.getTask(task.id);
+				expect(updatedTask!.prUrl).toBe('https://github.com/org/repo/pull/20');
+			} finally {
+				ctx2.runtime.stop();
+				ctx2.db.close();
+			}
+		});
+
+		it('does not call gh pr close when submit_for_review uses the same PR URL', async () => {
+			const ghCalls: Array<string[]> = [];
+			const ctx2 = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args) => {
+						ghCalls.push(args);
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			try {
+				const { task, group } = await spawnAndRouteToLeader(ctx2, { assignedAgent: 'coder' });
+
+				// Pre-set the task with the same PR URL that will be submitted
+				await ctx2.taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/10');
+
+				// Leader calls submit_for_review with the SAME PR URL — no close needed
+				await ctx2.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+					pr_url: 'https://github.com/org/repo/pull/10',
+				});
+
+				const closeCalls = ghCalls.filter((a) => a[1] === 'pr' && a[2] === 'close');
+				expect(closeCalls.length).toBe(0);
+			} finally {
+				ctx2.runtime.stop();
+				ctx2.db.close();
+			}
+		});
+
+		it('proceeds with submit_for_review even when closeStalePr fails', async () => {
+			const ctx2 = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async () => ({ stdout: '', exitCode: 1 }), // gh always fails
+				},
+			});
+
+			try {
+				const { task, group } = await spawnAndRouteToLeader(ctx2, { assignedAgent: 'coder' });
+
+				// Pre-set an existing PR URL
+				await ctx2.taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/10');
+
+				// Even though gh pr close will fail, submit_for_review should still succeed
+				const result = await ctx2.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+					pr_url: 'https://github.com/org/repo/pull/20',
+				});
+
+				const parsed = JSON.parse(result.content[0].text);
+				expect(parsed.success).toBe(true);
+
+				// Task still updates to the new PR URL
+				const updatedTask = await ctx2.taskManager.getTask(task.id);
+				expect(updatedTask!.prUrl).toBe('https://github.com/org/repo/pull/20');
+			} finally {
+				ctx2.runtime.stop();
+				ctx2.db.close();
+			}
+		});
+	});
+
+	describe('progress_summary handling', () => {
+		it('persists progress_summary to group metadata when provided with send_to_worker', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+			const summary =
+				'Task adds GET /health endpoint. Worker created the route but tests are failing.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Fix the failing tests',
+				progress_summary: summary,
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe(summary);
+		});
+
+		it('persists progress_summary to group metadata when provided with fail_task', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+			const summary = 'Task adds GET /health. Worker could not resolve a dependency conflict.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'fail_task', {
+				reason: 'Dependency conflict unresolvable',
+				progress_summary: summary,
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe(summary);
+		});
+
+		it('emits a leader_summary group event when progress_summary is provided', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+			const summary = 'Task adds a health endpoint. Worker created route; tests pass.';
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Looks good, approve',
+				progress_summary: summary,
+			});
+
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const summaryEvent = events.find((e) => e.kind === 'leader_summary');
+			expect(summaryEvent).toBeDefined();
+			const payload = JSON.parse(summaryEvent!.payloadJson!);
+			expect(payload.text).toContain(summary);
+		});
+
+		it('does not persist or emit event when progress_summary is absent', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Fix the tests',
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBeNull();
+
+			const { events } = ctx.groupRepo.getEvents(group.id);
+			const summaryEvent = events.find((e) => e.kind === 'leader_summary');
+			expect(summaryEvent).toBeUndefined();
+		});
+
+		it('updates progress_summary on subsequent tool calls', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Fix the tests',
+				progress_summary: 'First iteration: route created, tests failing.',
+			});
+
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Update docs too',
+				progress_summary: 'Second iteration: tests fixed, docs missing.',
+			});
+
+			const updated = ctx.groupRepo.getGroup(group.id)!;
+			expect(updated.leaderProgressSummary).toBe('Second iteration: tests fixed, docs missing.');
 		});
 	});
 });

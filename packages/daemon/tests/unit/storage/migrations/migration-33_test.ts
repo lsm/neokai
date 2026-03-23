@@ -1,0 +1,245 @@
+/**
+ * Migration 33 Tests
+ *
+ * Tests for Migration 33: Add inject_workflow_context column to space_agents.
+ *
+ * Covers:
+ * - Fresh DB (full migration chain): column exists with default 0
+ * - Legacy DB path: column is added to an existing table that lacks it
+ * - Idempotency: running migration on a table that already has the column is a no-op
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function columnExists(db: BunDatabase, table: string, column: string): boolean {
+	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+	return rows.some((r) => r.name === column);
+}
+
+function getColumnDefault(db: BunDatabase, table: string, column: string): string | null {
+	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+		name: string;
+		dflt_value: string | null;
+	}>;
+	return rows.find((r) => r.name === column)?.dflt_value ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+describe('Migration 33: Add inject_workflow_context to space_agents', () => {
+	let testDir: string;
+	let db: BunDatabase;
+
+	beforeEach(() => {
+		testDir = join(process.cwd(), 'tmp', 'test-migration-33', `test-${Date.now()}`);
+		mkdirSync(testDir, { recursive: true });
+
+		const dbPath = join(testDir, 'test.db');
+		db = new BunDatabase(dbPath);
+		db.exec('PRAGMA foreign_keys = ON');
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			// ignore
+		}
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+		} catch {
+			// ignore
+		}
+	});
+
+	// -------------------------------------------------------------------------
+	// Fresh DB — full migration chain
+	// -------------------------------------------------------------------------
+
+	test('fresh DB: inject_workflow_context column exists after full migration', () => {
+		runMigrations(db, () => {});
+		expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(true);
+	});
+
+	test('fresh DB: inject_workflow_context has default value of 0', () => {
+		runMigrations(db, () => {});
+		expect(getColumnDefault(db, 'space_agents', 'inject_workflow_context')).toBe('0');
+	});
+
+	test('fresh DB: new agents default to inject_workflow_context = 0', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+		).run('space-1', '/workspace/project', 'Test Space', now, now);
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('agent-1', 'space-1', 'Coder', 'coder', now, now);
+
+		const row = db
+			.prepare(`SELECT inject_workflow_context FROM space_agents WHERE id = 'agent-1'`)
+			.get() as { inject_workflow_context: number };
+		expect(row.inject_workflow_context).toBe(0);
+	});
+
+	test('fresh DB: inject_workflow_context can be set to 1', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+		).run('space-1', '/workspace/project', 'Test Space', now, now);
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, role, inject_workflow_context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('agent-1', 'space-1', 'Planner', 'planner', 1, now, now);
+
+		const row = db
+			.prepare(`SELECT inject_workflow_context FROM space_agents WHERE id = 'agent-1'`)
+			.get() as { inject_workflow_context: number };
+		expect(row.inject_workflow_context).toBe(1);
+	});
+
+	// -------------------------------------------------------------------------
+	// Legacy DB path — simulate pre-migration-33 state without the column
+	// -------------------------------------------------------------------------
+
+	test('legacy DB: column is added to existing table that lacks it', () => {
+		// Create the space_agents table as it existed before migration 33
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active',
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_agents (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				model TEXT,
+				provider TEXT,
+				tools TEXT NOT NULL DEFAULT '[]',
+				system_prompt TEXT NOT NULL DEFAULT '',
+				role TEXT NOT NULL DEFAULT 'coder',
+				config TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
+
+		// Confirm column is absent before migration
+		expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
+
+		// Run migrations
+		runMigrations(db, () => {});
+
+		// Column should now exist
+		expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(true);
+	});
+
+	test('legacy DB: existing agent rows are preserved with default value after column add', () => {
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY, workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '', instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT, allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active',
+				config TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_agents (
+				id TEXT PRIMARY KEY, space_id TEXT NOT NULL, name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '', model TEXT, provider TEXT,
+				tools TEXT NOT NULL DEFAULT '[]', system_prompt TEXT NOT NULL DEFAULT '',
+				role TEXT NOT NULL DEFAULT 'coder', config TEXT,
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+		).run('space-1', '/workspace', 'S', now, now);
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('agent-1', 'space-1', 'Coder', 'coder', now, now);
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('agent-2', 'space-1', 'Planner', 'planner', now, now);
+
+		runMigrations(db, () => {});
+
+		const rows = db
+			.prepare(`SELECT id, name, role, inject_workflow_context FROM space_agents ORDER BY id`)
+			.all() as Array<{ id: string; name: string; role: string; inject_workflow_context: number }>;
+		expect(rows).toHaveLength(2);
+		expect(rows[0]).toMatchObject({
+			id: 'agent-1',
+			name: 'Coder',
+			role: 'coder',
+			inject_workflow_context: 0,
+		});
+		expect(rows[1]).toMatchObject({
+			id: 'agent-2',
+			name: 'Planner',
+			role: 'planner',
+			inject_workflow_context: 0,
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Idempotency — column already exists
+	// -------------------------------------------------------------------------
+
+	test('idempotency: running migration twice does not error', () => {
+		runMigrations(db, () => {});
+		expect(() => runMigrations(db, () => {})).not.toThrow();
+		expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(true);
+	});
+
+	test('idempotency: data is not duplicated on second migration run', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+		).run('space-1', '/workspace', 'S', now, now);
+		db.prepare(
+			`INSERT INTO space_agents (id, space_id, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('agent-1', 'space-1', 'Coder', 'coder', now, now);
+
+		runMigrations(db, () => {});
+
+		const rows = db.prepare(`SELECT id FROM space_agents`).all();
+		expect(rows).toHaveLength(1);
+	});
+});

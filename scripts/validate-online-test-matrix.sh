@@ -5,6 +5,8 @@
 # features) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
+# NOTE: providers-anthropic-to-codex-bridge shard is disabled (requires OPENAI_API_KEY).
+#
 # Usage: bash scripts/validate-online-test-matrix.sh
 
 set -euo pipefail
@@ -24,6 +26,7 @@ RPC_FILES=(
   rpc-draft-handlers.test.ts
   rpc-file-handlers.test.ts
   rpc-interrupt-handlers.test.ts
+  rpc-live-query.test.ts
   rpc-mcp-toggle.test.ts
   rpc-message-handlers.test.ts
   rpc-model-handlers.test.ts
@@ -36,10 +39,15 @@ RPC_FILES=(
   rpc-settings-handlers.test.ts
   rpc-state-sync.test.ts
   rpc-task-draft-handlers.test.ts
+  rpc-task-lifecycle.test.ts
   session-handlers.test.ts
 )
 
+# NOTE: All room/* shards are intentionally commented out in .github/workflows/main.yml
+# due to resource usage. ROOM_FILES below tracks files that exist on disk; CI does not
+# automatically run them. Run them locally or enable per-task in the CI matrix.
 ROOM_FILES=(
+  mission-lifecycle.test.ts
   room-advanced-scenarios.test.ts
   room-chat-agent-tools.test.ts
   room-chat-constraints.test.ts
@@ -47,19 +55,20 @@ ROOM_FILES=(
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
+  room-tick-job.test.ts
 )
 
 FEATURES_FILES=(
   auto-title.test.ts
+  github-poll-job.test.ts
+  job-queue-crash-recovery.test.ts
   message-delivery-mode-queue.test.ts
   message-persistence.test.ts
 )
 
 PROVIDERS_FILES=(
-  anthropic-provider.test.ts
-  github-copilot-provider.test.ts
-  model-switch-system-init.test.ts
-  openai-provider.test.ts
+  anthropic-to-copilot-bridge-provider.test.ts
+  anthropic-to-codex-bridge-provider.test.ts  # CI shard disabled — kept here so validator doesn't flag it
 )
 
 check_split_module() {
@@ -107,7 +116,7 @@ check_split_module "providers" "${PROVIDERS_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
-KNOWN_DIRS="agent components convo coordinator features git glm lifecycle mcp providers rewind room rpc sandbox sdk websocket"
+KNOWN_DIRS="agent components convo coordinator features git glm lifecycle mcp providers rewind room rpc sandbox sdk space websocket"
 
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue

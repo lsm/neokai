@@ -41,7 +41,7 @@ export function createTables(db: BunDatabase): void {
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent')),
         session_context TEXT
       )
     `);
@@ -73,7 +73,7 @@ export function createTables(db: BunDatabase): void {
         message_subtype TEXT,
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
-        send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent', 'failed')),
+        send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -142,7 +142,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -161,6 +161,7 @@ export function createTables(db: BunDatabase): void {
         pr_number INTEGER,
         pr_created_at INTEGER,
         input_draft TEXT,
+        updated_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -184,7 +185,48 @@ export function createTables(db: BunDatabase): void {
         completed_at INTEGER,
         planning_attempts INTEGER DEFAULT 0,
         goal_review_attempts INTEGER DEFAULT 0,
+        mission_type TEXT NOT NULL DEFAULT 'one_shot'
+          CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+        autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+          CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+        schedule TEXT,
+        schedule_paused INTEGER NOT NULL DEFAULT 0,
+        next_run_at INTEGER,
+        structured_metrics TEXT,
+        max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+        max_planning_attempts INTEGER NOT NULL DEFAULT 0,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        replan_count INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Mission metric history table
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS mission_metric_history (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL,
+        metric_name TEXT NOT NULL,
+        value REAL NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Mission executions table
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS mission_executions (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL,
+        execution_number INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'running',
+        result_summary TEXT,
+        task_ids TEXT NOT NULL DEFAULT '[]',
+        planning_attempts INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+        UNIQUE(goal_id, execution_number)
       )
     `);
 
@@ -298,8 +340,18 @@ function createIndexes(db: BunDatabase): void {
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup ON mission_metric_history(goal_id, metric_name, recorded_at)`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
+	);
 
 	// GitHub integration indexes
 	db.exec(
@@ -311,6 +363,13 @@ function createIndexes(db: BunDatabase): void {
 	);
 	// Room Runtime indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
+	// Partial unique index: at most one active group per task ref_id at the DB level.
+	// Scoped to task/task_pair group types only — other future group types may share
+	// ref_id values without violating this constraint.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
+	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
 	// Job queue indexes

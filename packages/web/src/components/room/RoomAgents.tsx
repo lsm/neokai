@@ -64,7 +64,7 @@ interface AgentRole {
 }
 
 const BUILTIN_AGENTS: AgentRole[] = [
-	{ key: 'planner', label: 'Planner', description: 'Breaks goals into tasks' },
+	{ key: 'planner', label: 'Planner', description: 'Breaks missions into tasks' },
 	{ key: 'coder', label: 'Coder', description: 'Implements code changes' },
 	{ key: 'general', label: 'General', description: 'Non-coding tasks' },
 	{ key: 'leader', label: 'Leader', description: 'Reviews and routes' },

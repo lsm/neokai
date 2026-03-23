@@ -28,6 +28,8 @@ export interface GeneralAgentConfig {
 	sessionId: string;
 	workspacePath: string;
 	model?: string;
+	/** Provider ID for this session — auto-detected from model if omitted */
+	provider?: string;
 	/** Summaries of previously completed tasks in the same goal */
 	previousTaskSummaries?: string[];
 }
@@ -199,6 +201,7 @@ export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'general',
 		model: config.model ?? DEFAULT_GENERAL_MODEL,
+		provider: config.provider,
 		contextAutoQueue: false,
 	};
 }

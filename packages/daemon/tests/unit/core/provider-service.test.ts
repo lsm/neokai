@@ -90,6 +90,17 @@ class MockProvider implements Provider {
 	}
 }
 
+// Provider whose buildSdkConfig always throws (simulates embedded-server-not-started)
+class ThrowingMockProvider extends MockProvider {
+	constructor() {
+		super('throwing', 'Throwing Provider', true, 'throwing-');
+	}
+
+	buildSdkConfig(): ProviderSdkConfig {
+		throw new Error('embedded server not started');
+	}
+}
+
 // GLM-like provider for testing
 class GlmMockProvider extends MockProvider {
 	readonly id = 'glm' as const;
@@ -118,6 +129,35 @@ class GlmMockProvider extends MockProvider {
 				ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4',
 			},
 			isAnthropicCompatible: true,
+		};
+	}
+}
+
+// Copilot-like provider: owns claude-opus-4.6 and sets ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY=''
+// Used to test the providerId passthrough and the ANTHROPIC_API_KEY clearing behaviour.
+class CopilotMockProvider extends MockProvider {
+	readonly id = 'anthropic-copilot' as const;
+	readonly displayName = 'GitHub Copilot (Anthropic API)';
+
+	constructor() {
+		super('anthropic-copilot', 'GitHub Copilot (Anthropic API)', true, 'copilot-');
+	}
+
+	ownsModel(modelId: string): boolean {
+		return modelId.toLowerCase().startsWith('copilot-') || modelId === 'claude-opus-4.6';
+	}
+
+	buildSdkConfig(): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:54321',
+				ANTHROPIC_AUTH_TOKEN: 'anthropic-copilot-proxy:/workspace',
+				ANTHROPIC_API_KEY: '', // sentinel: clear real key
+				ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-opus-4.6',
+				ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4.6',
+			},
+			isAnthropicCompatible: true,
+			apiVersion: 'v1',
 		};
 	}
 }
@@ -388,6 +428,16 @@ describe('ProviderService', () => {
 			expect(config.baseUrl).toBe('https://api.anthropic.com');
 			expect(config.apiVersion).toBe('v1');
 		});
+
+		it('should return defaults when buildSdkConfig throws (e.g. server not yet started)', async () => {
+			registry.register(new ThrowingMockProvider());
+
+			const config = await service.getTitleGenerationConfig('throwing' as unknown as ProviderId);
+
+			// Should not throw; should fall back to safe defaults
+			expect(config.baseUrl).toBe('https://api.anthropic.com');
+			expect(config.apiVersion).toBe('v1');
+		});
 	});
 
 	describe('isModelValidForProvider', () => {
@@ -410,68 +460,43 @@ describe('ProviderService', () => {
 		});
 	});
 
-	describe('isGlmModel', () => {
-		it('should return true for GLM model', () => {
-			const isGlm = service.isGlmModel('glm-4');
-			expect(isGlm).toBe(true);
-		});
-
-		it('should return false for non-GLM model', () => {
-			const isGlm = service.isGlmModel('claude-3-opus');
-			expect(isGlm).toBe(false);
-		});
-	});
-
-	describe('detectProviderFromModel', () => {
-		it('should detect anthropic provider', () => {
-			const provider = service.detectProviderFromModel('claude-3-opus');
-			expect(provider).toBe('anthropic');
-		});
-
-		it('should detect glm provider', () => {
-			const provider = service.detectProviderFromModel('glm-4');
-			expect(provider).toBe('glm');
-		});
-
-		it('should default to anthropic for unknown model', () => {
-			const provider = service.detectProviderFromModel('unknown-model');
-			expect(provider).toBe('anthropic');
-		});
-	});
-
-	describe('translateModelIdForSdk', () => {
-		it('should translate GLM model ID', () => {
-			const translated = service.translateModelIdForSdk('glm-4');
-			expect(translated).toBe('translated-4');
-		});
-
-		it('should pass through anthropic model ID', () => {
-			const translated = service.translateModelIdForSdk('claude-3-opus');
-			expect(translated).toBe('claude-3-opus');
-		});
-
-		it('should pass through unknown model ID', () => {
-			const translated = service.translateModelIdForSdk('unknown-model');
-			expect(translated).toBe('unknown-model');
-		});
-	});
-
 	describe('getEnvVarsForModel', () => {
 		it('should return empty object for anthropic model', () => {
-			const envVars = service.getEnvVarsForModel('claude-3-opus');
+			const envVars = service.getEnvVarsForModel('claude-3-opus', 'anthropic');
 			expect(envVars).toEqual({});
 		});
 
 		it('should return env vars for GLM model', () => {
-			const envVars = service.getEnvVarsForModel('glm-4');
+			const envVars = service.getEnvVarsForModel('glm-4', 'glm');
 
 			expect(envVars.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 			expect(envVars.API_TIMEOUT_MS).toBe('120000');
 		});
 
-		it('should return empty object for unknown model', () => {
-			const envVars = service.getEnvVarsForModel('unknown-model');
+		it('should return empty object for unknown provider', () => {
+			const envVars = service.getEnvVarsForModel('unknown-model', 'anthropic');
 			expect(envVars).toEqual({});
+		});
+
+		it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+			registry.register(new ThrowingMockProvider());
+
+			// Must not throw
+			const envVars = service.getEnvVarsForModel('throwing-model', 'throwing');
+			expect(envVars).toEqual({});
+		});
+
+		it('uses explicit providerId to route to the correct provider for colliding model IDs', () => {
+			// Both AnthropicMockProvider and CopilotMockProvider claim 'claude-opus-4.6'.
+			// The provider ID selects deterministically: 'anthropic' → {} (no extra env vars),
+			// 'anthropic-copilot' → has ANTHROPIC_BASE_URL.
+			registry.register(new CopilotMockProvider());
+
+			const envVarsAnthropic = service.getEnvVarsForModel('claude-opus-4.6', 'anthropic');
+			expect(envVarsAnthropic.ANTHROPIC_BASE_URL).toBeUndefined();
+
+			const envVarsWithId = service.getEnvVarsForModel('claude-opus-4.6', 'anthropic-copilot');
+			expect(envVarsWithId.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:54321');
 		});
 	});
 
@@ -562,11 +587,42 @@ describe('ProviderService', () => {
 			const envVars = service.getProviderEnvVars(session);
 			expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('custom-api-key');
 		});
+
+		it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+			registry.register(new ThrowingMockProvider());
+
+			const session: Session = {
+				id: 'test-session',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'throwing-1',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'throwing' as unknown as import('@neokai/shared/provider').ProviderId,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Must not throw
+			const envVars = service.getProviderEnvVars(session);
+			expect(envVars).toEqual({});
+		});
 	});
 
 	describe('applyEnvVarsToProcess', () => {
 		it('should return empty object for anthropic model', () => {
-			const original = service.applyEnvVarsToProcess('claude-3-opus');
+			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 			expect(original).toEqual({});
 		});
 
@@ -575,7 +631,7 @@ describe('ProviderService', () => {
 			process.env.API_TIMEOUT_MS = '120000';
 			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
 
-			const original = service.applyEnvVarsToProcess('claude-3-opus');
+			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
 			expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 			expect(original.API_TIMEOUT_MS).toBe('120000');
@@ -589,7 +645,7 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
 			process.env.ANTHROPIC_BASE_URL = 'original-url';
 
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Check original values were saved
 			expect(original.ANTHROPIC_AUTH_TOKEN).toBe('original-token');
@@ -599,19 +655,37 @@ describe('ProviderService', () => {
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 		});
 
+		it('deletes ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
+			// Mirrors what AnthropicToCopilotBridgeProvider does: returning ANTHROPIC_API_KEY: ''
+			// prevents the SDK subprocess from calling api.anthropic.com with the real key.
+			registry.register(new CopilotMockProvider());
+			process.env.ANTHROPIC_API_KEY = 'real-key';
+
+			const original = service.applyEnvVarsToProcess('claude-opus-4.6', 'anthropic-copilot');
+
+			// Key must be deleted so SDK subprocess cannot call Anthropic directly.
+			expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+			// Original value must be saved for restoration.
+			expect(original.ANTHROPIC_API_KEY).toBe('real-key');
+
+			// After restore the key is back.
+			service.restoreEnvVars(original);
+			expect(process.env.ANTHROPIC_API_KEY).toBe('real-key');
+		});
+
 		it('should clear provider-leaked GLM base URL after GLM query', () => {
 			// First simulate GLM was used (leaving its base URL)
 			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 
 			// Apply GLM env vars
-			const originalFromGlm = service.applyEnvVarsToProcess('glm-4');
+			const originalFromGlm = service.applyEnvVarsToProcess('glm-4', 'glm');
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
 			// Restore from GLM query
 			service.restoreEnvVars(originalFromGlm);
 
 			// Switch to anthropic - leaked GLM URL should be cleared
-			const originalFromAnthropic = service.applyEnvVarsToProcess('claude-3-opus');
+			const originalFromAnthropic = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
 			// The leaked GLM URL should be cleared
 			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -637,6 +711,16 @@ describe('ProviderService', () => {
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 			expect(original).toBeDefined();
 		});
+
+		it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+			registry.register(new ThrowingMockProvider());
+
+			// Must not throw
+			const original = service.applyEnvVarsToProcessForProvider(
+				'throwing' as unknown as ProviderId
+			);
+			expect(original).toEqual({});
+		});
 	});
 
 	describe('restoreEnvVars', () => {
@@ -645,7 +729,7 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_BASE_URL = 'original-url';
 
 			// Apply GLM env vars
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Verify env vars changed
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -664,7 +748,7 @@ describe('ProviderService', () => {
 			delete process.env.ANTHROPIC_BASE_URL;
 
 			// Apply GLM env vars
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Verify env vars were set
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -707,7 +791,7 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'opus-model';
 
 			// Apply GLM env vars
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Restore
 			service.restoreEnvVars(original);

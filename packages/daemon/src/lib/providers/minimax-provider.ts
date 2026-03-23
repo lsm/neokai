@@ -62,6 +62,28 @@ export class MinimaxProvider implements Provider {
 			releaseDate: '2026-01-01',
 			available: true,
 		},
+		{
+			id: 'MiniMax-M2.7',
+			name: 'MiniMax-M2.7',
+			alias: 'minimax-m27',
+			family: 'minimax',
+			provider: 'minimax',
+			contextWindow: 200000,
+			description: 'MiniMax-M2.7 · Flagship Coding Model',
+			releaseDate: '2026-03-01',
+			available: true,
+		},
+		{
+			id: 'MiniMax-M2.7-highspeed',
+			name: 'MiniMax-M2.7-highspeed',
+			alias: 'minimax-m27-fast',
+			family: 'minimax',
+			provider: 'minimax',
+			contextWindow: 200000,
+			description: 'MiniMax-M2.7-highspeed · Fast Coding Model',
+			releaseDate: '2026-03-01',
+			available: true,
+		},
 	];
 
 	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
@@ -105,6 +127,9 @@ export class MinimaxProvider implements Provider {
 
 	/**
 	 * Build SDK configuration for MiniMax
+	 * Routes ANTHROPIC_DEFAULT_*_MODEL to the selected model so the SDK uses
+	 * the model the user actually picked. Falls back to MiniMax-M2.5 for
+	 * unrecognised model IDs.
 	 */
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const apiKey = sessionConfig?.apiKey || this.getApiKey();
@@ -113,15 +138,16 @@ export class MinimaxProvider implements Provider {
 		}
 
 		const baseUrl = sessionConfig?.baseUrl || MinimaxProvider.BASE_URL;
+		const routingModelId = this.ownsModel(modelId) ? modelId : 'MiniMax-M2.5';
 
 		const envVars: Record<string, string> = {
 			ANTHROPIC_BASE_URL: baseUrl,
 			ANTHROPIC_AUTH_TOKEN: apiKey,
 			API_TIMEOUT_MS: '3000000',
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M2.5',
-			ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M2.5',
-			ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M2.5',
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
+			ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
+			ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
 		};
 
 		return {

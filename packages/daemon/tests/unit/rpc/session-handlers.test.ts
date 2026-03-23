@@ -115,6 +115,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getCurrentModel: ReturnType<typeof mock>;
 		handleModelSwitch: ReturnType<typeof mock>;
 		resetQuery: ReturnType<typeof mock>;
+		restart: ReturnType<typeof mock>;
 		handleQueryTrigger: ReturnType<typeof mock>;
 		setMaxThinkingTokens: ReturnType<typeof mock>;
 		setPermissionMode: ReturnType<typeof mock>;
@@ -130,6 +131,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		status: 'active',
 		config: {
 			model: 'claude-sonnet-4-20250514',
+			provider: 'anthropic',
 			coordinatorMode: false,
 			sandbox: { enabled: true },
 			thinkingLevel: 'auto',
@@ -147,6 +149,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		getCurrentModel: mock(() => ({ id: 'claude-sonnet-4-20250514' })),
 		handleModelSwitch: mock(async () => ({ success: true, model: 'claude-opus-4-6' })),
 		resetQuery: mock(async () => ({ success: true })),
+		restart: mock(async () => {}),
 		handleQueryTrigger: mock(async () => ({ triggered: true, count: 1 })),
 		setMaxThinkingTokens: mock(async () => ({ success: true })),
 		setPermissionMode: mock(async () => ({ success: true })),
@@ -496,15 +499,35 @@ describe('Session RPC Handlers', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('broadcasts session.updated event', async () => {
+		it('broadcasts session.updated event on session channel', async () => {
 			const handler = messageHubData.handlers.get('session.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ sessionId: 'session-123', title: 'New Title' }, {});
 
-			expect(messageHubData.hub.event).toHaveBeenCalledWith('session.updated', expect.any(Object), {
-				channel: 'session:session-123',
-			});
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({ sessionId: 'session-123', title: 'New Title' }),
+				{ channel: 'session:session-123' }
+			);
+		});
+
+		it('also broadcasts session.updated on room channel when session has a roomId', async () => {
+			const handler = messageHubData.handlers.get('session.update');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				context: { roomId: 'room-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123', title: 'New Title' }, {});
+
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({ sessionId: 'session-123', roomId: 'room-abc' }),
+				{ channel: 'room:room-abc' }
+			);
 		});
 	});
 
@@ -519,17 +542,44 @@ describe('Session RPC Handlers', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('broadcasts session.deleted event', async () => {
+		it('broadcasts session.deleted only on room channel (not global) when session has roomId', async () => {
 			const handler = messageHubData.handlers.get('session.delete');
 			expect(handler).toBeDefined();
 
+			const { agentSession } = createMockAgentSession({
+				context: { roomId: 'room-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(agentSession);
+
 			await handler!({ sessionId: 'session-123' }, {});
 
+			// Verify room-channel broadcast fires
 			expect(messageHubData.hub.event).toHaveBeenCalledWith(
 				'session.deleted',
-				{ sessionId: 'session-123' },
+				expect.objectContaining({ sessionId: 'session-123', roomId: 'room-abc' }),
+				{ channel: 'room:room-abc' }
+			);
+			// Global broadcast must NOT come from this handler (session-lifecycle.ts handles it)
+			expect(messageHubData.hub.event).not.toHaveBeenCalledWith(
+				'session.deleted',
+				expect.anything(),
 				{ channel: 'global' }
 			);
+		});
+
+		it('does not broadcast any event when session has no roomId', async () => {
+			const handler = messageHubData.handlers.get('session.delete');
+			expect(handler).toBeDefined();
+
+			// Default mock session has no context.roomId
+			const calls = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls;
+			const before = calls.length;
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			const after = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.length;
+			// No broadcasts from RPC handler; global broadcast is handled by session-lifecycle.ts
+			expect(after - before).toBe(0);
 		});
 	});
 
@@ -560,6 +610,67 @@ describe('Session RPC Handlers', () => {
 			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
 				'Session not found'
 			);
+		});
+
+		it('broadcasts session.updated with status archived on session channel after archiving', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({ sessionId: 'session-123', status: 'archived' }),
+				{ channel: 'session:session-123' }
+			);
+		});
+
+		it('broadcasts session.updated on room channel when session belongs to a room', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+				context: { roomId: 'room-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				expect.objectContaining({
+					sessionId: 'session-123',
+					status: 'archived',
+					roomId: 'room-abc',
+				}),
+				{ channel: 'room:room-abc' }
+			);
+		});
+
+		it('does not broadcast on room channel when session has no roomId', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			// Default mock session has no context.roomId
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const before = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.length;
+			await handler!({ sessionId: 'session-123' }, {});
+			const after = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.length;
+
+			// Only one broadcast: session:{id} channel; no room channel
+			expect(after - before).toBe(1);
+			const calls = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls.slice(before);
+			expect(calls[0][2]).toEqual({ channel: 'session:session-123' });
 		});
 	});
 
@@ -608,7 +719,7 @@ describe('Session RPC Handlers', () => {
 				{
 					sessionId: 'session-123',
 					content: 'Queue this',
-					deliveryMode: 'next_turn',
+					deliveryMode: 'defer',
 				},
 				{}
 			);
@@ -618,7 +729,7 @@ describe('Session RPC Handlers', () => {
 				expect.objectContaining({
 					sessionId: 'session-123',
 					content: 'Queue this',
-					deliveryMode: 'next_turn',
+					deliveryMode: 'defer',
 				})
 			);
 		});
@@ -701,24 +812,30 @@ describe('Session RPC Handlers', () => {
 			const params = {
 				sessionId: 'session-123',
 				model: 'claude-opus-4-6',
+				provider: 'anthropic',
 			};
 
-			const { mocks } = createMockAgentSession();
+			const { agentSession, mocks } = createMockAgentSession();
 			mocks.handleModelSwitch.mockResolvedValueOnce({
 				success: true,
 				model: 'claude-opus-4-6',
 			});
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!(params, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.handleModelSwitch).toHaveBeenCalledWith('claude-opus-4-6', 'anthropic');
 		});
 
 		it('broadcasts session.updated on successful switch', async () => {
 			const handler = messageHubData.handlers.get('session.model.switch');
 			expect(handler).toBeDefined();
 
-			await handler!({ sessionId: 'session-123', model: 'claude-opus-4-6' }, {});
+			await handler!(
+				{ sessionId: 'session-123', model: 'claude-opus-4-6', provider: 'anthropic' },
+				{}
+			);
 
 			expect(messageHubData.hub.event).toHaveBeenCalledWith('session.updated', expect.any(Object), {
 				channel: 'session:session-123',
@@ -732,8 +849,35 @@ describe('Session RPC Handlers', () => {
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
 			await expect(
-				handler!({ sessionId: 'non-existent', model: 'claude-opus' }, {})
+				handler!({ sessionId: 'non-existent', model: 'claude-opus', provider: 'anthropic' }, {})
 			).rejects.toThrow('Session not found');
+		});
+
+		it('throws error when provider is omitted', async () => {
+			const handler = messageHubData.handlers.get('session.model.switch');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ sessionId: 'session-123', model: 'claude-opus' }, {})
+			).rejects.toThrow('Missing required field: provider');
+		});
+	});
+
+	describe('session.model.get', () => {
+		it('throws error when session has no provider configured', async () => {
+			const handler = messageHubData.handlers.get('session.model.get');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession();
+			(agentSession.getSessionData as ReturnType<typeof mock>).mockReturnValue({
+				id: 'session-123',
+				config: { model: 'claude-sonnet-4-20250514' }, // no provider
+			});
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await expect(handler!({ sessionId: 'session-123' }, {})).rejects.toThrow(
+				'Session has no provider configured'
+			);
 		});
 	});
 
@@ -1035,6 +1179,46 @@ describe('Session RPC Handlers', () => {
 		});
 	});
 
+	describe('session.restart', () => {
+		it('restarts query and preserves SDK session', async () => {
+			const handler = messageHubData.handlers.get('session.restart');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.restart.mockResolvedValueOnce();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ success: true });
+			expect(mocks.restart).toHaveBeenCalled();
+		});
+
+		it('returns error when restart fails', async () => {
+			const handler = messageHubData.handlers.get('session.restart');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			mocks.restart.mockRejectedValueOnce(new Error('Restart failed'));
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			const result = await handler!({ sessionId: 'session-123' }, {});
+
+			expect(result).toEqual({ success: false, error: 'Restart failed' });
+		});
+
+		it('throws error when session not found', async () => {
+			const handler = messageHubData.handlers.get('session.restart');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+				'Session not found'
+			);
+		});
+	});
+
 	describe('session.query.trigger', () => {
 		it('triggers query successfully', async () => {
 			const handler = messageHubData.handlers.get('session.query.trigger');
@@ -1058,7 +1242,7 @@ describe('Session RPC Handlers', () => {
 	});
 
 	describe('session.messages.countByStatus', () => {
-		it('returns count for saved status', async () => {
+		it('returns count for deferred status', async () => {
 			const handler = messageHubData.handlers.get('session.messages.countByStatus');
 			expect(handler).toBeDefined();
 
@@ -1066,12 +1250,12 @@ describe('Session RPC Handlers', () => {
 				getMessageCountByStatus: mock(() => 5),
 			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
 
-			const result = await handler!({ sessionId: 'session-123', status: 'saved' }, {});
+			const result = await handler!({ sessionId: 'session-123', status: 'deferred' }, {});
 
 			expect(result).toEqual({ count: 5 });
 		});
 
-		it('returns count for queued status', async () => {
+		it('returns count for enqueued status', async () => {
 			const handler = messageHubData.handlers.get('session.messages.countByStatus');
 			expect(handler).toBeDefined();
 
@@ -1079,7 +1263,7 @@ describe('Session RPC Handlers', () => {
 				getMessageCountByStatus: mock(() => 3),
 			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
 
-			const result = await handler!({ sessionId: 'session-123', status: 'queued' }, {});
+			const result = await handler!({ sessionId: 'session-123', status: 'enqueued' }, {});
 
 			expect(result).toEqual({ count: 3 });
 		});
@@ -1090,14 +1274,14 @@ describe('Session RPC Handlers', () => {
 
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent', status: 'saved' }, {})).rejects.toThrow(
+			await expect(handler!({ sessionId: 'non-existent', status: 'deferred' }, {})).rejects.toThrow(
 				'Session not found'
 			);
 		});
 	});
 
 	describe('session.messages.byStatus', () => {
-		it('returns user message summaries for saved status', async () => {
+		it('returns user message summaries for deferred status', async () => {
 			const handler = messageHubData.handlers.get('session.messages.byStatus');
 			expect(handler).toBeDefined();
 
@@ -1110,13 +1294,13 @@ describe('Session RPC Handlers', () => {
 						type: 'user',
 						message: {
 							role: 'user',
-							content: [{ type: 'text', text: 'queued message' }],
+							content: [{ type: 'text', text: 'enqueued message' }],
 						},
 					},
 				]),
 			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
 
-			const result = await handler!({ sessionId: 'session-123', status: 'saved' }, {});
+			const result = await handler!({ sessionId: 'session-123', status: 'deferred' }, {});
 
 			expect(result).toEqual({
 				messages: [
@@ -1124,8 +1308,8 @@ describe('Session RPC Handlers', () => {
 						dbId: 'db-1',
 						uuid: 'msg-1',
 						timestamp: 123,
-						status: 'saved',
-						text: 'queued message',
+						status: 'deferred',
+						text: 'enqueued message',
 					},
 				],
 			});

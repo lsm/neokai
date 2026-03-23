@@ -18,11 +18,12 @@ describe('Session RPC Handlers - Extended', () => {
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, 30_000);
 
 	afterEach(async () => {
+		if (!daemon) return;
 		await daemon.waitForExit();
-	});
+	}, 15_000);
 
 	async function createSession(
 		workspacePath: string,
@@ -149,6 +150,7 @@ describe('Session RPC Handlers - Extended', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'haiku',
+				provider: 'anthropic',
 			})) as { success: boolean };
 
 			expect(result.success).toBe(true);
@@ -166,6 +168,7 @@ describe('Session RPC Handlers - Extended', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'invalid-model-id',
+				provider: 'anthropic',
 			})) as { success: boolean; error?: string };
 
 			expect(result.success).toBe(false);

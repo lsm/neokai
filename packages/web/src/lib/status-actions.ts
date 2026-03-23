@@ -43,6 +43,7 @@ const TOOL_ACTION_MAP: Record<string, string> = {
 	Grep: 'Searching code...',
 	Glob: 'Finding files...',
 	Task: 'Starting agent...',
+	Agent: 'Starting agent...',
 	WebFetch: 'Fetching web content...',
 	WebSearch: 'Searching web...',
 	SlashCommand: 'Running command...',

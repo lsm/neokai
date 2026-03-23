@@ -249,12 +249,6 @@ export class StateManager {
 			});
 		});
 
-		this.eventBus.on('goal.updated', (data) => {
-			this.messageHub.event('goal.updated', data, {
-				channel: data.sessionId, // 'room:${roomId}'
-			});
-		});
-
 		this.eventBus.on('goal.completed', (data) => {
 			this.messageHub.event('goal.completed', data, {
 				channel: data.sessionId, // 'room:${roomId}'
@@ -264,6 +258,136 @@ export class StateManager {
 		this.eventBus.on('goal.progressUpdated', (data) => {
 			this.messageHub.event('goal.progressUpdated', data, {
 				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		// =====================================================================
+		// Space event bridge: forward DaemonHub space events → WebSocket clients
+		//
+		// Mirrors the room event bridge above. Space events emitted by RPC
+		// handlers travel through DaemonHub (InProcessTransportBus, internal
+		// only) and must be forwarded to messageHub so the router delivers
+		// them to WebSocket clients.
+		//
+		// Channel conventions:
+		//   - Broad space events (space.*, space.task.*, space.workflowRun.*,
+		//     spaceWorkflow.*): sessionId is 'global' — delivered to all
+		//     subscribers via the global channel.
+		//   - spaceAgent.* events: sessionId is 'space:${spaceId}' — delivered
+		//     only to clients that called joinChannel('space:${spaceId}').
+		// =====================================================================
+
+		// Space lifecycle events (global channel)
+		this.eventBus.on('space.created', (data) => {
+			this.messageHub.event('space.created', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('space.updated', (data) => {
+			this.messageHub.event('space.updated', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('space.archived', (data) => {
+			this.messageHub.event('space.archived', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('space.deleted', (data) => {
+			this.messageHub.event('space.deleted', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		// Space task events (global channel)
+		this.eventBus.on('space.task.created', (data) => {
+			this.messageHub.event('space.task.created', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('space.task.updated', (data) => {
+			this.messageHub.event('space.task.updated', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		// Space workflow run events (global channel)
+		this.eventBus.on('space.workflowRun.created', (data) => {
+			this.messageHub.event('space.workflowRun.created', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('space.workflowRun.updated', (data) => {
+			this.messageHub.event('space.workflowRun.updated', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		// Space agent events (space-scoped channel: 'space:${spaceId}')
+		this.eventBus.on('spaceAgent.created', (data) => {
+			this.messageHub.event('spaceAgent.created', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceAgent.updated', (data) => {
+			this.messageHub.event('spaceAgent.updated', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceAgent.deleted', (data) => {
+			this.messageHub.event('spaceAgent.deleted', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		// Space session group events (space-scoped channel: 'space:${spaceId}')
+		this.eventBus.on('spaceSessionGroup.created', (data) => {
+			this.messageHub.event('spaceSessionGroup.created', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.memberAdded', (data) => {
+			this.messageHub.event('spaceSessionGroup.memberAdded', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.memberUpdated', (data) => {
+			this.messageHub.event('spaceSessionGroup.memberUpdated', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		this.eventBus.on('spaceSessionGroup.deleted', (data) => {
+			this.messageHub.event('spaceSessionGroup.deleted', data, {
+				channel: data.sessionId, // 'space:${spaceId}'
+			});
+		});
+
+		// Space workflow definition events (global channel)
+		this.eventBus.on('spaceWorkflow.created', (data) => {
+			this.messageHub.event('spaceWorkflow.created', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('spaceWorkflow.updated', (data) => {
+			this.messageHub.event('spaceWorkflow.updated', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
+		this.eventBus.on('spaceWorkflow.deleted', (data) => {
+			this.messageHub.event('spaceWorkflow.deleted', data, {
+				channel: data.sessionId, // 'global'
 			});
 		});
 	}
@@ -540,7 +664,13 @@ export class StateManager {
 
 		// Get all session state in one place
 		const sessionData = agentSession.getSessionData();
-		const agentState = agentSession.getProcessingState();
+		// Prefer event-sourced processingStateCache over the session's in-memory state.
+		// Room leader/worker sessions are live in RoomRuntimeService.agentSessions but are
+		// loaded separately into SessionCache (as "ghosts") when state.session is fetched.
+		// The ghost's in-memory processingState becomes stale once the live session changes
+		// state. processingStateCache is always up-to-date via session.updated DaemonHub events.
+		const agentState =
+			this.processingStateCache.get(sessionId) ?? agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
 
 		// Get error from cache (null if no error or error has been cleared)

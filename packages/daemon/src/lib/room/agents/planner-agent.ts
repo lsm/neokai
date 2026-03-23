@@ -49,6 +49,18 @@ export interface PlannerCreateTaskParams {
 	dependsOn?: string[];
 }
 
+/** Metric status for measurable mission replanning */
+export interface MetricReplanStatus {
+	name: string;
+	current: number;
+	target: number;
+	baseline?: number;
+	direction?: 'increase' | 'decrease';
+	met: boolean;
+	/** Recent metric history values (most recent last) */
+	recentHistory?: number[];
+}
+
 /** Context passed to the planner when replanning after a task failure */
 export interface ReplanContext {
 	/** Tasks that completed successfully (DO NOT redo) */
@@ -57,6 +69,10 @@ export interface ReplanContext {
 	failedTask: { title: string; error: string };
 	/** Planning attempt number (1-indexed) */
 	attempt: number;
+	/** Optional: metric context for measurable mission replanning */
+	metricContext?: {
+		metrics: MetricReplanStatus[];
+	};
 }
 
 export interface PlannerAgentConfig {
@@ -66,6 +82,8 @@ export interface PlannerAgentConfig {
 	sessionId: string;
 	workspacePath: string;
 	model?: string;
+	/** Provider ID for this session — auto-detected from model if omitted */
+	provider?: string;
 	/** Callback to create a draft task linked to this planning task */
 	createDraftTask: (params: PlannerCreateTaskParams) => Promise<{ id: string; title: string }>;
 	/** Callback to update an existing draft task */
@@ -294,7 +312,7 @@ Finish your response after the plan-writer completes — the Leader will dispatc
 When the Leader sends you an approval message, you are in Phase 2.
 **IMPORTANT**: Do NOT skip straight to \`create_task\` — you MUST merge the plan PR first.
 
-1. Merge the plan PR: run \`gh pr merge <PR_NUMBER> --merge\` (use the pr_number from the Phase 1 plan-writer result)
+1. Merge the plan PR: run \`gh pr merge <PR_NUMBER>\` (use the pr_number from the Phase 1 plan-writer result)
 2. Read the plan files (use the \`plan_files\` list from Phase 1, or find them under \`${planDir}/\` or at \`${planPath}\`)
 3. Create tasks 1:1 from the plan sections using the \`create_task\` tool
 4. Each task title and description should match the plan exactly
@@ -352,6 +370,29 @@ export function buildPlannerTaskMessage(config: PlannerAgentConfig): string {
 		sections.push('');
 		sections.push(`Create new tasks that address the failure and complete the remaining goal.`);
 		sections.push(`Do NOT create tasks for work that already completed successfully.`);
+
+		// Metric context for measurable missions
+		if (rc.metricContext && rc.metricContext.metrics.length > 0) {
+			sections.push(`\n### Metric Targets (Measurable Mission)\n`);
+			sections.push(
+				`This goal has KPI targets. Your plan must include tasks that move these metrics toward their targets.\n`
+			);
+			for (const m of rc.metricContext.metrics) {
+				const direction = m.direction ?? 'increase';
+				const statusIcon = m.met ? '[MET]' : '[NOT MET]';
+				const dirStr = direction === 'increase' ? 'increase to' : 'decrease to';
+				let line = `- **${m.name}**: current=${m.current}, need to ${dirStr} ${m.target} ${statusIcon}`;
+				if (direction === 'decrease' && m.baseline !== undefined) {
+					line += `, baseline=${m.baseline}`;
+				}
+				sections.push(line);
+				if (m.recentHistory && m.recentHistory.length > 0) {
+					sections.push(`  Recent history: ${m.recentHistory.join(' → ')}`);
+				}
+			}
+			sections.push('');
+			sections.push(`Focus your plan on tasks that will directly improve the unmet metrics above.`);
+		}
 	}
 
 	sections.push(`\nBreak this goal into tasks.`);
@@ -568,6 +609,7 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'planner',
 		model: config.model ?? DEFAULT_PLANNER_MODEL,
+		provider: config.provider,
 		agent: 'Planner',
 		agents: {
 			Planner: plannerAgentDef,

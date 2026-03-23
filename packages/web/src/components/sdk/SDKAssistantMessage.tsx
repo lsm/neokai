@@ -17,8 +17,9 @@ import {
 	isThinkingBlock,
 	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
-import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
+import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { QuestionPrompt } from '../QuestionPrompt.tsx';
@@ -79,11 +80,19 @@ export function SDKAssistantMessage({
 			.join('\n');
 	};
 
+	const [copied, setCopied] = useState(false);
+
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
 	const handleCopy = async () => {
 		const textContent = getTextContent();
 		const success = await copyToClipboard(textContent);
 		if (success) {
-			toast.success('Message copied to clipboard');
+			setCopied(true);
 		} else {
 			toast.error('Failed to copy message');
 		}
@@ -138,7 +147,7 @@ export function SDKAssistantMessage({
 							<path
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								stroke-width={2}
+								strokeWidth={2}
 								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
 							/>
 						</svg>
@@ -181,15 +190,31 @@ export function SDKAssistantMessage({
 					<span class="text-xs text-gray-500">{getTimestamp()}</span>
 				</Tooltip>
 
-				<IconButton size="md" onClick={handleCopy} title="Copy message">
-					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							stroke-width={2}
-							d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-						/>
-					</svg>
+				<IconButton
+					size="md"
+					onClick={handleCopy}
+					title={copied ? 'Copied!' : 'Copy message'}
+					class={copied ? 'text-green-400' : ''}
+				>
+					{copied ? (
+						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M5 13l4 4L19 7"
+							/>
+						</svg>
+					) : (
+						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+							/>
+						</svg>
+					)}
 				</IconButton>
 			</div>
 		) : null;
@@ -348,7 +373,8 @@ function ToolUseBlock({
 	const isOutputRemoved = resultData?.isOutputRemoved || false;
 
 	// Use SubagentBlock for Task tool (no delete button)
-	if (block.name === 'Task') {
+	// SDK 0.2.76+ renamed the tool from 'Task' to 'Agent', support both for compatibility
+	if (block.name === 'Task' || block.name === 'Agent') {
 		return (
 			<SubagentBlock
 				input={block.input as unknown as AgentInput}

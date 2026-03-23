@@ -16,20 +16,12 @@ export type {
 } from './types.js';
 
 export type {
-	ProviderQueryOptions,
-	ProviderQueryContext,
-	ToolDefinition,
-	PiMonoContentBlock,
-	PiMonoUserMessage,
-	PiMonoAssistantMessage,
-	PiMonoMessage,
-} from './query-types.js';
-
-export type {
 	ProviderAuthStatus,
 	ProviderAuthRequest,
 	ProviderAuthResponse,
 	ProviderLogoutRequest,
+	ProviderRefreshRequest,
+	ProviderRefreshResponse,
 	ListProviderAuthStatusResponse,
 	OAuthFlowData,
 } from './auth-types.js';

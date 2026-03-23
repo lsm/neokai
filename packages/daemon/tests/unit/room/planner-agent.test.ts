@@ -7,6 +7,7 @@ import {
 	createPlannerAgentInit,
 	toPlanSlug,
 	type PlannerAgentConfig,
+	type ReplanContext,
 } from '../../../src/lib/room/agents/planner-agent';
 
 const sharedBaseConfig: PlannerAgentConfig = {
@@ -368,6 +369,94 @@ describe('planner-agent', () => {
 			expect(msg).toContain('Add signup');
 			expect(msg).toContain('OAuth not configured');
 			expect(msg).toContain('DO NOT redo');
+		});
+
+		it('should not include metric section without replanContext', () => {
+			const msg = buildPlannerTaskMessage(baseConfig);
+			expect(msg).not.toContain('Metric Targets');
+		});
+
+		it('should include metric section when metricContext is provided', () => {
+			const rc: ReplanContext = {
+				completedTasks: [{ title: 'Task A', result: 'done' }],
+				failedTask: { title: 'Metric targets not met', error: 'coverage not met' },
+				attempt: 2,
+				metricContext: {
+					metrics: [
+						{
+							name: 'coverage',
+							current: 50,
+							target: 80,
+							direction: 'increase',
+							met: false,
+							recentHistory: [30, 40, 50],
+						},
+						{
+							name: 'latency_p99',
+							current: 250,
+							target: 100,
+							direction: 'decrease',
+							baseline: 500,
+							met: false,
+							recentHistory: [450, 350, 250],
+						},
+					],
+				},
+			};
+			const msg = buildPlannerTaskMessage({ ...baseConfig, replanContext: rc });
+			expect(msg).toContain('Metric Targets');
+			expect(msg).toContain('coverage');
+			expect(msg).toContain('current=50');
+			// Format is "need to increase to 80" (not "target=80")
+			expect(msg).toContain('increase to 80');
+			expect(msg).toContain('[NOT MET]');
+			expect(msg).toContain('latency_p99');
+			expect(msg).toContain('baseline=500');
+			expect(msg).toContain('30 → 40 → 50');
+		});
+
+		it('should mark met metrics as [MET]', () => {
+			const rc: ReplanContext = {
+				completedTasks: [],
+				failedTask: { title: 'Metric targets not met', error: 'some not met' },
+				attempt: 1,
+				metricContext: {
+					metrics: [
+						{
+							name: 'coverage',
+							current: 90,
+							target: 80,
+							direction: 'increase',
+							met: true,
+						},
+					],
+				},
+			};
+			const msg = buildPlannerTaskMessage({ ...baseConfig, replanContext: rc });
+			expect(msg).toContain('[MET]');
+			expect(msg).not.toContain('[NOT MET]');
+		});
+
+		it('should handle replanContext without metricContext (backward compat)', () => {
+			const rc: ReplanContext = {
+				completedTasks: [{ title: 'Task A', result: 'done' }],
+				failedTask: { title: 'Task B', error: 'build failed' },
+				attempt: 2,
+			};
+			const msg = buildPlannerTaskMessage({ ...baseConfig, replanContext: rc });
+			expect(msg).toContain('Replanning Context');
+			expect(msg).toContain('Task B');
+			expect(msg).not.toContain('Metric Targets');
+		});
+
+		it('should include attempt number in replanning context', () => {
+			const rc: ReplanContext = {
+				completedTasks: [],
+				failedTask: { title: 'Failed Task', error: 'error' },
+				attempt: 3,
+			};
+			const msg = buildPlannerTaskMessage({ ...baseConfig, replanContext: rc });
+			expect(msg).toContain('Attempt 3');
 		});
 	});
 

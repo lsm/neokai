@@ -54,11 +54,10 @@ describe('MCP Tools Toggle Integration', () => {
 	});
 
 	afterEach(async () => {
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
-	});
+		if (!daemon) return;
+		daemon.kill('SIGTERM');
+		await daemon.waitForExit();
+	}, 15_000);
 
 	test(
 		'disabledMcpServers is written to settings.local.json',

@@ -4,11 +4,12 @@
  * Tests for SDK query execution with streaming input.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { tmpdir } from 'node:os';
 import { QueryRunner, type QueryRunnerContext } from '../../../src/lib/agent/query-runner';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../src/storage/database';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
@@ -184,6 +185,7 @@ describe('QueryRunner', () => {
 			queryAbortController: null,
 			firstMessageReceived: false,
 			startupTimeoutTimer: null,
+			startupTimeoutAutoRecoverAttempts: 0,
 			originalEnvVars: {},
 
 			// Methods for state coordination
@@ -640,6 +642,198 @@ describe('QueryRunner', () => {
 					// Consume
 				}
 			}).toThrow('Some SDK error');
+		});
+	});
+
+	describe('runQuery() finally block close() behaviour', () => {
+		// Integration tests: exercise the actual QueryRunner.start() → runQuery() finally block.
+		// In unit tests, no credentials are configured (setup.ts clears all API keys), so
+		// runQuery() fails at the auth check before creating a new queryObject. This means
+		// ctx.queryObject stays as whatever was pre-set, and the finally block (non-stale path)
+		// calls close() on it and nulls it — exactly the natural-completion cleanup path.
+
+		it('should call close() on pre-existing queryObject in finally block', async () => {
+			const closeSpy = mock(() => {});
+			const ctx = createContext({
+				queryObject: {
+					interrupt: mock(async () => {}),
+					close: closeSpy,
+				} as unknown as Query,
+			});
+			runner = new QueryRunner(ctx);
+
+			// start() launches runQuery() asynchronously; wait for it to settle.
+			// runQuery() fails at the auth check (no credentials in unit tests),
+			// but the finally block still runs and should close + null ctx.queryObject.
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(closeSpy).toHaveBeenCalled();
+			expect(ctx.queryObject).toBeNull();
+		});
+
+		it('should handle close() errors gracefully in finally block', async () => {
+			const ctx = createContext({
+				queryObject: {
+					interrupt: mock(async () => {}),
+					close: mock(() => {
+						throw new Error('Close failed');
+					}),
+				} as unknown as Query,
+			});
+			runner = new QueryRunner(ctx);
+
+			// start() launches runQuery() asynchronously; wait for it to settle.
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// queryObject is still nulled after error is caught
+			expect(ctx.queryObject).toBeNull();
+		});
+
+		it('should not call close() or null queryObject for stale queries in finally block', async () => {
+			const closeSpy = mock(() => {});
+			let gen = 0;
+			const originalQueryObject = {
+				interrupt: mock(async () => {}),
+				close: closeSpy,
+			} as unknown as Query;
+			const ctx = createContext({
+				queryObject: originalQueryObject,
+				// incrementQueryGeneration returns gen 1, but getQueryGeneration returns 2
+				// → isStaleQuery = true → finally block skips all cleanup
+				incrementQueryGeneration: () => ++gen, // returns 1
+				getQueryGeneration: () => 2, // current gen is 2, query ran as gen 1
+			});
+			runner = new QueryRunner(ctx);
+
+			// start() launches runQuery() asynchronously; wait for it to settle.
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(closeSpy).not.toHaveBeenCalled();
+			// ctx.queryObject is not nulled — it belongs to the current (gen 2) query
+			expect(ctx.queryObject).toBe(originalQueryObject);
+		});
+	});
+
+	describe('startup timeout auto-recovery', () => {
+		// Integration tests: exercise the runQuery() catch block when a startup-timeout
+		// error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
+		// test never waits for the real 15-second timer.
+		// ANTHROPIC_API_KEY is set to a dummy value so the pre-query auth check passes.
+
+		let savedApiKey: string | undefined;
+
+		beforeEach(() => {
+			savedApiKey = process.env.ANTHROPIC_API_KEY;
+			process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+			// Use a real directory so fs.mkdir() succeeds (reached after auth passes)
+			mockSession.workspacePath = tmpdir();
+			buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+		});
+
+		afterEach(() => {
+			if (savedApiKey === undefined) {
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				process.env.ANTHROPIC_API_KEY = savedApiKey;
+			}
+		});
+
+		it('should NOT call messageQueue.clear() when onStartupTimeoutAutoRecover is registered', async () => {
+			const ctx = createContext({
+				onStartupTimeoutAutoRecover: mock(async () => {}),
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).not.toHaveBeenCalled();
+		});
+
+		it('should call messageQueue.clear() when onStartupTimeoutAutoRecover is absent', async () => {
+			const ctx = createContext();
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).toHaveBeenCalled();
+		});
+
+		it('should call messageQueue.clear() on startup-timeout AbortError even when handler is registered', async () => {
+			// Guard: if the throw site ever becomes an AbortError, queue must still be
+			// cleared because the recovery path is gated behind !isAbortError and will
+			// not run — leaving stale preserved messages would be wrong.
+			const abortError = new Error('SDK startup timeout - query aborted');
+			abortError.name = 'AbortError';
+			buildSpy.mockRejectedValue(abortError);
+
+			const ctx = createContext({
+				onStartupTimeoutAutoRecover: mock(async () => {}),
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(clearSpy).toHaveBeenCalled();
+		});
+
+		it('should schedule onStartupTimeoutAutoRecover after ~300ms', async () => {
+			const recoverSpy = mock(async () => {});
+			const ctx = createContext({
+				onStartupTimeoutAutoRecover: recoverSpy,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// Not yet called — deferred by setTimeout(300ms)
+			expect(recoverSpy).not.toHaveBeenCalled();
+
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(recoverSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('should NOT invoke onStartupTimeoutAutoRecover when isCleaningUp returns true', async () => {
+			const recoverSpy = mock(async () => {});
+			const ctx = createContext({
+				isCleaningUp: () => true,
+				onStartupTimeoutAutoRecover: recoverSpy,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(recoverSpy).not.toHaveBeenCalled();
+		});
+
+		it('should surface error normally and NOT recover when retry limit (1) is already reached', async () => {
+			const recoverSpy = mock(async () => {});
+			const ctx = createContext({
+				startupTimeoutAutoRecoverAttempts: 1, // already at limit
+				onStartupTimeoutAutoRecover: recoverSpy,
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(recoverSpy).not.toHaveBeenCalled();
+			expect(handleErrorSpy).toHaveBeenCalled();
+		});
+
+		it('should increment startupTimeoutAutoRecoverAttempts when recovery is scheduled', async () => {
+			const ctx = createContext({
+				startupTimeoutAutoRecoverAttempts: 0,
+				onStartupTimeoutAutoRecover: mock(async () => {}),
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(1);
 		});
 	});
 });

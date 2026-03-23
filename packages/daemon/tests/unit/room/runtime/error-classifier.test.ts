@@ -74,10 +74,10 @@ describe('error-classifier', () => {
 				expect(result!.statusCode).toBe(429);
 			});
 
-			it('classifies Anthropic usage-limit message as rate_limit with resetsAt', () => {
+			it('classifies Anthropic usage-limit message as usage_limit with resetsAt', () => {
 				const result = classifyError("You've hit your limit · resets 1pm (America/New_York)");
 				expect(result).not.toBeNull();
-				expect(result!.class).toBe('rate_limit');
+				expect(result!.class).toBe('usage_limit');
 				expect(result!.resetsAt).toBeGreaterThan(Date.now() - 1000);
 			});
 

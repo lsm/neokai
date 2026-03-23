@@ -14,7 +14,6 @@ const log = new Logger('github-polling');
 
 const DEFAULT_BASE_URL = 'https://api.github.com';
 const DEFAULT_USER_AGENT = 'NeoKai-GitHub-Integration/1.0';
-const DEFAULT_INTERVAL = 60000; // 1 minute
 
 /**
  * State for a single repository being polled
@@ -36,7 +35,7 @@ interface RepoState {
 export class GitHubPollingService {
 	private config: PollingConfig;
 	private repositories: Map<string, RepoState> = new Map();
-	private pollingInterval: Timer | null = null;
+	private running = false;
 	private isPolling = false;
 	private onEvent?: (event: GitHubEvent) => Promise<void> | void;
 
@@ -46,7 +45,7 @@ export class GitHubPollingService {
 	) {
 		this.config = {
 			token: config.token,
-			interval: config.interval ?? DEFAULT_INTERVAL,
+			interval: config.interval ?? 60000,
 			baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
 			userAgent: config.userAgent ?? DEFAULT_USER_AGENT,
 		};
@@ -54,39 +53,26 @@ export class GitHubPollingService {
 	}
 
 	/**
-	 * Start the polling loop
+	 * Start the polling service (state flag only — scheduling is handled by the job queue).
 	 */
 	start(): void {
-		if (this.pollingInterval) {
+		if (this.running) {
 			log.warn('Polling service already running');
 			return;
 		}
 
+		this.running = true;
 		log.info('Starting GitHub polling service', {
-			interval: this.config.interval,
 			repositoryCount: this.repositories.size,
 		});
-
-		// Run initial poll immediately
-		this.pollAllRepositories().catch((error) => {
-			log.error('Initial poll failed', error);
-		});
-
-		// Schedule recurring polls
-		this.pollingInterval = setInterval(() => {
-			this.pollAllRepositories().catch((error) => {
-				log.error('Scheduled poll failed', error);
-			});
-		}, this.config.interval);
 	}
 
 	/**
-	 * Stop the polling loop
+	 * Stop the polling service (state flag only).
 	 */
 	stop(): void {
-		if (this.pollingInterval) {
-			clearInterval(this.pollingInterval);
-			this.pollingInterval = null;
+		if (this.running) {
+			this.running = false;
 			log.info('GitHub polling service stopped');
 		}
 	}
@@ -133,10 +119,21 @@ export class GitHubPollingService {
 	}
 
 	/**
-	 * Check if the service is currently polling
+	 * Check if the service is currently running
 	 */
 	isRunning(): boolean {
-		return this.pollingInterval !== null;
+		return this.running;
+	}
+
+	/**
+	 * Trigger a poll immediately. No-op if a poll is already in progress.
+	 */
+	async triggerPoll(): Promise<void> {
+		if (this.isPolling) {
+			log.debug('Poll already in progress, skipping triggerPoll');
+			return;
+		}
+		await this.pollAllRepositories();
 	}
 
 	/**

@@ -11,7 +11,7 @@
  */
 
 import type { ModelInfo } from '@neokai/shared';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { initializeProviders } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
@@ -102,19 +102,25 @@ const FALLBACK_MODELS: ModelInfo[] = [
  * are always available for resolution, even when only non-Anthropic
  * providers are configured.
  *
- * Provider models take precedence over fallback models with same ID.
+ * Provider models take precedence over fallback models with the same
+ * (provider, id) pair. Models with the same id but different providers
+ * are kept as separate entries so that provider-filtered lookup in
+ * getModelInfo can distinguish them (e.g. both 'anthropic' and
+ * 'anthropic-copilot' may expose 'claude-sonnet-4.6').
  */
 function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
+	// Key by "provider:id" so same-id models from different providers
+	// are preserved as distinct entries rather than last-writer-wins.
 	const modelMap = new Map<string, ModelInfo>();
 
 	// Add fallback models first
 	for (const model of FALLBACK_MODELS) {
-		modelMap.set(model.id, model);
+		modelMap.set(`${model.provider}:${model.id}`, model);
 	}
 
-	// Provider models override fallbacks with same ID
+	// Provider models override fallbacks with same (provider, id)
 	for (const model of providerModels) {
-		modelMap.set(model.id, model);
+		modelMap.set(`${model.provider}:${model.id}`, model);
 	}
 
 	return Array.from(modelMap.values());
@@ -338,60 +344,129 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
 }
 
 /**
- * Get model info by ID or alias
- * Searches available models with support for legacy model IDs
+ * Three-step search helper for a given model list.
+ * 1. Exact ID match
+ * 2. Alias field match
+ * 3. Legacy model mapping
+ */
+function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
+	// 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
+	let found = models.find((m) => m.id === idOrAlias);
+
+	// 2. Alias field match
+	if (!found) {
+		found = models.find((m) => m.alias === idOrAlias);
+	}
+
+	// 3. Legacy model mapping (maps old full IDs to SDK short IDs)
+	if (!found) {
+		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
+		if (legacyMappedId) {
+			found = models.find((m) => m.id === legacyMappedId);
+		}
+	}
+
+	return found;
+}
+
+/**
+ * Get model info by ID or alias, filtered to the specified provider.
+ * All three parameters are required — no fallback to unfiltered search.
+ * Returns null if no model matching both idOrAlias and providerId is found.
+ *
+ * @param idOrAlias - Model ID or alias to look up
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Provider ID to filter by (required)
  */
 export async function getModelInfo(
+	idOrAlias: string,
+	cacheKey: string,
+	providerId: string
+): Promise<ModelInfo | null> {
+	const availableModels = getAvailableModels(cacheKey);
+	const providerModels = availableModels.filter((m) => m.provider === providerId);
+	return findInModels(providerModels, idOrAlias) ?? null;
+}
+
+/**
+ * Get model info by ID or alias without filtering by provider.
+ * Use this ONLY for callers that genuinely lack provider context (e.g., legacy
+ * config paths, manual test utilities). For all new code, prefer `getModelInfo`
+ * with an explicit `providerId`.
+ *
+ * WARNING: If the same model ID exists in multiple providers (e.g., `claude-sonnet-4.6`
+ * in both `anthropic` and `anthropic-copilot`), this function returns whichever entry
+ * appears first in the cache — the result is ambiguous and provider-dependent.
+ *
+ * @param idOrAlias - Model ID or alias to look up
+ * @param cacheKey - Cache key to look up models (defaults to 'global')
+ */
+export async function getModelInfoUnfiltered(
 	idOrAlias: string,
 	cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
 	const availableModels = getAvailableModels(cacheKey);
-
-	// 1. Try exact ID match first (works for SDK's short IDs like 'opus', 'default')
-	let model = availableModels.find((m) => m.id === idOrAlias);
-
-	// 2. Try alias match in model's alias field
-	if (!model) {
-		model = availableModels.find((m) => m.alias === idOrAlias);
-	}
-
-	// 3. Try legacy model mapping (maps old full IDs to SDK short IDs)
-	// This handles existing sessions with legacy model IDs like 'claude-sonnet-4-5-20250929'
-	if (!model) {
-		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
-		if (legacyMappedId) {
-			model = availableModels.find((m) => m.id === legacyMappedId);
-		}
-	}
-
-	return model || null;
+	return findInModels(availableModels, idOrAlias) ?? null;
 }
 
 /**
- * Validate if a model ID or alias is valid
+ * Validate if a model ID or alias is valid for the specified provider.
+ * All three parameters are required — validation is strict, no unfiltered fallback.
+ *
+ * @param idOrAlias - Model ID or alias to validate
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Provider ID to filter by (required)
  */
 export async function isValidModel(
 	idOrAlias: string,
-	cacheKey: string = 'global'
+	cacheKey: string,
+	providerId: string
 ): Promise<boolean> {
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey);
+	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
 	return modelInfo !== null;
 }
 
 /**
- * Resolve a model alias to its actual ID in the available models
- * Returns the model ID as it exists in the SDK/cache
+ * Resolve a model alias to its actual ID, filtered to the specified provider.
+ * All three parameters are required.
+ * Returns the original idOrAlias if no match is found.
+ *
+ * @param idOrAlias - Model ID or alias to resolve
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Provider ID to filter by (required)
  */
 export async function resolveModelAlias(
 	idOrAlias: string,
-	cacheKey: string = 'global'
+	cacheKey: string,
+	providerId: string
 ): Promise<string> {
-	// Try to find the model directly
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey);
+	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
 	if (modelInfo) {
 		return modelInfo.id;
 	}
+	// Return as-is if nothing found
+	return idOrAlias;
+}
 
+/**
+ * Resolve a model alias to its actual ID without filtering by provider.
+ * Use this ONLY for callers that genuinely lack provider context.
+ * For all new code, prefer `resolveModelAlias` with an explicit `providerId`.
+ *
+ * WARNING: Same ambiguity caveat as `getModelInfoUnfiltered` — if the same alias
+ * resolves to different IDs in different providers, the result is non-deterministic.
+ *
+ * @param idOrAlias - Model ID or alias to resolve
+ * @param cacheKey - Cache key to look up models (defaults to 'global')
+ */
+export async function resolveModelAliasUnfiltered(
+	idOrAlias: string,
+	cacheKey: string = 'global'
+): Promise<string> {
+	const modelInfo = await getModelInfoUnfiltered(idOrAlias, cacheKey);
+	if (modelInfo) {
+		return modelInfo.id;
+	}
 	// Return as-is if nothing found
 	return idOrAlias;
 }

@@ -416,6 +416,51 @@ describe('JobQueueRepository', () => {
 			expect(jobs.length).toBe(3);
 		});
 
+		it('filters by status array (returns jobs matching any of the statuses)', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [processing] = repository.dequeue('test', 1);
+			repository.complete(processing.id);
+			// Now we have: 1 pending, 1 completed
+
+			const jobs = repository.listJobs({ status: ['pending', 'completed'] });
+
+			expect(jobs.length).toBe(2);
+			expect(jobs.every((j) => j.status === 'pending' || j.status === 'completed')).toBe(true);
+		});
+
+		it('filters by status array — only matching statuses returned', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.dequeue('test', 1);
+			// Now: 1 pending, 1 processing
+
+			const jobs = repository.listJobs({ status: ['pending'] });
+
+			expect(jobs.length).toBe(1);
+			expect(jobs[0].status).toBe('pending');
+		});
+
+		it('returns empty array for empty status array', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+
+			const jobs = repository.listJobs({ status: [] });
+
+			expect(jobs).toEqual([]);
+		});
+
+		it('string status still works (backward compatible)', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.dequeue('test', 1);
+
+			const jobs = repository.listJobs({ status: 'pending' });
+
+			expect(jobs.length).toBe(1);
+			expect(jobs[0].status).toBe('pending');
+		});
+
 		it('orders by created_at DESC', async () => {
 			repository.enqueue({ queue: 'test', payload: { order: 1 } });
 			await new Promise((r) => setTimeout(r, 5));
@@ -492,6 +537,24 @@ describe('JobQueueRepository', () => {
 
 			expect(deleted).toBe(1);
 			expect(repository.getJob(job.id)).toBeNull();
+		});
+
+		it('deletes failed jobs older than threshold', () => {
+			// Insert a 'failed' job directly — the processor never writes this status
+			// (it uses 'dead' for exhausted retries) but the type contract allows it,
+			// so cleanup must handle it to prevent indefinite accumulation.
+			const now = Date.now();
+			const db = (repository as any).db;
+			db.exec(`
+				INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
+				VALUES ('failed-job', 'test', 'failed', '{}', 0, 3, 1, ${now}, ${now}, ${now})
+			`);
+
+			const threshold = now + 1000;
+			const deleted = repository.cleanup(threshold);
+
+			expect(deleted).toBe(1);
+			expect(repository.getJob('failed-job')).toBeNull();
 		});
 
 		it('does NOT delete pending or processing jobs', () => {
@@ -571,6 +634,32 @@ describe('JobQueueRepository', () => {
 			const reclaimed = repository.reclaimStale(threshold);
 
 			expect(reclaimed).toBe(4);
+		});
+	});
+
+	describe('deleteJob', () => {
+		it('returns true and removes the job when it exists', () => {
+			const job = repository.enqueue({ queue: 'test', payload: {} });
+			const deleted = repository.deleteJob(job.id);
+			expect(deleted).toBe(true);
+			expect(repository.getJob(job.id)).toBeNull();
+		});
+
+		it('returns false when the job ID does not exist', () => {
+			const deleted = repository.deleteJob('non-existent-id');
+			expect(deleted).toBe(false);
+		});
+
+		it('deletes exactly one row and leaves others untouched', () => {
+			const job1 = repository.enqueue({ queue: 'test', payload: { n: 1 } });
+			const job2 = repository.enqueue({ queue: 'test', payload: { n: 2 } });
+			const job3 = repository.enqueue({ queue: 'test', payload: { n: 3 } });
+
+			repository.deleteJob(job2.id);
+
+			expect(repository.getJob(job1.id)).not.toBeNull();
+			expect(repository.getJob(job2.id)).toBeNull();
+			expect(repository.getJob(job3.id)).not.toBeNull();
 		});
 	});
 });

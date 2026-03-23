@@ -195,8 +195,9 @@ describe.skip('Coordinator Tool Delegation - Behavioral', () => {
 		// Verify coordinator tool usage
 		const coordinatorToolUses = getCoordinatorToolUses(allMessages);
 
-		// Verify delegation happened — coordinator should use Task for mutations
-		const taskUses = coordinatorToolUses.filter((t) => t.name === 'Task');
+		// Verify delegation happened — coordinator should use Task/Agent for mutations
+		// SDK 0.2.76+ renamed the tool from 'Task' to 'Agent'; accept both names
+		const taskUses = coordinatorToolUses.filter((t) => t.name === 'Task' || t.name === 'Agent');
 		expect(taskUses.length).toBeGreaterThan(0);
 
 		// Verify the coordinator did NOT use mutation tools directly

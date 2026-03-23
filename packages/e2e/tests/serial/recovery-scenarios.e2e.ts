@@ -83,7 +83,8 @@ test.describe('Recovery Mechanisms', () => {
 
 		// Should see the message that was being processed
 		const hasMessage = await page
-			.locator('text="Message before refresh"')
+			.locator('[data-message-role="user"]')
+			.filter({ hasText: 'Message before refresh' })
 			.isVisible({ timeout: 5000 })
 			.catch(() => false);
 

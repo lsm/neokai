@@ -125,7 +125,11 @@ export class JobQueueRepository {
 		return this.rowToJob(row);
 	}
 
-	listJobs(filter: { queue?: string; status?: JobStatus; limit?: number }): Job[] {
+	listJobs(filter: { queue?: string; status?: JobStatus | JobStatus[]; limit?: number }): Job[] {
+		if (Array.isArray(filter.status) && filter.status.length === 0) {
+			return [];
+		}
+
 		let query = `SELECT * FROM job_queue WHERE 1=1`;
 		const params: (string | number)[] = [];
 
@@ -134,8 +138,14 @@ export class JobQueueRepository {
 			params.push(filter.queue);
 		}
 		if (filter.status !== undefined) {
-			query += ` AND status = ?`;
-			params.push(filter.status);
+			if (Array.isArray(filter.status)) {
+				const placeholders = filter.status.map(() => '?').join(',');
+				query += ` AND status IN (${placeholders})`;
+				params.push(...filter.status);
+			} else {
+				query += ` AND status = ?`;
+				params.push(filter.status);
+			}
 		}
 
 		query += ` ORDER BY created_at DESC LIMIT ?`;
@@ -167,10 +177,20 @@ export class JobQueueRepository {
 	}
 
 	cleanup(beforeMs: number): number {
+		// 'failed' is included defensively: the processor never writes it (retries go back to
+		// 'pending' and exhausted retries become 'dead'), but the type contract allows it and
+		// future code could produce it. Including it prevents indefinite accumulation.
 		const result = this.db
-			.prepare(`DELETE FROM job_queue WHERE status IN ('completed', 'dead') AND completed_at < ?`)
+			.prepare(
+				`DELETE FROM job_queue WHERE status IN ('completed', 'dead', 'failed') AND completed_at < ?`
+			)
 			.run(beforeMs);
 		return result.changes;
+	}
+
+	deleteJob(id: string): boolean {
+		const result = this.db.prepare(`DELETE FROM job_queue WHERE id = ?`).run(id);
+		return result.changes > 0;
 	}
 
 	reclaimStale(staleBefore: number): number {

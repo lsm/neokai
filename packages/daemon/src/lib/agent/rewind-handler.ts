@@ -10,7 +10,7 @@
  * - Checkpoint retrieval (from user messages in DB)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	RewindMode,
 	RewindPreview,
@@ -306,8 +306,13 @@ export class RewindHandler {
 		const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
 		// Step 2: Truncate the SDK JSONL file at this message
+		// Use worktree path when available — SDK creates session files based on CWD,
+		// which is the worktree path for worktree sessions, not session.workspacePath.
+		const sdkWorkspacePath = session.worktree
+			? session.worktree.worktreePath
+			: session.workspacePath;
 		const _jsonlResult = truncateSessionFileAtMessage(
-			session.workspacePath,
+			sdkWorkspacePath,
 			session.sdkSessionId,
 			session.id,
 			checkpointId
@@ -717,8 +722,11 @@ export class RewindHandler {
 				// Truncate JSONL at the earliest selected message
 				const jsonlUuid = (earliestMessage as { uuid?: string }).uuid;
 				if (jsonlUuid) {
+					const rewindSdkPath = session.worktree
+						? session.worktree.worktreePath
+						: session.workspacePath;
 					const _jsonlResult = truncateSessionFileAtMessage(
-						session.workspacePath,
+						rewindSdkPath,
 						session.sdkSessionId,
 						session.id,
 						jsonlUuid

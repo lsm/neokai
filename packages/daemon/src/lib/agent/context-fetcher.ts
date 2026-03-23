@@ -9,8 +9,16 @@
  * - Free space
  * - Autocompact buffer
  *
- * The /context command returns a user message with isReplay=true containing
- * markdown-formatted breakdown in <local-command-stdout> tags.
+ * The /context command response format depends on the claude binary version:
+ *
+ * OLD format (claude binary < ~1.0.53):
+ *   A user message with isReplay=true containing markdown-formatted breakdown
+ *   wrapped in <local-command-stdout> tags.
+ *
+ * NEW format (claude binary >= ~1.0.53):
+ *   An assistant message where the SDK's sc8() function strips the
+ *   <local-command-stdout> wrapper and converts the output to an assistant
+ *   message with raw markdown content.
  */
 
 import type { ContextInfo, ContextCategoryBreakdown } from '@neokai/shared';
@@ -33,25 +41,74 @@ export class ContextFetcher {
 	}
 
 	/**
-	 * Check if an SDK message is a /context response
+	 * Extract text content from a message's content field.
+	 * Handles both string content and array of text blocks (BetaContentBlock[]).
+	 */
+	private extractTextContent(content: unknown): string {
+		if (typeof content === 'string') return content;
+		if (Array.isArray(content)) {
+			return content
+				.filter((block): block is { type: 'text'; text: string } => {
+					return (
+						typeof block === 'object' &&
+						block !== null &&
+						(block as { type?: string }).type === 'text'
+					);
+				})
+				.map((block) => block.text)
+				.join('');
+		}
+		return '';
+	}
+
+	/**
+	 * Check if an SDK message is a /context response.
+	 *
+	 * Handles two SDK message formats:
+	 * 1. OLD: user message with isReplay=true, content wrapped in <local-command-stdout> tags
+	 * 2. NEW: assistant message with raw markdown content (no wrapper tags)
+	 *
 	 * Returns true if the message contains context breakdown
 	 */
 	isContextResponse(message: SDKMessage): boolean {
-		if (message.type !== 'user') return false;
+		if (message.type === 'user') {
+			const userMsg = message as {
+				isReplay?: boolean;
+				message?: { content?: unknown };
+			};
 
-		const userMsg = message as {
-			isReplay?: boolean;
-			message?: { content?: string };
-		};
+			if (!userMsg.isReplay) return false;
 
-		if (!userMsg.isReplay) return false;
+			const content = this.extractTextContent(userMsg.message?.content);
+			if (!content.includes('<local-command-stdout>')) return false;
 
-		const content = userMsg.message?.content || '';
-		if (!content.includes('<local-command-stdout>')) return false;
+			// SDK output headers can drift by version/provider, but /context output always
+			// includes a "**Tokens:**" line in local-command stdout.
+			return content.includes('Context Usage') || content.includes('**Tokens:**');
+		}
 
-		// SDK output headers can drift by version/provider, but /context output always
-		// includes a "**Tokens:**" line in local-command stdout.
-		return content.includes('Context Usage') || content.includes('**Tokens:**');
+		if (message.type === 'assistant') {
+			// New SDK format: assistant message produced by sc8() in the claude binary.
+			// The <local-command-stdout> wrapper is stripped; content is raw markdown.
+			//
+			// NOTE: Unlike the old user/isReplay format (which is protected by both
+			// the isReplay flag and UUID matching), this path relies solely on content
+			// heuristics with no UUID correlation. The dual-signal guard below
+			// (**Tokens:** + | Category |) reduces false-positive risk, but a real
+			// assistant response that happens to contain both patterns would be silently
+			// consumed and not shown in the UI. This is an acceptable trade-off because
+			// the pattern combination is highly specific to /context output.
+			const assistantMsg = message as {
+				message?: { content?: unknown };
+			};
+
+			const content = this.extractTextContent(assistantMsg.message?.content);
+			// Must contain the tokens line AND at least one category table row to avoid
+			// false-positives on regular assistant messages that mention token counts.
+			return content.includes('**Tokens:**') && content.includes('| Category |');
+		}
+
+		return false;
 	}
 
 	/**
@@ -59,34 +116,53 @@ export class ContextFetcher {
 	 * Returns null if message is not a context response
 	 */
 	parseContextResponse(message: SDKMessage): ParsedContextInfo | null {
-		if (message.type !== 'user') {
-			return null;
+		if (message.type === 'user') {
+			const userMsg = message as {
+				isReplay?: boolean;
+				message?: { content?: unknown };
+			};
+
+			if (!userMsg.isReplay) {
+				return null;
+			}
+
+			const content = this.extractTextContent(userMsg.message?.content);
+			if (!content.includes('<local-command-stdout>')) {
+				return null;
+			}
+
+			try {
+				return this.parseMarkdownContext(content);
+			} catch (error) {
+				this.logger.warn('Failed to parse context response (user/isReplay):', error);
+				return null;
+			}
 		}
 
-		const userMsg = message as {
-			isReplay?: boolean;
-			message?: { content?: string };
-		};
+		if (message.type === 'assistant') {
+			// New SDK format: raw markdown content without <local-command-stdout> wrapper
+			const assistantMsg = message as {
+				message?: { content?: unknown };
+			};
 
-		if (!userMsg.isReplay) {
-			return null;
+			const content = this.extractTextContent(assistantMsg.message?.content);
+			if (!content.includes('**Tokens:**') || !content.includes('| Category |')) {
+				return null;
+			}
+
+			try {
+				return this.parseMarkdownTokensAndBreakdown(content);
+			} catch (error) {
+				this.logger.warn('Failed to parse context response (assistant):', error);
+				return null;
+			}
 		}
 
-		const content = userMsg.message?.content || '';
-		if (!content.includes('<local-command-stdout>')) {
-			return null;
-		}
-
-		try {
-			return this.parseMarkdownContext(content);
-		} catch (error) {
-			this.logger.warn('Failed to parse context response:', error);
-			return null;
-		}
+		return null;
 	}
 
 	/**
-	 * Parse markdown content from <local-command-stdout> tags
+	 * Parse markdown content from <local-command-stdout> tags (old SDK format).
 	 */
 	private parseMarkdownContext(content: string): ParsedContextInfo {
 		// Extract content from <local-command-stdout> tags
@@ -95,8 +171,15 @@ export class ContextFetcher {
 			throw new Error('No <local-command-stdout> tags found');
 		}
 
-		const markdown = match[1];
+		return this.parseMarkdownTokensAndBreakdown(match[1]);
+	}
 
+	/**
+	 * Parse model, token counts, and category breakdown from raw markdown.
+	 * Used by both old format (after stripping <local-command-stdout> tags)
+	 * and new format (assistant message with no tags).
+	 */
+	private parseMarkdownTokensAndBreakdown(markdown: string): ParsedContextInfo {
 		// Parse model and capacity from tokens line
 		// Example: **Model:** claude-sonnet-4-5-20250929
 		// Example: **Tokens:** 62.5k / 200.0k (31%) - when tokens > 0, SDK uses 'k' suffix

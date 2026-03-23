@@ -4,14 +4,19 @@ import {
 	navigateToSettings,
 	navigateToHome,
 	navigateToRooms,
+	navigateToInbox,
+	navigateToSpaces,
 } from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
+import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
+import { inboxStore } from '../lib/inbox-store.ts';
 
 export function NavRail() {
 	const navSection = navSectionSignal.value;
+	const inboxBadgeCount = inboxStore.reviewCount.value;
 
 	const handleNavClick = (section: NavSection) => {
 		switch (section) {
@@ -24,6 +29,12 @@ export function NavRail() {
 				break;
 			case 'rooms':
 				navigateToRooms();
+				break;
+			case 'inbox':
+				navigateToInbox();
+				break;
+			case 'spaces':
+				navigateToSpaces();
 				break;
 			case 'settings':
 				navigateToSettings();
@@ -47,16 +58,33 @@ export function NavRail() {
 
 			{/* Nav Items */}
 			<nav class="flex-1 flex flex-col gap-1">
-				{MAIN_NAV_ITEMS.map((item) => (
-					<NavIconButton
-						key={item.id}
-						active={navSection === item.id}
-						onClick={() => handleNavClick(item.id)}
-						label={item.label}
-					>
-						{item.icon}
-					</NavIconButton>
-				))}
+				{MAIN_NAV_ITEMS.map((item) => {
+					if (item.id === 'inbox') {
+						const badge = inboxBadgeCount;
+						return (
+							<div key={item.id} class="relative">
+								<NavIconButton
+									active={navSection === item.id}
+									onClick={() => handleNavClick(item.id)}
+									label={item.label}
+								>
+									{item.icon}
+								</NavIconButton>
+								<InboxBadge count={badge} class="absolute top-1 right-1" />
+							</div>
+						);
+					}
+					return (
+						<NavIconButton
+							key={item.id}
+							active={navSection === item.id}
+							onClick={() => handleNavClick(item.id)}
+							label={item.label}
+						>
+							{item.icon}
+						</NavIconButton>
+					);
+				})}
 			</nav>
 
 			{/* Bottom - Daemon Status & Settings */}

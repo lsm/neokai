@@ -1,6 +1,451 @@
 {
 	"mocks": [
 		{
+			"comment": "Task Agent lifecycle — follow-up after report_result tool execution. 'toolu_report_lifecycle_001' appears only in the follow-up call (as tool_use_id inside a tool_result block) — not in the initial probe call. ORDERING: must appear before the probe_task_agent_report_complete_001 mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "toolu_report_lifecycle_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (task-agent report_result follow-up)"
+					}
+				],
+				"body": {
+					"id": "msg_task_agent_report_followup_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED LIFECYCLE] Task completed successfully. The report_result tool has been executed and the task status has been updated."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 25,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Task Agent lifecycle — report_result probe. Returns the full MCP tool name 'mcp__task-agent__report_result' with stop_reason 'tool_use' so the SDK dispatches the tool. This updates the task status to 'completed' and emits space.task.completed. bodyFragment substring matches 'probe_task_agent_report_complete_001' in the user message injected by the test.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_task_agent_report_complete_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (task-agent report_result probe)"
+					}
+				],
+				"body": {
+					"id": "msg_task_agent_report_probe_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED LIFECYCLE] I will now call report_result to mark this task as completed."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_report_lifecycle_001",
+							"name": "mcp__task-agent__report_result",
+							"input": {
+								"status": "completed",
+								"summary": "Task completed successfully via probe_task_agent_report_complete_001 lifecycle test mock."
+							}
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "tool_use",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 60,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Task Agent lifecycle — spawn_step_agent probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'spawn_step_agent' (registered as 'mcp__task-agent__spawn_step_agent'). Tool dispatch with a non-matching name causes the SDK to loop indefinitely. The text mentions spawn_step_agent and step-code-lifecycle-001 so tests can assert on text content.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_task_agent_spawn_step_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (task-agent spawn_step_agent probe)"
+					}
+				],
+				"body": {
+					"id": "msg_task_agent_spawn_probe_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED LIFECYCLE] I will now call spawn_step_agent for step step-code-lifecycle-001 to create a sub-agent for the Code Implementation step."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 40,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Task Agent lifecycle — check_step_status probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'check_step_status'. The text mentions check_step_status and step-code-lifecycle-001 so tests can assert on text content.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_task_agent_check_step_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (task-agent check_step_status probe)"
+					}
+				],
+				"body": {
+					"id": "msg_task_agent_check_probe_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED LIFECYCLE] I will now call check_step_status to monitor the running step agent for step-code-lifecycle-001."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 35,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Task Agent lifecycle — advance_workflow probe. Returns text-only (no tool_use blocks) to prevent the Claude Agent SDK from trying to dispatch the short tool name 'advance_workflow'. The text mentions advance_workflow so tests can assert on text content.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_task_agent_advance_wf_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (task-agent advance_workflow probe)"
+					}
+				],
+				"body": {
+					"id": "msg_task_agent_advance_probe_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED LIFECYCLE] I will now call advance_workflow to move the workflow from step-code-lifecycle-001 to the next step."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 35,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - follow-up after get_task_detail tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_get_detail_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) — not in the initial probe call — so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_get_detail mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "toolu_get_detail_probe_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent get_task_detail follow-up)"
+					}
+				],
+				"body": {
+					"id": "msg_space_followup_detail_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Task details retrieved. Assessing the situation."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 15,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - follow-up after retry_task tool execution. bodyFragment as a string performs substring matching on the serialized request body. 'toolu_retry_probe_001' only appears in the follow-up call (as the tool_use_id inside a tool_result block) — not in the initial probe call — so this mock fires exclusively for follow-ups. ORDERING: must appear before the probe_semi_autonomous_retry mock.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "toolu_retry_probe_001"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent retry_task follow-up)"
+					}
+				],
+				"body": {
+					"id": "msg_space_followup_retry_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Task retry initiated. Monitoring for progress."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 300,
+						"output_tokens": 15,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - supervised mode: escalate to human (probe phrase embedded in TASK_EVENT reason). Uses bodyFragment substring matching — .JsonContains was found to match ALL requests that have a 'messages' key, not just those containing the specified value.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_supervised_escalation"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent supervised)"
+					}
+				],
+				"body": {
+					"id": "msg_space_supervised_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED SUPERVISED] Task needs human attention. I am operating in supervised mode and cannot act autonomously. I need your approval before retrying or cancelling this task. The task failed and I am waiting for your guidance on how to proceed."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 60,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - semi_autonomous: returns get_task_detail tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool — avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__get_task_detail, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_semi_autonomous_get_detail"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent semi_autonomous get_task_detail)"
+					}
+				],
+				"body": {
+					"id": "msg_space_semi_detail_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED SEMI-AUTONOMOUS] A task needs attention. I will use get_task_detail to assess the situation before deciding how to proceed."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_get_detail_probe_001",
+							"name": "get_task_detail",
+							"input": {
+								"task_id": "PLACEHOLDER_TASK_ID"
+							}
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"comment": "Space agent - semi_autonomous: returns retry_task tool_use in content. Uses stop_reason end_turn so the SDK does NOT dispatch the tool — avoiding MCP name resolution issues (registered as mcp__global-spaces-tools__retry_task, mock uses short name). The tool_use block is still recorded in the assistant message content and verified by the test.",
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"bodyFragment": "probe_semi_autonomous_retry"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy mocks.json (space-agent semi_autonomous retry_task)"
+					}
+				],
+				"body": {
+					"id": "msg_space_semi_retry_001",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED SEMI-AUTONOMOUS] I am in semi-autonomous mode. I will retry this failed task autonomously without waiting for human approval."
+						},
+						{
+							"type": "tool_use",
+							"id": "toolu_retry_probe_001",
+							"name": "retry_task",
+							"input": {
+								"task_id": "PLACEHOLDER_TASK_ID"
+							}
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 200,
+						"output_tokens": 80,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages",
 				"method": "POST",
@@ -177,6 +622,7 @@
 			}
 		},
 		{
+			"comment": "CATCH-ALL for beta messages — must be last. All probe-specific and follow-up mocks must precede this entry.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST"

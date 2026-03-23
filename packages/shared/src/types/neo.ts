@@ -72,6 +72,73 @@ export type GoalStatus = 'active' | 'needs_human' | 'completed' | 'archived';
  */
 export type GoalPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+// ============================================================================
+// Mission Types (Goal V2)
+// ============================================================================
+
+/**
+ * Mission type — determines execution model for a goal
+ */
+export type MissionType = 'one_shot' | 'measurable' | 'recurring';
+
+/**
+ * Autonomy level — determines how much human oversight is required
+ */
+export type AutonomyLevel = 'supervised' | 'semi_autonomous';
+
+/**
+ * A structured metric tracked by a measurable mission
+ */
+export interface MissionMetric {
+	name: string;
+	target: number;
+	current: number;
+	unit?: string;
+	/** Direction of improvement (default: 'increase') */
+	direction?: 'increase' | 'decrease';
+	/** Baseline value (required for 'decrease' direction) */
+	baseline?: number;
+}
+
+/**
+ * A single metric history data point
+ */
+export interface MetricHistoryEntry {
+	metricName: string;
+	value: number;
+	/** Unix timestamp (seconds) */
+	recordedAt: number;
+}
+
+/**
+ * Cron schedule definition for recurring missions
+ * nextRunAt is stored as a dedicated column on RoomGoal, not inside this JSON
+ */
+export interface CronSchedule {
+	expression: string;
+	timezone: string;
+}
+
+/**
+ * Status of a mission execution run
+ */
+export type MissionExecutionStatus = 'running' | 'completed' | 'failed';
+
+/**
+ * A single execution run for a recurring or one-shot mission
+ */
+export interface MissionExecution {
+	id: string;
+	goalId: string;
+	executionNumber: number;
+	startedAt: number;
+	completedAt?: number;
+	status: MissionExecutionStatus;
+	resultSummary?: string;
+	taskIds: string[];
+	planningAttempts: number;
+}
+
 /**
  * A structured objective for a room
  * Goals track progress via linked tasks
@@ -105,7 +172,33 @@ export interface RoomGoal {
 	updatedAt: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
+	// --- Mission V2 fields ---
+	/** Mission execution model (default: 'one_shot') */
+	missionType?: MissionType;
+	/** Autonomy level for this mission (default: 'supervised') */
+	autonomyLevel?: AutonomyLevel;
+	/** Structured KPI metrics for measurable missions */
+	structuredMetrics?: MissionMetric[];
+	/** Cron schedule for recurring missions */
+	schedule?: CronSchedule;
+	/** Whether the recurring schedule is paused */
+	schedulePaused?: boolean;
+	/** Unix timestamp (seconds) of next scheduled run */
+	nextRunAt?: number;
+	/** Max consecutive failures before escalating to human */
+	maxConsecutiveFailures?: number;
+	/** Max planning attempts override (takes precedence over room config) */
+	maxPlanningAttempts?: number;
+	/** Current count of consecutive failures */
+	consecutiveFailures?: number;
+	/** Lifetime replan counter (distinct from per-execution planning_attempts) */
+	replanCount?: number;
 }
+
+/**
+ * Type alias for the UI and type layer — RoomGoal is the canonical type
+ */
+export type Mission = RoomGoal;
 
 /**
  * Parameters for creating a new room
@@ -156,7 +249,8 @@ export type TaskStatus =
 	| 'review'
 	| 'completed'
 	| 'needs_attention'
-	| 'cancelled';
+	| 'cancelled'
+	| 'archived';
 
 /**
  * Task priority
@@ -213,7 +307,7 @@ export interface NeoTask {
 	startedAt?: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
-	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
+	/** Archive timestamp (milliseconds since epoch) - derived from status='archived' */
 	archivedAt?: number | null;
 	/**
 	 * Which agent session is currently active (generating output).
@@ -227,6 +321,8 @@ export interface NeoTask {
 	prNumber?: number | null;
 	/** When PR was created/submitted (milliseconds since epoch) */
 	prCreatedAt?: number | null;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
 }
 
 /**
@@ -277,6 +373,8 @@ export interface UpdateTaskParams {
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
 	inputDraft?: string | null;
+	/** Timestamp when the task was archived. Set to null to clear when unarchiving. */
+	archivedAt?: number | null;
 }
 
 // ============================================================================
@@ -339,6 +437,8 @@ export interface TaskSummary {
 	status: TaskStatus;
 	priority: TaskPriority;
 	progress?: number | null;
+	/** Description of current step (for worker summary in review cards) */
+	currentStep?: string | null;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
 	/** Error message for failed tasks */
@@ -349,6 +449,8 @@ export interface TaskSummary {
 	prUrl?: string | null;
 	/** Pull request number (if available) */
 	prNumber?: number | null;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
 }
 
 /**

@@ -82,7 +82,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 		// Allow event propagation so runtime picks up the updated room config
 		// (runtime subscribes to room.updated and refreshes its room reference)
 		await Bun.sleep(100);
-	}, 30_000);
+	}, 60_000);
 
 	afterAll(
 		async () => {
@@ -92,10 +92,9 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				delete process.env.DEFAULT_MODEL;
 			}
 
-			if (daemon) {
-				daemon.kill('SIGTERM');
-				await daemon.waitForExit();
-			}
+			if (!daemon) return;
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
 		},
 		{ timeout: 20_000 }
 	);

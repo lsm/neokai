@@ -14,6 +14,7 @@ import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
 import { connectionState } from '../lib/state';
+import { getModelLabel } from '../lib/session-utils';
 import { navigateToRoom } from '../lib/router';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
@@ -215,7 +216,7 @@ export function ChatHeader({
 							</svg>
 						</div>
 					)}
-					<h2 class="text-lg font-semibold text-gray-100 truncate">
+					<h2 data-testid="chat-header-title" class="text-lg font-semibold text-gray-100 truncate">
 						{session?.title || 'New Session'}
 					</h2>
 					<div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
@@ -231,6 +232,14 @@ export function ChatHeader({
 						</span>
 						<span class="text-gray-500">•</span>
 						<span class="font-mono text-green-400">${displayStats.totalCost.toFixed(4)}</span>
+						{session?.config?.model && (
+							<>
+								<span class="text-gray-500">•</span>
+								<span class="text-blue-400 font-medium" title={session.config.model}>
+									{getModelLabel(session.config.model)}
+								</span>
+							</>
+						)}
 					</div>
 					{/* Git branch info */}
 					{(session?.worktree?.branch || session?.gitBranch) && (

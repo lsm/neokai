@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Save and retrieve SDK messages
  * - Pagination support (before/since cursors)
- * - Message query mode tracking (saved/queued/sent status)
+ * - Message query mode tracking (deferred/enqueued/consumed status)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -13,7 +13,7 @@ import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
 import type { SQLiteValue } from '../types';
 
-export type SendStatus = 'saved' | 'queued' | 'sent' | 'failed';
+export type SendStatus = 'deferred' | 'enqueued' | 'consumed' | 'failed';
 
 export class SDKMessageRepository {
 	private logger = new Logger('Database');
@@ -87,11 +87,11 @@ export class SDKMessageRepository {
 		since?: number
 	): { messages: SDKMessage[]; hasMore: boolean } {
 		// Step 1: Get top-level messages (excluding subagent messages)
-		// Show user messages that were sent to SDK, plus any that failed to deliver.
+		// Show user messages that were consumed to SDK, plus any that failed to deliver.
 		let query = `SELECT sdk_message, timestamp, send_status FROM sdk_messages
       WHERE session_id = ?
         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
-        AND (message_type != 'user' OR COALESCE(send_status, 'sent') IN ('sent', 'failed'))`;
+        AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
 		const params: SQLiteValue[] = [sessionId];
 
 		// Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
@@ -153,7 +153,7 @@ export class SDKMessageRepository {
 			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
-         AND (message_type != 'user' OR COALESCE(send_status, 'sent') IN ('sent', 'failed'))
+         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC`;
 			const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 
@@ -212,7 +212,7 @@ export class SDKMessageRepository {
 			`SELECT COUNT(*) as count FROM sdk_messages
        WHERE session_id = ?
          AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
-         AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')`
+         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') = 'consumed')`
 		);
 		const result = stmt.get(sessionId) as { count: number };
 		return result.count;
@@ -222,21 +222,25 @@ export class SDKMessageRepository {
 	// Message Query Mode operations
 	// ============================================================================
 	// Message send status types for query mode feature:
-	// - 'saved': Message persisted but not yet sent to SDK (Manual mode)
-	// - 'queued': Message in queue waiting to be sent (during processing)
-	// - 'sent': Message has been yielded to SDK
+	// - 'deferred': Message persisted but not yet consumed to SDK (Manual mode)
+	// - 'enqueued': Message in queue waiting to be consumed (during processing)
+	// - 'consumed': Message has been yielded to SDK
 
 	/**
 	 * Save a user message with explicit send status
 	 *
 	 * Used by query modes to track message lifecycle:
-	 * - Immediate mode: saves with status 'sent' (after yielding to SDK)
-	 * - Auto-queue mode: saves with status 'queued' (pending SDK consumption)
-	 * - Manual mode: saves with status 'saved' (until user triggers send)
+	 * - Immediate mode: saves with status 'consumed' (after yielding to SDK)
+	 * - Auto-queue mode: saves with status 'enqueued' (pending SDK consumption)
+	 * - Manual mode: saves with status 'deferred' (until user triggers send)
 	 *
 	 * @returns The generated message ID
 	 */
-	saveUserMessage(sessionId: string, message: SDKMessage, sendStatus: SendStatus = 'sent'): string {
+	saveUserMessage(
+		sessionId: string,
+		message: SDKMessage,
+		sendStatus: SendStatus = 'consumed'
+	): string {
 		const id = generateUUID();
 		const messageType = message.type;
 		const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
@@ -263,8 +267,8 @@ export class SDKMessageRepository {
 	 * Get messages by send status for a session
 	 *
 	 * Used to retrieve:
-	 * - 'saved' messages for manual trigger
-	 * - 'queued' messages for auto-send on turn_end
+	 * - 'deferred' messages for manual trigger
+	 * - 'enqueued' messages for auto-send on turn_end
 	 *
 	 * Returns messages in chronological order (oldest first).
 	 */
@@ -294,8 +298,8 @@ export class SDKMessageRepository {
 	 * Update send status for messages
 	 *
 	 * Used to transition messages through the lifecycle:
-	 * - 'saved' -> 'queued' (when user triggers manual send)
-	 * - 'queued' -> 'sent' (when message is yielded to SDK)
+	 * - 'deferred' -> 'enqueued' (when user triggers manual send)
+	 * - 'enqueued' -> 'consumed' (when message is yielded to SDK)
 	 */
 	updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
 		if (messageIds.length === 0) return;

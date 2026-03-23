@@ -10,7 +10,7 @@
  * - Reset request subscription
  * - Message persisted subscription
  * - Query trigger subscription
- * - Send queued on turn end subscription
+ * - Send enqueued-on-turn-end subscription
  */
 
 import type { Session, MessageContent } from '@neokai/shared';
@@ -61,8 +61,11 @@ export class EventSubscriptionSetup {
 		// Model switch request handler
 		const unsubModelSwitch = daemonHub.on(
 			'model.switchRequest',
-			async ({ sessionId: sid, model }) => {
-				const result = await modelSwitchHandler.switchModel(model);
+			async ({ sessionId: sid, model, provider }) => {
+				if (!provider) {
+					throw new Error('model.switchRequest event is missing required field: provider');
+				}
+				const result = await modelSwitchHandler.switchModel(model, provider);
 
 				// Emit result
 				await daemonHub.emit('model.switched', {
@@ -128,15 +131,15 @@ export class EventSubscriptionSetup {
 		);
 		this.unsubscribers.push(unsubQueryTrigger);
 
-		// Send queued messages on turn end (Auto-queue mode)
-		const unsubSendQueuedOnTurnEnd = daemonHub.on(
-			'query.sendQueuedOnTurnEnd',
+		// Send enqueued messages on turn end (auto-defer mode)
+		const unsubSendEnqueuedOnTurnEnd = daemonHub.on(
+			'query.sendEnqueuedOnTurnEnd',
 			async () => {
-				await queryModeHandler.sendQueuedMessagesOnTurnEnd();
+				await queryModeHandler.sendEnqueuedMessagesOnTurnEnd();
 			},
 			{ sessionId }
 		);
-		this.unsubscribers.push(unsubSendQueuedOnTurnEnd);
+		this.unsubscribers.push(unsubSendEnqueuedOnTurnEnd);
 	}
 
 	/**

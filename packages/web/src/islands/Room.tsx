@@ -3,16 +3,19 @@
  *
  * Main room page component with:
  * - Room dashboard showing sessions and tasks
- * - Goals tab
+ * - Missions tab
  * - Real-time updates via state channels
  */
 
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
+import { currentRoomTabSignal } from '../lib/signals';
+import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
+import type { CreateGoalFormData } from '../components/room/GoalsEditor';
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
@@ -31,14 +34,34 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
 
+	// Manage LiveQuery subscriptions for tasks and goals.
+	// Intentionally declared before the select() effect so that LiveQuery
+	// handlers are registered before the hub request fires — both share
+	// [roomId] as their dependency and run in declaration order.
+	useRoomLiveQuery(roomId);
+
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => {
 			setInitialLoad(false);
 		});
 		return () => {
 			roomStore.select(null);
+			// Clear any pending tab signal when leaving a room to prevent cross-room contamination
+			currentRoomTabSignal.value = null;
 		};
 	}, [roomId]);
+
+	// Watch for pending tab navigation from goal badges in task list / task view
+	const pendingTab = currentRoomTabSignal.value;
+	useEffect(() => {
+		if (pendingTab && !taskViewId) {
+			const validTabs: RoomTab[] = ['overview', 'context', 'agents', 'goals', 'settings'];
+			if (validTabs.includes(pendingTab as RoomTab)) {
+				setActiveTab(pendingTab as RoomTab);
+			}
+			currentRoomTabSignal.value = null;
+		}
+	}, [pendingTab, taskViewId, roomId]);
 
 	// Update URL when tab changes
 	const handleTabChange = (tab: RoomTab) => {
@@ -85,15 +108,15 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	}
 
 	// Goals handlers
-	const handleCreateGoal = async (goal: {
-		title: string;
-		description?: string;
-		priority?: string;
-	}) => {
+	const handleCreateGoal = async (goal: CreateGoalFormData) => {
 		await roomStore.createGoal({
 			title: goal.title,
 			description: goal.description ?? '',
-			priority: goal.priority as 'low' | 'normal' | 'high' | 'urgent',
+			priority: goal.priority,
+			missionType: goal.missionType,
+			autonomyLevel: goal.autonomyLevel,
+			structuredMetrics: goal.structuredMetrics,
+			schedule: goal.schedule,
 		});
 	};
 
@@ -181,7 +204,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								}`}
 								onClick={() => handleTabChange('goals')}
 							>
-								Goals
+								Missions
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -224,6 +247,9 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										onDeleteGoal={handleDeleteGoal}
 										onLinkTask={handleLinkTaskToGoal}
 										isLoading={roomStore.goalsLoading.value}
+										autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
+										onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
+										onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
 									/>
 								</div>
 							)}

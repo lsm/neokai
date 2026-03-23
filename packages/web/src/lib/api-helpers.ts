@@ -30,7 +30,11 @@ import type {
 	ArchiveSessionResponse,
 	GetAuthStatusResponse,
 } from '@neokai/shared';
-import type { ProviderAuthResponse, ListProviderAuthStatusResponse } from '@neokai/shared/provider';
+import type {
+	ProviderAuthResponse,
+	ListProviderAuthStatusResponse,
+	ProviderRefreshResponse,
+} from '@neokai/shared/provider';
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
 
@@ -136,6 +140,11 @@ export async function logoutProvider(
 ): Promise<{ success: boolean; error?: string }> {
 	const hub = getHubOrThrow();
 	return await hub.request<{ success: boolean; error?: string }>('auth.logout', { providerId });
+}
+
+export async function refreshProvider(providerId: string): Promise<ProviderRefreshResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<ProviderRefreshResponse>('auth.refresh', { providerId });
 }
 
 // ==================== Settings Operations ====================

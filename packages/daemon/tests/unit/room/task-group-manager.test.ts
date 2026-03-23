@@ -6,10 +6,12 @@ import {
 	type WorkerConfig,
 } from '../../../src/lib/room/runtime/task-group-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { LeaderToolCallbacks } from '../../../src/lib/room/agents/leader-agent';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
@@ -43,7 +45,10 @@ function createMockDaemonHub() {
 }
 
 // Mock SessionFactory
-function createMockSessionFactory(initialLiveSessions: string[] = []) {
+function createMockSessionFactory(
+	initialLiveSessions: string[] = [],
+	options?: { restoreSessionFails?: boolean }
+) {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	const liveSessions = new Set<string>(initialLiveSessions);
 	const removedWorktrees: string[] = [];
@@ -62,7 +67,7 @@ function createMockSessionFactory(initialLiveSessions: string[] = []) {
 		async injectMessage(
 			sessionId: string,
 			message: string,
-			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+			opts?: { deliveryMode?: 'immediate' | 'defer' }
 		) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
@@ -79,6 +84,22 @@ function createMockSessionFactory(initialLiveSessions: string[] = []) {
 		async removeWorktree(workspacePath: string) {
 			calls.push({ method: 'removeWorktree', args: [workspacePath] });
 			removedWorktrees.push(workspacePath);
+			return true;
+		},
+		async restoreSession(sessionId: string) {
+			calls.push({ method: 'restoreSession', args: [sessionId] });
+			// If restore fails (simulating session not in DB), don't add to liveSessions
+			if (options?.restoreSessionFails) {
+				return false;
+			}
+			liveSessions.add(sessionId);
+			return true;
+		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
+			return true;
+		},
+		setSessionMcpServers(_sessionId: string, _mcpServers: Record<string, unknown>) {
 			return true;
 		},
 	} satisfies SessionFactory & {
@@ -189,7 +210,20 @@ describe('TaskGroupManager', () => {
 				description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER DEFAULT 0,
 				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
-				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT NOT NULL DEFAULT 'one_shot'
+					CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+					CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+				schedule TEXT,
+				schedule_paused INTEGER NOT NULL DEFAULT 0,
+				next_run_at INTEGER,
+				structured_metrics TEXT,
+				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+				consecutive_failures INTEGER NOT NULL DEFAULT 0,
+		replan_count INTEGER NOT NULL DEFAULT 0
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -205,7 +239,8 @@ describe('TaskGroupManager', () => {
 				active_session TEXT,
 				pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER
+				pr_created_at INTEGER,
+				updated_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
@@ -227,14 +262,23 @@ describe('TaskGroupManager', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL DEFAULT 'system',
+				message_type TEXT NOT NULL DEFAULT 'status',
+				content TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL
+			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		const mockHub = createMockDaemonHub();
-		groupRepo = new SessionGroupRepository(db as never);
+		groupRepo = new SessionGroupRepository(db, createReactiveDatabase(db as never));
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
-		taskManager = new TaskManager(db as never, 'room-1');
-		goalManager = new GoalManager(db as never, 'room-1');
+		taskManager = new TaskManager(db as never, 'room-1', noOpReactiveDb);
+		goalManager = new GoalManager(db as never, 'room-1', noOpReactiveDb);
 		sessionFactory = createMockSessionFactory();
 
 		const room = makeRoom();
@@ -285,7 +329,7 @@ describe('TaskGroupManager', () => {
 			expect(group.feedbackIteration).toBe(0);
 		});
 
-		it('should create Worker session immediately and defer Leader', async () => {
+		it('should create both Worker and Leader sessions eagerly', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -306,9 +350,9 @@ describe('TaskGroupManager', () => {
 			const leaderCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
-			// Worker starts immediately, Leader is deferred until routeWorkerToLeader
+			// Both worker and leader start immediately — eager initialization
 			expect(workerCalls).toHaveLength(1);
-			expect(leaderCalls).toHaveLength(0);
+			expect(leaderCalls).toHaveLength(1);
 		});
 
 		it('should set task to in_progress', async () => {
@@ -346,7 +390,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			expect(observer.isObserving(group.workerSessionId)).toBe(true);
-			// Leader is observed proactively so terminal events are not missed after lazy creation.
+			// Leader session is created eagerly alongside the worker, so it is observed immediately.
 			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
 		});
 
@@ -375,6 +419,7 @@ describe('TaskGroupManager', () => {
 				goalId: goal.id,
 				reviewContext: 'code_review',
 				leaderTaskContext: 'Goal context for leader',
+				eagerlyCreated: true,
 			});
 		});
 
@@ -394,6 +439,87 @@ describe('TaskGroupManager', () => {
 
 			const persisted = groupRepo.getGroup(group.id)!;
 			expect(persisted.deferredLeader?.goalId).toBeNull();
+		});
+
+		it('should register worker observer before injecting the initial message', async () => {
+			// Regression test: verifies the race-condition fix where the worker could
+			// complete before the observer was registered, causing the terminal event to
+			// be missed entirely. The observer must be set up BEFORE injectMessage() fires.
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Track call order
+			const callOrder: string[] = [];
+			const trackingFactory = {
+				...sessionFactory,
+				async createAndStartSession(init: unknown, role: string) {
+					callOrder.push(`createAndStartSession:${role}`);
+					await sessionFactory.createAndStartSession(init, role);
+				},
+				async injectMessage(
+					sessionId: string,
+					message: string,
+					opts?: { deliveryMode?: 'immediate' | 'defer' }
+				) {
+					callOrder.push(`injectMessage:${sessionId.split(':')[0]}`);
+					await sessionFactory.injectMessage(sessionId, message, opts);
+				},
+			};
+
+			const trackingManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: trackingFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			let observerRegisteredBeforeInject = false;
+			const onWorkerTerminal = () => {};
+			const onLeaderTerminal = () => {};
+
+			// Monkey-patch observer.observe to record when worker is registered
+			const origObserve = observer.observe.bind(observer);
+			let workerObserverRegistered = false;
+			observer.observe = (sessionId: string, cb: unknown) => {
+				if (sessionId.startsWith('coder:')) {
+					workerObserverRegistered = true;
+				}
+				return origObserve(sessionId, cb as Parameters<typeof origObserve>[1]);
+			};
+
+			// Monkey-patch injectMessage to check if worker observer was registered before inject
+			const origInject = trackingFactory.injectMessage.bind(trackingFactory);
+			trackingFactory.injectMessage = async (
+				sessionId: string,
+				message: string,
+				opts?: { deliveryMode?: 'immediate' | 'defer' }
+			) => {
+				if (sessionId.startsWith('coder:')) {
+					observerRegisteredBeforeInject = workerObserverRegistered;
+				}
+				return origInject(sessionId, message, opts);
+			};
+
+			await trackingManager.spawn(
+				room,
+				task,
+				goal,
+				onWorkerTerminal,
+				onLeaderTerminal,
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Restore observer
+			observer.observe = origObserve;
+
+			expect(observerRegisteredBeforeInject).toBe(true);
 		});
 	});
 
@@ -552,11 +678,17 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			// Deferred leader config should store null goalId
+			// Leader config should store null goalId
 			const persisted = groupRepo.getGroup(group.id)!;
 			expect(persisted.deferredLeader?.goalId).toBeNull();
 
-			// Routing worker to leader should succeed — leader session is created
+			// Leader session is created eagerly in spawn()
+			const leaderCallsAfterSpawn = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(leaderCallsAfterSpawn).toHaveLength(1);
+
+			// Routing worker to leader should succeed — leader session already exists
 			const result = await manager.routeWorkerToLeader(
 				group.id,
 				'Worker output for goal-free task',
@@ -565,10 +697,11 @@ describe('TaskGroupManager', () => {
 
 			expect(result).not.toBeNull();
 
-			const leaderCalls = sessionFactory.calls.filter(
+			// No additional leader creation — leader was already created in spawn()
+			const leaderCallsAfterRoute = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
-			expect(leaderCalls).toHaveLength(1);
+			expect(leaderCallsAfterRoute).toHaveLength(1);
 
 			// Task should not be failed (leader creation succeeded without a goal)
 			const updatedTask = await taskManager.getTask(task.id);
@@ -666,6 +799,121 @@ describe('TaskGroupManager', () => {
 
 			expect(updated!.submittedForReview).toBe(false);
 			expect(updated!.feedbackIteration).toBe(1);
+		});
+
+		it('should restore dead worker session before routing feedback', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory with the worker already in live sessions (normal spawn behavior)
+			const factory = createMockSessionFactory([]);
+			// Create a new manager with the factory
+			const testManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: factory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await testManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First route to Leader so group is in awaiting_leader state
+			await testManager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
+
+			// Simulate worker session dying (e.g., after daemon restart or eviction)
+			// Remove worker from live sessions to simulate dead session
+			factory.liveSessions.delete(group.workerSessionId);
+
+			// Verify worker session is not in cache
+			expect(factory.hasSession(group.workerSessionId)).toBe(false);
+
+			// Now route leader feedback back to worker
+			await testManager.routeLeaderToWorker(group.id, 'Fix the tests');
+
+			// Verify session was restored before injecting message
+			const restoreCalls = factory.calls.filter(
+				(c) => c.method === 'restoreSession' && c.args[0] === group.workerSessionId
+			);
+			expect(restoreCalls).toHaveLength(1);
+
+			// injectMessage lazily starts the SDK query, no explicit startSession needed
+			const injectCalls = factory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					c.args[1] === 'Fix the tests'
+			);
+			expect(injectCalls).toHaveLength(1);
+		});
+
+		it('should fail group when worker session restore fails', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory that fails restoreSession (simulating session not in DB)
+			const failFactory = createMockSessionFactory([], { restoreSessionFails: true });
+			const failManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: failFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await failManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First route to Leader so group is in awaiting_leader state
+			await failManager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
+
+			// Simulate worker session dying (not in cache)
+			failFactory.liveSessions.delete(group.workerSessionId);
+
+			// Verify worker session is not in cache
+			expect(failFactory.hasSession(group.workerSessionId)).toBe(false);
+
+			// Now route leader feedback back to worker - should fail gracefully
+			const result = await failManager.routeLeaderToWorker(group.id, 'Fix the tests');
+
+			// Verify restore was attempted
+			const restoreCalls = failFactory.calls.filter(
+				(c) => c.method === 'restoreSession' && c.args[0] === group.workerSessionId
+			);
+			expect(restoreCalls).toHaveLength(1);
+
+			// Verify group was failed instead of throwing
+			expect(result).toBeNull();
+
+			// Verify task is marked as needs_attention (failTask sets this status)
+			const failedTask = await taskManager.getTask(task.id);
+			expect(failedTask!.status).toBe('needs_attention');
+			expect(failedTask!.error).toContain('Worker session lost during restart');
 		});
 	});
 
@@ -842,7 +1090,7 @@ describe('TaskGroupManager', () => {
 	});
 
 	describe('worktree cleanup', () => {
-		it('should cleanup worktree on task completion', async () => {
+		it('should NOT cleanup worktree on task completion (preserved for reactivation)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -858,8 +1106,10 @@ describe('TaskGroupManager', () => {
 
 			await manager.complete(group.id, 'All done');
 
-			// Should have called removeWorktree with the group's workspace path
-			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+			// Worktree should NOT be cleaned up on completion — preserved for reactivation
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
+			const removeWorktreeCalls = sessionFactory.calls.filter((c) => c.method === 'removeWorktree');
+			expect(removeWorktreeCalls).toHaveLength(0);
 		});
 
 		it('should NOT cleanup worktree on task failure (kept for debugging)', async () => {
@@ -909,7 +1159,7 @@ describe('TaskGroupManager', () => {
 			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
 		});
 
-		it('should cleanup worktree on task cancellation', async () => {
+		it('should NOT cleanup worktree on task cancellation (preserved for reactivation)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -925,10 +1175,11 @@ describe('TaskGroupManager', () => {
 
 			await manager.cancel(group.id);
 
-			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+			// Worktree should NOT be cleaned up on cancellation — preserved for reactivation
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
 		});
 
-		it('should cleanup worktree when terminating a non-terminal group', async () => {
+		it('should NOT cleanup worktree when terminating a non-terminal group (preserved for reactivation)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -944,38 +1195,87 @@ describe('TaskGroupManager', () => {
 
 			await manager.terminateGroup(group.id);
 
+			// Worktree should NOT be cleaned up on termination — preserved for reactivation
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
+			const removeWorktreeCalls = sessionFactory.calls.filter((c) => c.method === 'removeWorktree');
+			expect(removeWorktreeCalls).toHaveLength(0);
+		});
+
+		it('should NOT cleanup worktree when terminating an already-terminal group', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First complete the group (making it terminal)
+			await manager.complete(group.id, 'Done');
+			sessionFactory.calls.length = 0; // Reset call tracking
+
+			// Now terminate the already-terminal group
+			await manager.terminateGroup(group.id);
+
+			// Worktree should NOT be cleaned up — only archiveGroup() cleans up
+			const removeWorktreeCalls = sessionFactory.calls.filter((c) => c.method === 'removeWorktree');
+			expect(removeWorktreeCalls).toHaveLength(0);
+		});
+
+		it('should cleanup worktree ONLY via archiveGroup after completion', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Complete — no cleanup
+			await manager.complete(group.id, 'All done');
+			expect(sessionFactory.removedWorktrees).toHaveLength(0);
+
+			// Archive — cleanup happens
+			await manager.archiveGroup(group.id);
+			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+		});
+
+		it('should cleanup worktree ONLY via archiveGroup after cancellation', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Cancel — no cleanup
+			await manager.cancel(group.id);
+			expect(sessionFactory.removedWorktrees).toHaveLength(0);
+
+			// Archive — cleanup happens
+			await manager.archiveGroup(group.id);
 			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
 		});
 
 		it('should not cleanup worktree if workspace is main repo', async () => {
 			const task = await createTask();
-			const goal = makeGoal(db);
-			const callbacks = createMockLeaderCallbacks();
 
-			// Create a manager where workspace path matches the worktree path
-			// This simulates a scenario where no worktree was created (non-git repo)
-			const mainRepoFactory = {
-				...createMockSessionFactory(),
-				async createWorktree() {
-					// Return null to simulate non-git repo (no worktree created)
-					return null;
-				},
-			} satisfies SessionFactory & { removedWorktrees: string[] };
-
-			const mainRepoManager = new TaskGroupManager({
-				groupRepo,
-				sessionObserver: observer,
-				taskManager,
-				goalManager,
-				sessionFactory: mainRepoFactory,
-				workspacePath: '/workspace',
-				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
-				getTask: (taskId) => taskManager.getTask(taskId),
-				getGoal: (goalId) => goalManager.getGoal(goalId),
-			});
-
-			// spawn() will throw because worktree creation failed
-			// So we need to test the cleanup logic directly via a manually created group
 			// Create group directly with main repo path
 			const rawGroup = groupRepo.createGroup(
 				task.id,
@@ -984,15 +1284,15 @@ describe('TaskGroupManager', () => {
 				'coder',
 				'/workspace' // Same as main workspace - simulates no worktree
 			);
-			await taskManager.startTask(task.id);
 
-			await mainRepoManager.complete(rawGroup.id, 'Done');
+			// archiveGroup should skip cleanup when workspace is main repo
+			await manager.archiveGroup(rawGroup.id);
 
 			// Should NOT have called removeWorktree since workspace is main repo
-			expect(mainRepoFactory.removedWorktrees).not.toContain('/workspace');
+			expect(sessionFactory.removedWorktrees).not.toContain('/workspace');
 		});
 
-		it('should not fail operation when worktree cleanup fails', async () => {
+		it('should not fail operation when worktree cleanup fails in archiveGroup', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -1027,12 +1327,12 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			// Should not throw even though cleanup fails
-			const result = await failingManager.complete(group.id, 'Done');
+			// Complete first (no cleanup)
+			await failingManager.complete(group.id, 'Done');
 
-			expect(result!.completedAt).not.toBeNull();
-			const taskResult = await taskManager.getTask(task.id);
-			expect(taskResult!.status).toBe('completed');
+			// archiveGroup should not throw even though cleanup fails
+			const result = await failingManager.archiveGroup(group.id);
+			expect(result).not.toBeNull();
 		});
 	});
 });

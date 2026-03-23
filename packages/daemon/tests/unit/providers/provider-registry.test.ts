@@ -2,11 +2,17 @@
  * Unit tests for Provider Registry
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@neokai/shared';
+import { Logger } from '@neokai/shared/logger';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
-import { resetProviderFactory } from '../../../src/lib/providers/factory';
-import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
+import { initializeProviders, resetProviderFactory } from '../../../src/lib/providers/factory';
+import {
+	ProviderRegistry,
+	getProviderRegistry,
+	inferProviderForModel,
+	resetProviderRegistry,
+} from '../../../src/lib/providers/registry';
 
 // Mock provider for testing
 class MockProvider implements Provider {
@@ -59,6 +65,37 @@ class MockProvider implements Provider {
 			isAnthropicCompatible: true,
 		};
 	}
+}
+
+// Provider subclass factories for collision tests
+function makeAnthropicProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic' as const;
+		readonly displayName = 'Anthropic';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('claude-');
+		}
+	})();
+}
+
+function makeAnthropicCopilotProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic-copilot' as const;
+		readonly displayName = 'Anthropic Copilot';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('claude-');
+		}
+	})();
+}
+
+function makeAnthropicCodexProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic-codex' as const;
+		readonly displayName = 'Anthropic Codex';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('gpt-') || modelId.startsWith('claude-');
+		}
+	})();
 }
 
 describe('ProviderRegistry', () => {
@@ -188,23 +225,48 @@ describe('ProviderRegistry', () => {
 		});
 	});
 
-	describe('detectProvider', () => {
-		it('should detect provider from model ID', () => {
-			const provider = new MockProvider(true, 'custom-');
-			registry.register(provider);
+	describe('detectProviderForModel', () => {
+		it('should return copilot provider when providerId is anthropic-copilot', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
 
-			expect(registry.detectProvider('custom-model')?.id).toBe('mock');
+			// Deterministic: explicit providerId → always the right provider regardless of model
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
+			expect(result?.id).toBe('anthropic-copilot');
 		});
 
-		it('should return undefined when no provider owns the model', () => {
-			const provider = new MockProvider(true, 'mock-');
-			registry.register(provider);
+		it('should return anthropic provider when providerId is anthropic', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
 
-			expect(registry.detectProvider('unknown-model')).toBeUndefined();
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic');
+			expect(result?.id).toBe('anthropic');
 		});
 
-		it('should return undefined when no providers registered', () => {
-			expect(registry.detectProvider('any-model')).toBeUndefined();
+		it('should return codex provider for gpt- model when providerId is anthropic-codex', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCodexProvider());
+
+			const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
+			expect(result?.id).toBe('anthropic-codex');
+		});
+
+		it('should return undefined and log an error when providerId is not registered', () => {
+			const errorSpy = spyOn(Logger.prototype, 'error').mockImplementation(mock(() => {}));
+
+			try {
+				registry.register(makeAnthropicProvider());
+
+				const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
+				expect(result).toBeUndefined();
+				// Error should be logged for the unknown provider
+				expect(errorSpy).toHaveBeenCalledTimes(1);
+				const errArg = errorSpy.mock.calls[0][0] as string;
+				expect(errArg).toContain('nonexistent-provider');
+				expect(errArg).toContain('claude-opus-4.6');
+			} finally {
+				errorSpy.mockRestore();
+			}
 		});
 	});
 
@@ -255,6 +317,108 @@ describe('ProviderRegistry', () => {
 		});
 	});
 
+	describe('initializeProviders — all five providers registered', () => {
+		// Outer beforeEach already resets registry+factory; no per-test resets needed.
+
+		it('should register exactly five built-in providers', () => {
+			const reg = initializeProviders();
+
+			const ids = reg
+				.getAll()
+				.map((p) => p.id)
+				.sort();
+			expect(ids).toEqual(
+				['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm', 'minimax'].sort()
+			);
+		});
+
+		it('should include anthropic provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('anthropic')).toBe(true);
+		});
+
+		it('should include glm provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('glm')).toBe(true);
+		});
+
+		it('should include minimax provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('minimax')).toBe(true);
+		});
+
+		it('should include anthropic-codex provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('anthropic-codex')).toBe(true);
+		});
+
+		it('should include anthropic-copilot provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('anthropic-copilot')).toBe(true);
+		});
+
+		it('should return the same singleton registry on repeated calls without reset', () => {
+			const reg1 = initializeProviders();
+			const reg2 = initializeProviders();
+			// The global singleton must be the same reference — not a new instance
+			expect(reg1).toBe(reg2);
+			expect(reg2.size).toBe(5);
+		});
+
+		it('should use the global registry singleton', () => {
+			initializeProviders();
+			const globalReg = getProviderRegistry();
+			expect(globalReg.size).toBe(5);
+		});
+	});
+
+	describe('ownsModel collision — anthropic vs anthropic-copilot vs anthropic-codex', () => {
+		it('anthropic and anthropic-copilot both claim claude- models', () => {
+			const anthropic = makeAnthropicProvider();
+			const copilot = makeAnthropicCopilotProvider();
+
+			expect(anthropic.ownsModel('claude-sonnet-4.6')).toBe(true);
+			expect(copilot.ownsModel('claude-sonnet-4.6')).toBe(true);
+		});
+
+		it('anthropic-codex additionally claims gpt- models', () => {
+			const codex = makeAnthropicCodexProvider();
+
+			expect(codex.ownsModel('gpt-5.3-codex')).toBe(true);
+			expect(codex.ownsModel('claude-opus-4.6')).toBe(true);
+		});
+
+		it('detectProviderForModel is deterministic for colliding model IDs', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+			registry.register(makeAnthropicCodexProvider());
+
+			// Explicit routing — no ambiguity regardless of registration order
+			expect(registry.detectProviderForModel('claude-sonnet-4.6', 'anthropic')?.id).toBe(
+				'anthropic'
+			);
+			expect(registry.detectProviderForModel('claude-sonnet-4.6', 'anthropic-copilot')?.id).toBe(
+				'anthropic-copilot'
+			);
+			expect(registry.detectProviderForModel('claude-opus-4.6', 'anthropic-codex')?.id).toBe(
+				'anthropic-codex'
+			);
+		});
+
+		it('detectProviderForModel returns undefined for unknown provider regardless of model', () => {
+			registry.register(makeAnthropicProvider());
+
+			// Suppress the expected error log produced by detectProviderForModel
+			const errorSpy = spyOn(Logger.prototype, 'error').mockImplementation(mock(() => {}));
+			try {
+				const result = registry.detectProviderForModel('claude-sonnet-4.6', 'unknown-provider');
+				expect(result).toBeUndefined();
+			} finally {
+				errorSpy.mockRestore();
+			}
+		});
+	});
+
 	describe('getDefaultProvider', () => {
 		it('should use DEFAULT_PROVIDER env var when set', async () => {
 			const original = process.env.DEFAULT_PROVIDER;
@@ -291,5 +455,39 @@ describe('ProviderRegistry', () => {
 		it('should throw when no providers registered', async () => {
 			await expect(registry.getDefaultProvider()).rejects.toThrow('No providers registered');
 		});
+	});
+});
+
+describe('inferProviderForModel', () => {
+	it('maps glm- prefix to glm', () => {
+		expect(inferProviderForModel('glm-5-turbo')).toBe('glm');
+		expect(inferProviderForModel('glm-4')).toBe('glm');
+	});
+
+	it('maps bare glm to glm', () => {
+		expect(inferProviderForModel('glm')).toBe('glm');
+	});
+
+	it('maps minimax- prefix to minimax', () => {
+		expect(inferProviderForModel('minimax-m2.5')).toBe('minimax');
+	});
+
+	it('maps bare minimax to minimax', () => {
+		expect(inferProviderForModel('minimax')).toBe('minimax');
+	});
+
+	it('maps gpt- prefix to anthropic-codex', () => {
+		expect(inferProviderForModel('gpt-5.3-codex')).toBe('anthropic-codex');
+		expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+	});
+
+	it('defaults claude- models to anthropic', () => {
+		expect(inferProviderForModel('claude-sonnet-4-5-20250929')).toBe('anthropic');
+		expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
+	});
+
+	it('defaults unknown models to anthropic', () => {
+		expect(inferProviderForModel('sonnet')).toBe('anthropic');
+		expect(inferProviderForModel('unknown-model')).toBe('anthropic');
 	});
 });

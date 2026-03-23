@@ -51,8 +51,8 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	'session.deleted': { sessionId: string };
 
-	// SDK events
-	'sdk.message': { sessionId: string; message: SDKMessage };
+	// SDK events — message may include a neokai-injected `timestamp` field from the DB layer
+	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number } };
 
 	// Auth events (global events - use 'global' as sessionId)
 	'auth.changed': {
@@ -86,6 +86,16 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'session.error': { sessionId: string; error: string; details?: unknown };
 	'session.errorClear': { sessionId: string };
 
+	// API retry events
+	'session.retryAttempt': {
+		sessionId: string;
+		attempt: number;
+		max_retries: number;
+		delay_ms: number;
+		error_status: number | null;
+		error: string;
+	};
+
 	// Message events
 	'message.sent': { sessionId: string };
 
@@ -115,7 +125,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 
 	// Model switch events
-	'model.switchRequest': { sessionId: string; model: string };
+	'model.switchRequest': { sessionId: string; model: string; provider: string };
 	'model.switched': {
 		sessionId: string;
 		success: boolean;
@@ -130,6 +140,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	// Reset events
 	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
 	'agent.reset': { sessionId: string; success: boolean; error?: string };
+	'agent.restart': { sessionId: string; success: boolean; error?: string };
 
 	// Message sending events
 	'message.sendRequest': {
@@ -146,21 +157,21 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		userMessageText: string;
 		needsWorkspaceInit: boolean;
 		hasDraftToClear: boolean;
-		sendStatus: 'saved' | 'queued' | 'sent';
+		sendStatus: 'deferred' | 'enqueued' | 'consumed';
 		deliveryMode: MessageDeliveryMode;
 	};
 
 	// Query mode events
-	// Trigger to send saved messages (Manual mode)
+	// Trigger to send deferred messages (manual mode)
 	'query.trigger': { sessionId: string };
 	// Notification when message statuses change
 	'messages.statusChanged': {
 		sessionId: string;
 		messageIds: string[];
-		status: 'saved' | 'queued' | 'sent';
+		status: 'deferred' | 'enqueued' | 'consumed';
 	};
-	// Send queued messages on turn end (Auto-queue mode)
-	'query.sendQueuedOnTurnEnd': { sessionId: string };
+	// Send enqueued messages on turn end (auto-defer mode)
+	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
 
 	// Rewind events
 	'rewind.started': {
@@ -329,6 +340,16 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		goalId: string;
 		goal: import('@neokai/shared').RoomGoal;
 	};
+	/** Emitted when a coder/general task completes without human review (semi-autonomous mode) */
+	'goal.task.auto_completed': {
+		sessionId: string; // 'room:${roomId}' for channel routing
+		roomId: string;
+		goalId: string;
+		taskId: string;
+		taskTitle: string;
+		prUrl: string;
+		approvalSource: 'leader_semi_auto';
+	};
 	'goal.updated': {
 		sessionId: string;
 		roomId: string;
@@ -390,6 +411,129 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		roomId: string;
 		templateId: string;
+	};
+
+	// Space events (global events - use 'global' as sessionId)
+	'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.updated': {
+		sessionId: string;
+		spaceId: string;
+		space?: Partial<import('@neokai/shared').Space>;
+	};
+	'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+	'space.deleted': { sessionId: string; spaceId: string };
+
+	// Space task events (global events - use 'global' as sessionId)
+	'space.task.created': {
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+	};
+	'space.task.updated': {
+		sessionId: string;
+		spaceId: string;
+		taskId: string;
+		task: import('@neokai/shared').SpaceTask;
+	};
+
+	// Space Task Agent completion events (use 'global' as sessionId)
+	/** Emitted by report_result when a Task Agent marks a task as completed. */
+	'space.task.completed': {
+		sessionId: string;
+		taskId: string;
+		spaceId: string;
+		status: string;
+		summary: string;
+		workflowRunId: string;
+		taskTitle: string;
+	};
+	/** Emitted by report_result when a Task Agent marks a task as needs_attention or cancelled. */
+	'space.task.failed': {
+		sessionId: string;
+		taskId: string;
+		spaceId: string;
+		status: string;
+		summary: string;
+		workflowRunId: string;
+		taskTitle: string;
+	};
+
+	// Space workflow run events (global events - use 'global' as sessionId)
+	'space.workflowRun.created': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run: import('@neokai/shared').SpaceWorkflowRun;
+	};
+	'space.workflowRun.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+	};
+
+	// Space Agent events (channel: 'space:${spaceId}')
+	'spaceAgent.created': {
+		sessionId: string;
+		spaceId: string;
+		agent: import('@neokai/shared').SpaceAgent;
+	};
+	'spaceAgent.updated': {
+		sessionId: string;
+		spaceId: string;
+		agent: import('@neokai/shared').SpaceAgent;
+	};
+	'spaceAgent.deleted': {
+		sessionId: string;
+		spaceId: string;
+		agentId: string;
+	};
+
+	// Space session group events (channel: 'space:${spaceId}')
+	// sessionId is set to 'space:${spaceId}' for channel routing — only clients subscribed
+	// to that space receive these events.
+	'spaceSessionGroup.created': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		taskId: string;
+		group: import('@neokai/shared').SpaceSessionGroup;
+	};
+	'spaceSessionGroup.memberAdded': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
+		member: import('@neokai/shared').SpaceSessionGroupMember;
+	};
+	'spaceSessionGroup.memberUpdated': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
+		memberId: string;
+		member: import('@neokai/shared').SpaceSessionGroupMember;
+	};
+	'spaceSessionGroup.deleted': {
+		sessionId: string; // 'space:${spaceId}'
+		spaceId: string;
+		groupId: string;
+	};
+
+	// Space workflow definition events (global events - use 'global' as sessionId)
+	// NOTE: namespace is 'spaceWorkflow.*' (not 'space.workflow.*') — matches SpaceStore subscriptions in M5
+	'spaceWorkflow.created': {
+		sessionId: string;
+		spaceId: string;
+		workflow: import('@neokai/shared').SpaceWorkflow;
+	};
+	'spaceWorkflow.updated': {
+		sessionId: string;
+		spaceId: string;
+		workflow: import('@neokai/shared').SpaceWorkflow;
+	};
+	'spaceWorkflow.deleted': {
+		sessionId: string;
+		spaceId: string;
+		workflowId: string;
 	};
 
 	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)

@@ -10,7 +10,7 @@ import {
 	type SDKRuntimeConfigContext,
 } from '../../../src/lib/agent/sdk-runtime-config';
 import type { Session } from '@neokai/shared';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { SettingsManager } from '../../../src/lib/settings-manager';

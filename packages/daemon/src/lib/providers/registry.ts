@@ -7,10 +7,13 @@
  * This enables:
  * - Adding new providers without modifying core code
  * - Plugin-style provider architecture
- * - Provider auto-detection from model IDs
  */
 
+import { createLogger } from '@neokai/shared/logger';
 import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
+import type { Provider as ProviderIdStr } from '@neokai/shared';
+
+const log = createLogger('kai:providers:registry');
 
 /**
  * Provider Registry class
@@ -74,18 +77,34 @@ export class ProviderRegistry {
 	}
 
 	/**
-	 * Detect provider from model ID
-	 * Asks each provider if it owns the model
-	 *
-	 * Returns undefined if no provider claims the model
+	 * Find the first registered provider that owns this model ID.
+	 * Uses each provider's ownsModel() heuristic for auto-detection.
+	 * Returns undefined if no provider claims the model.
 	 */
-	detectProvider(modelId: string): Provider | undefined {
-		for (const provider of this.getAll()) {
-			if (provider.ownsModel(modelId)) {
+	findProviderForModel(modelId: string): Provider | undefined {
+		for (const provider of this.providers.values()) {
+			if (typeof provider.ownsModel === 'function' && provider.ownsModel(modelId)) {
 				return provider;
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * Resolve provider by explicit (modelId, providerId) pair — fully deterministic.
+	 *
+	 * Both the model ID and provider ID must be known at the call site. This is the
+	 * preferred routing method: when the UI selects a model it always has the associated
+	 * provider ID, so there is never any ambiguity.
+	 *
+	 * Logs an error and returns `undefined` if the provider is not registered.
+	 */
+	detectProviderForModel(modelId: string, providerId: string): Provider | undefined {
+		const provider = this.providers.get(providerId);
+		if (!provider) {
+			log.error(`[routing] Unknown provider '${providerId}' for model '${modelId}'`);
+		}
+		return provider;
 	}
 
 	/**
@@ -217,4 +236,33 @@ export function getProviderRegistry(): ProviderRegistry {
  */
 export function resetProviderRegistry(): void {
 	registryInstance = null;
+}
+
+/**
+ * Infer the provider for a given model ID.
+ *
+ * Strategy (two-pass):
+ * 1. Try the live registry via `findProviderForModel()` — covers all registered providers
+ *    including `anthropic-copilot` and `anthropic-codex`, which have dynamic model lists.
+ *    Returns the correct provider whenever the daemon has finished initializing.
+ * 2. Fall back to a static naming heuristic when the registry is empty (e.g., unit tests
+ *    or early-startup callers where providers are not yet registered):
+ *    - `glm-*` → 'glm'
+ *    - `minimax-*` → 'minimax'
+ *    - `gpt-*` → 'anthropic-codex'
+ *    - everything else → 'anthropic'
+ *
+ * Callers should NOT call `initializeProviders()` just for this function — the registry
+ * is populated at daemon startup; calling it lazily at spawn-time is safe and avoids
+ * test-interference from re-registering providers.
+ */
+export function inferProviderForModel(modelId: string): ProviderIdStr {
+	// Live registry lookup (populated at daemon startup, empty in unit tests)
+	const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
+	if (fromRegistry) return fromRegistry as ProviderIdStr;
+	// Static fallback when registry is empty
+	if (modelId.startsWith('glm-') || modelId === 'glm') return 'glm';
+	if (modelId.startsWith('minimax-') || modelId === 'minimax') return 'minimax';
+	if (modelId.startsWith('gpt-')) return 'anthropic-codex';
+	return 'anthropic';
 }

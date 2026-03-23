@@ -57,6 +57,10 @@ export interface ProviderSessionConfig {
 	apiKey?: string;
 	/** Custom base URL override */
 	baseUrl?: string;
+	/** Workspace/working directory for this session (used for workspace-scoped providers) */
+	workspacePath?: string;
+	/** Session ID for provider-aware routing (e.g. persistent session tracking) */
+	sessionId?: string;
 	/** Additional provider-specific settings */
 	[key: string]: unknown;
 }
@@ -170,20 +174,6 @@ export interface Provider {
 	translateModelIdForSdk?(modelId: string): string;
 
 	/**
-	 * Optional: Create custom query generator for non-SDK providers.
-	 * Return null to use standard Claude Agent SDK query().
-	 * This allows providers like OpenAI/GitHub Copilot to bypass the SDK entirely.
-	 */
-	createQuery?(
-		prompt: AsyncGenerator<import('../sdk/sdk.d.ts').SDKUserMessage>,
-		options: import('./query-types.js').ProviderQueryOptions,
-		context: import('./query-types.js').ProviderQueryContext
-	):
-		| Promise<AsyncGenerator<import('../sdk/sdk.d.ts').SDKMessage> | null>
-		| AsyncGenerator<import('../sdk/sdk.d.ts').SDKMessage>
-		| null;
-
-	/**
 	 * Optional: Get authentication status for this provider.
 	 * Returns detailed auth info including method, expiration, and user info.
 	 */
@@ -201,6 +191,19 @@ export interface Provider {
 	 * Clears stored credentials.
 	 */
 	logout?(): Promise<void>;
+
+	/**
+	 * Optional: Refresh authentication token for this provider.
+	 * Used when token has expired and needs refresh without full logout/login.
+	 * Returns true if refresh succeeded, false otherwise.
+	 */
+	refreshToken?(): Promise<boolean>;
+
+	/**
+	 * Optional: Shut down any resources held by this provider (e.g. an embedded
+	 * HTTP server). Called during daemon shutdown so the event loop can exit.
+	 */
+	shutdown?(): Promise<void>;
 }
 
 /**

@@ -74,6 +74,11 @@ export interface CallContext {
 	 * Timestamp
 	 */
 	timestamp: string;
+
+	/**
+	 * Client ID — present for WebSocket-originated requests, undefined for in-process calls
+	 */
+	clientId?: string;
 }
 
 /**

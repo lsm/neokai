@@ -82,7 +82,7 @@ describe('MessagePersistence', () => {
 		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockEventBus);
 	});
 
-	it('persists idle current_turn as sent and still dispatches to query', async () => {
+	it('persists idle immediate as consumed and still dispatches to query', async () => {
 		await persistence.persist({
 			sessionId: 'test-session-id',
 			messageId: 'msg-1',
@@ -92,7 +92,7 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-1', type: 'user' }),
-			'sent'
+			'consumed'
 		);
 		expect(messageHubEventSpy).toHaveBeenCalledWith(
 			'state.sdkMessages.delta',
@@ -102,20 +102,20 @@ describe('MessagePersistence', () => {
 		expect(eventBusEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 			sessionId: 'test-session-id',
 			messageIds: ['db-msg-1'],
-			status: 'sent',
+			status: 'consumed',
 		});
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				sessionId: 'test-session-id',
 				messageId: 'msg-1',
-				sendStatus: 'sent',
-				deliveryMode: 'current_turn',
+				sendStatus: 'consumed',
+				deliveryMode: 'immediate',
 			})
 		);
 	});
 
-	it('persists busy current_turn as queued and does not immediately echo', async () => {
+	it('persists busy immediate as enqueued and does not immediately echo', async () => {
 		processingStateSpy.mockReturnValue({ status: 'processing' });
 
 		await persistence.persist({
@@ -127,33 +127,33 @@ describe('MessagePersistence', () => {
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-2', type: 'user' }),
-			'queued'
+			'enqueued'
 		);
 		expect(messageHubEventSpy).not.toHaveBeenCalled();
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-2',
-				sendStatus: 'queued',
-				deliveryMode: 'current_turn',
+				sendStatus: 'enqueued',
+				deliveryMode: 'immediate',
 			})
 		);
 	});
 
-	it('persists busy next_turn as saved and does not dispatch', async () => {
+	it('persists busy defer as deferred and does not dispatch', async () => {
 		processingStateSpy.mockReturnValue({ status: 'processing' });
 
 		await persistence.persist({
 			sessionId: 'test-session-id',
 			messageId: 'msg-3',
 			content: 'next turn please',
-			deliveryMode: 'next_turn',
+			deliveryMode: 'defer',
 		});
 
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-3', type: 'user' }),
-			'saved'
+			'deferred'
 		);
 		expect(eventBusEmitSpy).not.toHaveBeenCalledWith(
 			'message.persisted',
@@ -161,27 +161,27 @@ describe('MessagePersistence', () => {
 		);
 	});
 
-	it('falls back idle next_turn to sent current_turn and dispatches', async () => {
+	it('falls back idle defer to consumed immediate and dispatches', async () => {
 		processingStateSpy.mockReturnValue({ status: 'idle' });
 
 		await persistence.persist({
 			sessionId: 'test-session-id',
 			messageId: 'msg-4',
 			content: 'next turn while idle',
-			deliveryMode: 'next_turn',
+			deliveryMode: 'defer',
 		});
 
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
 			expect.objectContaining({ uuid: 'msg-4', type: 'user' }),
-			'sent'
+			'consumed'
 		);
 		expect(eventBusEmitSpy).toHaveBeenCalledWith(
 			'message.persisted',
 			expect.objectContaining({
 				messageId: 'msg-4',
-				sendStatus: 'sent',
-				deliveryMode: 'current_turn',
+				sendStatus: 'consumed',
+				deliveryMode: 'immediate',
 			})
 		);
 	});

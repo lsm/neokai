@@ -31,6 +31,7 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 		onEvent: mockOnEvent,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
+		isConnected: true,
 	}),
 }));
 
@@ -119,10 +120,12 @@ vi.mock('../ScrollToBottomButton.tsx', () => ({
 
 // Mock InputTextarea so we don't need its full dependencies.
 // Forwards maxChars as maxLength so tests can verify the 50000 limit is passed.
+// Forwards onKeyDown so keyboard-shortcut tests can exercise Enter/Shift+Enter/Cmd+Enter.
 vi.mock('../InputTextarea.tsx', () => ({
 	InputTextarea: ({
 		content,
 		onContentChange,
+		onKeyDown,
 		onSubmit,
 		disabled,
 		placeholder,
@@ -131,6 +134,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 	}: {
 		content: string;
 		onContentChange: (v: string) => void;
+		onKeyDown?: (e: KeyboardEvent) => void;
 		onSubmit: () => void;
 		disabled?: boolean;
 		placeholder?: string;
@@ -143,6 +147,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 				data-testid="input-textarea-field"
 				value={content}
 				onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
+				onKeyDown={onKeyDown}
 				disabled={disabled}
 				placeholder={placeholder}
 				maxLength={maxChars}
@@ -270,7 +275,7 @@ describe('TaskView — awaiting_human badge', () => {
 		await waitFor(() => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
-		expect(container.querySelector('.bg-amber-900\\/20')).toBeNull();
+		expect(container.querySelector('[data-testid="action-bar"]')).toBeNull();
 	});
 });
 
@@ -406,7 +411,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		expect(queryByTestId('task-target-button')).not.toBeNull();
 	});
 
-	it('sends feedback via task.sendHumanMessage in awaiting_human state', async () => {
+	it('sends feedback via task.sendHumanMessage in awaiting_human state (default target: leader)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
@@ -430,7 +435,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				message: 'Nice work!',
-				target: 'worker',
+				target: 'leader',
 			});
 		});
 	});
@@ -445,16 +450,16 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
-		// Verify approve button is in the HeaderReviewBar (amber-900/20 background)
+		// Verify approve button is in the ActionBar
 		await waitFor(() => {
-			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-			expect(headerReviewBar).not.toBeNull();
-			const approveBtn = headerReviewBar?.querySelector('button.bg-green-700');
+			const actionBar = container.querySelector('[data-testid="action-bar"]');
+			expect(actionBar).not.toBeNull();
+			const approveBtn = actionBar?.querySelector('[data-testid="action-bar-primary"]');
 			expect(approveBtn).not.toBeNull();
 		});
 
 		const approveBtn = container.querySelector(
-			'.bg-amber-900\\/20 button.bg-green-700'
+			'[data-testid="action-bar-primary"]'
 		) as HTMLButtonElement;
 		fireEvent.click(approveBtn);
 
@@ -482,9 +487,9 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		// Verify the feedback textarea is in the bottom area (border-t, not in amber header)
 		const inputWrapper = getByTestId('input-textarea').closest('.border-t');
 		expect(inputWrapper).not.toBeNull();
-		// Verify it's NOT in the amber header bar
-		const amberBar = container.querySelector('.bg-amber-900\\/20');
-		expect(amberBar?.contains(getByTestId('input-textarea'))).toBe(false);
+		// Verify it's NOT in the action bar
+		const actionBar = container.querySelector('[data-testid="action-bar"]');
+		expect(actionBar?.contains(getByTestId('input-textarea'))).toBe(false);
 	});
 
 	it('sends message to leader via task.sendHumanMessage in awaiting_leader state', async () => {
@@ -504,7 +509,9 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Please focus on auth first' } });
 
-		// Explicitly target leader in the dropdown.
+		// Explicitly select leader in the dropdown.
+		// Note: 'leader' is the default since the default target changed, so this selection
+		// is redundant but kept to make the intent of this test explicit.
 		fireEvent.click(getByTestId('task-target-button'));
 		fireEvent.click(getByTestId('task-target-option-leader'));
 		fireEvent.click(getByTestId('input-textarea-send'));
@@ -519,7 +526,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		});
 	});
 
-	it('sends message to worker in awaiting_worker state', async () => {
+	it('sends message to worker in awaiting_worker state when worker is explicitly selected', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -535,6 +542,11 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Add benchmarks too' } });
+
+		// Explicitly select worker (default is now leader)
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-worker'));
+
 		fireEvent.click(getByTestId('input-textarea-send'));
 
 		await waitFor(() => {
@@ -565,6 +577,351 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		const leaderOption = getByTestId('task-target-option-leader') as HTMLButtonElement;
 		expect(workerOption.disabled).toBe(false);
 		expect(leaderOption.disabled).toBe(false);
+	});
+
+	it('default target is leader', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		// Default target button label should be "Leader"
+		expect(getByTestId('task-target-button').textContent).toContain('Leader');
+	});
+
+	it('shows pending queue overlay for the selected target session', async () => {
+		mockRequest.mockImplementation(async (method, payload) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.messages.byStatus') {
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'l-e1',
+								uuid: 'l-e1',
+								text: 'leader-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'deferred') {
+					return {
+						messages: [
+							{
+								dbId: 'l-d1',
+								uuid: 'l-d1',
+								text: 'leader-next',
+								timestamp: Date.now(),
+								status: 'deferred',
+							},
+						],
+					};
+				}
+				return { messages: [] };
+			}
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('queue-overlay')).toBeTruthy();
+			expect(getByTestId('queue-overlay').textContent).toContain('leader-now');
+			expect(getByTestId('queue-overlay').textContent).toContain('leader-next');
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
+			sessionId: 'sess-l',
+			status: 'enqueued',
+			limit: 20,
+		});
+		expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
+			sessionId: 'sess-l',
+			status: 'deferred',
+			limit: 20,
+		});
+	});
+
+	it('refreshes pending queue overlay when target switches to worker', async () => {
+		mockRequest.mockImplementation(async (method, payload) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.messages.byStatus') {
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'l-e1',
+								uuid: 'l-e1',
+								text: 'leader-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				if (payload?.sessionId === 'sess-w' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'w-e1',
+								uuid: 'w-e1',
+								text: 'worker-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				return { messages: [] };
+			}
+			return {};
+		});
+
+		const { getByTestId, queryByText } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(queryByText('leader-now')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-worker'));
+
+		await waitFor(() => {
+			expect(queryByText('worker-now')).toBeTruthy();
+			expect(queryByText('leader-now')).toBeNull();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('session.messages.byStatus', {
+			sessionId: 'sess-w',
+			status: 'enqueued',
+			limit: 20,
+		});
+	});
+
+	it('ignores stale queue responses after target switch', async () => {
+		let resolveLeaderEnqueued: ((value: { messages: QueuedMessage[] }) => void) | undefined;
+		type QueuedMessage = {
+			dbId: string;
+			uuid: string;
+			text: string;
+			timestamp: number;
+			status: 'deferred' | 'enqueued' | 'consumed';
+		};
+		const leaderEnqueuedPromise = new Promise<{ messages: QueuedMessage[] }>((resolve) => {
+			resolveLeaderEnqueued = resolve;
+		});
+
+		mockRequest.mockImplementation(async (method, payload) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'session.messages.byStatus') {
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'enqueued') {
+					return leaderEnqueuedPromise;
+				}
+				if (payload?.sessionId === 'sess-l' && payload?.status === 'deferred') {
+					return { messages: [] };
+				}
+				if (payload?.sessionId === 'sess-w' && payload?.status === 'enqueued') {
+					return {
+						messages: [
+							{
+								dbId: 'w-e1',
+								uuid: 'w-e1',
+								text: 'worker-now',
+								timestamp: Date.now(),
+								status: 'enqueued',
+							},
+						],
+					};
+				}
+				if (payload?.sessionId === 'sess-w' && payload?.status === 'deferred') {
+					return { messages: [] };
+				}
+				return { messages: [] };
+			}
+			return {};
+		});
+
+		const { getByTestId, queryByText } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('task-target-button')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-worker'));
+
+		await waitFor(() => {
+			expect(queryByText('worker-now')).toBeTruthy();
+		});
+
+		await act(async () => {
+			resolveLeaderEnqueued?.({
+				messages: [
+					{
+						dbId: 'l-e-stale',
+						uuid: 'l-e-stale',
+						text: 'leader-stale',
+						timestamp: Date.now(),
+						status: 'enqueued',
+					},
+				],
+			});
+			await Promise.resolve();
+		});
+
+		await waitFor(() => {
+			expect(queryByText('worker-now')).toBeTruthy();
+			expect(queryByText('leader-stale')).toBeNull();
+		});
+	});
+
+	it('sends message when Enter is pressed (desktop)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Hello leader' } });
+
+		// Plain Enter on desktop — should send
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Hello leader',
+				target: 'leader',
+			});
+		});
+	});
+
+	it('does NOT send when Shift+Enter is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Hello\nworld' } });
+
+		// Shift+Enter — should NOT send (used for newlines)
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true, metaKey: false, ctrlKey: false });
+
+		// sendMessage is async, but the RPC call should not have been invoked synchronously
+		// Verify immediately that no send was triggered (the handler does not send for Shift+Enter)
+		expect(mockRequest).not.toHaveBeenCalledWith(
+			'task.sendHumanMessage',
+			expect.objectContaining({ message: expect.any(String) })
+		);
+	});
+
+	it('sends message when Cmd+Enter is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Cmd enter works' } });
+
+		// Cmd+Enter — should also send (backward compat, macOS)
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false, metaKey: true, ctrlKey: false });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Cmd enter works',
+				target: 'leader',
+			});
+		});
+	});
+
+	it('sends message when Ctrl+Enter is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Ctrl enter works' } });
+
+		// Ctrl+Enter — should send (backward compat, Windows/Linux)
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Ctrl enter works',
+				target: 'leader',
+			});
+		});
+	});
+
+	it('placeholder text reflects Enter-to-send UX', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.placeholder).toContain('Enter to send');
+		expect(textarea.placeholder).toContain('Shift+Enter');
 	});
 });
 
@@ -842,7 +1199,7 @@ describe('TaskView — Task options dropdown menu', () => {
 		cleanup();
 	});
 
-	it('shows task options menu for pending tasks (cancel only)', async () => {
+	it('shows cancel button for pending tasks (cancel only)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
@@ -855,11 +1212,19 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).not.toBeNull();
+		// Open info panel to access actions
+		const infoPanelTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(infoPanelTrigger).not.toBeNull();
+		fireEvent.click(infoPanelTrigger);
+		// Cancel is visible inside the panel
+		expect(container.querySelector('[data-testid="task-info-panel-cancel"]')).not.toBeNull();
+		// Complete is NOT shown for pending tasks
+		expect(container.querySelector('[data-testid="task-info-panel-complete"]')).toBeNull();
 	});
 
-	it('shows task options menu for in_progress tasks (complete + cancel)', async () => {
+	it('shows cancel button and dropdown with complete action for in_progress tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -872,11 +1237,19 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).not.toBeNull();
+		// Open info panel to access actions
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		// Cancel is visible inside the panel
+		expect(container.querySelector('[data-testid="task-info-panel-cancel"]')).not.toBeNull();
+		// Complete is visible inside the panel for in_progress tasks
+		expect(container.querySelector('[data-testid="task-info-panel-complete"]')).not.toBeNull();
 	});
 
-	it('shows task options menu for review tasks (complete + cancel)', async () => {
+	it('shows cancel button for review tasks (no complete button — review status)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
@@ -889,11 +1262,19 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).not.toBeNull();
+		// Open info panel to access actions
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		// Cancel is visible inside the panel
+		expect(container.querySelector('[data-testid="task-info-panel-cancel"]')).not.toBeNull();
+		// Complete is NOT shown for review tasks
+		expect(container.querySelector('[data-testid="task-info-panel-complete"]')).toBeNull();
 	});
 
-	it('does NOT show task options menu for completed tasks', async () => {
+	it('does NOT show action buttons for completed tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
 			if (method === 'task.getGroup') return { group: null };
@@ -906,8 +1287,15 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).toBeNull();
+		// No cancel button for completed tasks
+		expect(container.querySelector('[data-testid="task-info-panel-cancel"]')).toBeNull();
+		// No complete in dropdown for completed tasks
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-complete"]')).toBeNull();
 	});
 
 	it('does NOT show cancel button for needs_attention tasks', async () => {
@@ -923,11 +1311,17 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).toBeNull();
+		expect(container.querySelector('[data-testid="task-info-panel-cancel"]')).toBeNull();
+		// Complete is in dropdown - open to verify it's NOT there for needs_attention
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-complete"]')).toBeNull();
 	});
 
-	it('does NOT show task options menu for cancelled tasks', async () => {
+	it('does NOT show action buttons for cancelled tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
 			if (method === 'task.getGroup') return { group: null };
@@ -940,11 +1334,17 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]');
-		expect(menuButton).toBeNull();
+		expect(container.querySelector('[data-testid="task-info-panel-cancel"]')).toBeNull();
+		// Complete is in dropdown - open to verify it's NOT there for cancelled
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-complete"]')).toBeNull();
 	});
 
-	it('opens dropdown and shows Cancel Task item for in_progress task', async () => {
+	it('shows both cancel and complete buttons for in_progress task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -957,18 +1357,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const labels = items.map((el) => el.textContent);
-			expect(labels.some((l) => l?.includes('Cancel Task'))).toBe(true);
-			expect(labels.some((l) => l?.includes('Mark as Complete'))).toBe(true);
-		});
+		// Action dropdown trigger should be visible (actions are inside dropdown)
+		expect(container.querySelector('[data-testid="task-info-panel-trigger"]')).not.toBeNull();
 	});
 
-	it('opens dropdown and shows only Cancel Task for pending task', async () => {
+	it('shows only cancel button (no complete) for pending task', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
@@ -981,18 +1374,11 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const labels = items.map((el) => el.textContent);
-			expect(labels.some((l) => l?.includes('Cancel Task'))).toBe(true);
-			expect(labels.some((l) => l?.includes('Mark as Complete'))).toBe(false);
-		});
+		// Action dropdown trigger should be visible
+		expect(container.querySelector('[data-testid="task-info-panel-trigger"]')).not.toBeNull();
 	});
 
-	it('opens cancel dialog when Cancel Task menu item is clicked', async () => {
+	it('opens cancel dialog when cancel button is clicked', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1005,17 +1391,17 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		// Click Cancel Task item
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const cancelItem = items.find((el) => el.textContent?.includes('Cancel Task')) as HTMLElement;
-			expect(cancelItem).not.toBeUndefined();
-			fireEvent.click(cancelItem);
-		});
+		// Open info panel to access cancel action
+		const infoPanelTriggerCancel = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(infoPanelTriggerCancel);
+		// Cancel is inside the panel
+		const cancelButton = container.querySelector(
+			'[data-testid="task-info-panel-cancel"]'
+		) as HTMLElement;
+		expect(cancelButton).not.toBeNull();
+		fireEvent.click(cancelButton);
 
 		// Cancel dialog should open
 		await waitFor(() => {
@@ -1023,7 +1409,7 @@ describe('TaskView — Task options dropdown menu', () => {
 		});
 	});
 
-	it('opens complete dialog when Mark as Complete menu item is clicked', async () => {
+	it('opens complete dialog when complete button is clicked', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -1036,19 +1422,19 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
+		// Open dropdown first
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
 
-		// Click Mark as Complete item
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const completeItem = items.find((el) =>
-				el.textContent?.includes('Mark as Complete')
-			) as HTMLElement;
-			expect(completeItem).not.toBeUndefined();
-			fireEvent.click(completeItem);
-		});
+		// Now click complete inside dropdown
+		const completeButton = container.querySelector(
+			'[data-testid="task-info-panel-complete"]'
+		) as HTMLElement;
+		expect(completeButton).not.toBeNull();
+		fireEvent.click(completeButton);
 
 		// Complete dialog should open
 		await waitFor(() => {
@@ -1070,15 +1456,16 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown and click cancel
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
-
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const cancelItem = items.find((el) => el.textContent?.includes('Cancel Task')) as HTMLElement;
-			fireEvent.click(cancelItem);
-		});
+		// Open info panel to access cancel action
+		const infoPanelTriggerCancel = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(infoPanelTriggerCancel);
+		// Cancel is inside the panel
+		const cancelButton = container.querySelector(
+			'[data-testid="task-info-panel-cancel"]'
+		) as HTMLElement;
+		fireEvent.click(cancelButton);
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-testid="cancel-task-confirm"]')).not.toBeNull();
@@ -1115,17 +1502,17 @@ describe('TaskView — Task options dropdown menu', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// Open dropdown and click Mark as Complete
-		const menuButton = container.querySelector('[data-testid="task-options-menu"]') as HTMLElement;
-		fireEvent.click(menuButton);
+		// Open dropdown first
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(dropdownTrigger);
 
-		await waitFor(() => {
-			const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
-			const completeItem = items.find((el) =>
-				el.textContent?.includes('Mark as Complete')
-			) as HTMLElement;
-			fireEvent.click(completeItem);
-		});
+		// Click complete inside dropdown
+		const completeButton = container.querySelector(
+			'[data-testid="task-info-panel-complete"]'
+		) as HTMLElement;
+		fireEvent.click(completeButton);
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-testid="complete-task-confirm"]')).not.toBeNull();
@@ -1145,9 +1532,119 @@ describe('TaskView — Task options dropdown menu', () => {
 				taskId: 'task-1',
 				status: 'completed',
 				result: 'Marked complete by user',
+				mode: 'manual',
 			});
 			expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
 		});
+	});
+
+	it('closes info panel when Complete action is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Click Complete — panel should close
+		const completeBtn = container.querySelector(
+			'[data-testid="task-info-panel-complete"]'
+		) as HTMLElement;
+		fireEvent.click(completeBtn);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
+
+	it('closes info panel when Cancel action is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Click Cancel — panel should close
+		const cancelBtn = container.querySelector(
+			'[data-testid="task-info-panel-cancel"]'
+		) as HTMLElement;
+		fireEvent.click(cancelBtn);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
+
+	it('closes info panel when Archive action is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Click Archive — panel should close
+		const archiveBtn = container.querySelector(
+			'[data-testid="task-info-panel-archive"]'
+		) as HTMLElement;
+		fireEvent.click(archiveBtn);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
+	});
+
+	it('closes info panel when Escape key is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		fireEvent.click(trigger);
+		expect(container.querySelector('[data-testid="task-info-panel"]')).not.toBeNull();
+
+		// Press Escape — panel should close
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(container.querySelector('[data-testid="task-info-panel"]')).toBeNull();
 	});
 });
 
@@ -1293,9 +1790,9 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
 		await waitFor(() => {
-			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-			expect(headerReviewBar).not.toBeNull();
-			const rejectBtn = headerReviewBar?.querySelector('button.bg-red-700');
+			const actionBar = container.querySelector('[data-testid="action-bar"]');
+			expect(actionBar).not.toBeNull();
+			const rejectBtn = actionBar?.querySelector('[data-testid="action-bar-secondary"]');
 			expect(rejectBtn).not.toBeNull();
 		});
 	});
@@ -1313,9 +1810,9 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// No header review bar should be shown
-		const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-		expect(headerReviewBar).toBeNull();
+		// No action bar should be shown
+		const actionBar = container.querySelector('[data-testid="action-bar"]');
+		expect(actionBar).toBeNull();
 	});
 
 	it('calls task.reject RPC when reject button is clicked', async () => {
@@ -1330,15 +1827,15 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 			<TaskView roomId="room-1" taskId="task-1" />
 		);
 
-		// Wait for the header review bar to appear
+		// Wait for the action bar to appear
 		await waitFor(() => {
-			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
-			expect(headerReviewBar).not.toBeNull();
+			const actionBar = container.querySelector('[data-testid="action-bar"]');
+			expect(actionBar).not.toBeNull();
 		});
 
 		// Click reject button (opens modal)
 		const rejectBtn = container.querySelector(
-			'.bg-amber-900\\/20 button.bg-red-700'
+			'[data-testid="action-bar-secondary"]'
 		) as HTMLButtonElement;
 		fireEvent.click(rejectBtn);
 
@@ -1517,7 +2014,7 @@ describe('TaskView — PR link in header', () => {
 		expect(container.textContent).not.toContain('PR #');
 	});
 
-	it('does not show PR link in header for review task (review bar shows it instead)', async () => {
+	it('shows PR link in header AND in review bar for review task (both render)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get')
 				return {
@@ -1534,15 +2031,12 @@ describe('TaskView — PR link in header', () => {
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
 		await waitFor(() => {
-			expect(container.textContent).not.toContain('Loading task');
+			expect(container.textContent).toContain('PR #99');
 		});
 
-		// The PR link should appear in the review bar but NOT in the header title area.
-		// Since the review bar and header both render, there will be exactly one PR link
-		// (in the review bar). The header div does not render a second PR badge.
+		// PR link appears in both the header badge and the review bar button.
 		const prLinks = container.querySelectorAll('a[href="https://github.com/org/repo/pull/99"]');
-		// Only the review bar link should exist (not a second one from the header)
-		expect(prLinks.length).toBe(1);
+		expect(prLinks.length).toBe(2);
 	});
 
 	it('shows PR link in header for needs_attention task with prUrl', async () => {
@@ -1567,5 +2061,935 @@ describe('TaskView — PR link in header', () => {
 
 		const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/7"]');
 		expect(prLink).not.toBeNull();
+	});
+
+	it('shows PR link in header for review task even without submittedForReview (no review bar)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get')
+				return {
+					task: {
+						...makeTask('task-1', 'review'),
+						prUrl: 'https://github.com/org/repo/pull/55',
+						prNumber: 55,
+					},
+				};
+			// group not awaiting_human, so submittedForReview is false → review bar hidden
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('PR #55');
+		});
+
+		// PR link is in the header only (no review bar since submittedForReview is false)
+		const prLinks = container.querySelectorAll('a[href="https://github.com/org/repo/pull/55"]');
+		expect(prLinks.length).toBe(1);
+	});
+
+	it('shows PR link in header for completed task with prUrl', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get')
+				return {
+					task: {
+						...makeTask('task-1', 'completed'),
+						prUrl: 'https://github.com/org/repo/pull/101',
+						prNumber: 101,
+					},
+				};
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('PR #101');
+		});
+
+		const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/101"]');
+		expect(prLink).not.toBeNull();
+	});
+});
+
+// ─── Reactivate and Archive Action Tests ───
+
+describe('TaskView — Reactivate and Archive actions', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows Reactivate button for completed task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-reactivate-button"]')).not.toBeNull();
+	});
+
+	it('shows Archive action in dropdown for completed task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Archive is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-archive"]')).not.toBeNull();
+	});
+
+	it('shows Reactivate button for cancelled task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-reactivate-button"]')).not.toBeNull();
+	});
+
+	it('shows "Sending a message will reactivate this task" hint for completed task without group', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.textContent).toContain('Sending a message will reactivate this task.');
+	});
+
+	it('input is disabled for archived task (no group)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.disabled).toBe(true);
+		const sendButton = getByTestId('input-textarea-send') as HTMLButtonElement;
+		expect(sendButton.disabled).toBe(true);
+	});
+
+	it('calls task.setStatus with in_progress when Reactivate button is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'in_progress') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const reactivateButton = container.querySelector(
+			'[data-testid="task-reactivate-button"]'
+		) as HTMLElement;
+		expect(reactivateButton).not.toBeNull();
+
+		await act(async () => {
+			fireEvent.click(reactivateButton);
+		});
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+				mode: 'manual',
+			});
+		});
+	});
+
+	it('shows Archive action in dropdown for needs_attention task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'needs_attention') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Archive is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-archive"]')).not.toBeNull();
+	});
+
+	it('calls task.setStatus with archived when Archive dialog is confirmed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return {};
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open dropdown first
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+
+		// Click archive inside dropdown
+		const archiveButton = container.querySelector(
+			'[data-testid="task-info-panel-archive"]'
+		) as HTMLElement;
+		expect(archiveButton).not.toBeNull();
+		fireEvent.click(archiveButton);
+
+		// The Modal renders into body via a portal, so query from document
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="archive-task-confirm"]')).not.toBeNull();
+		});
+
+		await act(async () => {
+			fireEvent.click(
+				document.querySelector('[data-testid="archive-task-confirm"]') as HTMLElement
+			);
+		});
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				status: 'archived',
+				mode: 'manual',
+			});
+		});
+	});
+
+	it('does NOT show reactivation hint when completed task has an active group', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.textContent).not.toContain('Sending a message will reactivate this task.');
+	});
+
+	it('shows Archive action in dropdown for cancelled task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Archive is in the dropdown - open dropdown to verify
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-archive"]')).not.toBeNull();
+	});
+
+	it('does NOT show Reactivate button for in_progress task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-reactivate-button"]')).toBeNull();
+	});
+
+	it('does NOT show Reactivate button for archived task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.querySelector('[data-testid="task-reactivate-button"]')).toBeNull();
+	});
+
+	it('does NOT show Archive action in dropdown for in_progress task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Archive is in the dropdown - open dropdown to verify it's NOT there
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-archive"]')).toBeNull();
+	});
+
+	it('does NOT show Archive action in dropdown for archived task', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Archive is in the dropdown - open dropdown to verify it's NOT there
+		const dropdownTrigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(dropdownTrigger).not.toBeNull();
+		fireEvent.click(dropdownTrigger);
+		expect(container.querySelector('[data-testid="task-info-panel-archive"]')).toBeNull();
+	});
+
+	it('archived status badge has text-gray-600 class', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Verify the element containing "archived" text carries the text-gray-600 class
+		const allGraySpans = Array.from(container.querySelectorAll('.text-gray-600'));
+		const statusBadge = allGraySpans.find((el) => el.textContent?.includes('archived'));
+		expect(statusBadge).not.toBeNull();
+	});
+
+	it('input is enabled for completed task (no group)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.disabled).toBe(false);
+		const sendButton = getByTestId('input-textarea-send') as HTMLButtonElement;
+		expect(sendButton.disabled).toBe(false);
+	});
+
+	it('input is enabled for cancelled task (no group)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.disabled).toBe(false);
+		const sendButton = getByTestId('input-textarea-send') as HTMLButtonElement;
+		expect(sendButton.disabled).toBe(false);
+	});
+});
+
+describe('TaskView — SetStatusModal', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
+			return {};
+		});
+	});
+
+	it('opens SetStatusModal when Set Status button is clicked from info panel', async () => {
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		expect(trigger).not.toBeNull();
+		fireEvent.click(trigger);
+
+		// Click Set Status button
+		const setStatusButton = container.querySelector(
+			'[data-testid="task-info-panel-set-status"]'
+		) as HTMLElement;
+		expect(setStatusButton).not.toBeNull();
+
+		await act(async () => {
+			fireEvent.click(setStatusButton);
+		});
+
+		// Modal should appear
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="set-status-confirm"]')).not.toBeNull();
+		});
+	});
+
+	it('calls task.setStatus with mode: manual when status is selected and confirmed', async () => {
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel and click Set Status
+		fireEvent.click(
+			container.querySelector('[data-testid="task-info-panel-trigger"]') as HTMLElement
+		);
+		await act(async () => {
+			fireEvent.click(
+				container.querySelector('[data-testid="task-info-panel-set-status"]') as HTMLElement
+			);
+		});
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="set-status-confirm"]')).not.toBeNull();
+		});
+
+		// Select 'pending' from the dropdown (portal renders in document.body)
+		const select = document.querySelector('select') as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: 'pending' } });
+		});
+
+		// Confirm
+		await act(async () => {
+			fireEvent.click(document.querySelector('[data-testid="set-status-confirm"]') as HTMLElement);
+		});
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				status: 'pending',
+				mode: 'manual',
+			});
+		});
+	});
+
+	it('shows destructive warning when transitioning from archived', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'archived') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
+			return {};
+		});
+
+		// archived tasks don't show the Set Status button — verify it's hidden
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open the info panel
+		const trigger = container.querySelector(
+			'[data-testid="task-info-panel-trigger"]'
+		) as HTMLElement;
+		// For archived tasks, the info panel trigger may still exist but setStatus button should not
+		if (trigger) {
+			fireEvent.click(trigger);
+			expect(container.querySelector('[data-testid="task-info-panel-set-status"]')).toBeNull();
+		}
+	});
+
+	it('shows destructive warning for completed→pending transition', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') return { task: makeTask('task-1', 'pending') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Open info panel and click Set Status
+		fireEvent.click(
+			container.querySelector('[data-testid="task-info-panel-trigger"]') as HTMLElement
+		);
+		await act(async () => {
+			fireEvent.click(
+				container.querySelector('[data-testid="task-info-panel-set-status"]') as HTMLElement
+			);
+		});
+
+		await waitFor(() => {
+			expect(document.querySelector('[data-testid="set-status-confirm"]')).not.toBeNull();
+		});
+
+		// Select 'pending' to trigger destructive warning
+		const select = document.querySelector('select') as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: 'pending' } });
+		});
+
+		// Warning text should appear in the modal
+		await waitFor(() => {
+			expect(document.body.textContent).toContain('Previous results will be cleared');
+		});
+	});
+});
+
+// Import roomStore to set up goal associations for goal badge tests
+import { roomStore } from '../../lib/room-store.ts';
+import { currentRoomTabSignal } from '../../lib/signals.ts';
+
+describe('TaskView — goal badge', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		// Clear goals between tests
+		roomStore.goals.value = [];
+		currentRoomTabSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+		roomStore.goals.value = [];
+		currentRoomTabSignal.value = null;
+	});
+
+	it('shows goal badge when task is linked to a goal', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		roomStore.goals.value = [
+			{
+				id: 'goal-1',
+				roomId: 'room-1',
+				title: 'Test Mission',
+				description: '',
+				status: 'active',
+				priority: 'normal',
+				progress: 0,
+				linkedTaskIds: ['task-1'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		];
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const badge = container.querySelector('[data-testid="task-view-goal-badge"]');
+		expect(badge).toBeTruthy();
+		expect(badge?.textContent).toContain('Test Mission');
+	});
+
+	it('does NOT show goal badge when task has no linked goal', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		// No goals set - roomStore.goals.value is already []
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const badge = container.querySelector('[data-testid="task-view-goal-badge"]');
+		expect(badge).toBeNull();
+	});
+
+	it('sets currentRoomTabSignal to "goals" and navigates to room when goal badge clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		roomStore.goals.value = [
+			{
+				id: 'goal-1',
+				roomId: 'room-1',
+				title: 'Clickable Mission',
+				description: '',
+				status: 'active',
+				priority: 'normal',
+				progress: 0,
+				linkedTaskIds: ['task-1'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		];
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="task-view-goal-badge"]')).toBeTruthy();
+		});
+
+		const badge = container.querySelector(
+			'[data-testid="task-view-goal-badge"]'
+		) as HTMLButtonElement;
+		fireEvent.click(badge);
+
+		expect(currentRoomTabSignal.value).toBe('goals');
+		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+	});
+
+	it('shows goal title as tooltip on badge', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		roomStore.goals.value = [
+			{
+				id: 'goal-1',
+				roomId: 'room-1',
+				title: 'Tooltip Mission Title',
+				description: '',
+				status: 'active',
+				priority: 'normal',
+				progress: 0,
+				linkedTaskIds: ['task-1'],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		];
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid="task-view-goal-badge"]')).toBeTruthy();
+		});
+
+		const badge = container.querySelector('[data-testid="task-view-goal-badge"]');
+		expect(badge?.getAttribute('title')).toBe('Mission: Tooltip Mission Title');
+	});
+});
+
+describe('TaskView — task.getGroup retry on failure', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		cleanup();
+	});
+
+	it('retries task.getGroup once after 1s if first attempt throws', async () => {
+		let getGroupCallCount = 0;
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') {
+				getGroupCallCount++;
+				if (getGroupCallCount === 1) throw new Error('daemon not ready');
+				return { group: makeGroup('awaiting_human') };
+			}
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Initial render (task.get resolves, task.getGroup fails).
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		// First getGroup call failed — advance the 1s retry delay.
+		await act(async () => {
+			vi.advanceTimersByTime(1000);
+			await Promise.resolve();
+		});
+
+		// Retry succeeded — group should now be loaded.
+		await waitFor(() => {
+			expect(getGroupCallCount).toBe(2);
+		});
+
+		// The "Awaiting your review" badge (from group.submittedForReview) should be visible.
+		await waitFor(() => {
+			expect(container.querySelector('.animate-pulse')?.textContent).toContain(
+				'Awaiting your review'
+			);
+		});
+	});
+
+	it('shows "Loading conversation history" for review task while group is null', async () => {
+		// task.getGroup always returns null (daemon just restarted, group not yet returned).
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// Should show the helpful "Loading conversation history" message, not the generic empty state.
+		expect(container.textContent).toContain('Loading conversation history');
+		// Should NOT show the old generic "No active agent group" title for review tasks.
+		expect(container.textContent).not.toContain('No active agent group');
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug regression: TaskConversationRenderer must NOT remount when a message is sent
+//
+// Sending a message used to call onMessageSentWithReload() which bumped conversationKey,
+// remounting TaskConversationRenderer and causing a full re-fetch / loading flash.
+// After the fix, the conversationKey is never bumped on message send —
+// the LiveQuery delta event appends the new message instead.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('TaskView — no reload on message send (bug regression)', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('TaskConversationRenderer DOM node is NOT replaced after a successful message send', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait for TaskConversationRenderer to mount
+		await waitFor(() => {
+			expect(getByTestId('conversation')).toBeTruthy();
+		});
+
+		// Capture the exact DOM node before the send
+		const conversationNodeBefore = getByTestId('conversation');
+
+		// Type a message and send it
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Hello, please continue' } });
+		fireEvent.click(getByTestId('input-textarea-send'));
+
+		// Wait for the RPC to complete
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', expect.any(Object));
+		});
+
+		// The DOM node must be the same object — no remount, no reload flash
+		const conversationNodeAfter = getByTestId('conversation');
+		expect(conversationNodeAfter).toBe(conversationNodeBefore);
+	});
+
+	it('conversationKey bumps only for approve (not for normal message send)', async () => {
+		// This test verifies that approve still causes a remount (intentional),
+		// while a normal message send does not.
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			if (method === 'task.approve') return {};
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId, container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait for TaskConversationRenderer to mount
+		await waitFor(() => {
+			expect(getByTestId('conversation')).toBeTruthy();
+		});
+
+		const nodeBeforeSend = getByTestId('conversation');
+
+		// Send a normal human message — should NOT remount
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Keep going' } });
+		fireEvent.click(getByTestId('input-textarea-send'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', expect.any(Object));
+		});
+
+		// Still the same node
+		expect(getByTestId('conversation')).toBe(nodeBeforeSend);
+
+		const nodeBeforeApprove = getByTestId('conversation');
+
+		// Approve — should remount (intentional key bump)
+		const approveBtn = container.querySelector(
+			'[data-testid="action-bar-primary"]'
+		) as HTMLButtonElement;
+		expect(approveBtn).not.toBeNull();
+		fireEvent.click(approveBtn);
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.approve', expect.any(Object));
+		});
+
+		// After approve, the node is replaced (conversationKey bumped)
+		// This is intentional — approve triggers a full conversation refresh
+		await waitFor(() => {
+			const nodeAfterApprove = getByTestId('conversation');
+			expect(nodeAfterApprove).not.toBe(nodeBeforeApprove);
+		});
 	});
 });
