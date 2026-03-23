@@ -19,13 +19,21 @@ const mockOnEvent = vi.fn((_eventName: string, _handler: unknown) => () => {});
 const mockJoinRoom = vi.fn();
 const mockLeaveRoom = vi.fn();
 
+// Module-level state for dynamic mocking (used by tab-resume tests)
+const mockMessageHubState = {
+	isConnected: true,
+	requestThrows: false,
+};
+
 vi.mock('../useMessageHub.ts', () => ({
 	useMessageHub: () => ({
 		request: mockRequest,
 		onEvent: mockOnEvent,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
-		isConnected: true,
+		get isConnected() {
+			return mockMessageHubState.isConnected;
+		},
 	}),
 }));
 
@@ -88,6 +96,128 @@ function makeGroup() {
 // -------------------------------------------------------
 // Tests
 // -------------------------------------------------------
+
+describe('useTaskViewData — tab resume behavior', () => {
+	beforeEach(() => {
+		// Reset state for each test
+		mockMessageHubState.isConnected = true;
+		mockMessageHubState.requestThrows = false;
+		mockRequest.mockReset();
+		mockOnEvent.mockClear();
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+
+		mockRequest.mockImplementation(async (method: string) => {
+			if (mockMessageHubState.requestThrows) throw new Error('Connection lost');
+			if (method === 'task.get') return { task: makeTask('in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup() };
+			if (method === 'session.get') return { session: null };
+			return {};
+		});
+	});
+
+	it('returns early and clears error when isConnected is false', async () => {
+		// First render with connection - loads successfully
+		const { result, rerender } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		expect(result.current.task).not.toBeNull();
+		expect(result.current.error).toBeNull();
+
+		// Simulate connection loss by setting isConnected to false
+		// This simulates what happens when connectionState becomes 'disconnected' or 'reconnecting'
+		mockMessageHubState.isConnected = false;
+
+		// Rerender to trigger effect (isConnected changed from true to false)
+		rerender();
+
+		// Wait for the effect to run
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		// Error should be cleared because load() returned early due to !isConnected
+		expect(result.current.error).toBeNull();
+	});
+
+	it('clears stale error and loads task when isConnected becomes true', async () => {
+		// Start with isConnected = false
+		mockMessageHubState.isConnected = false;
+
+		const { result, rerender } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		// Error should be null because load() returned early
+		expect(result.current.error).toBeNull();
+		expect(result.current.task).toBeNull();
+
+		// Now simulate reconnection - isConnected becomes true
+		mockMessageHubState.isConnected = true;
+
+		// Rerender to trigger effect (isConnected changed from false to true)
+		rerender();
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		// Task should be loaded successfully, error should be cleared
+		expect(result.current.error).toBeNull();
+		expect(result.current.task).not.toBeNull();
+	});
+
+	it('does not permanently show error when isConnected transitions during reconnection', async () => {
+		// Simulate the bug scenario: same hook, isConnected transitions
+		// isConnected=true -> isConnected=false -> isConnected=true
+		// (what happens when connectionState goes disconnected -> reconnecting -> connected)
+
+		// Start with isConnected = true but request will fail
+		mockMessageHubState.requestThrows = true;
+
+		const { result, rerender } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		// Error is set because request failed (simulating mid-resume failure)
+		expect(result.current.error).toBe('Connection lost');
+
+		// Simulate reconnection: isConnected goes false (reconnecting)
+		mockMessageHubState.isConnected = false;
+		mockMessageHubState.requestThrows = false; // Will succeed when reconnected
+
+		// Rerender to trigger effect (isConnected changed from true to false)
+		rerender();
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		// Error should be cleared because load() returned early due to !isConnected
+		expect(result.current.error).toBeNull();
+
+		// Simulate reconnection complete: isConnected goes true
+		mockMessageHubState.isConnected = true;
+
+		// Rerender to trigger effect (isConnected changed from false to true)
+		rerender();
+
+		await waitFor(() => {
+			expect(result.current.isLoading).toBe(false);
+		});
+
+		// Task should be loaded, error should remain cleared
+		expect(result.current.error).toBeNull();
+		expect(result.current.task).not.toBeNull();
+	});
+});
 
 describe('useTaskViewData', () => {
 	beforeEach(() => {

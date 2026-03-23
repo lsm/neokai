@@ -151,6 +151,17 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		};
 
 		const load = async () => {
+			// Guard: skip load if not connected (the effect will re-trigger when connection is restored)
+			if (!isConnected) {
+				setError(null);
+				setIsLoading(false);
+				return;
+			}
+
+			// Clear any stale error from previous failed attempts
+			setError(null);
+			setIsLoading(true);
+
 			try {
 				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
 				if (!cancelled) {
