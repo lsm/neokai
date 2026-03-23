@@ -643,4 +643,307 @@ test.describe('Visual Workflow Editor', () => {
 		// Verify the Task Agent channel is no longer in the channels section
 		await expect(taskAgentChannelEntry).not.toBeVisible({ timeout: 2000 });
 	});
+
+	// ─── Channel Direction Visualization Tests ──────────────────────────────────
+	// These tests verify that channel direction is visually rendered on the canvas.
+	// They require:
+	// - ChannelEdgeRenderer in WorkflowCanvas.tsx to render arrowhead markers based on direction
+	// - ChannelEdge interface to include direction property
+	// - Bidirectional channels: double-headed arrow (↔) via marker-start + marker-end
+	// - Unidirectional channels: single arrowhead (→) via marker-end only
+	// - Channel edges use dashed gray stroke; transition edges use solid colored stroke
+	//
+	// The arrowhead rendering is part of Change 6 (Show Channel Direction in the Visual
+	// Editor) of the workflow graph model goal. Once implemented, remove test.skip().
+
+	// ─── Test 12: Channel edges are visually distinct from transition edges ─────
+
+	test('Channel edges are visually distinct from transition edges', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+
+		// Create a workflow with a transition (edge) via RPC so we have both types
+		const agentId = await getDefaultAgentId(page, spaceId);
+		const s1 = crypto.randomUUID();
+		const s2 = crypto.randomUUID();
+		const t1 = crypto.randomUUID();
+
+		await page.evaluate(
+			async ({ sid, aId, step1, step2, trans1 }) => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub?.request) throw new Error('Hub not available');
+				await hub.request('spaceWorkflow.create', {
+					spaceId: sid,
+					name: 'Channel vs Transition Test',
+					steps: [
+						{ id: step1, name: 'Start', agentId: aId },
+						{ id: step2, name: 'End', agentId: aId },
+					],
+					transitions: [
+						{ id: trans1, from: step1, to: step2, order: 0, condition: { type: 'always' } },
+					],
+					startStepId: step1,
+					rules: [],
+					tags: [],
+					layout: {
+						[step1]: { x: 100, y: 80 },
+						[step2]: { x: 450, y: 80 },
+					},
+				});
+			},
+			{ sid: spaceId, aId: agentId, step1: s1, step2: s2, trans1: t1 }
+		);
+
+		// Navigate to workflows and open in visual mode
+		await page.locator('text=Workflows').first().click();
+		await expect(page.locator('text=Channel vs Transition Test')).toBeVisible({ timeout: 5000 });
+
+		const workflowCard = page
+			.locator('[class*="group"]')
+			.filter({ has: page.locator('text=Channel vs Transition Test') })
+			.first();
+		await workflowCard.evaluate((el) => {
+			const actions = el.querySelector<HTMLElement>('[data-testid="workflow-card-actions"]');
+			if (actions) actions.style.opacity = '1';
+		});
+		await workflowCard.getByRole('button', { name: 'Edit' }).click();
+		await expect(page.getByTestId('editor-mode-toggle')).toBeVisible({ timeout: 5000 });
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Transition edge should exist and have data attributes
+		const transitionEdge = editor.locator(`[data-testid="edge-${t1}"]`);
+		await expect(transitionEdge).toBeVisible({ timeout: 5000 });
+		await expect(transitionEdge).toHaveAttribute('data-edge-id', t1);
+
+		// Transition edges have solid stroke (not dashed) and colored stroke
+		// They use SVG markers for arrowheads
+		const transitionPath = transitionEdge.locator('path').first();
+		const strokeDasharray = await transitionPath.getAttribute('stroke-dasharray');
+		// Transition edges should NOT be dashed (stroke-dasharray should be null or empty)
+		expect(strokeDasharray === null || strokeDasharray === '').toBe(true);
+
+		// Task Agent channel edges should exist (auto-created when nodes exist)
+		// They have data-channel-edge="true" attribute
+		const channelEdge = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdge).toBeVisible({ timeout: 5000 });
+
+		// Channel edges should have dashed stroke
+		const channelPath = channelEdge.locator('path').last();
+		const channelStrokeDasharray = await channelPath.getAttribute('stroke-dasharray');
+		// Channel edges ARE dashed (e.g., "6 4")
+		expect(channelStrokeDasharray).toMatch(/^\d+\s+\d+$/);
+	});
+
+	// ─── Test 13: Task Agent channel edges are rendered ───────────────────────
+
+	test('Task Agent channel edges are rendered', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node - Task Agent channel edge should appear automatically
+		await editor.getByTestId('add-step-button').click();
+
+		// Wait for node to appear
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		// Channel edge should be rendered with data-channel-edge attribute
+		const channelEdges = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdges).toHaveCount(1, { timeout: 3000 });
+
+		// Channel edge should be a dashed gray path (verifiable via stroke attributes)
+		const channelPath = channelEdges.locator('path').last();
+		await expect(channelPath).toBeVisible({ timeout: 2000 });
+
+		// Gray color for channel edges (CHANNEL_EDGE_COLOR = '#9ca3af')
+		const stroke = await channelPath.getAttribute('stroke');
+		expect(stroke).toBe('#9ca3af');
+	});
+
+	// ─── Test 14: Bidirectional channels show double-arrowhead edges ────────────
+
+	test.skip('Bidirectional channels show double-arrowhead edges on canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		// Select the node and configure it with an agent
+		const node = editor.locator('[data-testid^="workflow-node-"]').nth(0);
+		await node.click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+		await editor.getByTestId('close-button').click();
+
+		// Verify Task Agent channel is auto-created (bidirectional by default)
+		// The ChannelTopologyBadge on the node should show ↔ for bidirectional
+		await expect(node.locator('text=↔')).toBeVisible({ timeout: 2000 });
+
+		// The channel edge on canvas should have both marker-start and marker-end
+		// (double-headed arrow for bidirectional)
+		const channelEdge = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdge).toBeVisible({ timeout: 3000 });
+
+		// Get the visible path element (not the transparent hitbox)
+		const channelPath = channelEdge.locator('path:not([stroke="transparent"])');
+		await expect(channelPath).toBeVisible({ timeout: 2000 });
+
+		// Bidirectional channels should have both marker-start and marker-end
+		const markerEnd = await channelPath.getAttribute('marker-end');
+		const markerStart = await channelPath.getAttribute('marker-start');
+		expect(markerEnd).not.toBeNull();
+		expect(markerStart).not.toBeNull();
+		// Both should reference arrow markers
+		expect(markerEnd).toMatch(/url\(#.*arrow.*\)/i);
+		expect(markerStart).toMatch(/url\(#.*arrow.*\)/i);
+	});
+
+	// ─── Test 15: One-way channels show single-arrowhead edges ─────────────────
+
+	test.skip('One-way channels show single-arrowhead edges on canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node and configure it with an agent
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		const node = editor.locator('[data-testid^="workflow-node-"]').nth(0);
+		await node.click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+
+		// Open channels section and add a one-way channel
+		// First scroll to channels section or open it if collapsed
+		const panel = editor.getByTestId('node-config-panel');
+
+		// Look for the channels section toggle or add-channel-form
+		const channelsSection = panel.getByTestId('add-channel-form');
+		await expect(channelsSection).toBeVisible({ timeout: 2000 });
+
+		// Set direction to one-way (already default)
+		await panel
+			.locator('[data-testid="channel-from-select"]')
+			.selectOption({ label: 'task-agent' });
+		await panel
+			.locator('[data-testid="channel-to-input"], [data-testid="channel-to-select"]')
+			.fill('coder');
+
+		// Click add channel button
+		await panel.getByTestId('add-channel-button').click();
+
+		// Verify the channel was added as one-way (→ not ↔)
+		const channelEntry = panel
+			.locator('[data-testid="channel-entry"]')
+			.filter({ has: page.locator('text=→') });
+		await expect(channelEntry).toBeVisible({ timeout: 2000 });
+
+		await editor.getByTestId('close-button').click();
+
+		// The channel edge on canvas should have only marker-end (single arrowhead)
+		const channelEdge = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdge).toBeVisible({ timeout: 3000 });
+
+		const channelPath = channelEdge.locator('path:not([stroke="transparent"])');
+		await expect(channelPath).toBeVisible({ timeout: 2000 });
+
+		// One-way channels should have marker-end but NOT marker-start
+		const markerEnd = await channelPath.getAttribute('marker-end');
+		const markerStart = await channelPath.getAttribute('marker-start');
+		expect(markerEnd).not.toBeNull();
+		expect(markerEnd).toMatch(/url\(#.*arrow.*\)/i);
+		// marker-start should be null or empty for one-way
+		expect(markerStart === null || markerStart === '').toBe(true);
+	});
+
+	// ─── Test 16: Channel direction changes are reflected immediately ───────────
+
+	test.skip('Channel direction changes are reflected immediately in canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node and configure it
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		const node = editor.locator('[data-testid^="workflow-node-"]').nth(0);
+		await node.click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+
+		const panel = editor.getByTestId('node-config-panel');
+
+		// Add a channel as one-way first
+		const channelsSection = panel.getByTestId('add-channel-form');
+		await expect(channelsSection).toBeVisible({ timeout: 2000 });
+		await panel
+			.locator('[data-testid="channel-from-select"]')
+			.selectOption({ label: 'task-agent' });
+		await panel
+			.locator('[data-testid="channel-to-input"], [data-testid="channel-to-select"]')
+			.fill('coder');
+		await panel.getByTestId('add-channel-button').click();
+
+		// Verify it's one-way on canvas (only marker-end)
+		const channelPath1 = editor
+			.locator('[data-channel-edge="true"]')
+			.locator('path:not([stroke="transparent"])');
+		await expect(channelPath1).toBeVisible({ timeout: 2000 });
+		const markerEnd1 = await channelPath1.getAttribute('marker-end');
+		const markerStart1 = await channelPath1.getAttribute('marker-start');
+		expect(markerEnd1).not.toBeNull();
+		expect(markerStart1 === null || markerStart1 === '').toBe(true);
+
+		// Now change the channel to bidirectional via the config panel
+		// Find the channel entry and change its direction dropdown
+		const channelEntry = panel.locator('[data-testid="channel-entry"]').first();
+		await expect(channelEntry).toBeVisible({ timeout: 2000 });
+
+		// Look for a direction select within the channel entry
+		const directionSelect = channelEntry.locator('select').first();
+		if (await directionSelect.isVisible()) {
+			await directionSelect.selectOption('bidirectional');
+		} else {
+			// If no select, look for an edit button or use the add form
+			// For now, remove and re-add as bidirectional
+			await channelEntry.locator('[data-testid="remove-channel-button"]').click();
+			await panel.locator('[data-testid="channel-direction-select"]').selectOption('bidirectional');
+			await panel.getByTestId('add-channel-button').click();
+		}
+
+		// Wait a moment for the state to update
+		await page.waitForTimeout(500);
+
+		// Verify the canvas now shows double-arrowhead (both marker-start and marker-end)
+		const channelPath2 = editor
+			.locator('[data-channel-edge="true"]')
+			.locator('path:not([stroke="transparent"])');
+		await expect(channelPath2).toBeVisible({ timeout: 2000 });
+		const markerEnd2 = await channelPath2.getAttribute('marker-end');
+		const markerStart2 = await channelPath2.getAttribute('marker-start');
+		expect(markerEnd2).not.toBeNull();
+		expect(markerStart2).not.toBeNull();
+	});
 });
