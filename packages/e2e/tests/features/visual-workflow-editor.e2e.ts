@@ -37,6 +37,8 @@ import {
 	resetEditorModeStorage,
 	openNewWorkflowEditor,
 	switchToVisualMode,
+	setupMultiAgentStep,
+	getDefaultAgentId,
 } from '../helpers/workflow-editor-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
@@ -49,20 +51,6 @@ async function createTestSpace(page: Page): Promise<string> {
 
 async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 	return deleteSpace(page, spaceId);
-}
-
-/** Get the default agent ID for the active space (infrastructure only). */
-async function getDefaultAgentId(page: Page, spaceId: string): Promise<string> {
-	return page.evaluate(async (sid) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('Hub not available');
-		const res = (await hub.request('spaceAgent.list', { spaceId: sid })) as {
-			agents: Array<{ id: string; role: string }>;
-		};
-		const agent = res.agents.find((a) => a.role === 'planner') ?? res.agents[0];
-		if (!agent) throw new Error('No agents found in space');
-		return agent.id;
-	}, spaceId);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -523,6 +511,11 @@ test.describe('Visual Workflow Editor', () => {
 
 		// Task Agent node should still be visible after Delete key
 		await expect(taskAgentNode).toBeVisible({ timeout: 2000 });
+
+		// Also try Backspace key (graph editors often handle both)
+		await taskAgentNode.click();
+		await page.keyboard.press('Backspace');
+		await expect(taskAgentNode).toBeVisible({ timeout: 2000 });
 	});
 
 	// ─── Test 9: Adding a new node shows Task Agent channel edges on the canvas ───
@@ -553,7 +546,7 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 
 		// The ChannelTopologyBadge on the canvas node should show a channel to/from Task Agent
-		// Note: ChannelTopologyBadge truncates "task-agent" to "task-age…" (10 chars → 8 + ellipsis)
+		// "task-agent" is 10 chars; the 8-char truncation limit produces "task-age…"
 		// So we look for the truncated form. Also verify on the node card itself.
 		const nodeCard = nodes.nth(1);
 		await expect(nodeCard.locator('[data-testid="channel-topology-badge"]')).toBeVisible({
@@ -616,14 +609,24 @@ test.describe('Visual Workflow Editor', () => {
 		await nodes.nth(2).click();
 		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
 
+		// Put node in multi-agent mode (channels-section only renders with 2+ agents)
+		// Use index-based selection since agent names are dynamically created in test spaces
+		const panel = editor.getByTestId('node-config-panel');
+		await panel.getByTestId('agent-select').selectOption({ index: 1 });
+		await panel.getByTestId('add-agent-button').click();
+		await expect(panel.getByTestId('agents-list')).toBeVisible({ timeout: 3000 });
+		await panel.getByTestId('add-agent-select').selectOption({ index: 2 });
+		await expect(panel.getByTestId('agents-list').getByTestId('agent-entry')).toHaveCount(2, {
+			timeout: 3000,
+		});
+
 		// Verify Task Agent channel exists in the NodeConfigPanel's channels-section
 		// (not the ChannelTopologyBadge which is on the canvas node)
-		// channels-section only renders in multi-agent mode, so we need at least 2 agents
-		const channelsSection = editor.getByTestId('node-config-panel').getByTestId('channels-section');
+		const channelsSection = panel.getByTestId('channels-section');
 		await expect(channelsSection).toBeVisible({ timeout: 2000 });
 
 		// Find the channel entry that references task-agent
-		// The channel list truncates role strings (like "task-agent" → "task-age…")
+		// "task-agent" is 10 chars; the 8-char truncation limit produces "task-age…"
 		const taskAgentChannelEntry = channelsSection.locator('[data-testid="channel-entry"]').filter({
 			has: page.locator('text=task-age'),
 		});

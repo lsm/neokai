@@ -53,6 +53,20 @@ export async function deleteSpace(page: Page, spaceId: string): Promise<void> {
 	}
 }
 
+/** Get the default agent ID for the active space (infrastructure only). */
+export async function getDefaultAgentId(page: Page, spaceId: string): Promise<string> {
+	return page.evaluate(async (sid) => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub?.request) throw new Error('Hub not available');
+		const res = (await hub.request('spaceAgent.list', { spaceId: sid })) as {
+			agents: Array<{ id: string; role: string }>;
+		};
+		const agent = res.agents.find((a) => a.role === 'planner') ?? res.agents[0];
+		if (!agent) throw new Error('No agents found in space');
+		return agent.id;
+	}, spaceId);
+}
+
 // ─── Navigation helpers ────────────────────────────────────────────────────────
 
 export async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
