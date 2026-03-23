@@ -2121,6 +2121,49 @@ describe('SpaceRuntime', () => {
 			expect(coderToTaskAgent).toBeDefined();
 		});
 
+		test('storeResolvedChannels: deduplicates channels when step has multiple agents with the same role', async () => {
+			// When a step has two agents that share the same role (e.g., two coder agents),
+			// resolveAndStoreChannels should generate only ONE bidirectional task-agent↔coder
+			// channel pair, not two duplicate pairs.
+			const AGENT_CODER_2 = 'agent-coder-2-duplicate-role';
+			seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2', 'coder');
+
+			const stepId = `step-dedup-${Date.now()}`;
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Duplicate Role Test',
+				steps: [
+					{
+						id: stepId,
+						name: 'Two Coders Same Role',
+						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_CODER_2 }],
+					},
+				],
+				transitions: [],
+				startStepId: stepId,
+				rules: [],
+			});
+
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			const updatedRun = workflowRunRepo.getRun(run.id)!;
+			const resolvedChannels = (updatedRun.config as Record<string, unknown> | undefined)
+				?._resolvedChannels as Array<Record<string, unknown>>;
+			expect(Array.isArray(resolvedChannels)).toBe(true);
+
+			// Should have exactly ONE task-agent→coder channel (not two)
+			const taskAgentToCoderChannels = resolvedChannels.filter(
+				(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
+			);
+			expect(taskAgentToCoderChannels).toHaveLength(1);
+
+			// Should have exactly ONE coder→task-agent channel (not two)
+			const coderToTaskAgentChannels = resolvedChannels.filter(
+				(ch) => ch.fromRole === 'coder' && ch.toRole === 'task-agent'
+			);
+			expect(coderToTaskAgentChannels).toHaveLength(1);
+		});
+
 		test('storeResolvedChannels: advancing from channel step to no-channel step replaces topology', async () => {
 			// Step A has channels; Step B does not. After advancing, Step B's default
 			// task-agent channels replace the prior step's channels.

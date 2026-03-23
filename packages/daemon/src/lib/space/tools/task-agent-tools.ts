@@ -654,7 +654,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					});
 				}
 
-				// Workflow advanced to the next step
+				// Workflow advanced to the next step — resolve and store channel topology for the new step.
+				// This ensures Task Agent can send_message to agents in the new step's topology.
+				const run = workflowRunRepo.getRun(workflowRunId);
+				if (run) {
+					runtime.resolveAndStoreChannels(workflowRunId, run.spaceId, nextStep);
+				}
+
 				return jsonResult({
 					success: true,
 					terminal: false,

@@ -362,7 +362,7 @@ export class SpaceRuntime {
 		// Resolve channel topology for the start step and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
-		this.storeResolvedChannels(run.id, space.id, startStep);
+		this.resolveAndStoreChannels(run.id, space.id, startStep);
 
 		return { run, tasks };
 	}
@@ -780,7 +780,7 @@ export class SpaceRuntime {
 			} else {
 				// Resolve channel topology for the new step.
 				// TODO: Milestone 6: pass to session group creation instead of run config.
-				this.storeResolvedChannels(runId, meta.spaceId, newStep);
+				this.resolveAndStoreChannels(runId, meta.spaceId, newStep);
 			}
 		} catch (err) {
 			if (!(err instanceof WorkflowTransitionError)) {
@@ -1010,7 +1010,7 @@ export class SpaceRuntime {
 	 * Steps with no `channels` declaration still get default task-agent channels,
 	 * so the Task Agent always has peer communication ability.
 	 */
-	private storeResolvedChannels(runId: string, spaceId: string, step: WorkflowStep): void {
+	resolveAndStoreChannels(runId: string, spaceId: string, step: WorkflowStep): void {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 
@@ -1025,12 +1025,18 @@ export class SpaceRuntime {
 		// These are added regardless of whether user-declared channels exist, ensuring the
 		// Task Agent can always communicate with step agents.
 		const stepAgents = resolveStepAgents(step);
-		const nodeRoles = stepAgents
-			.map((sa) => {
-				const spaceAgent = allAgents.find((a) => a.id === sa.agentId);
-				return spaceAgent?.role ?? null;
-			})
-			.filter((role): role is string => role !== null);
+		// Deduplicate roles — a step may have multiple agents with the same role,
+		// but we only need one bidirectional channel pair per unique role.
+		const nodeRoles = [
+			...new Set(
+				stepAgents
+					.map((sa) => {
+						const spaceAgent = allAgents.find((a) => a.id === sa.agentId);
+						return spaceAgent?.role ?? null;
+					})
+					.filter((role): role is string => role !== null)
+			),
+		];
 
 		// Build a set of existing channel pairs (fromRole→toRole) to avoid duplicates
 		const existingPairs = new Set<string>();
@@ -1038,9 +1044,12 @@ export class SpaceRuntime {
 			existingPairs.add(`${ch.fromRole}→${ch.toRole}`);
 		}
 
-		// Generate default task-agent ↔ node bidirectional channels
+		// Generate default task-agent ↔ node bidirectional channels.
+		// agentId fields use the role string as a placeholder — ChannelResolver.canSend()
+		// only checks fromRole/toRole, so the actual agentId value does not affect routing.
+		// If agentId enforcement is added in the future, this placeholder should be replaced
+		// with the actual agent's ID (and this comment updated).
 		const defaultChannels: typeof userResolved = [];
-		const TASK_AGENT_ID = 'task-agent';
 
 		for (const nodeRole of nodeRoles) {
 			// task-agent → node (if not already declared)
@@ -1048,8 +1057,8 @@ export class SpaceRuntime {
 				defaultChannels.push({
 					fromRole: 'task-agent',
 					toRole: nodeRole,
-					fromAgentId: TASK_AGENT_ID,
-					toAgentId: nodeRole, // Use role as agentId placeholder; canSend only checks roles
+					fromAgentId: 'task-agent',
+					toAgentId: nodeRole,
 					direction: 'one-way',
 					isHubSpoke: false,
 				});
@@ -1059,8 +1068,8 @@ export class SpaceRuntime {
 				defaultChannels.push({
 					fromRole: nodeRole,
 					toRole: 'task-agent',
-					fromAgentId: nodeRole, // Use role as agentId placeholder
-					toAgentId: TASK_AGENT_ID,
+					fromAgentId: nodeRole,
+					toAgentId: 'task-agent',
 					direction: 'one-way',
 					isHubSpoke: false,
 				});
