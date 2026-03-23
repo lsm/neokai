@@ -62,7 +62,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			start_step_id TEXT,
+			start_node_id TEXT,
 			config TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
@@ -73,7 +73,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_workflow_steps (
+		CREATE TABLE IF NOT EXISTS space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -91,16 +91,16 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
-			from_step_id TEXT NOT NULL,
-			to_step_id TEXT NOT NULL,
+			from_node_id TEXT NOT NULL,
+			to_node_id TEXT NOT NULL,
 			condition TEXT,
 			order_index INTEGER NOT NULL DEFAULT 0,
 			is_cyclic INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+			FOREIGN KEY (from_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -112,7 +112,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			current_step_index INTEGER NOT NULL DEFAULT 0,
-			current_step_id TEXT,
+			current_node_id TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
 				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
 			config TEXT,
@@ -143,7 +143,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(assigned_agent IN ('coder', 'general')),
 			custom_agent_id TEXT,
 			workflow_run_id TEXT,
-			workflow_step_id TEXT,
+			workflow_node_id TEXT,
 			created_by_task_id TEXT,
 			goal_id TEXT,
 			progress INTEGER,
@@ -165,7 +165,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
 			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
-			FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
+			FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
 		)
 	`);
 
@@ -176,7 +176,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			name TEXT NOT NULL,
 			description TEXT,
 			workflow_run_id TEXT,
-			current_step_id TEXT,
+			current_node_id TEXT,
 			task_id TEXT,
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'completed', 'failed')),

@@ -2607,7 +2607,8 @@ function runMigration44(db: BunDatabase): void {
  * Uses create-copy-drop-rename pattern for SQLite compatibility.
  */
 function runMigration45(db: BunDatabase): void {
-	// Skip if space_workflow_steps table doesn't exist (fresh database)
+	// Skip if space_workflow_steps was already renamed to space_workflow_nodes,
+	// or if the spaces feature was never enabled on this DB.
 	if (!tableExists(db, 'space_workflow_steps')) {
 		return;
 	}
