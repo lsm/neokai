@@ -790,7 +790,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				message:
 					`Group has ${members.length} member(s). ` +
 					(resolver.isEmpty()
-						? 'No channel topology declared — all messaging is unrestricted.'
+						? 'No channel topology declared.'
 						: `Channel topology is active and enforced.`),
 			});
 		},

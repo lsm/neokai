@@ -290,8 +290,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`\`permittedTargets\` — roles they are allowed to message per the declared topology.\n`
 	);
 	sections.push(
-		`All agents (including the Task Agent) use \`send_message\` for peer communication. ` +
-			`Channel topology is enforced uniformly — no agent has a special bypass.\n`
+		`Channel topology is enforced uniformly across all agents. ` +
+			`(Note: peer messaging via \`send_message\` will be added in a follow-up task.)\n`
 	);
 
 	// ---- Task context -------------------------------------------------------

@@ -1,5 +1,5 @@
 /**
- * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 5
+ * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 6
  * tools available to the Task Agent session.
  *
  * Tools:
@@ -8,6 +8,7 @@
  *   advance_workflow      — advance the workflow to the next step after the current step completes
  *   report_result         — report the final task result (terminal tool)
  *   request_human_input   — pause execution and surface a question to the human user
+ *   list_group_members    — list all members of the current task's session group
  *
  * This file is consumed by the MCP server factory (Milestone 3). It intentionally
  * contains only schema definitions — no runtime logic or side effects.
