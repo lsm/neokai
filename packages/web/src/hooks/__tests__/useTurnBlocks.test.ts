@@ -931,5 +931,160 @@ describe('useTurnBlocks', () => {
 			expect(turn.assistantCount).toBe(3); // all assistant-type messages
 			expect(turn.messageCount).toBe(4);
 		});
+
+		it('two-agent worker→leader→worker scenario produces three turn blocks', () => {
+			const workerMsg1 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker' });
+			const leaderMsg = makeAgentMessage({ authorRole: 'leader', authorSessionId: 'leader' });
+			const workerMsg2 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker' });
+
+			const items = renderUseTurnBlocks([workerMsg1, leaderMsg, workerMsg2], true);
+
+			expect(items).toHaveLength(3);
+			expect(asTurn(items[0]).agentRole).toBe('coder');
+			expect(asTurn(items[1]).agentRole).toBe('leader');
+			expect(asTurn(items[2]).agentRole).toBe('coder');
+			// Only the last turn is active
+			expect(asTurn(items[0]).isActive).toBe(false);
+			expect(asTurn(items[1]).isActive).toBe(false);
+			expect(asTurn(items[2]).isActive).toBe(true);
+		});
+	});
+
+	// ── Real-time delta ──────────────────────────────────────────────────────
+
+	describe('real-time delta', () => {
+		it('adding a message to the same session extends the existing turn', () => {
+			const msg1 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' });
+			const msg2 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' });
+
+			// Initial render with one message
+			const { result, rerender } = renderHook(
+				({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
+				{ initialProps: { m: [msg1], tail: true } }
+			);
+			expect(result.current).toHaveLength(1);
+			expect(asTurn(result.current[0]).messageCount).toBe(1);
+
+			// Add second message from same session
+			rerender({ m: [msg1, msg2], tail: true });
+			expect(result.current).toHaveLength(1); // still one turn
+			expect(asTurn(result.current[0]).messageCount).toBe(2);
+		});
+
+		it('adding a message from a new session starts a new turn', () => {
+			const msg1 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' });
+			const msg2 = makeAgentMessage({ authorRole: 'leader', authorSessionId: 'sess-2' });
+
+			const { result, rerender } = renderHook(
+				({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
+				{ initialProps: { m: [msg1], tail: true } }
+			);
+			expect(result.current).toHaveLength(1);
+
+			// Add message from a different session
+			rerender({ m: [msg1, msg2], tail: true });
+			expect(result.current).toHaveLength(2); // two turns now
+			expect(asTurn(result.current[0]).sessionId).toBe('sess-1');
+			expect(asTurn(result.current[1]).sessionId).toBe('sess-2');
+		});
+
+		it('new turn becomes active and previous turn becomes inactive after session switch', () => {
+			const msg1 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' });
+			const msg2 = makeAgentMessage({ authorRole: 'leader', authorSessionId: 'sess-2' });
+
+			const { result, rerender } = renderHook(
+				({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
+				{ initialProps: { m: [msg1], tail: true } }
+			);
+			// Initially first turn is active
+			expect(asTurn(result.current[0]).isActive).toBe(true);
+
+			// After session switch, first turn inactive, second is active
+			rerender({ m: [msg1, msg2], tail: true });
+			expect(asTurn(result.current[0]).isActive).toBe(false);
+			expect(asTurn(result.current[1]).isActive).toBe(true);
+		});
+
+		it('previewMessage updates to the latest message in the turn as messages stream in', () => {
+			const msg1 = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-1',
+				uuid: 'uuid-first',
+			});
+			const msg2 = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-1',
+				uuid: 'uuid-latest',
+			});
+
+			const { result, rerender } = renderHook(
+				({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
+				{ initialProps: { m: [msg1], tail: true } }
+			);
+			// Preview is the only message initially
+			const preview1 = asTurn(result.current[0]).previewMessage;
+			expect(preview1?.uuid).toBe('uuid-first');
+
+			// After streaming new message, preview updates to the latest
+			rerender({ m: [msg1, msg2], tail: true });
+			const preview2 = asTurn(result.current[0]).previewMessage;
+			expect(preview2?.uuid).toBe('uuid-latest');
+		});
+
+		it('mid-turn runtime buffering is stable across incremental re-renders', () => {
+			// Simulates a status message arriving mid-turn during streaming:
+			// Step 1: [agentMsg1] — one active turn
+			// Step 2: [agentMsg1, statusMsg] — still one turn + one buffered runtime
+			// Step 3: [agentMsg1, statusMsg, agentMsg1b] — same session: turn extended, runtime after it
+			// Step 4: [agentMsg1, statusMsg, agentMsg1b, agentMsg2] — new session: two turns with runtime between
+
+			const agentMsg1 = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'worker',
+				createdAt: 1000,
+			});
+			const statusMsg = makeStatusMessage({ createdAt: 2000 });
+			const agentMsg1b = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'worker',
+				createdAt: 3000,
+			});
+			const agentMsg2 = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'leader',
+				createdAt: 4000,
+			});
+
+			const { result, rerender } = renderHook(
+				({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
+				{ initialProps: { m: [agentMsg1], tail: true } }
+			);
+
+			// Step 1: one active turn
+			expect(result.current).toHaveLength(1);
+			expect(asTurn(result.current[0]).isActive).toBe(true);
+
+			// Step 2: status mid-stream — still one turn, runtime buffered after it
+			rerender({ m: [agentMsg1, statusMsg], tail: true });
+			expect(result.current).toHaveLength(2);
+			expect(result.current[0].type).toBe('turn');
+			expect(result.current[1].type).toBe('runtime');
+
+			// Step 3: same session appends — turn extends, runtime still follows
+			rerender({ m: [agentMsg1, statusMsg, agentMsg1b], tail: true });
+			expect(result.current).toHaveLength(2);
+			expect(result.current[0].type).toBe('turn');
+			expect(asTurn(result.current[0]).messageCount).toBe(2);
+			expect(result.current[1].type).toBe('runtime');
+
+			// Step 4: new session — two turns with runtime between them
+			rerender({ m: [agentMsg1, statusMsg, agentMsg1b, agentMsg2], tail: true });
+			expect(result.current).toHaveLength(3);
+			expect(result.current[0].type).toBe('turn');
+			expect(result.current[1].type).toBe('runtime');
+			expect(result.current[2].type).toBe('turn');
+			expect(asTurn(result.current[2]).sessionId).toBe('leader');
+			expect(asTurn(result.current[2]).isActive).toBe(true);
+		});
 	});
 });
