@@ -454,7 +454,7 @@ describe('Space Agent RPC Handlers', () => {
 			insertWorkflowStep(db, 'step-3', 'wf-3', agentId);
 
 			// Remove the step reference by setting agent_id to NULL
-			db.prepare(`UPDATE space_workflow_steps SET agent_id = NULL WHERE id = 'step-3'`).run();
+			db.prepare(`UPDATE space_workflow_nodes SET agent_id = NULL WHERE id = 'step-3'`).run();
 
 			const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
 				id: agentId,

@@ -46,7 +46,7 @@ describe('SpaceTaskRepository', () => {
 
 		(db as any)
 			.prepare(
-				`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
 			)
 			.run(workflowStepId, workflowId, 'Step 1', 0, now, now);
 	});

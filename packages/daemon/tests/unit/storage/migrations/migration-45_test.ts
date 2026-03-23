@@ -915,7 +915,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 
 		// Verify M38 column (is_cyclic) preserved
 		db.prepare(
-			`INSERT INTO space_workflow_transitions (id, workflow_id, from_step_id, to_step_id, is_cyclic, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_transitions (id, workflow_id, from_node_id, to_node_id, is_cyclic, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		).run('trans-1', 'wf-1', 'step-1', 'step-1', 1, 0, now, now);
 		const trans = db
 			.prepare(`SELECT is_cyclic FROM space_workflow_transitions WHERE id='trans-1'`)
