@@ -18,3 +18,6 @@ export type { RoomSettingsProps } from './RoomSettings';
 // @public - Library export
 export { RoomAgents } from './RoomAgents';
 export type { RoomAgentsProps } from './RoomAgents';
+// @public - Library export
+export { TurnSummaryBlock } from './TurnSummaryBlock';
+export type { TurnSummaryBlockProps } from './TurnSummaryBlock';
