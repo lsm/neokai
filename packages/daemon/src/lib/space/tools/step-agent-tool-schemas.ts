@@ -1,11 +1,10 @@
 /**
- * Step Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 3
+ * Step Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 2
  * peer communication tools available to step agent sub-sessions.
  *
  * Tools:
- *   list_peers          — list other group members with their roles, statuses, and permitted channels
- *   send_message       — primary channel-validated direct messaging tool
- *   request_peer_input  — fallback Task Agent mediated messaging tool
+ *   list_peers   — list other group members with their roles, statuses, and permitted channels
+ *   send_message — channel-validated direct messaging tool
  *
  * This file contains only schema definitions — no runtime logic or side effects.
  *
@@ -42,9 +41,6 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
  *   - Point-to-point: `target: 'coder'`
  *   - Broadcast to all permitted: `target: '*'`
  *   - Multicast: `target: ['coder', 'reviewer']`
- *
- * Returns an error with available channels and suggests `request_peer_input` when
- * the channel topology does not permit the requested direction.
  */
 export const SendMessageSchema = z.object({
 	/**
@@ -68,37 +64,6 @@ export const SendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
 // ---------------------------------------------------------------------------
-// request_peer_input
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `request_peer_input` input.
- *
- * Fallback Task Agent mediated communication tool. Available when no direct channel
- * is declared for the target role, or when `send_message` fails validation.
- *
- * This is ASYNC and NON-BLOCKING — the tool returns an acknowledgment immediately.
- * The peer's answer will arrive as a separate user turn prefixed with:
- *   `[Peer response from {role}]: ...`
- *
- * Do NOT wait for an immediate reply. Continue working and handle the peer's
- * response when it arrives in the conversation.
- */
-export const RequestPeerInputSchema = z.object({
-	/** Role of the peer to ask (e.g., 'reviewer', 'coder'). */
-	target_role: z
-		.string()
-		.describe("Role of the peer to request input from (e.g., 'reviewer', 'coder')"),
-	/** The question or request to send to the peer via the Task Agent. */
-	question: z
-		.string()
-		.min(1)
-		.describe('The question or request to relay to the peer through the Task Agent'),
-});
-
-export type RequestPeerInputInput = z.infer<typeof RequestPeerInputSchema>;
-
-// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -108,7 +73,6 @@ export type RequestPeerInputInput = z.infer<typeof RequestPeerInputSchema>;
 export const STEP_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
-	request_peer_input: RequestPeerInputSchema,
 } as const;
 
 export type StepAgentToolName = keyof typeof STEP_AGENT_TOOL_SCHEMAS;

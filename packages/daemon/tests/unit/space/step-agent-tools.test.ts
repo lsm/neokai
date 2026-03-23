@@ -2,9 +2,8 @@
  * Unit tests for createStepAgentToolHandlers()
  *
  * Covers all step agent peer communication tools:
- *   list_peers          — list peers excluding self and task-agent
- *   send_message        — channel-validated direct messaging (renamed from send_feedback)
- *   request_peer_input  — Task Agent mediated async fallback
+ *   list_peers   — list peers excluding self and task-agent
+ *   send_message — channel-validated direct messaging
  *
  * Tests use a real SQLite database (via runMigrations) and mock message
  * injectors so no real agent sessions are created.
@@ -182,7 +181,6 @@ function makeConfig(
 	overrides: Partial<StepAgentToolsConfig> = {}
 ): StepAgentToolsConfig {
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
-	const taskAgentMessages: string[] = [];
 
 	return {
 		mySessionId: ctx.coderSessionId,
@@ -194,9 +192,6 @@ function makeConfig(
 		workflowRunRepo: ctx.workflowRunRepo,
 		messageInjector: async (sessionId, message) => {
 			injectedMessages.push({ sessionId, message });
-		},
-		injectToTaskAgent: async (message) => {
-			taskAgentMessages.push(message);
 		},
 		...overrides,
 	};
@@ -341,7 +336,6 @@ describe('step-agent-tools: send_message', () => {
 		expect(data.success).toBe(false);
 		expect(data.error).toContain("does not permit 'coder' to send to: reviewer");
 		expect(data.unauthorizedRoles).toContain('reviewer');
-		expect(data.suggestion).toContain('request_peer_input');
 	});
 
 	test('returns error when no channels declared at all (empty topology blocks send_message)', async () => {
@@ -350,11 +344,9 @@ describe('step-agent-tools: send_message', () => {
 		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
 		const data = JSON.parse(result.content[0].text);
 
-		// With no declared channels, send_message is unavailable — all communication
-		// must go through request_peer_input (Task Agent mediated).
+		// With no declared channels, send_message is unavailable.
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('No channel topology declared');
-		expect(data.suggestion).toBe('request_peer_input');
 	});
 
 	test('broadcast (*) succeeds and delivers to all permitted targets', async () => {
@@ -388,10 +380,9 @@ describe('step-agent-tools: send_message', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain("No permitted targets for role 'coder'");
-		expect(data.suggestion).toBe('request_peer_input');
 	});
 
-	test('broadcast (*) with empty topology returns suggestion to use request_peer_input', async () => {
+	test('broadcast (*) with empty topology returns error', async () => {
 		// No channels declared at all
 		const config = makeConfig(ctx);
 		const handlers = createStepAgentToolHandlers(config);
@@ -400,7 +391,6 @@ describe('step-agent-tools: send_message', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('No channel topology declared');
-		expect(data.suggestion).toBe('request_peer_input');
 	});
 
 	test('multicast delivers to all specified target roles', async () => {
@@ -676,120 +666,6 @@ describe('step-agent-tools: send_message', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: request_peer_input
-// ---------------------------------------------------------------------------
-
-describe('step-agent-tools: request_peer_input', () => {
-	let ctx: TestCtx;
-
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('routes request to Task Agent and returns acknowledgment', async () => {
-		const taskAgentMessages: string[] = [];
-		const config = makeConfig(ctx, {
-			injectToTaskAgent: async (msg) => {
-				taskAgentMessages.push(msg);
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.request_peer_input({
-			target_role: 'reviewer',
-			question: 'Can you review my PR?',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(data.targetRole).toBe('reviewer');
-		expect(data.async).toBe(true);
-		expect(data.message).toContain('async');
-		expect(data.message).toContain('[Peer response from reviewer]:');
-		expect(taskAgentMessages).toHaveLength(1);
-		expect(taskAgentMessages[0]).toContain("from 'coder'");
-		expect(taskAgentMessages[0]).toContain("to 'reviewer'");
-		expect(taskAgentMessages[0]).toContain('Can you review my PR?');
-	});
-
-	test('formats routing message with session ID prefix', async () => {
-		let capturedMessage = '';
-		const config = makeConfig(ctx, {
-			injectToTaskAgent: async (msg) => {
-				capturedMessage = msg;
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-		await handlers.request_peer_input({
-			target_role: 'reviewer',
-			question: 'Is the code correct?',
-		});
-
-		expect(capturedMessage).toContain(`session ${ctx.coderSessionId}`);
-		expect(capturedMessage).toContain('reviewer');
-		expect(capturedMessage).toContain('[Peer response from reviewer]:');
-	});
-
-	test('returns error when Task Agent injection fails', async () => {
-		const config = makeConfig(ctx, {
-			injectToTaskAgent: async () => {
-				throw new Error('Task Agent unavailable');
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.request_peer_input({
-			target_role: 'reviewer',
-			question: 'Help?',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('Task Agent unavailable');
-	});
-
-	test('is available when no channels declared (fallback mode)', async () => {
-		// No workflowRunId means no channels declared — request_peer_input should work
-		const taskAgentMessages: string[] = [];
-		const config = makeConfig(ctx, {
-			injectToTaskAgent: async (msg) => {
-				taskAgentMessages.push(msg);
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.request_peer_input({
-			target_role: 'coder',
-			question: 'What should I do?',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(taskAgentMessages).toHaveLength(1);
-	});
-
-	test('sends acknowledgment regardless of whether target role exists in group', async () => {
-		// request_peer_input does NOT validate group membership — that's the Task Agent's job
-		const config = makeConfig(ctx, {
-			injectToTaskAgent: async () => {
-				/* no-op */
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.request_peer_input({
-			target_role: 'nonexistent-role',
-			question: 'Are you there?',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		// request_peer_input does not validate target role existence
-		expect(data.success).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
 // Tests: createStepAgentMcpServer (factory)
 // ---------------------------------------------------------------------------
 
@@ -841,10 +717,7 @@ describe('step-agent-tools: system prompt includes peer communication section', 
 
 		expect(prompt).toContain('Peer Communication');
 		expect(prompt).toContain('send_message');
-		expect(prompt).toContain('request_peer_input');
 		expect(prompt).toContain('list_peers');
 		expect(prompt).toContain('channel-validated');
-		expect(prompt).toContain('async and non-blocking');
-		expect(prompt).toContain('[Peer response from {role}]:');
 	});
 });

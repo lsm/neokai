@@ -158,20 +158,12 @@ describe('buildCustomAgentSystemPrompt', () => {
 		expect(prompt).toContain('pullrequestreview');
 	});
 
-	it('includes peer communication section with all three tools', () => {
+	it('includes peer communication section with list_peers and send_message', () => {
 		const agent = makeAgent();
 		const prompt = buildCustomAgentSystemPrompt(agent);
 		expect(prompt).toContain('Peer Communication');
 		expect(prompt).toContain('list_peers');
 		expect(prompt).toContain('send_message');
-		expect(prompt).toContain('request_peer_input');
-	});
-
-	it('explains async nature of request_peer_input', () => {
-		const agent = makeAgent();
-		const prompt = buildCustomAgentSystemPrompt(agent);
-		expect(prompt).toContain('[Peer response from {role}]:');
-		expect(prompt).toContain('async and non-blocking');
 	});
 
 	it('no role produces role-specific instructions (roles are display labels only)', () => {
