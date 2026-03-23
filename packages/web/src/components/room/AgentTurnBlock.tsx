@@ -13,6 +13,7 @@
 
 import { useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
@@ -135,7 +136,7 @@ function NestedMessageRenderer({
 					);
 				})}
 
-				{/* Text blocks - rendered like thinking block: header + preview */}
+				{/* Text blocks - use bubble style like normal session */}
 				{textBlocks.map((block, idx) => {
 					const rawText = (block as { text: string }).text;
 					const text = rawText.trim();
@@ -147,42 +148,26 @@ function NestedMessageRenderer({
 					return (
 						<div
 							key={`text-${idx}`}
-							class="border rounded-lg overflow-hidden bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
+							class={cn(
+								messageSpacing.assistant.bubble.combined,
+								messageColors.assistant.background,
+								messageColors.assistant.text,
+								borderRadius.message.bubble,
+								'max-w-[85%] md:max-w-[70%]'
+							)}
 						>
-							<div class="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-900/20">
-								<svg
-									class="w-4 h-4 flex-shrink-0 text-green-600 dark:text-green-400"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
-								>
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-									/>
-								</svg>
-								<span class="text-sm font-semibold text-green-900 dark:text-green-100">
-									Assistant
-								</span>
-							</div>
-							<div class="relative border-t border-green-200 dark:border-green-800">
-								<div class="p-3 bg-white dark:bg-gray-900">
-									{isLast ? (
-										<div class="text-sm text-green-800 dark:text-green-200 prose prose-sm dark:prose-invert max-w-full overflow-x-auto">
-											<MarkdownRenderer content={text} />
-										</div>
-									) : (
-										<div
-											class="text-sm text-green-800 dark:text-green-200 prose prose-sm prose-p:my-0 dark:prose-invert [&>*]:my-0 whitespace-normal break-words line-clamp-1"
-											style="max-width: 100%"
-										>
-											<MarkdownRenderer content={text} />
-										</div>
-									)}
+							{isLast ? (
+								<div class="prose prose-sm max-w-full overflow-x-auto">
+									<MarkdownRenderer content={text} />
 								</div>
-							</div>
+							) : (
+								<div
+									class="prose prose-sm prose-p:my-0 [&>*]:my-0 whitespace-normal break-words line-clamp-1"
+									style="max-width: 100%"
+								>
+									<MarkdownRenderer content={text} />
+								</div>
+							)}
 						</div>
 					);
 				})}
@@ -237,18 +222,25 @@ function NestedMessageRenderer({
 			});
 
 			return (
-				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
-					{textBlocks.map((block, idx) => {
-						const blockObj = block as Record<string, unknown>;
-						return (
-							<div
-								key={idx}
-								class="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words"
-							>
-								{blockObj.text as string}
-							</div>
-						);
-					})}
+				<div class="flex justify-end">
+					<div
+						class={cn(
+							messageSpacing.user.bubble.combined,
+							messageColors.user.background,
+							messageColors.user.text,
+							borderRadius.message.bubble,
+							'max-w-[85%] md:max-w-[70%]'
+						)}
+					>
+						{textBlocks.map((block, idx) => {
+							const blockObj = block as Record<string, unknown>;
+							return (
+								<div key={idx} class="whitespace-pre-wrap break-words">
+									{blockObj.text as string}
+								</div>
+							);
+						})}
+					</div>
 				</div>
 			);
 		}
@@ -256,8 +248,19 @@ function NestedMessageRenderer({
 		// Handle string content
 		if (typeof content === 'string') {
 			return (
-				<div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words">
-					{content}
+				<div class="flex justify-end">
+					<div
+						class={cn(
+							messageSpacing.user.bubble.combined,
+							messageColors.user.background,
+							messageColors.user.text,
+							borderRadius.message.bubble,
+							'max-w-[85%] md:max-w-[70%]',
+							'whitespace-pre-wrap break-words'
+						)}
+					>
+						{content}
+					</div>
 				</div>
 			);
 		}
