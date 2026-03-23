@@ -12,6 +12,7 @@
 
 import { useMemo } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import { isTextBlock, type ContentBlock } from '@neokai/shared/sdk/type-guards';
 import {
 	parseGroupMessage,
 	type ParsedGroupMessage,
@@ -116,6 +117,19 @@ function countAssistantBlocks(msg: SDKMessage): { toolCalls: number; thinking: n
 		if (block.type === 'thinking') thinking++;
 	}
 	return { toolCalls, thinking };
+}
+
+/**
+ * Check if an assistant message has at least one text content block.
+ */
+function hasTextContent(msg: SDKMessage): boolean {
+	if (msg.type !== 'assistant') return false;
+
+	const assistantMsg = msg as { type: 'assistant'; message?: { content?: ContentBlock[] } };
+	const content = assistantMsg.message?.content;
+	if (!Array.isArray(content)) return false;
+
+	return content.some((block) => isTextBlock(block));
 }
 
 /**
@@ -332,7 +346,8 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 			const { toolCalls, thinking } = countAssistantBlocks(msg);
 			current.toolCallCount += toolCalls;
 			current.thinkingCount += thinking;
-			if (msg.type === 'assistant') current.assistantCount++;
+			// Only count assistant messages that have text content
+			if (msg.type === 'assistant' && hasTextContent(msg)) current.assistantCount++;
 
 			const toolName = extractLastToolName(msg);
 			if (toolName) current.lastAction = toolName;
