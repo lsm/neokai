@@ -167,24 +167,31 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}, [edges, stepKeyToLocalId]);
 
 	// ------------------------------------------------------------------
-	// Derived: ChannelEdge[] for Task Agent channel connections
+	// Derived: ResolvedWorkflowChannel[] for Task Agent channel connections
 	// Task Agent channels are stored on individual steps (step.channels).
 	// We extract edges from task-agent to each connected step.
 	// ------------------------------------------------------------------
 
-	const channelEdges = useMemo<{ fromStepId: 'task-agent'; toStepId: string }[]>(() => {
-		const result: { fromStepId: 'task-agent'; toStepId: string }[] = [];
+	const channelEdges = useMemo<
+		{ fromStepId: string; toStepId: string; direction: 'one-way' | 'bidirectional' }[]
+	>(() => {
+		const result: {
+			fromStepId: string;
+			toStepId: string;
+			direction: 'one-way' | 'bidirectional';
+		}[] = [];
 		for (const node of nodes) {
 			const channels = node.step.channels;
 			if (!channels) continue;
 			for (const channel of channels) {
-				// Check if this channel involves task-agent (bidirectional only)
-				const hasTaskAgent =
-					(channel.from === 'task-agent' || channel.to === 'task-agent') &&
-					channel.direction === 'bidirectional';
-				if (hasTaskAgent) {
-					// Add one edge per node (break after first matching channel)
-					result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
+				// Only include channels where task-agent is the source, and use the actual
+				// channel.direction (not hardcoded bidirectional).
+				if (channel.from === 'task-agent') {
+					result.push({
+						fromStepId: 'task-agent',
+						toStepId: node.step.localId,
+						direction: channel.direction,
+					});
 					break;
 				}
 			}
@@ -754,7 +761,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					viewportState={viewportState}
 					onViewportChange={setViewportState}
 					transitions={transitions}
-					channelEdges={channelEdges}
+					channels={channelEdges}
 					onNodeSelect={handleNodeSelect}
 					onDeleteNode={handleDeleteNode}
 					onNodePositionChange={handleNodePositionChange}
