@@ -13,6 +13,7 @@
 
 import { useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	isTextBlock,
@@ -249,21 +250,31 @@ function NestedMessageRenderer({
 export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 	const colors = getRoleColors(turn.agentRole);
 
-	// Filter out the first user message that duplicates the input prompt
-	// (same logic as SubagentBlock for consistency)
-	const filteredNestedMessages = useMemo(() => {
-		if (turn.messages.length === 0) return [];
+	// Extract the first user message as input prompt, rest are nested messages
+	const { inputMessage, nestedMessages } = useMemo(() => {
+		if (turn.messages.length === 0) return { inputMessage: null, nestedMessages: [] };
 
-		return turn.messages.filter((msg, idx) => {
-			// Only check the first message
-			if (idx !== 0) return true;
-
-			// Only filter user messages
-			if (msg.type !== 'user') return true;
-
-			return true; // Keep all user messages for now since we don't have an input prompt to compare
-		});
+		const first = turn.messages[0];
+		if (first.type === 'user') {
+			return {
+				inputMessage: first,
+				nestedMessages: turn.messages.slice(1),
+			};
+		}
+		return { inputMessage: null, nestedMessages: turn.messages };
 	}, [turn.messages]);
+
+	// Extract text content from a user message for the input section
+	const inputText = useMemo(() => {
+		if (!inputMessage || inputMessage.type !== 'user') return null;
+		const content = inputMessage.message.content;
+		if (typeof content === 'string') return content;
+		if (Array.isArray(content)) {
+			const textBlock = content.find((b) => (b as { type: string }).type === 'text');
+			return textBlock ? (textBlock as { text: string }).text : null;
+		}
+		return null;
+	}, [inputMessage]);
 
 	return (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
@@ -367,14 +378,24 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 
 			{/* Messages section - always expanded, matches SubagentBlock Messages section */}
 			<div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
+				{/* Input section */}
+				{inputText && (
+					<div class="border-b border-gray-200 dark:border-gray-700 p-3">
+						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
+						<div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
+							<MarkdownRenderer content={inputText} />
+						</div>
+					</div>
+				)}
+
 				{/* Nested messages section */}
-				{filteredNestedMessages.length > 0 && (
+				{nestedMessages.length > 0 && (
 					<div class="border-b border-gray-200 dark:border-gray-700 p-3">
 						<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-							Messages ({filteredNestedMessages.length})
+							Messages ({nestedMessages.length})
 						</div>
 						<div class="space-y-3">
-							{filteredNestedMessages.map((msg, idx) => (
+							{nestedMessages.map((msg, idx) => (
 								<NestedMessageRenderer
 									key={msg.uuid || `nested-${idx}`}
 									message={msg}
