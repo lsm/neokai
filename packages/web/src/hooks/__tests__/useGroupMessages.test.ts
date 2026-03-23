@@ -49,7 +49,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Builds a minimal SessionGroupMessage for use in tests. */
+/** Builds a minimal top-level SessionGroupMessage for use in tests. */
 function makeMessage(id: number, content = `msg-${id}`): SessionGroupMessage {
 	return {
 		id,
@@ -59,6 +59,25 @@ function makeMessage(id: number, content = `msg-${id}`): SessionGroupMessage {
 		messageType: 'text',
 		content,
 		createdAt: 1_000_000 + id,
+	};
+}
+
+/**
+ * Builds a subagent child message whose parentToolUseId ties it to a parent.
+ * The `subId` is used to give each child a unique id and a createdAt after
+ * the parent, so they sort correctly (parent at 1_000_000+parentId, children
+ * start at 2_000_000+subId to ensure they always sort after the parent).
+ */
+function makeChild(subId: number, parentToolUseId: string): SessionGroupMessage {
+	return {
+		id: `child-${subId}`,
+		groupId: 'group-1',
+		sessionId: null,
+		role: 'assistant',
+		messageType: 'text',
+		content: `child-${subId}`,
+		createdAt: 2_000_000 + subId,
+		parentToolUseId,
 	};
 }
 
@@ -731,6 +750,117 @@ describe('useGroupMessages', () => {
 
 			act(() => rerender({ isConn: true }));
 			expect(result.current.isReconnecting).toBe(false);
+		});
+	});
+
+	describe('subagent block pagination', () => {
+		it('counts subagent blocks as 1 top-level unit: 20 TL + 1 parent + 70 children all visible with pageSize=50', () => {
+			// 20 top-level messages + 1 parent (also top-level) + 70 children = 91 total.
+			// 21 top-level < pageSize=50, so all 91 messages should be visible and hasOlder=false.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 50 }));
+			const subId = lastSubscribeSubId();
+
+			const topLevel = Array.from({ length: 20 }, (_, i) => makeMessage(i + 1));
+			const parent = makeMessage(21); // top-level parent of the subagent block
+			const children = Array.from({ length: 70 }, (_, i) => makeChild(i + 1, 'tool-use-id-21'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [...topLevel, parent, ...children],
+					version: 1,
+				});
+			});
+
+			// All 91 messages visible — subagent block not split
+			expect(result.current.messages).toHaveLength(91);
+			// No older messages — 21 top-level < pageSize=50
+			expect(result.current.hasOlder).toBe(false);
+		});
+
+		it('subagent block never split: parent and all children always shown together', () => {
+			// 55 top-level messages + 1 parent + 10 children = 66 total, 56 top-level.
+			// pageSize=50 → hide oldest 6 top-level; parent (top-level #56) is visible
+			// so all 10 children must also be visible.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 50 }));
+			const subId = lastSubscribeSubId();
+
+			const topLevel = Array.from({ length: 55 }, (_, i) => makeMessage(i + 1));
+			const parent = makeMessage(56);
+			const children = Array.from({ length: 10 }, (_, i) => makeChild(i + 1, 'tool-use-id-56'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [...topLevel, parent, ...children],
+					version: 1,
+				});
+			});
+
+			// 56 top-level, pageSize=50 → 6 oldest top-level hidden
+			expect(result.current.hasOlder).toBe(true);
+			// Visible: 50 top-level (messages 7-56) + 10 children = 60
+			expect(result.current.messages).toHaveLength(60);
+			// Parent (msg 56) must be in the visible window
+			expect(result.current.messages.some((m) => m.id === 56)).toBe(true);
+			// All 10 children must be in the visible window
+			const visibleChildIds = result.current.messages
+				.filter((m) => (m as SessionGroupMessage).parentToolUseId === 'tool-use-id-56')
+				.map((m) => m.id);
+			expect(visibleChildIds).toHaveLength(10);
+		});
+
+		it('loadEarlier reveals top-level messages and their children together', () => {
+			// 4 top-level + 1 parent + 5 children = 10 total, 5 top-level.
+			// pageSize=3 → hide 2 oldest top-level; show newest 3 top-level + 5 children.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 3 }));
+			const subId = lastSubscribeSubId();
+
+			const topLevel = Array.from({ length: 4 }, (_, i) => makeMessage(i + 1));
+			const parent = makeMessage(5);
+			const children = Array.from({ length: 5 }, (_, i) => makeChild(i + 1, 'tool-use-id-5'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [...topLevel, parent, ...children],
+					version: 1,
+				});
+			});
+
+			// 5 top-level, pageSize=3 → 2 hidden (msg 1 and msg 2)
+			expect(result.current.hasOlder).toBe(true);
+			// Visible: msg 3, msg 4, parent (msg 5) + 5 children = 8
+			expect(result.current.messages).toHaveLength(8);
+
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			// After loadEarlier: all 10 messages visible
+			expect(result.current.messages).toHaveLength(10);
+			expect(result.current.hasOlder).toBe(false);
+		});
+
+		it('hasOlder is false when all messages are subagent children of a single visible parent', () => {
+			// 1 top-level parent + 20 children — all fit in pageSize=5 top-level (only 1 TL)
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 5 }));
+			const subId = lastSubscribeSubId();
+
+			const parent = makeMessage(1);
+			const children = Array.from({ length: 20 }, (_, i) => makeChild(i + 1, 'tool-use-id-1'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [parent, ...children],
+					version: 1,
+				});
+			});
+
+			// 1 top-level < pageSize=5 → all 21 visible, hasOlder=false
+			expect(result.current.messages).toHaveLength(21);
+			expect(result.current.hasOlder).toBe(false);
 		});
 	});
 

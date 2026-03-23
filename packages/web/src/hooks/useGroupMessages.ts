@@ -35,6 +35,13 @@ export interface SessionGroupMessage {
 	messageType: string;
 	content: string;
 	createdAt: number;
+	/**
+	 * For SDK messages that are subagent tool results, this is the `parent_tool_use_id`
+	 * from the SDK message JSON — i.e. the `tool_use` block that spawned the subagent.
+	 * Null/undefined for top-level messages and all event rows.
+	 * Used by the pagination logic to keep subagent blocks intact across page boundaries.
+	 */
+	parentToolUseId?: string | null;
 }
 
 /** Default number of messages shown initially and per "load earlier" page. */
@@ -67,11 +74,19 @@ interface PaginationState {
 	allMessages: SessionGroupMessage[];
 	/**
 	 * Number of messages at the start of `allMessages` that are hidden.
-	 * Starts at max(0, snapshot.length - pageSize) so only the newest page shows.
+	 * The cutoff is always placed at a top-level message boundary so that subagent
+	 * blocks (parentToolUseId !== null) are never split across pages.
 	 * Updated atomically with `allMessages` so that removed deltas in the hidden
 	 * region never shift the visible window unexpectedly.
 	 */
 	hiddenOlderCount: number;
+	/**
+	 * Number of top-level messages (parentToolUseId is null/undefined) in the hidden
+	 * region. `hasOlder` is derived from this value so that the "Load earlier" button
+	 * only appears when there are actual top-level messages to reveal, not just orphaned
+	 * subagent children.
+	 */
+	hiddenTopLevelCount: number;
 }
 
 type PaginationAction =
@@ -92,57 +107,110 @@ function sortMessages(msgs: SessionGroupMessage[]): SessionGroupMessage[] {
 	});
 }
 
+/** Returns true if the message is a top-level message (not a subagent child). */
+function isTopLevel(msg: SessionGroupMessage): boolean {
+	return !msg.parentToolUseId;
+}
+
+/**
+ * Returns the index into `msgs` at which the visible window starts, such that
+ * exactly `pageSize` **top-level** messages are visible (at or after that index).
+ * The cut always falls on a top-level message boundary so subagent blocks are
+ * never split across pages — all children of a hidden parent are also hidden.
+ *
+ * Returns 0 when there are fewer than `pageSize` top-level messages (show all).
+ */
+function topLevelCutoffIndex(msgs: SessionGroupMessage[], pageSize: number): number {
+	let tlCount = 0;
+	for (let i = msgs.length - 1; i >= 0; i--) {
+		if (isTopLevel(msgs[i])) {
+			tlCount++;
+			if (tlCount >= pageSize) {
+				return i;
+			}
+		}
+	}
+	return 0;
+}
+
+/** Counts top-level messages in `msgs`. */
+function countTopLevel(msgs: SessionGroupMessage[]): number {
+	return msgs.reduce((n, m) => (isTopLevel(m) ? n + 1 : n), 0);
+}
+
 function paginationReducer(state: PaginationState, action: PaginationAction): PaginationState {
 	switch (action.type) {
 		case 'reset':
-			return { allMessages: [], hiddenOlderCount: 0 };
+			return { allMessages: [], hiddenOlderCount: 0, hiddenTopLevelCount: 0 };
 
 		case 'snapshot': {
 			const sorted = sortMessages(action.rows);
+			// Cut at a top-level boundary so subagent blocks are never split.
+			const cutoff = topLevelCutoffIndex(sorted, action.pageSize);
 			return {
 				allMessages: sorted,
-				hiddenOlderCount: Math.max(0, sorted.length - action.pageSize),
+				hiddenOlderCount: cutoff,
+				hiddenTopLevelCount: countTopLevel(sorted.slice(0, cutoff)),
 			};
 		}
 
 		case 'delta': {
 			let msgs = state.allMessages;
 			let hidden = state.hiddenOlderCount;
+			let hiddenTL = state.hiddenTopLevelCount;
 
 			if (action.removed && action.removed.length > 0) {
 				const removedIds = new Set(action.removed.map((row) => String(row.id)));
 				// Count how many removed messages were in the hidden region so we can
-				// adjust hiddenOlderCount and keep the same visible window.
-				const removedInHidden = msgs
-					.slice(0, hidden)
-					.filter((row) => removedIds.has(String(row.id))).length;
+				// adjust hiddenOlderCount (and hiddenTopLevelCount) atomically to keep
+				// the visible window stable.
+				const hiddenSlice = msgs.slice(0, hidden);
+				const removedInHidden = hiddenSlice.filter((row) => removedIds.has(String(row.id)));
+				const removedTLInHidden = countTopLevel(removedInHidden);
 				msgs = msgs.filter((row) => !removedIds.has(String(row.id)));
-				hidden = Math.max(0, hidden - removedInHidden);
+				hidden = Math.max(0, hidden - removedInHidden.length);
+				hiddenTL = Math.max(0, hiddenTL - removedTLInHidden);
 			}
 
 			if (action.updated && action.updated.length > 0) {
 				const updatedById = new Map(action.updated.map((row) => [String(row.id), row]));
 				msgs = msgs.map((row) => updatedById.get(String(row.id)) ?? row);
+				// Recompute hiddenTopLevelCount in case parentToolUseId changed on an updated row.
+				hiddenTL = countTopLevel(msgs.slice(0, hidden));
 			}
 
 			if (action.added && action.added.length > 0) {
 				// New messages are appended to the end — hiddenOlderCount does not grow
-				// so they are always visible immediately.
+				// so they are always visible immediately. hiddenTopLevelCount is unaffected.
 				msgs = [...msgs, ...action.added];
 			}
 
-			return { allMessages: sortMessages(msgs), hiddenOlderCount: hidden };
+			return {
+				allMessages: sortMessages(msgs),
+				hiddenOlderCount: hidden,
+				hiddenTopLevelCount: hiddenTL,
+			};
 		}
 
-		case 'loadEarlier':
+		case 'loadEarlier': {
+			// Reveal the next pageSize top-level messages (and all their children) from
+			// the hidden region by finding a new top-level cut within the hidden slice.
+			const hiddenSlice = state.allMessages.slice(0, state.hiddenOlderCount);
+			const newCutoff = topLevelCutoffIndex(hiddenSlice, action.pageSize);
 			return {
 				...state,
-				hiddenOlderCount: Math.max(0, state.hiddenOlderCount - action.pageSize),
+				hiddenOlderCount: newCutoff,
+				hiddenTopLevelCount: countTopLevel(hiddenSlice.slice(0, newCutoff)),
 			};
+		}
 	}
 }
 
-const INITIAL_PAGINATION_STATE: PaginationState = { allMessages: [], hiddenOlderCount: 0 };
+const INITIAL_PAGINATION_STATE: PaginationState = {
+	allMessages: [],
+	hiddenOlderCount: 0,
+	hiddenTopLevelCount: 0,
+};
 
 // ─── Subscription counter ─────────────────────────────────────────────────────
 
@@ -207,7 +275,7 @@ export function useGroupMessages(
 
 	const { request, onEvent, isConnected } = useMessageHub();
 
-	const [{ allMessages, hiddenOlderCount }, dispatch] = useReducer(
+	const [{ allMessages, hiddenOlderCount, hiddenTopLevelCount }, dispatch] = useReducer(
 		paginationReducer,
 		INITIAL_PAGINATION_STATE
 	);
@@ -327,7 +395,7 @@ export function useGroupMessages(
 		messages,
 		isLoading,
 		isReconnecting: !isConnected && groupId !== null,
-		hasOlder: hiddenOlderCount > 0,
+		hasOlder: hiddenTopLevelCount > 0,
 		loadEarlier,
 	};
 }
