@@ -5,18 +5,20 @@
  * Scoped to toggle behavior and localStorage persistence — detailed rendering
  * is covered by unit tests.
  *
- * Setup: creates a room+task via RPC (accepted infrastructure pattern).
+ * Setup: creates a room+task via RPC in beforeEach (accepted infrastructure pattern).
  * Cleanup: deletes the room via RPC in afterEach.
  *
- * All test actions go through the UI (clicks, navigation).
+ * All test actions go through the UI (clicks, navigation, keyboard).
  * All assertions verify visible DOM state via data-testid selectors.
  *
- * Note on slide-out panel: SlideOutPanel is always mounted in the DOM and uses
- * CSS transforms (translate-x-full) to hide. Playwright's toBeInViewport() is
- * used to verify visibility since toBeVisible() does not detect off-screen
- * transforms. Slide-out open/close tests require turn blocks which need real
- * agent sessions — those tests are skipped when no turn blocks are available
- * (turn blocks cannot be seeded via RPC without real session records in SQLite).
+ * Slide-out panel note:
+ * SlideOutPanel is always mounted in the DOM and uses CSS transforms
+ * (translate-x-full) to hide rather than display:none. Assertions use
+ * toHaveClass(/translate-x-full/) to verify closed state directly rather
+ * than toBeInViewport() which is viewport-size sensitive. Open/close behavior
+ * (clicking turn blocks) requires real agent session records to satisfy the
+ * sdk_messages FK constraint — that coverage is documented as future work when
+ * real session seeding infrastructure is available.
  */
 
 import { test, expect } from '../../fixtures';
@@ -25,8 +27,13 @@ import { deleteRoom } from '../helpers/room-helpers';
 
 const STORAGE_KEY = 'neokai:taskViewVersion';
 
-// ─── Setup Helpers ────────────────────────────────────────────────────────────
+// ─── RPC Infrastructure Helpers ───────────────────────────────────────────────
 
+/**
+ * Creates a room and task via RPC. Called from beforeEach — accepted
+ * infrastructure pattern (CLAUDE.md: room.create in beforeEach is allowed;
+ * task.create is an accepted extension for task-specific test isolation).
+ */
 async function createRoomAndTask(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
 ): Promise<{ roomId: string; taskId: string }> {
@@ -53,13 +60,15 @@ async function createRoomAndTask(
 }
 
 /**
- * Creates a room, task, and a synthetic session group.
- * The group makes the turn-blocks-container render in V2 (it's conditional on group existence).
- * System messages are seeded so the container is not empty — they appear as runtime messages.
+ * Creates a room, task, and a synthetic session group with a seeded status
+ * message. The group presence causes turn-blocks-container to render in V2
+ * (the container is conditional on a session group existing). System-type
+ * messages go to task_group_events (no session_id FK), so they avoid the
+ * sessions-table FK constraint that blocks agent-message seeding.
  */
 async function createRoomTaskAndGroup(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<{ roomId: string; taskId: string; groupId: string }> {
+): Promise<{ roomId: string; taskId: string }> {
 	await waitForWebSocketConnected(page);
 
 	return page.evaluate(async () => {
@@ -78,14 +87,13 @@ async function createRoomTaskAndGroup(
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
-		// Create synthetic session group (E2E infrastructure RPC — non-production only)
-		const groupRes = await hub.request('task.group.create', {
-			roomId,
-			taskId,
-		});
-		const groupId = (groupRes as { groupId: string }).groupId;
+		// Create synthetic session group (non-production E2E RPC)
+		const groupRes = await hub.request('task.group.create', { roomId, taskId });
+		const { groupId } = groupRes as { groupId: string };
 
-		// Seed a system status message (goes to task_group_events — no session FK constraint)
+		// Seed a system status message (goes to task_group_events — no session FK constraint).
+		// This makes the turn-blocks-container render; the message appears as a RuntimeMessage,
+		// not a TurnBlock (agent messages with a valid sessions-table FK are needed for turn blocks).
 		await hub.request('task.group.addMessage', {
 			groupId,
 			role: 'system',
@@ -93,7 +101,7 @@ async function createRoomTaskAndGroup(
 			content: 'Task started',
 		});
 
-		return { roomId, taskId, groupId };
+		return { roomId, taskId };
 	});
 }
 
@@ -108,38 +116,36 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
-		roomId = '';
-		taskId = '';
 
-		// Clear the localStorage preference so each test starts from V1 (default)
+		// Ensure each test starts from V1 (default)
 		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
+
+		// Infrastructure RPC setup (in beforeEach per E2E rules)
+		({ roomId, taskId } = await createRoomAndTask(page));
 	});
 
 	test.afterEach(async ({ page }) => {
 		await deleteRoom(page, roomId);
+		roomId = '';
+		taskId = '';
 	});
 
 	test('shows toggle button in task view header', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page));
-
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
 		});
 
-		const toggle = page.locator('[data-testid="task-view-toggle"]');
-		await expect(toggle).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('[data-testid="task-view-toggle"]')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('switches to V2 view when toggle is clicked', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page));
-
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
 		});
 
-		// V2 container should NOT be present initially (default is V1)
+		// V2 container should not exist in V1 mode
 		await expect(page.locator('[data-testid="task-view-v2"]')).not.toBeAttached();
 
 		// Click the toggle to switch to V2
@@ -150,8 +156,6 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 	});
 
 	test('persists V2 preference across page reload', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page));
-
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
@@ -161,23 +165,19 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 		await page.locator('[data-testid="task-view-toggle"]').click();
 		await expect(page.locator('[data-testid="task-view-v2"]')).toBeVisible({ timeout: 5000 });
 
-		// Verify localStorage was set
+		// Verify localStorage was updated
 		const stored = await page.evaluate((key) => localStorage.getItem(key), STORAGE_KEY);
 		expect(stored).toBe('v2');
 
-		// Reload the page
+		// Reload — synchronous lazy init prevents flicker so V2 should be active immediately
 		await page.reload();
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
 		});
-
-		// V2 should still be active (no flicker — synchronous lazy init)
 		await expect(page.locator('[data-testid="task-view-v2"]')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('switches back to V1 from V2 view when toggle is clicked again', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page));
-
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
@@ -195,10 +195,8 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 	});
 
 	test('persists V1 preference when returning to V1 and reloading', async ({ page }) => {
-		// Pre-set to V2 via localStorage so we start in V2
+		// Pre-set to V2 so we can test the V2→V1→reload flow
 		await page.evaluate((key) => localStorage.setItem(key, 'v2'), STORAGE_KEY);
-
-		({ roomId, taskId } = await createRoomAndTask(page));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
@@ -235,15 +233,15 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
-		roomId = '';
-		taskId = '';
 
-		// Start each test in V2 mode
+		// Start in V2 mode
 		await page.evaluate((key) => localStorage.setItem(key, 'v2'), STORAGE_KEY);
 	});
 
 	test.afterEach(async ({ page }) => {
 		await deleteRoom(page, roomId);
+		roomId = '';
+		taskId = '';
 	});
 
 	test('V2 root container is present with correct data-testid', async ({ page }) => {
@@ -258,7 +256,8 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 	});
 
 	test('V2 turn blocks container is present when session group exists', async ({ page }) => {
-		// turn-blocks-container is conditionally rendered only when a session group exists
+		// turn-blocks-container is conditionally rendered only when a session group exists.
+		// Create the group (and seed a status message) via RPC before navigating.
 		({ roomId, taskId } = await createRoomTaskAndGroup(page));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
@@ -266,13 +265,17 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 			{ timeout: 10000 }
 		);
 
-		// The turn blocks container should be present in V2 when a group exists
 		await expect(page.locator('[data-testid="turn-blocks-container"]')).toBeVisible({
 			timeout: 8000,
 		});
 	});
 
-	test('toggle button label updates to reflect current view', async ({ page }) => {
+	test('toggle button shows directional arrow indicating current view', async ({ page }) => {
+		// TaskViewToggle renders different arrow characters per state:
+		//   V2 active → button text contains "←" (offering to go back to V1)
+		//   V1 active → button text contains "→" (offering to go forward to V2)
+		// Both states always contain the strings "V1" and "V2", so the arrow character
+		// is the discriminating indicator.
 		({ roomId, taskId } = await createRoomAndTask(page));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
@@ -282,16 +285,16 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 
 		const toggle = page.locator('[data-testid="task-view-toggle"]');
 
-		// In V2 mode, toggle should show "V1 ← V2" pattern (offering to go back to V1)
+		// In V2 mode: button shows "V1 ← V2" (← indicates V2 is active)
 		await expect(toggle).toBeVisible({ timeout: 5000 });
-		await expect(toggle).toContainText('V2');
+		await expect(toggle).toContainText('←');
 
-		// Switch to V1 — toggle should now show "V1 → V2" pattern
+		// After switching to V1: button shows "V1 → V2" (→ indicates V1 is active)
 		await toggle.click();
-		await expect(toggle).toContainText('V1');
+		await expect(toggle).toContainText('→');
 	});
 
-	test('toggle aria-label reflects current state', async ({ page }) => {
+	test('toggle aria-label reflects current view state', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTask(page));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
@@ -301,10 +304,10 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 
 		const toggle = page.locator('[data-testid="task-view-toggle"]');
 
-		// Currently in V2 — aria-label should say switching to V1
+		// Currently in V2 — aria-label offers to switch back to V1
 		await expect(toggle).toHaveAttribute('aria-label', /V1 timeline/);
 
-		// Switch to V1 — aria-label should now say switching to V2
+		// Switch to V1 — aria-label now offers to switch to V2
 		await toggle.click();
 		await expect(toggle).toHaveAttribute('aria-label', /V2 turn-based/);
 	});
@@ -321,184 +324,72 @@ test.describe('TaskViewV2 — Slide-out Panel', () => {
 		await page
 			.getByRole('button', { name: 'New Session', exact: true })
 			.waitFor({ timeout: 10000 });
-		roomId = '';
-		taskId = '';
 
 		// Start in V2 mode
 		await page.evaluate((key) => localStorage.setItem(key, 'v2'), STORAGE_KEY);
+
+		// Infrastructure RPC setup (in beforeEach per E2E rules)
+		({ roomId, taskId } = await createRoomAndTask(page));
 	});
 
 	test.afterEach(async ({ page }) => {
 		await deleteRoom(page, roomId);
+		roomId = '';
+		taskId = '';
 	});
 
-	test('slide-out panel is not in viewport initially', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page));
-
+	test('slide-out panel is off-screen when closed (translate-x-full)', async ({ page }) => {
+		// SlideOutPanel is always mounted in the DOM; CSS transforms control visibility.
+		// Check the translate-x-full class directly (more reliable than viewport intersection).
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
 		});
 
-		// The panel is always in the DOM but translated off-screen (translate-x-full).
-		// Use toBeInViewport() to verify it's not visible in the viewport.
-		await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport();
-		// Backdrop should be transparent (opacity-0) when closed
-		await expect(page.locator('[data-testid="slide-out-backdrop"]')).toHaveClass(/opacity-0/);
+		await expect(page.locator('[data-testid="slide-out-panel"]')).toHaveClass(/translate-x-full/, {
+			timeout: 5000,
+		});
+	});
+
+	test('slide-out backdrop is transparent when panel is closed (opacity-0)', async ({ page }) => {
+		await page.goto(`/room/${roomId}/task/${taskId}`);
+		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
+
+		// Backdrop uses opacity-0 + pointer-events-none when closed
+		await expect(page.locator('[data-testid="slide-out-backdrop"]')).toHaveClass(/opacity-0/, {
+			timeout: 5000,
+		});
 	});
 
 	test('slide-out panel has correct accessibility attributes', async ({ page }) => {
-		({ roomId, taskId } = await createRoomAndTask(page));
-
 		await page.goto(`/room/${roomId}/task/${taskId}`);
 		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Panel should have correct accessibility attributes regardless of open state
 		const panel = page.locator('[data-testid="slide-out-panel"]');
 		await expect(panel).toHaveAttribute('role', 'dialog');
 		await expect(panel).toHaveAttribute('aria-modal', 'true');
 	});
 
-	test('clicking a turn block opens the slide-out panel', async ({ page }) => {
-		// Note: Turn blocks require real agent messages in sdk_messages with valid session_id FK.
-		// Synthetic session groups (e2e-worker-xxx) don't satisfy the sessions table FK.
-		// This test runs its assertions only if turn blocks are actually rendered.
-		({ roomId, taskId } = await createRoomTaskAndGroup(page));
-
+	test('slide-out panel close button has correct aria-label', async ({ page }) => {
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Group Test Task' })).toBeVisible(
-			{ timeout: 10000 }
+		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Test Task' })).toBeVisible({
+			timeout: 10000,
+		});
+
+		await expect(page.locator('[data-testid="slide-out-panel-close"]')).toHaveAttribute(
+			'aria-label',
+			'Close panel'
 		);
-
-		// Wait for the turn-blocks-container to appear
-		await expect(page.locator('[data-testid="turn-blocks-container"]')).toBeVisible({
-			timeout: 8000,
-		});
-
-		const turnBlocks = page.locator('[data-testid="turn-block"]');
-		const blockCount = await turnBlocks.count();
-
-		if (blockCount === 0) {
-			// No turn blocks — system-only messages don't produce agent turn blocks.
-			// Verify the panel is still off-screen (nothing to open it).
-			await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport();
-			return;
-		}
-
-		// Click the first turn block
-		await turnBlocks.first().click();
-
-		// Slide-out panel should slide into the viewport
-		await expect(page.locator('[data-testid="slide-out-panel"]')).toBeInViewport({
-			timeout: 5000,
-		});
 	});
 
-	test('slide-out panel closes when close button is clicked', async ({ page }) => {
-		({ roomId, taskId } = await createRoomTaskAndGroup(page));
-
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Group Test Task' })).toBeVisible(
-			{ timeout: 10000 }
-		);
-
-		await expect(page.locator('[data-testid="turn-blocks-container"]')).toBeVisible({
-			timeout: 8000,
-		});
-
-		const turnBlocks = page.locator('[data-testid="turn-block"]');
-		const blockCount = await turnBlocks.count();
-
-		if (blockCount === 0) {
-			// No turn blocks available — skip open/close assertion
-			await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport();
-			return;
-		}
-
-		// Open the panel
-		await turnBlocks.first().click();
-		await expect(page.locator('[data-testid="slide-out-panel"]')).toBeInViewport({
-			timeout: 5000,
-		});
-
-		// Click the close button
-		await page.locator('[data-testid="slide-out-panel-close"]').click();
-
-		// Panel should slide off-screen
-		await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport({
-			timeout: 3000,
-		});
-	});
-
-	test('slide-out panel closes on Escape key', async ({ page }) => {
-		({ roomId, taskId } = await createRoomTaskAndGroup(page));
-
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Group Test Task' })).toBeVisible(
-			{ timeout: 10000 }
-		);
-
-		await expect(page.locator('[data-testid="turn-blocks-container"]')).toBeVisible({
-			timeout: 8000,
-		});
-
-		const turnBlocks = page.locator('[data-testid="turn-block"]');
-		const blockCount = await turnBlocks.count();
-
-		if (blockCount === 0) {
-			await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport();
-			return;
-		}
-
-		// Open the panel
-		await turnBlocks.first().click();
-		await expect(page.locator('[data-testid="slide-out-panel"]')).toBeInViewport({
-			timeout: 5000,
-		});
-
-		// Press Escape to close
-		await page.keyboard.press('Escape');
-
-		// Panel should slide off-screen
-		await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport({
-			timeout: 3000,
-		});
-	});
-
-	test('slide-out panel closes when backdrop is clicked', async ({ page }) => {
-		({ roomId, taskId } = await createRoomTaskAndGroup(page));
-
-		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.getByRole('heading', { name: 'E2E TaskViewV2 Group Test Task' })).toBeVisible(
-			{ timeout: 10000 }
-		);
-
-		await expect(page.locator('[data-testid="turn-blocks-container"]')).toBeVisible({
-			timeout: 8000,
-		});
-
-		const turnBlocks = page.locator('[data-testid="turn-block"]');
-		const blockCount = await turnBlocks.count();
-
-		if (blockCount === 0) {
-			// Verify backdrop is transparent (pointer-events-none)
-			await expect(page.locator('[data-testid="slide-out-backdrop"]')).toHaveClass(/opacity-0/);
-			return;
-		}
-
-		// Open the panel
-		await turnBlocks.first().click();
-		const backdrop = page.locator('[data-testid="slide-out-backdrop"]');
-		await expect(backdrop).toHaveClass(/opacity-100/, { timeout: 5000 });
-
-		// Click the backdrop to close
-		await backdrop.click();
-
-		// Panel should slide off-screen
-		await expect(page.locator('[data-testid="slide-out-panel"]')).not.toBeInViewport({
-			timeout: 3000,
-		});
-	});
+	// NOTE: Open/close interaction tests (clicking turn blocks to open the panel,
+	// closing via button/Escape/backdrop) require agent-turn messages in sdk_messages,
+	// which need valid session_id FK references to the sessions table. Synthetic session
+	// groups created via task.group.create use generated IDs (e2e-worker-xxx) that are
+	// not in the sessions table. This coverage is reserved for when real session seeding
+	// infrastructure (or daemon-level session stub creation) becomes available.
 });
