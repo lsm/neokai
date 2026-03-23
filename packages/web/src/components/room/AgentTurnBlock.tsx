@@ -293,9 +293,6 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 					>
 						{turn.agentLabel}
 					</span>
-
-					{/* Description - agent label or role */}
-					<span class={cn('text-sm font-medium truncate', colors.text)}>{turn.agentLabel}</span>
 				</div>
 
 				<div class="flex items-center gap-2 flex-shrink-0">
