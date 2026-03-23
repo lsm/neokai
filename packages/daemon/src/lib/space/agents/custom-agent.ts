@@ -155,7 +155,7 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 		`You are part of a multi-agent team within this workflow step. ` +
 			`You have MCP tools for communicating with peer agents in the same group.`
 	);
-	sections.push(`\n### Primary: \`send_message\` (channel-validated direct messaging)\n`);
+	sections.push(`\n### \`send_message\` (channel-validated direct messaging)\n`);
 	sections.push(
 		`Use \`send_message\` to send messages directly to permitted peers based on the declared channel topology.`
 	);
@@ -166,18 +166,7 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	);
 	sections.push(
 		`This tool validates against declared channels. ` +
-			`If the channel is not declared, it returns an error with available channels and suggests \`request_peer_input\`.`
-	);
-	sections.push(`\n### Fallback: \`request_peer_input\` (Task Agent mediated)\n`);
-	sections.push(
-		`Use \`request_peer_input\` when no direct channel is declared or as a fallback when \`send_message\` fails validation.`
-	);
-	sections.push(
-		`This is **async and non-blocking** — the tool returns immediately with an acknowledgment. ` +
-			`The peer's answer will arrive as a separate user turn prefixed with: \`[Peer response from {role}]: ...\``
-	);
-	sections.push(
-		`**Do NOT wait for an immediate reply.** Continue your work and handle peer responses when they arrive.`
+			`If the channel is not declared, it returns an error with available channels.`
 	);
 	sections.push(`\n### Discovering peers: \`list_peers\`\n`);
 	sections.push(
@@ -186,9 +175,8 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 	);
 	sections.push(`\n### Communication model rules\n`);
 	sections.push(
-		`- If this step has declared channels: use \`send_message\` for permitted directions, ` +
-			`\`request_peer_input\` for undeclared directions\n` +
-			`- If this step has no declared channels: all communication goes through \`request_peer_input\`\n` +
+		`- Use \`send_message\` for all peer communication — channel topology determines permitted targets\n` +
+			`- If a direction is not declared in the channel topology, \`send_message\` returns an error\n` +
 			`- All communication is scoped to this group — you cannot message agents in other tasks`
 	);
 

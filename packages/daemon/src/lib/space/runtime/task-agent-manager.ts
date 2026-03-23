@@ -673,7 +673,7 @@ export class TaskAgentManager {
 		if (!taskWorkflowRunId) {
 			log.warn(
 				`TaskAgentManager.createSubSessionFactory: task ${taskId} has no workflowRunId — ` +
-					`step-agent channel topology will be unavailable (request_peer_input still works)`
+					`step-agent channel topology will be unavailable`
 			);
 		}
 
@@ -1345,11 +1345,8 @@ export class TaskAgentManager {
 	 * Build a step agent MCP server for a newly spawned sub-session.
 	 * Called from the `buildStepAgentMcpServer` callback passed to createTaskAgentMcpServer().
 	 *
-	 * The server gives the step agent peer communication tools (list_peers, send_message,
-	 * request_peer_input) that are scoped to its group and channel topology.
-	 *
-	 * The `injectToTaskAgent` callback routes `request_peer_input` requests through the
-	 * Task Agent, which has unrestricted relay access to all group members.
+	 * The server gives the step agent peer communication tools (list_peers, send_message)
+	 * that are scoped to its group and channel topology.
 	 */
 	private buildStepAgentMcpServerForSession(
 		taskId: string,
@@ -1368,7 +1365,6 @@ export class TaskAgentManager {
 			workflowRunRepo: this.config.workflowRunRepo,
 			messageInjector: (targetSessionId, message) =>
 				this.injectSubSessionMessage(targetSessionId, message),
-			injectToTaskAgent: (message) => this.injectTaskAgentMessage(taskId, message),
 		});
 	}
 }

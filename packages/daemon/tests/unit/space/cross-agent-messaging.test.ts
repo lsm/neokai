@@ -4,9 +4,8 @@
  * Exercises the full messaging stack with a real SQLite DB and mock injectors
  * (no real agent sessions). Focuses on end-to-end behavioral enforcement:
  *
- *   send_message         — channel validation, target modes, fan-out, hub-spoke
- *   request_peer_input    — Task Agent mediated async flow
- *   list_peers            — peer discovery with channel info
+ *   send_message  — channel validation, target modes, fan-out, hub-spoke
+ *   list_peers    — peer discovery with channel info
  *   list_group_members    — Task Agent group view
  *   relay_message         — Task Agent unrestricted relay, cross-group rejection
  *
@@ -185,10 +184,8 @@ function makeStepConfig(
 	overrides: Partial<StepAgentToolsConfig> = {}
 ): StepAgentToolsConfig & {
 	injectedMessages: Array<{ sessionId: string; message: string }>;
-	taskAgentMessages: string[];
 } {
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
-	const taskAgentMessages: string[] = [];
 
 	const config = {
 		mySessionId,
@@ -201,13 +198,10 @@ function makeStepConfig(
 		messageInjector: async (sessionId: string, message: string) => {
 			injectedMessages.push({ sessionId, message });
 		},
-		injectToTaskAgent: async (message: string) => {
-			taskAgentMessages.push(message);
-		},
 		...overrides,
 	};
 
-	return Object.assign(config, { injectedMessages, taskAgentMessages });
+	return Object.assign(config, { injectedMessages });
 }
 
 // ===========================================================================
@@ -547,7 +541,7 @@ describe('send_message — no channels declared', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('all send_message calls fail with suggestion to use request_peer_input', async () => {
+	test('all send_message calls fail when no channels declared', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
@@ -559,7 +553,6 @@ describe('send_message — no channels declared', () => {
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hi' }));
 		expect(result.success).toBe(false);
-		expect(result.suggestion).toBe('request_peer_input');
 		expect(cfg.injectedMessages).toHaveLength(0);
 	});
 });
@@ -688,97 +681,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 });
 
 // ===========================================================================
-// 5. request_peer_input — Task Agent mediated async flow
-// ===========================================================================
-
-describe('request_peer_input — async routing through Task Agent', () => {
-	let ctx: StepCtx;
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('routes question to Task Agent and returns async acknowledgment', async () => {
-		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
-		]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(
-			await handlers.request_peer_input({
-				target_role: 'reviewer',
-				question: 'Does the API look correct?',
-			})
-		);
-		expect(result.success).toBe(true);
-		expect(result.async).toBe(true);
-		expect(result.targetRole).toBe('reviewer');
-		expect(cfg.taskAgentMessages).toHaveLength(1);
-	});
-
-	test('routing message includes sender identity, session ID, and target role', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		await handlers.request_peer_input({ target_role: 'reviewer', question: 'Any concerns?' });
-
-		const msg = cfg.taskAgentMessages[0];
-		expect(msg).toContain('coder');
-		expect(msg).toContain('reviewer');
-		expect(msg).toContain('sess-coder');
-		expect(msg).toContain('Any concerns?');
-	});
-
-	test('routing message asks Task Agent to forward response back with prefix', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		await handlers.request_peer_input({ target_role: 'reviewer', question: 'Question' });
-
-		const msg = cfg.taskAgentMessages[0];
-		expect(msg).toContain('[Peer response from reviewer]');
-	});
-
-	test('available even when no channels declared (fallback mode)', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		// No channels set — resolver is empty, send_message would fail
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		// send_message should fail
-		const fbResult = parse(await handlers.send_message({ target: 'reviewer', message: 'Hi' }));
-		expect(fbResult.success).toBe(false);
-
-		// request_peer_input should succeed
-		const rpResult = parse(
-			await handlers.request_peer_input({ target_role: 'reviewer', question: 'Hi' })
-		);
-		expect(rpResult.success).toBe(true);
-	});
-
-	test('returns error when Task Agent injection fails', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
-			injectToTaskAgent: async () => {
-				throw new Error('Task Agent session not found');
-			},
-		});
-		const handlers = createStepAgentToolHandlers(cfg);
-
-		const result = parse(
-			await handlers.request_peer_input({ target_role: 'reviewer', question: 'Q' })
-		);
-		expect(result.success).toBe(false);
-		expect(result.error as string).toContain('Task Agent session not found');
-	});
-});
-
-// ===========================================================================
-// 6. list_peers — peer discovery
+// 5. list_peers — peer discovery
 // ===========================================================================
 
 describe('list_peers — peer discovery with channel info', () => {
@@ -1259,17 +1162,17 @@ describe('relay_message — cross-group rejection', () => {
 });
 
 // ===========================================================================
-// 12. Step with no channels declared — open model (all via request_peer_input)
+// 12. Step with no channels declared — no messaging available
 // ===========================================================================
 
-describe('Step with no channels declared — open model', () => {
+describe('Step with no channels declared', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('send_message always fails; request_peer_input always succeeds', async () => {
+	test('send_message fails when no channels declared', async () => {
 		ctx = makeStepCtx([
 			{ sessionId: 'sess-a', role: 'agent-a' },
 			{ sessionId: 'sess-b', role: 'agent-b' },
@@ -1283,13 +1186,6 @@ describe('Step with no channels declared — open model', () => {
 			await handlersA.send_message({ target: 'agent-b', message: 'Direct msg' })
 		);
 		expect(fbResult.success).toBe(false);
-		expect(fbResult.suggestion).toBe('request_peer_input');
-
-		const rpResult = parse(
-			await handlersA.request_peer_input({ target_role: 'agent-b', question: 'Q?' })
-		);
-		expect(rpResult.success).toBe(true);
-		expect(rpResult.async).toBe(true);
 	});
 
 	test('list_peers shows no permitted targets when no channels declared', async () => {
