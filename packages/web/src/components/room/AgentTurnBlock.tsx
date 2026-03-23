@@ -511,17 +511,34 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 						);
 						// Track seen texts for deduplication across nested messages
 						const seenTexts = new Set<string>();
+
+						// Only show last 3 messages
+						const MESSAGES_TO_SHOW = 3;
+						const hasMore = nestedMessages.length > MESSAGES_TO_SHOW;
+						const messagesToRender = hasMore
+							? nestedMessages.slice(-MESSAGES_TO_SHOW)
+							: nestedMessages;
+
 						return (
 							<div class="border-b border-gray-200 dark:border-gray-700 p-3">
 								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
 									Messages ({nestedMessages.length})
 								</div>
 								<div class="space-y-3">
-									{nestedMessages.map((msg, idx) => {
-										const isLastAssistant = idx === lastAssistantIdx;
+									{hasMore && (
+										<div class="text-xs text-gray-500 dark:text-gray-400 italic text-center py-1">
+											({nestedMessages.length - MESSAGES_TO_SHOW}) more messages
+										</div>
+									)}
+									{messagesToRender.map((msg, idx) => {
+										// Adjust idx for the sliced array
+										const actualIdx = hasMore
+											? nestedMessages.length - MESSAGES_TO_SHOW + idx
+											: idx;
+										const isLastAssistant = actualIdx === lastAssistantIdx;
 										return (
 											<NestedMessageRenderer
-												key={msg.uuid || `nested-${idx}`}
+												key={msg.uuid || `nested-${actualIdx}`}
 												message={msg}
 												toolResultsMap={new Map()}
 												isLast={isLastAssistant}
