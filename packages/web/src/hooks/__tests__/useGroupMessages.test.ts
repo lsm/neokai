@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for useGroupMessages Hook
  *
@@ -370,7 +369,8 @@ describe('useGroupMessages', () => {
 				(call) => call[0] === 'liveQuery.subscribe' && call[1]?.params?.[0] === 'group-2'
 			);
 			expect(group2Call).toBeDefined();
-			const secondSubId = group2Call[1].subscriptionId;
+			// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+			const secondSubId = group2Call![1].subscriptionId as string;
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -513,7 +513,7 @@ describe('useGroupMessages', () => {
 		it('clears messages and stops loading when groupId becomes null', () => {
 			const { result, rerender } = renderHook(
 				({ groupId }: { groupId: string | null }) => useGroupMessages(groupId),
-				{ initialProps: { groupId: 'group-1' } }
+				{ initialProps: { groupId: 'group-1' as string | null } }
 			);
 
 			const subId = lastSubscribeSubId();
@@ -889,6 +889,51 @@ describe('useGroupMessages', () => {
 			expect(result.current.messages).toHaveLength(3);
 			expect(result.current.messages[2].id).toBe(6);
 			expect(result.current.hasOlder).toBe(true); // older messages still hidden
+		});
+
+		it('removed delta for a hidden message adjusts hiddenOlderCount without shifting visible window', () => {
+			// pageSize=2, snapshot has 5 messages → shows [4,5], 3 hidden ([1,2,3])
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+			expect(result.current.hasOlder).toBe(true); // 3 hidden
+
+			// Remove message 2 (which is in the hidden region)
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					removed: [makeMessage(2)],
+					version: 2,
+				});
+			});
+
+			// Visible window must still show [4, 5] — not shift to expose [3]
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+			// hasOlder still true: 2 hidden messages remain ([1, 3])
+			expect(result.current.hasOlder).toBe(true);
+
+			// loadEarlier now reveals the remaining 2 hidden messages
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			expect(result.current.messages).toHaveLength(4); // [1, 3, 4, 5]
+			expect(result.current.messages[0].id).toBe(1);
+			expect(result.current.messages[1].id).toBe(3);
+			expect(result.current.hasOlder).toBe(false);
 		});
 
 		it('hiddenOlderCount resets to 0 when groupId changes', () => {

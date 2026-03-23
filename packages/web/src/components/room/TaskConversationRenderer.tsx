@@ -50,6 +50,12 @@ interface TaskConversationRendererProps {
 	 * after older messages are prepended via "Load earlier messages".
 	 */
 	scrollContainerRef?: RefObject<HTMLDivElement>;
+	/**
+	 * Called with `true` when a "load earlier" operation starts and `false` when the scroll
+	 * position has been restored. The parent passes this to `useAutoScroll` as `loadingOlder`
+	 * so auto-scroll-to-bottom is suppressed while older messages are being prepended.
+	 */
+	onLoadingOlderChange?: (loading: boolean) => void;
 }
 
 const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
@@ -163,6 +169,7 @@ export function TaskConversationRenderer({
 	workerSessionId,
 	onMessageCountChange,
 	scrollContainerRef,
+	onLoadingOlderChange,
 }: TaskConversationRendererProps) {
 	const { request } = useMessageHub();
 
@@ -192,8 +199,9 @@ export function TaskConversationRenderer({
 				scrollTop: scrollContainerRef.current.scrollTop,
 			};
 		}
+		onLoadingOlderChange?.(true);
 		loadEarlier();
-	}, [loadEarlier, scrollContainerRef]);
+	}, [loadEarlier, scrollContainerRef, onLoadingOlderChange]);
 
 	// After rawMessages changes (triggered by loadEarlier), restore scroll position
 	// so older prepended messages don't cause a jarring jump to the top.
@@ -205,8 +213,9 @@ export function TaskConversationRenderer({
 			if (!scrollContainerRef.current) return;
 			const newScrollHeight = scrollContainerRef.current.scrollHeight;
 			scrollContainerRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
+			onLoadingOlderChange?.(false);
 		});
-	}, [rawMessages, scrollContainerRef]);
+	}, [rawMessages, scrollContainerRef, onLoadingOlderChange]);
 
 	const messages = useMemo(
 		() => rawMessages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null),

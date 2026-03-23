@@ -16,9 +16,14 @@
  * - Pagination: only the newest `pageSize` messages are shown initially. Older
  *   messages are stored in an internal buffer and revealed via `loadEarlier()`.
  *   New messages from live deltas are always appended and visible.
+ *   `allMessages` and `hiddenOlderCount` are updated atomically via useReducer so
+ *   that `removed` deltas in the hidden region keep the visible window consistent.
+ * - `pageSize` is intentionally kept as a ref and NOT included in the subscription
+ *   effect deps. Changing page size must not tear down and re-establish the WebSocket
+ *   subscription — it only affects the initial hidden count and the loadEarlier step.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
 import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
 
@@ -36,7 +41,11 @@ export interface SessionGroupMessage {
 export const DEFAULT_PAGE_SIZE = 50;
 
 export interface UseGroupMessagesOptions {
-	/** Number of messages to show per page (default: DEFAULT_PAGE_SIZE). */
+	/**
+	 * Number of messages to show per page (default: DEFAULT_PAGE_SIZE).
+	 * Changes to this value do NOT trigger re-subscription — they only affect how
+	 * many messages are hidden/revealed per page.
+	 */
 	pageSize?: number;
 }
 
@@ -50,6 +59,92 @@ export interface UseGroupMessagesResult {
 	/** Reveals the previous page of older messages from the buffer. Instant (no network request). */
 	loadEarlier: () => void;
 }
+
+// ─── Internal reducer ─────────────────────────────────────────────────────────
+
+interface PaginationState {
+	/** All messages received from LiveQuery, sorted chronologically. */
+	allMessages: SessionGroupMessage[];
+	/**
+	 * Number of messages at the start of `allMessages` that are hidden.
+	 * Starts at max(0, snapshot.length - pageSize) so only the newest page shows.
+	 * Updated atomically with `allMessages` so that removed deltas in the hidden
+	 * region never shift the visible window unexpectedly.
+	 */
+	hiddenOlderCount: number;
+}
+
+type PaginationAction =
+	| { type: 'reset' }
+	| { type: 'snapshot'; rows: SessionGroupMessage[]; pageSize: number }
+	| {
+			type: 'delta';
+			removed?: SessionGroupMessage[];
+			updated?: SessionGroupMessage[];
+			added?: SessionGroupMessage[];
+	  }
+	| { type: 'loadEarlier'; pageSize: number };
+
+function sortMessages(msgs: SessionGroupMessage[]): SessionGroupMessage[] {
+	return [...msgs].sort((a, b) => {
+		if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+		return String(a.id).localeCompare(String(b.id));
+	});
+}
+
+function paginationReducer(state: PaginationState, action: PaginationAction): PaginationState {
+	switch (action.type) {
+		case 'reset':
+			return { allMessages: [], hiddenOlderCount: 0 };
+
+		case 'snapshot': {
+			const sorted = sortMessages(action.rows);
+			return {
+				allMessages: sorted,
+				hiddenOlderCount: Math.max(0, sorted.length - action.pageSize),
+			};
+		}
+
+		case 'delta': {
+			let msgs = state.allMessages;
+			let hidden = state.hiddenOlderCount;
+
+			if (action.removed && action.removed.length > 0) {
+				const removedIds = new Set(action.removed.map((row) => String(row.id)));
+				// Count how many removed messages were in the hidden region so we can
+				// adjust hiddenOlderCount and keep the same visible window.
+				const removedInHidden = msgs
+					.slice(0, hidden)
+					.filter((row) => removedIds.has(String(row.id))).length;
+				msgs = msgs.filter((row) => !removedIds.has(String(row.id)));
+				hidden = Math.max(0, hidden - removedInHidden);
+			}
+
+			if (action.updated && action.updated.length > 0) {
+				const updatedById = new Map(action.updated.map((row) => [String(row.id), row]));
+				msgs = msgs.map((row) => updatedById.get(String(row.id)) ?? row);
+			}
+
+			if (action.added && action.added.length > 0) {
+				// New messages are appended to the end — hiddenOlderCount does not grow
+				// so they are always visible immediately.
+				msgs = [...msgs, ...action.added];
+			}
+
+			return { allMessages: sortMessages(msgs), hiddenOlderCount: hidden };
+		}
+
+		case 'loadEarlier':
+			return {
+				...state,
+				hiddenOlderCount: Math.max(0, state.hiddenOlderCount - action.pageSize),
+			};
+	}
+}
+
+const INITIAL_PAGINATION_STATE: PaginationState = { allMessages: [], hiddenOlderCount: 0 };
+
+// ─── Subscription counter ─────────────────────────────────────────────────────
 
 let _subscriptionCounter = 0;
 
@@ -67,6 +162,8 @@ export function resetSubscriptionCounterForTesting(): void {
 	_subscriptionCounter = 0;
 }
 
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
 /**
  * Hook to subscribe to session group messages via LiveQuery.
  *
@@ -77,6 +174,8 @@ export function resetSubscriptionCounterForTesting(): void {
  * Only the newest `pageSize` messages are exposed via `messages`. Older
  * messages are hidden and revealed one page at a time via `loadEarlier()`.
  * New live-delta messages are always appended to the visible end.
+ * `removed` deltas correctly adjust `hiddenOlderCount` when removed messages
+ * fall within the hidden region, so the visible window never shifts silently.
  *
  * @param groupId - The session group ID to subscribe to, or null to clear/unsubscribe.
  * @param options - Optional configuration (pageSize).
@@ -101,13 +200,17 @@ export function useGroupMessages(
 	groupId: string | null,
 	options?: UseGroupMessagesOptions
 ): UseGroupMessagesResult {
-	const pageSize = options?.pageSize ?? DEFAULT_PAGE_SIZE;
+	// pageSize is kept as a ref so it does NOT appear in the subscription effect's
+	// dependency array — changing page size must not tear down the WebSocket subscription.
+	const pageSizeRef = useRef(options?.pageSize ?? DEFAULT_PAGE_SIZE);
+	pageSizeRef.current = options?.pageSize ?? DEFAULT_PAGE_SIZE;
+
 	const { request, onEvent, isConnected } = useMessageHub();
-	// allMessages holds the complete sorted set received from LiveQuery.
-	const [allMessages, setAllMessages] = useState<SessionGroupMessage[]>([]);
-	// hiddenOlderCount is the number of old messages hidden at the start of allMessages.
-	// Starts at max(0, snapshot.length - pageSize) so only the newest page is visible.
-	const [hiddenOlderCount, setHiddenOlderCount] = useState(0);
+
+	const [{ allMessages, hiddenOlderCount }, dispatch] = useReducer(
+		paginationReducer,
+		INITIAL_PAGINATION_STATE
+	);
 	const [isLoading, setIsLoading] = useState(false);
 
 	// Track the active subscriptionId to guard against stale events from prior
@@ -116,8 +219,7 @@ export function useGroupMessages(
 
 	useEffect(() => {
 		if (!groupId || !isConnected) {
-			setAllMessages([]);
-			setHiddenOlderCount(0);
+			dispatch({ type: 'reset' });
 			setIsLoading(false);
 			activeSubIdRef.current = null;
 			return;
@@ -126,56 +228,29 @@ export function useGroupMessages(
 		const subscriptionId = generateGroupMessagesSubId(groupId);
 		activeSubIdRef.current = subscriptionId;
 		setIsLoading(true);
-		setAllMessages([]);
-		setHiddenOlderCount(0);
+		dispatch({ type: 'reset' });
 
 		// Register event listeners BEFORE sending the subscribe request so the
 		// snapshot that is delivered synchronously as part of the subscribe
 		// response is not missed.
 		const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
 			if (event.subscriptionId !== activeSubIdRef.current) return;
-			const rows = event.rows as SessionGroupMessage[];
-			const sorted = [...rows].sort((a, b) => {
-				if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-				return String(a.id).localeCompare(String(b.id));
+			dispatch({
+				type: 'snapshot',
+				rows: event.rows as SessionGroupMessage[],
+				pageSize: pageSizeRef.current,
 			});
-			setAllMessages(sorted);
-			// Hide all messages older than the newest `pageSize` so we start at the bottom.
-			setHiddenOlderCount(Math.max(0, sorted.length - pageSize));
 			setIsLoading(false);
 		});
 
 		const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 			if (event.subscriptionId !== activeSubIdRef.current) return;
-			setAllMessages((prev) => {
-				let next = prev;
-
-				if (event.removed && event.removed.length > 0) {
-					const removedIds = new Set(
-						(event.removed as SessionGroupMessage[]).map((row) => String(row.id))
-					);
-					next = next.filter((row) => !removedIds.has(String(row.id)));
-				}
-
-				if (event.updated && event.updated.length > 0) {
-					const updatedById = new Map(
-						(event.updated as SessionGroupMessage[]).map((row) => [String(row.id), row])
-					);
-					next = next.map((row) => updatedById.get(String(row.id)) ?? row);
-				}
-
-				if (event.added && event.added.length > 0) {
-					next = [...next, ...(event.added as SessionGroupMessage[])];
-				}
-
-				next.sort((a, b) => {
-					if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-					return String(a.id).localeCompare(String(b.id));
-				});
-				return next;
+			dispatch({
+				type: 'delta',
+				removed: event.removed as SessionGroupMessage[] | undefined,
+				updated: event.updated as SessionGroupMessage[] | undefined,
+				added: event.added as SessionGroupMessage[] | undefined,
 			});
-			// Note: hiddenOlderCount is intentionally NOT updated when new messages
-			// arrive via delta. New messages append at the end and are always visible.
 		});
 
 		// Send the subscribe request with retry on failure.
@@ -234,7 +309,7 @@ export function useGroupMessages(
 				// Ignore cleanup errors.
 			});
 		};
-	}, [groupId, isConnected, pageSize, request, onEvent]);
+	}, [groupId, isConnected, request, onEvent]); // pageSize intentionally omitted — see module comment
 
 	// Expose only the visible slice: allMessages starting from hiddenOlderCount.
 	// New live-delta messages always appear at the end (never hidden).
@@ -245,8 +320,8 @@ export function useGroupMessages(
 
 	// Reveal one more page of older messages from the internal buffer.
 	const loadEarlier = useCallback(() => {
-		setHiddenOlderCount((prev) => Math.max(0, prev - pageSize));
-	}, [pageSize]);
+		dispatch({ type: 'loadEarlier', pageSize: pageSizeRef.current });
+	}, []); // dispatch is stable from useReducer; pageSizeRef is a ref
 
 	return {
 		messages,

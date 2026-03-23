@@ -179,7 +179,9 @@ test.describe('TaskView — Message Pagination', () => {
 
 			// Capture the scroll position before clicking Load Earlier
 			const scrollBefore = await page.evaluate(() => {
-				const container = document.querySelector('.overflow-y-auto') as HTMLElement | null;
+				const container = document.querySelector(
+					'[data-testid="task-messages-container"]'
+				) as HTMLElement | null;
 				return container ? container.scrollTop : 0;
 			});
 
@@ -200,7 +202,9 @@ test.describe('TaskView — Message Pagination', () => {
 			// After loading earlier messages, the container's scrollTop should be non-zero
 			// because the prepended messages push content down and we restore position.
 			const scrollAfter = await page.evaluate(() => {
-				const container = document.querySelector('.overflow-y-auto') as HTMLElement | null;
+				const container = document.querySelector(
+					'[data-testid="task-messages-container"]'
+				) as HTMLElement | null;
 				return container ? container.scrollTop : 0;
 			});
 
@@ -209,10 +213,9 @@ test.describe('TaskView — Message Pagination', () => {
 			// We allow some tolerance since the exact pixel value depends on content height.
 			expect(scrollAfter).toBeGreaterThan(0);
 
-			// Sanity check: scrollBefore should also have been non-zero since we were
-			// looking at a full page of messages and the container was scrolled.
-			// (This validates the test is measuring real scroll state.)
-			expect(typeof scrollBefore).toBe('number');
+			// Sanity check: scrollBefore must also be non-zero — the 50-message page fills
+			// the container so the user is already scrolled down before clicking Load Earlier.
+			expect(scrollBefore).toBeGreaterThan(0);
 		});
 	});
 });
