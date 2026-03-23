@@ -78,10 +78,12 @@ function NestedMessageRenderer({
 	message,
 	toolResultsMap,
 	isLast = false,
+	inputText = null,
 }: {
 	message: SDKMessage;
 	toolResultsMap?: Map<string, unknown>;
 	isLast?: boolean;
+	inputText?: string | null;
 }) {
 	// Handle assistant messages
 	if (message.type === 'assistant') {
@@ -135,6 +137,8 @@ function NestedMessageRenderer({
 				{textBlocks.map((block, idx) => {
 					const text = (block as { text: string }).text.trim();
 					if (!text) return null;
+					// Skip if this text matches the input prompt (duplicate of User card)
+					if (inputText && text === inputText.trim()) return null;
 					return (
 						<div
 							key={`text-${idx}`}
@@ -266,8 +270,8 @@ function NestedMessageRenderer({
 	if (message.type === 'system') {
 		const systemMessage = message as SDKMessage & { subtype?: string };
 
-		// Skip init messages
-		if (systemMessage.subtype === 'init') {
+		// Skip init and task_started messages - these are noise
+		if (systemMessage.subtype === 'init' || systemMessage.subtype === 'task_started') {
 			return null;
 		}
 
@@ -489,6 +493,7 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 												message={msg}
 												toolResultsMap={new Map()}
 												isLast={isLastAssistant}
+												inputText={inputText}
 											/>
 										);
 									})}
