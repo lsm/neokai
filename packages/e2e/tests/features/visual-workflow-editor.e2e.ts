@@ -680,17 +680,13 @@ test.describe('Visual Workflow Editor', () => {
 							id: step1,
 							name: 'Start',
 							agentId: aId,
-							channels: [
-								{ from: 'task-agent', to: 'coder', direction: 'bidirectional' },
-							],
+							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
 						{
 							id: step2,
 							name: 'End',
 							agentId: aId,
-							channels: [
-								{ from: 'task-agent', to: 'coder', direction: 'bidirectional' },
-							],
+							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
 					],
 					transitions: [
@@ -952,7 +948,9 @@ test.describe('Visual Workflow Editor', () => {
 		// once bidirectional arrowhead rendering is implemented
 		await page.waitForFunction(
 			() => {
-				const path = document.querySelector('[data-channel-edge="true"] path:not([stroke="transparent"])');
+				const path = document.querySelector(
+					'[data-channel-edge="true"] path:not([stroke="transparent"])'
+				);
 				if (!path) return false;
 				const markerStart = path.getAttribute('marker-start');
 				return markerStart !== null && markerStart !== '';
