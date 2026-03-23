@@ -173,27 +173,22 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// ------------------------------------------------------------------
 
 	const channelEdges = useMemo<{ fromStepId: 'task-agent'; toStepId: string }[]>(() => {
+		const seen = new Set<string>();
 		const result: { fromStepId: 'task-agent'; toStepId: string }[] = [];
 		for (const node of nodes) {
 			const channels = node.step.channels;
 			if (!channels) continue;
+			// Only add one edge per node, regardless of how many channels it has
+			if (seen.has(node.step.localId)) continue;
 			for (const channel of channels) {
-				// Handle bidirectional channels: task-agent -> node role
-				if (channel.direction === 'bidirectional') {
-					if (channel.from === 'task-agent') {
-						// task-agent -> node (use the node's localId as the target)
-						result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
-					} else if (channel.to === 'task-agent') {
-						// node -> task-agent (treat as task-agent is the source)
-						result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
-					}
-				}
-				// Handle one-way channels
-				if (channel.direction === 'one-way') {
-					if (channel.from === 'task-agent') {
-						result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
-					}
-					// Don't render edges where task-agent is the target (one-way from node to task-agent)
+				// Check if this channel involves task-agent
+				const hasTaskAgent =
+					(channel.from === 'task-agent' || channel.to === 'task-agent') &&
+					channel.direction === 'bidirectional';
+				if (hasTaskAgent) {
+					result.push({ fromStepId: 'task-agent', toStepId: node.step.localId });
+					seen.add(node.step.localId);
+					break; // only one edge per node
 				}
 			}
 		}

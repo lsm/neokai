@@ -187,14 +187,8 @@ function ChannelEdgeRenderer({
 
 				return (
 					<g key={`channel-${edge.toStepId}`} data-channel-edge="true">
-						{/* Invisible wider hitbox */}
-						<path
-							d={d}
-							stroke="transparent"
-							strokeWidth={12}
-							fill="none"
-							style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
-						/>
+						{/* Channel edges are informational — no click interaction yet */}
+						<path d={d} stroke="transparent" strokeWidth={12} fill="none" />
 						{/* Visible dashed edge */}
 						<path
 							d={d}

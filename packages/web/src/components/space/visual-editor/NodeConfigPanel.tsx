@@ -66,43 +66,31 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentStep(step);
 	const stepAgents = step.agents ?? [];
 
-	// Auto-create Task Agent channels when an agent is assigned to a node that has no channels.
-	// This runs after the step updates, creating channels for single-agent and multi-agent nodes.
-	useEffect(() => {
-		// Only auto-create if there are agents but no channels
-		const hasSingleAgent = !!step.agentId && !step.agents;
-		const hasMultiAgent = step.agents && step.agents.length > 0;
-		if (!hasSingleAgent && !hasMultiAgent) return;
-		if (step.channels !== undefined) return; // channels already exist
-
-		if (hasSingleAgent) {
-			// Single-agent: create task-agent channel for the agent's role
-			const agentInfo = agents.find((a) => a.id === step.agentId);
-			if (!agentInfo) return;
-			const newChannels: WorkflowChannel[] = [
-				{ from: 'task-agent', to: agentInfo.role, direction: 'bidirectional' },
-			];
-			onUpdate({ ...step, channels: newChannels });
-		} else if (hasMultiAgent && step.agents) {
-			// Multi-agent: create task-agent channel for each agent's role
-			const newChannels: WorkflowChannel[] = step.agents.map((sa) => {
-				const agentInfo = agents.find((a) => a.id === sa.agentId);
-				const role = agentInfo?.role ?? sa.agentId;
-				return { from: 'task-agent', to: role, direction: 'bidirectional' };
-			});
-			onUpdate({ ...step, channels: newChannels });
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
-
 	function updateAgents(next: WorkflowStepAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
+	}
+
+	/**
+	 * Auto-create Task Agent channels for a step that just got agents assigned.
+	 * Called from event handlers (agent dropdown onChange, addAgent) to avoid
+	 * mount-time side effects that corrupt existing workflow data.
+	 */
+	function autoCreateChannelsForAgents(agentsToChannel: WorkflowStepAgent[]) {
+		if (step.channels !== undefined) return; // channels already exist
+		const newChannels: WorkflowChannel[] = agentsToChannel.map((sa) => {
+			const agentInfo = agents.find((a) => a.id === sa.agentId);
+			const role = agentInfo?.role ?? sa.agentId;
+			return { from: 'task-agent', to: role, direction: 'bidirectional' };
+		});
+		onUpdate({ ...step, channels: newChannels });
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		if (stepAgents.some((a) => a.agentId === agentId)) return;
-		updateAgents([...stepAgents, { agentId }]);
+		const next = [...stepAgents, { agentId }];
+		autoCreateChannelsForAgents(next);
+		updateAgents(next);
 	}
 
 	function removeAgent(agentId: string) {
@@ -149,9 +137,20 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				<select
 					data-testid="agent-select"
 					value={step.agentId}
-					onChange={(e) =>
-						onUpdate({ ...step, agentId: (e.currentTarget as HTMLSelectElement).value })
-					}
+					onChange={(e) => {
+						const newAgentId = (e.currentTarget as HTMLSelectElement).value;
+						const nextStep = { ...step, agentId: newAgentId };
+						// Auto-create task-agent channel when a single agent is assigned
+						if (newAgentId && step.channels === undefined) {
+							const agentInfo = agents.find((a) => a.id === newAgentId);
+							if (agentInfo) {
+								nextStep.channels = [
+									{ from: 'task-agent', to: agentInfo.role, direction: 'bidirectional' },
+								];
+							}
+						}
+						onUpdate(nextStep);
+					}}
 					class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
 				>
 					<option value="">— Select agent —</option>
@@ -559,6 +558,7 @@ export function NodeConfigPanel({
 					condition={entryCondition ?? { type: 'always' }}
 					onChange={onUpdateEntryCondition}
 					terminalMessage={isFirstStep ? 'Workflow starts here' : undefined}
+					testId="entry-gate-select"
 				/>
 
 				{/* Exit Gate */}
@@ -567,6 +567,7 @@ export function NodeConfigPanel({
 					condition={exitCondition ?? { type: 'always' }}
 					onChange={onUpdateExitCondition}
 					terminalMessage={isLastStep ? 'Workflow ends here' : undefined}
+					testId="exit-gate-select"
 				/>
 
 				{/* Instructions */}

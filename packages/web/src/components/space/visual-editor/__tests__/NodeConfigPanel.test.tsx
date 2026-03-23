@@ -211,26 +211,23 @@ describe('NodeConfigPanel', () => {
 
 		it('calls onUpdateEntryCondition when entry gate type changes', () => {
 			const onUpdateEntryCondition = vi.fn();
-			const { container } = render(
+			const { getByTestId } = render(
 				<NodeConfigPanel
 					{...makeProps({ onUpdateEntryCondition, entryCondition: { type: 'always' } })}
 				/>
 			);
-			// selects: agent (index 0), entry gate (index 1), exit gate (index 2)
-			const selects = container.querySelectorAll('select');
-			fireEvent.change(selects[1], { target: { value: 'human' } });
+			fireEvent.change(getByTestId('entry-gate-select'), { target: { value: 'human' } });
 			expect(onUpdateEntryCondition).toHaveBeenCalledWith({ type: 'human', expression: undefined });
 		});
 
 		it('calls onUpdateExitCondition when exit gate type changes', () => {
 			const onUpdateExitCondition = vi.fn();
-			const { container } = render(
+			const { getByTestId } = render(
 				<NodeConfigPanel
 					{...makeProps({ onUpdateExitCondition, exitCondition: { type: 'always' } })}
 				/>
 			);
-			const selects = container.querySelectorAll('select');
-			fireEvent.change(selects[2], { target: { value: 'condition' } });
+			fireEvent.change(getByTestId('exit-gate-select'), { target: { value: 'condition' } });
 			expect(onUpdateExitCondition).toHaveBeenCalledWith({ type: 'condition', expression: '' });
 		});
 	});
@@ -466,9 +463,11 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('channels-section')).toBeTruthy();
 		});
 
-		it('does not show channels section in single-agent mode', () => {
+		it('shows channels section for single-agent node with agent (channels created on agent assignment)', () => {
+			// Channels section is shown for nodes with agents so users can manage Task Agent channels.
+			// Channels are created in the agent dropdown onChange handler, not on mount.
 			const { queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(queryByTestId('channels-section')).toBeNull();
+			expect(queryByTestId('channels-section')).toBeTruthy();
 		});
 
 		it('renders existing channels in channels list', () => {
