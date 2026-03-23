@@ -20,7 +20,15 @@ import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { getModelLabel } from '../../lib/session-utils';
-import { useGroupMessages, type SessionGroupMessage } from '../../hooks/useGroupMessages';
+import { useGroupMessages } from '../../hooks/useGroupMessages';
+import {
+	parseGroupMessage,
+	type ParsedGroupMessage,
+	type TaskMeta,
+} from '../../lib/parse-group-message';
+import { ROLE_COLORS } from '../../lib/task-constants';
+
+export { parseGroupMessage } from '../../lib/parse-group-message';
 
 /** Empty question state used as a safe fallback for messages with unknown session IDs */
 const NO_OP_QUESTION_STATE: SessionQuestionState = {
@@ -28,13 +36,6 @@ const NO_OP_QUESTION_STATE: SessionQuestionState = {
 	resolvedQuestions: new Map(),
 	onQuestionResolved: () => {},
 };
-
-interface TaskMeta {
-	authorRole: 'planner' | 'coder' | 'general' | 'leader' | 'craft' | 'lead' | 'human' | 'system';
-	authorSessionId: string;
-	turnId: string;
-	iteration: number;
-}
 
 interface TaskConversationRendererProps {
 	groupId: string;
@@ -46,108 +47,8 @@ interface TaskConversationRendererProps {
 	onMessageCountChange?: (count: number) => void;
 }
 
-const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
-	planner: { border: 'border-l-teal-500', label: 'Planner', labelColor: 'text-teal-400' },
-	coder: { border: 'border-l-blue-500', label: 'Coder', labelColor: 'text-blue-400' },
-	general: { border: 'border-l-slate-400', label: 'General', labelColor: 'text-slate-400' },
-	leader: { border: 'border-l-purple-500', label: 'Leader', labelColor: 'text-purple-400' },
-	human: { border: 'border-l-green-500', label: 'Human', labelColor: 'text-green-400' },
-	system: { border: 'border-l-transparent', label: '', labelColor: 'text-gray-500' },
-	craft: { border: 'border-l-blue-500', label: 'Craft', labelColor: 'text-blue-400' },
-	lead: { border: 'border-l-purple-500', label: 'Lead', labelColor: 'text-purple-400' },
-};
-
-export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
-	// messageType is used for DB records; type is used for WebSocket real-time events.
-	// Normalize to whichever field is set.
-	const msgAny = msg as unknown as Record<string, unknown>;
-	const msgType = msgAny.messageType ?? msgAny.type;
-
-	// Status messages are plain text, not JSON
-	if (msgType === 'status') {
-		return {
-			type: 'status',
-			text: msg.content,
-			timestamp: msg.createdAt,
-			_taskMeta: {
-				authorRole: 'system',
-				authorSessionId: '',
-				turnId: `status-${msg.id}`,
-				iteration: 0,
-			},
-		} as unknown as SDKMessage;
-	}
-
-	// Leader summary messages: rendered as a distinct card
-	if (msgType === 'leader_summary') {
-		return {
-			type: 'leader_summary',
-			text: msg.content,
-			timestamp: msg.createdAt,
-			_taskMeta: {
-				authorRole: 'system',
-				authorSessionId: '',
-				turnId: `leader-summary-${msg.id}`,
-				iteration: 0,
-			},
-		} as unknown as SDKMessage;
-	}
-
-	// Rate limited: stored as JSON with rich payload (resetsAt, sessionRole).
-	// Fall back to content as plain text if not valid JSON.
-	if (msgType === 'rate_limited') {
-		let parsed: Record<string, unknown> = {};
-		try {
-			parsed = JSON.parse(msg.content) as Record<string, unknown>;
-		} catch {
-			parsed = { text: msg.content };
-		}
-		return {
-			...parsed,
-			type: 'rate_limited',
-			timestamp: msg.createdAt,
-			_taskMeta: {
-				authorRole: 'system',
-				authorSessionId: '',
-				turnId: `rate-limited-${msg.id}`,
-				iteration: 0,
-			},
-		} as unknown as SDKMessage;
-	}
-
-	// Model fallback: stored as JSON with rich payload (fromModel, toModel, sessionRole).
-	// Fall back to content as plain text if not valid JSON.
-	if (msgType === 'model_fallback') {
-		let parsed: Record<string, unknown> = {};
-		try {
-			parsed = JSON.parse(msg.content) as Record<string, unknown>;
-		} catch {
-			parsed = { text: msg.content };
-		}
-		return {
-			...parsed,
-			type: 'model_fallback',
-			timestamp: msg.createdAt,
-			_taskMeta: {
-				authorRole: 'system',
-				authorSessionId: '',
-				turnId: `model-fallback-${msg.id}`,
-				iteration: 0,
-			},
-		} as unknown as SDKMessage;
-	}
-
-	try {
-		const parsed = JSON.parse(msg.content) as SDKMessage;
-		// Inject timestamp from the database row so message components render the correct creation time
-		return { ...parsed, timestamp: msg.createdAt } as unknown as SDKMessage;
-	} catch {
-		return null;
-	}
-}
-
 function getTaskMeta(msg: SDKMessage): TaskMeta | null {
-	const meta = (msg as SDKMessage & { _taskMeta?: TaskMeta })._taskMeta;
+	const meta = (msg as ParsedGroupMessage)._taskMeta;
 	return meta ?? null;
 }
 

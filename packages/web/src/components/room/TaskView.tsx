@@ -15,36 +15,25 @@
  * appears when the user has scrolled up.
  */
 
-import type { NeoTask, SessionInfo } from '@neokai/shared';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
-import { useMessageHub } from '../../hooks/useMessageHub';
-import { useModal } from '../../hooks/useModal';
-import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
+import { useTaskViewData } from '../../hooks/useTaskViewData';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
-import { roomStore } from '../../lib/room-store';
 import { currentRoomTabSignal } from '../../lib/signals';
-import { toast } from '../../lib/toast.ts';
-import { ActionBar } from '../ui/ActionBar';
 import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
-import { Modal } from '../ui/Modal';
 import { RejectModal } from '../ui/RejectModal';
-import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
 import { TaskInfoPanel } from './TaskInfoPanel';
-
-interface TaskGroupInfo {
-	id: string;
-	taskId: string;
-	workerSessionId: string;
-	leaderSessionId: string;
-	workerRole: string;
-	feedbackIteration: number;
-	submittedForReview: boolean;
-	createdAt: number;
-	completedAt: number | null;
-}
+import { HumanInputArea } from './task-shared/HumanInputArea';
+import {
+	CompleteTaskDialog,
+	CancelTaskDialog,
+	ArchiveTaskDialog,
+	SetStatusModal,
+} from './task-shared/TaskActionDialogs';
+import { TaskHeaderActions } from './task-shared/TaskHeaderActions';
+import { TaskReviewBar } from './task-shared/TaskReviewBar';
 
 interface TaskViewProps {
 	roomId: string;
@@ -62,799 +51,45 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	archived: 'text-gray-600',
 };
 
-type HumanMessageTarget = 'worker' | 'leader';
-
-interface HumanInputAreaProps {
-	hasGroup: boolean;
-	taskStatus: string;
-	roomId: string;
-	taskId: string;
-	leaderSessionId?: string;
-	workerSessionId?: string;
-}
-
-interface QueuedOverlayMessage {
-	dbId: string;
-	uuid: string;
-	text: string;
-	timestamp: number;
-	status: 'deferred' | 'enqueued' | 'consumed';
-}
-
-const TARGET_LABELS: Record<HumanMessageTarget, string> = {
-	worker: 'Worker',
-	leader: 'Leader',
-};
-
-function HumanInputArea({
-	hasGroup,
-	taskStatus,
-	roomId,
-	taskId,
-	leaderSessionId,
-	workerSessionId,
-}: HumanInputAreaProps) {
-	const { request } = useMessageHub();
-	const {
-		content: messageText,
-		setContent: setMessageText,
-		clear: clearDraft,
-		draftRestored,
-	} = useTaskInputDraft(roomId, taskId);
-	const [sending, setSending] = useState(false);
-	const [inputError, setInputError] = useState<string | null>(null);
-	const [target, setTarget] = useState<HumanMessageTarget>('leader');
-	const [menuOpen, setMenuOpen] = useState(false);
-	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
-	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
-	const menuRef = useRef<HTMLDivElement>(null);
-	const isTouchDeviceRef = useRef(false);
-	const isMountedRef = useRef(true);
-	const queueRequestVersionRef = useRef(0);
-
-	useEffect(() => {
-		isTouchDeviceRef.current =
-			window.matchMedia('(pointer: coarse)').matches ||
-			('ontouchstart' in window && window.innerWidth < 768);
-	}, []);
-
-	useEffect(() => {
-		return () => {
-			isMountedRef.current = false;
-			queueRequestVersionRef.current += 1;
-		};
-	}, []);
-
-	useEffect(() => {
-		if (!menuOpen) return;
-		const onDocMouseDown = (event: MouseEvent) => {
-			const targetNode = event.target as Node;
-			if (menuRef.current && !menuRef.current.contains(targetNode)) {
-				setMenuOpen(false);
-			}
-		};
-		document.addEventListener('mousedown', onDocMouseDown);
-		return () => document.removeEventListener('mousedown', onDocMouseDown);
-	}, [menuOpen]);
-
-	const isArchived = taskStatus === 'archived';
-	const canReactivateWithMessage = taskStatus === 'completed' || taskStatus === 'cancelled';
-	const canSend = !isArchived && (hasGroup || canReactivateWithMessage);
-	const targetSessionId = target === 'leader' ? leaderSessionId : workerSessionId;
-
-	const refreshQueuedMessages = useCallback(async () => {
-		const requestVersion = ++queueRequestVersionRef.current;
-		if (!hasGroup || !targetSessionId) {
-			if (!isMountedRef.current || requestVersion !== queueRequestVersionRef.current) {
-				return;
-			}
-			setQueuedForCurrentTurn([]);
-			setQueuedForNextTurn([]);
-			return;
-		}
-
-		try {
-			const [enqueuedResponse, deferredResponse] = (await Promise.all([
-				request('session.messages.byStatus', {
-					sessionId: targetSessionId,
-					status: 'enqueued',
-					limit: 20,
-				}),
-				request('session.messages.byStatus', {
-					sessionId: targetSessionId,
-					status: 'deferred',
-					limit: 20,
-				}),
-			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
-
-			if (!isMountedRef.current || requestVersion !== queueRequestVersionRef.current) {
-				return;
-			}
-
-			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
-			setQueuedForNextTurn(deferredResponse.messages ?? []);
-		} catch {
-			// Best-effort queue refresh.
-		}
-	}, [hasGroup, request, targetSessionId]);
-
-	useEffect(() => {
-		void refreshQueuedMessages();
-	}, [refreshQueuedMessages]);
-
-	useEffect(() => {
-		if (!hasGroup || (queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)) {
-			return;
-		}
-		const timer = setInterval(() => {
-			void refreshQueuedMessages();
-		}, 700);
-		return () => clearInterval(timer);
-	}, [hasGroup, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
-
-	const sendMessage = async () => {
-		if (sending || !messageText.trim() || !canSend) return;
-		setSending(true);
-		setInputError(null);
-		try {
-			await request('task.sendHumanMessage', {
-				roomId,
-				taskId,
-				message: messageText.trim(),
-				target,
-			});
-			clearDraft();
-			await refreshQueuedMessages();
-		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to send message');
-		} finally {
-			setSending(false);
-		}
-	};
-
-	const targetLabel = target === 'leader' ? 'leader' : 'worker';
-	const placeholder = isArchived
-		? 'Archived tasks cannot receive messages.'
-		: canReactivateWithMessage && !hasGroup
-			? 'Send a message to reactivate this task…'
-			: !hasGroup
-				? 'No active agent group yet — input will activate once a group starts.'
-				: isTouchDeviceRef.current
-					? `Send a message to the ${targetLabel}…`
-					: `Send a message to the ${targetLabel}… (Enter to send, Shift+Enter for newline)`;
-
-	return (
-		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-			{draftRestored && (
-				<div
-					class="flex items-center justify-between rounded bg-blue-900/30 border border-blue-700/40 px-3 py-1.5 text-xs text-blue-300"
-					data-testid="draft-restored-banner"
-				>
-					<span>Draft restored</span>
-					<button
-						type="button"
-						class="ml-2 text-blue-400 hover:text-blue-200 transition-colors"
-						onClick={clearDraft}
-						data-testid="draft-dismiss-button"
-					>
-						Discard draft
-					</button>
-				</div>
-			)}
-			{(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0) && canSend && (
-				<div class="flex flex-col items-end gap-1.5" data-testid="queue-overlay">
-					{queuedForCurrentTurn.slice(0, 3).map((queued, index) => (
-						<div
-							key={queued.dbId}
-							class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
-							data-testid="queued-current-turn-bubble"
-						>
-							<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-							<span class="truncate">
-								{index === 0 && <span class="mr-1 text-amber-300">Now</span>}
-								{queued.text}
-							</span>
-						</div>
-					))}
-					{queuedForNextTurn.slice(0, 3).map((queued, index) => (
-						<div
-							key={queued.dbId}
-							class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
-							data-testid="queued-next-turn-bubble"
-						>
-							<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
-							<span class="truncate">
-								{index === 0 && <span class="mr-1 text-blue-300">Next</span>}
-								{queued.text}
-							</span>
-						</div>
-					))}
-					{queuedForCurrentTurn.length > 3 && (
-						<p class="pointer-events-none text-xs text-amber-200/80">
-							+{queuedForCurrentTurn.length - 3} more pending
-						</p>
-					)}
-					{queuedForNextTurn.length > 3 && (
-						<p class="pointer-events-none text-xs text-blue-200/80">
-							+{queuedForNextTurn.length - 3} more deferred
-						</p>
-					)}
-				</div>
-			)}
-			<InputTextarea
-				content={messageText}
-				onContentChange={setMessageText}
-				onKeyDown={(e) => {
-					if (e.key === 'Enter') {
-						if (e.metaKey || e.ctrlKey || (!e.shiftKey && !isTouchDeviceRef.current)) {
-							e.preventDefault();
-							void sendMessage();
-						}
-					}
-				}}
-				onSubmit={() => void sendMessage()}
-				disabled={sending || !canSend}
-				placeholder={placeholder}
-				maxChars={50000}
-				leadingPaddingClass="pl-[5.75rem]"
-				leadingElement={
-					<div class="relative" ref={menuRef}>
-						<button
-							type="button"
-							class="inline-flex h-9 items-center gap-1 rounded-3xl bg-blue-500 px-3 text-xs font-medium text-white hover:bg-blue-600 active:scale-95 transition-all"
-							onClick={(e) => {
-								e.stopPropagation();
-								setMenuOpen((open) => !open);
-							}}
-							data-testid="task-target-button"
-							title="Select target agent"
-						>
-							<span>{TARGET_LABELS[target]}</span>
-							<svg
-								class="w-3 h-3 text-white/90"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M19 9l-7 7-7-7"
-								/>
-							</svg>
-						</button>
-
-						{menuOpen && (
-							<div class="absolute bottom-full mb-2 left-0 z-20 min-w-[140px] rounded-lg border border-dark-600 bg-dark-800 py-1 shadow-xl">
-								{(['worker', 'leader'] as const).map((option) => {
-									const selected = target === option;
-									return (
-										<button
-											key={option}
-											type="button"
-											onClick={() => {
-												setTarget(option);
-												setMenuOpen(false);
-											}}
-											data-testid={`task-target-option-${option}`}
-											class={`block w-full px-3 py-1.5 text-left text-xs transition-colors ${
-												selected
-													? 'text-blue-400 bg-dark-700/70'
-													: 'text-gray-200 hover:bg-dark-700'
-											}`}
-										>
-											{TARGET_LABELS[option]}
-										</button>
-									);
-								})}
-							</div>
-						)}
-					</div>
-				}
-			/>
-			{canReactivateWithMessage && !hasGroup && (
-				<p class="text-xs text-amber-500/80">Sending a message will reactivate this task.</p>
-			)}
-			{!canSend && !canReactivateWithMessage && (
-				<p class="text-xs text-gray-500">
-					{isArchived
-						? 'Archived tasks cannot receive messages.'
-						: 'No active group to receive messages yet.'}
-				</p>
-			)}
-			{inputError && <p class="text-xs text-red-400">{inputError}</p>}
-		</div>
-	);
-}
-
-interface CompleteTaskDialogProps {
-	task: NeoTask;
-	isOpen: boolean;
-	onClose: () => void;
-	onConfirm: (summary: string) => Promise<void>;
-}
-
-function CompleteTaskDialog({ task, isOpen, onClose, onConfirm }: CompleteTaskDialogProps) {
-	const [summary, setSummary] = useState('');
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const handleClose = () => {
-		setSummary('');
-		setError(null);
-		onClose();
-	};
-
-	const handleConfirm = async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			await onConfirm(summary);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to complete task');
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	return (
-		<Modal
-			isOpen={isOpen}
-			onClose={handleClose}
-			title="Mark Task as Complete?"
-			size="md"
-			showCloseButton
-		>
-			<div class="space-y-4">
-				<p class="text-sm text-gray-300">
-					You are about to mark <strong class="text-gray-100">{task.title}</strong> as completed.
-				</p>
-
-				<div class="bg-dark-800 border border-dark-600 rounded-lg p-3 text-xs text-gray-400">
-					<p class="font-medium text-gray-300 mb-1.5">What happens next:</p>
-					<ul class="list-disc list-inside space-y-1">
-						<li>
-							Task status changes to <span class="text-green-400">completed</span>
-						</li>
-						<li>Active sessions will be stopped</li>
-						<li>Worktree and branch are preserved — you can reactivate later</li>
-					</ul>
-				</div>
-
-				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1.5">
-						Completion Summary <span class="text-gray-500 font-normal">(optional)</span>
-					</label>
-					<textarea
-						class="w-full h-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-						placeholder="Briefly describe what was accomplished..."
-						value={summary}
-						onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
-						disabled={loading}
-					/>
-				</div>
-
-				{error && (
-					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
-						{error}
-					</p>
-				)}
-
-				<div class="flex items-center justify-end gap-3 pt-2">
-					<button
-						type="button"
-						onClick={handleClose}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						Cancel
-					</button>
-					<button
-						type="button"
-						onClick={() => void handleConfirm()}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-green-600 hover:bg-green-700 text-white disabled:bg-green-600/50 flex items-center gap-1.5"
-						data-testid="complete-task-confirm"
-					>
-						{loading ? (
-							'Completing…'
-						) : (
-							<>
-								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M5 13l4 4L19 7"
-									/>
-								</svg>
-								Mark Complete
-							</>
-						)}
-					</button>
-				</div>
-			</div>
-		</Modal>
-	);
-}
-
-interface CancelTaskDialogProps {
-	task: NeoTask;
-	isOpen: boolean;
-	onClose: () => void;
-	onConfirm: () => Promise<void>;
-}
-
-function CancelTaskDialog({ task, isOpen, onClose, onConfirm }: CancelTaskDialogProps) {
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const handleClose = () => {
-		setError(null);
-		onClose();
-	};
-
-	const handleConfirm = async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			await onConfirm();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to cancel task');
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	return (
-		<Modal isOpen={isOpen} onClose={handleClose} title="Cancel Task?" size="sm" showCloseButton>
-			<div class="space-y-4">
-				<p class="text-sm text-gray-300">
-					You are about to cancel <strong class="text-gray-100">{task.title}</strong>.
-				</p>
-
-				<div class="bg-amber-900/20 border border-amber-800/50 rounded-lg p-3 text-xs text-gray-400">
-					<p class="font-medium text-amber-400 mb-1.5">This action is reversible:</p>
-					<ul class="list-disc list-inside space-y-1">
-						<li>
-							Task will be marked as <span class="text-gray-300">cancelled</span>
-						</li>
-						<li>Active sessions will be stopped</li>
-						<li>Worktree and branch are preserved — you can reactivate later</li>
-					</ul>
-				</div>
-
-				{error && (
-					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
-						{error}
-					</p>
-				)}
-
-				<div class="flex items-center justify-end gap-3 pt-2">
-					<button
-						type="button"
-						onClick={handleClose}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						Keep Task
-					</button>
-					<button
-						type="button"
-						onClick={() => void handleConfirm()}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50 flex items-center gap-1.5"
-						data-testid="cancel-task-confirm"
-					>
-						{loading ? (
-							'Cancelling…'
-						) : (
-							<>
-								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M6 18L18 6M6 6l12 12"
-									/>
-								</svg>
-								Cancel Task
-							</>
-						)}
-					</button>
-				</div>
-			</div>
-		</Modal>
-	);
-}
-
-interface ArchiveTaskDialogProps {
-	task: NeoTask;
-	isOpen: boolean;
-	onClose: () => void;
-	onConfirm: () => Promise<void>;
-}
-
-function ArchiveTaskDialog({ task, isOpen, onClose, onConfirm }: ArchiveTaskDialogProps) {
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const handleClose = () => {
-		setError(null);
-		onClose();
-	};
-
-	const handleConfirm = async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			await onConfirm();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to archive task');
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	return (
-		<Modal isOpen={isOpen} onClose={handleClose} title="Archive Task?" size="sm" showCloseButton>
-			<div class="space-y-4">
-				<p class="text-sm text-gray-300">
-					You are about to archive <strong class="text-gray-100">{task.title}</strong>.
-				</p>
-
-				<div class="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-xs text-gray-400">
-					<p class="font-medium text-red-400 mb-1.5">This action is permanent:</p>
-					<ul class="list-disc list-inside space-y-1">
-						<li>
-							Task will be marked as <span class="text-gray-300">archived</span>
-						</li>
-						<li>All sessions will be terminated</li>
-						<li>Isolated worktree and branch will be cleaned up</li>
-						<li>The task cannot be reactivated after archiving</li>
-					</ul>
-				</div>
-
-				{error && (
-					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
-						{error}
-					</p>
-				)}
-
-				<div class="flex items-center justify-end gap-3 pt-2">
-					<button
-						type="button"
-						onClick={handleClose}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						Keep Task
-					</button>
-					<button
-						type="button"
-						onClick={() => void handleConfirm()}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50 flex items-center gap-1.5"
-						data-testid="archive-task-confirm"
-					>
-						{loading ? (
-							'Archiving…'
-						) : (
-							<>
-								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 13a2 2 0 002 2h8a2 2 0 002-2L19 8"
-									/>
-								</svg>
-								Archive Task
-							</>
-						)}
-					</button>
-				</div>
-			</div>
-		</Modal>
-	);
-}
-
-interface SetStatusModalProps {
-	task: NeoTask;
-	isOpen: boolean;
-	onClose: () => void;
-	onConfirm: (newStatus: import('@neokai/shared').TaskStatus) => Promise<void>;
-}
-
-const ALL_TASK_STATUSES: import('@neokai/shared').TaskStatus[] = [
-	'pending',
-	'in_progress',
-	'review',
-	'completed',
-	'needs_attention',
-	'cancelled',
-	'archived',
-	'draft',
-];
-
-const STATUS_LABELS: Record<import('@neokai/shared').TaskStatus, string> = {
-	pending: 'Pending',
-	in_progress: 'In Progress',
-	review: 'In Review',
-	completed: 'Completed',
-	needs_attention: 'Needs Attention',
-	cancelled: 'Cancelled',
-	archived: 'Archived',
-	draft: 'Draft',
-};
-
-/**
- * Returns true if the transition from `from` to `to` is considered destructive
- * and warrants an extra warning in the confirmation modal.
- */
-function isDestructiveTransition(
-	from: import('@neokai/shared').TaskStatus,
-	to: import('@neokai/shared').TaskStatus
-): boolean {
-	if (from === 'archived') return true; // restoring an archived task
-	if (from === 'completed' && to === 'pending') return true; // reopening completed task
-	if (from === 'cancelled' && to === 'completed') return true; // force-completing cancelled task
-	return false;
-}
-
-function destructiveTransitionWarning(
-	from: import('@neokai/shared').TaskStatus,
-	to: import('@neokai/shared').TaskStatus
-): string | null {
-	if (from === 'archived') {
-		return "You're restoring an archived task. The archived timestamp will be cleared.";
-	}
-	if (from === 'completed' && to === 'pending') {
-		return 'This will restart the task as pending. Previous results will be cleared.';
-	}
-	if (from === 'cancelled' && to === 'completed') {
-		return 'This will force-complete this cancelled task. Use with caution.';
-	}
-	return null;
-}
-
-function SetStatusModal({ task, isOpen, onClose, onConfirm }: SetStatusModalProps) {
-	const [selectedStatus, setSelectedStatus] = useState<import('@neokai/shared').TaskStatus | null>(
-		null
-	);
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const availableStatuses = ALL_TASK_STATUSES.filter((s) => s !== task.status);
-
-	const handleClose = () => {
-		setSelectedStatus(null);
-		setError(null);
-		onClose();
-	};
-
-	const handleConfirm = async () => {
-		if (!selectedStatus) return;
-		setLoading(true);
-		setError(null);
-		try {
-			await onConfirm(selectedStatus);
-			setSelectedStatus(null);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to update task status');
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	const warning = selectedStatus ? destructiveTransitionWarning(task.status, selectedStatus) : null;
-	const isDestructive = selectedStatus
-		? isDestructiveTransition(task.status, selectedStatus)
-		: false;
-
-	return (
-		<Modal isOpen={isOpen} onClose={handleClose} title="Set Task Status">
-			<div class="flex flex-col gap-4">
-				<p class="text-sm text-gray-400">
-					Current status:{' '}
-					<span class="font-medium text-gray-200">{STATUS_LABELS[task.status]}</span>
-				</p>
-
-				<div class="flex flex-col gap-1.5">
-					<label class="text-xs text-gray-500 font-medium uppercase tracking-wide">
-						New Status
-					</label>
-					<select
-						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-600"
-						value={selectedStatus ?? ''}
-						onChange={(e) => {
-							const val = (e.target as HTMLSelectElement).value;
-							setSelectedStatus((val as import('@neokai/shared').TaskStatus) || null);
-							setError(null);
-						}}
-					>
-						<option value="">Select a status…</option>
-						{availableStatuses.map((s) => (
-							<option key={s} value={s}>
-								{STATUS_LABELS[s]}
-							</option>
-						))}
-					</select>
-				</div>
-
-				{warning && (
-					<div class="flex items-start gap-2 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2.5">
-						<svg
-							class="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5"
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-							/>
-						</svg>
-						<p class="text-sm text-amber-300">{warning}</p>
-					</div>
-				)}
-
-				{error && (
-					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
-						{error}
-					</p>
-				)}
-
-				<div class="flex items-center justify-end gap-3 pt-2">
-					<button
-						type="button"
-						onClick={handleClose}
-						disabled={loading}
-						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						Cancel
-					</button>
-					<button
-						type="button"
-						onClick={() => void handleConfirm()}
-						disabled={loading || !selectedStatus}
-						data-testid="set-status-confirm"
-						class={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed flex items-center gap-1.5 ${
-							isDestructive
-								? 'bg-amber-600 hover:bg-amber-700 text-white disabled:bg-amber-600/50'
-								: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50'
-						}`}
-					>
-						{loading ? 'Updating…' : isDestructive ? 'Force Set Status' : 'Set Status'}
-					</button>
-				</div>
-			</div>
-		</Modal>
-	);
-}
-
 export function TaskView({ roomId, taskId }: TaskViewProps) {
-	const { request, onEvent, joinRoom, leaveRoom, isConnected } = useMessageHub();
-	const [task, setTask] = useState<NeoTask | null>(null);
+	const {
+		task,
+		group,
+		workerSession,
+		leaderSession,
+		isLoading,
+		error,
+		associatedGoal,
+		conversationKey,
+		approveReviewedTask,
+		rejectReviewedTask,
+		interruptSession,
+		reactivateTask,
+		completeTask,
+		cancelTask,
+		archiveTask,
+		setTaskStatusManually,
+		approving,
+		rejecting,
+		interrupting,
+		reactivating,
+		reviewError,
+		rejectModal,
+		completeModal,
+		cancelModal,
+		archiveModal,
+		setStatusModal,
+		canCancel,
+		canInterrupt,
+		canReactivate,
+		canComplete,
+		canArchive,
+	} = useTaskViewData(roomId, taskId);
 
-	// Look up the goal associated with this task (reverse lookup from roomStore)
-	const associatedGoal = roomStore.goalByTaskId.value.get(taskId) ?? null;
-	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
-	const [conversationKey, setConversationKey] = useState(0);
 	const [messageCount, setMessageCount] = useState(0);
-
-	// Session info for worker and leader (for displaying worktree path and agent info)
-	const [workerSession, setWorkerSession] = useState<SessionInfo | null>(null);
-	const [leaderSession, setLeaderSession] = useState<SessionInfo | null>(null);
 
 	// UI state for autoscroll toggle
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
-	const [interrupting, setInterrupting] = useState(false);
 
 	// Info panel (gear button) expanded state
 	const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(false);
@@ -868,19 +103,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		document.addEventListener('keydown', handleEscape, true);
 		return () => document.removeEventListener('keydown', handleEscape, true);
 	}, [isInfoPanelOpen]);
-
-	// Task action modals
-	const completeModal = useModal();
-	const cancelModal = useModal();
-	const rejectModal = useModal();
-	const archiveModal = useModal();
-	const setStatusModal = useModal();
-
-	// Review state — approve/reject for tasks awaiting human review
-	const [approving, setApproving] = useState(false);
-	const [rejecting, setRejecting] = useState(false);
-	const [reviewError, setReviewError] = useState<string | null>(null);
-	const [reactivating, setReactivating] = useState(false);
 
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
@@ -901,11 +123,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	});
 
 	// Reset conversation scroll state whenever the rendered conversation changes.
-	// This covers two cases:
-	//   1. conversationKey bumps (manual reload after approve/feedback)
-	//   2. group.id changes (room.task.update event spawns a new group)
-	// Using the combined renderer key mirrors the `key` prop on TaskConversationRenderer,
-	// so any remount that causes the child to re-fetch messages also resets the parent scroll state.
 	const rendererKey = group ? `${group.id}-${conversationKey}` : `null-${conversationKey}`;
 	useEffect(() => {
 		setIsFirstLoad(true);
@@ -913,8 +130,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setAutoScrollEnabled(true);
 	}, [rendererKey]);
 
-	// Mark initial load done after first messages arrive (fires after the render where
-	// useAutoScroll sees isFirstLoad:true and messageCount>0, so the initial scroll fires first)
+	// Mark initial load done after first messages arrive
 	useEffect(() => {
 		if (messageCount > 0 && isFirstLoad) {
 			setIsFirstLoad(false);
@@ -926,98 +142,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setAutoScrollEnabled(true);
 	}, [scrollToBottom]);
 
-	useEffect(() => {
-		const channel = `room:${roomId}`;
-		joinRoom(channel);
-		let cancelled = false;
-		let fetchGroupSeq = 0;
-
-		const fetchGroup = async () => {
-			const seq = ++fetchGroupSeq;
-
-			const tryFetch = async (): Promise<{ group: TaskGroupInfo | null } | null> => {
-				try {
-					return await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
-						roomId,
-						taskId,
-					});
-				} catch {
-					return null;
-				}
-			};
-
-			let res = await tryFetch();
-			// Retry once after 1s if the first attempt fails (e.g. daemon just restarted)
-			if (res === null && !cancelled && seq === fetchGroupSeq) {
-				await new Promise<void>((resolve) => setTimeout(resolve, 1000));
-				if (!cancelled && seq === fetchGroupSeq) {
-					res = await tryFetch();
-				}
-			}
-
-			if (res !== null && !cancelled && seq === fetchGroupSeq) {
-				setGroup(res.group);
-				// Fetch session info for worker and leader
-				void fetchSessionInfo(res.group);
-			}
-		};
-
-		const fetchSessionInfo = async (grp: TaskGroupInfo | null) => {
-			if (!grp) {
-				setWorkerSession(null);
-				setLeaderSession(null);
-				return;
-			}
-			try {
-				const [workerRes, leaderRes] = await Promise.all([
-					request<{ session: SessionInfo }>('session.get', {
-						sessionId: grp.workerSessionId,
-					}).catch(() => null),
-					request<{ session: SessionInfo }>('session.get', {
-						sessionId: grp.leaderSessionId,
-					}).catch(() => null),
-				]);
-				if (!cancelled) {
-					setWorkerSession(workerRes?.session ?? null);
-					setLeaderSession(leaderRes?.session ?? null);
-				}
-			} catch {
-				// Session fetch failure is non-fatal
-			}
-		};
-
-		const load = async () => {
-			try {
-				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
-				if (!cancelled) {
-					setTask(taskRes.task);
-					await fetchGroup();
-				}
-			} catch (err) {
-				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load task');
-			} finally {
-				if (!cancelled) setLoading(false);
-			}
-		};
-
-		load();
-
-		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
-		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
-			if (event.task.id === taskId && !cancelled) {
-				setTask(event.task);
-				void fetchGroup();
-			}
-		});
-
-		return () => {
-			cancelled = true;
-			unsub();
-			leaveRoom(channel);
-		};
-	}, [roomId, taskId, isConnected]);
-
-	if (loading) {
+	if (isLoading) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<p class="text-gray-400">Loading task…</p>
@@ -1042,148 +167,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	}
 
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
-
-	// Determine which actions are available based on task status
-	// Only in_progress and review tasks can transition to completed
-	const canComplete = task.status === 'in_progress' || task.status === 'review';
-	// Pending, in_progress, and review tasks can be cancelled
-	const canCancel =
-		task.status === 'pending' || task.status === 'in_progress' || task.status === 'review';
-	// Completed and cancelled tasks can be reactivated
-	const canReactivate = task.status === 'completed' || task.status === 'cancelled';
-	// Completed, cancelled, and needs_attention tasks can be archived
-	const canArchive =
-		task.status === 'completed' || task.status === 'cancelled' || task.status === 'needs_attention';
-
-	// Complete task handler — throws on error so the dialog can display it
-	const completeTask = async (summary: string) => {
-		await request('task.setStatus', {
-			roomId,
-			taskId,
-			status: 'completed',
-			result: summary || 'Marked complete by user',
-			mode: 'manual',
-		});
-		completeModal.close();
-		toast.success('Task completed');
-		navigateToRoom(roomId);
-	};
-
-	// Cancel task handler — throws on error so the dialog can display it
-	const cancelTask = async () => {
-		await request('task.cancel', { roomId, taskId });
-		cancelModal.close();
-		toast.info('Task cancelled');
-		navigateToRoom(roomId);
-	};
-
-	// Reactivate task handler — transitions completed/cancelled to in_progress
-	const reactivateTask = async () => {
-		if (reactivating) return;
-		setReactivating(true);
-		try {
-			await request('task.setStatus', { roomId, taskId, status: 'in_progress', mode: 'manual' });
-			toast.success('Task reactivated');
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to reactivate task');
-		} finally {
-			setReactivating(false);
-		}
-	};
-
-	// Archive task handler — transitions to archived (permanent)
-	const archiveTask = async () => {
-		await request('task.setStatus', { roomId, taskId, status: 'archived', mode: 'manual' });
-		archiveModal.close();
-		toast.info('Task archived');
-		navigateToRoom(roomId);
-	};
-
-	// Set task status manually — allows any transition (manual mode, no server-side validation)
-	const setTaskStatusManually = async (newStatus: import('@neokai/shared').TaskStatus) => {
-		await request('task.setStatus', {
-			roomId,
-			taskId,
-			status: newStatus,
-			mode: 'manual',
-		});
-		setStatusModal.close();
-		toast.success(`Task status set to ${newStatus.replace('_', ' ')}`);
-		if (newStatus === 'archived') {
-			navigateToRoom(roomId);
-		}
-	};
-
-	// Interrupt button shown only when task has active agent sessions
-	const canInterrupt = task.status === 'in_progress' || task.status === 'review';
-
-	// Interrupt handler - stops LLM generation without changing task status
-	const interruptSession = async () => {
-		if (interrupting) return;
-		setInterrupting(true);
-		try {
-			await request('task.interruptSession', { roomId, taskId });
-		} catch (err) {
-			// Best-effort: ignore errors from interrupt (session may already be idle)
-			void err;
-		} finally {
-			setInterrupting(false);
-		}
-	};
-
-	// Approve handler for tasks awaiting human review
-	const approveReviewedTask = async () => {
-		if (approving) return;
-		setApproving(true);
-		setReviewError(null);
-		try {
-			await request('task.approve', { roomId, taskId });
-			setConversationKey((k) => k + 1);
-		} catch (err) {
-			setReviewError(err instanceof Error ? err.message : 'Failed to approve task');
-		} finally {
-			setApproving(false);
-		}
-	};
-
-	// Reject handler for tasks awaiting human review
-	const rejectReviewedTask = async (feedback: string) => {
-		if (rejecting) return;
-		setRejecting(true);
-		setReviewError(null);
-		try {
-			await request('task.reject', { roomId, taskId, feedback });
-			rejectModal.close();
-			setConversationKey((k) => k + 1);
-		} catch (err) {
-			setReviewError(err instanceof Error ? err.message : 'Failed to reject task');
-		} finally {
-			setRejecting(false);
-		}
-	};
-
-	// PR link element passed as meta to ActionBar when available
-	const reviewPrMeta = task?.prUrl ? (
-		<a
-			href={task.prUrl}
-			target="_blank"
-			rel="noopener noreferrer"
-			class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-300 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors"
-		>
-			<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
-				<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-			</svg>
-			<span>PR #{task.prNumber ?? '?'}</span>
-			<svg class="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-				/>
-			</svg>
-		</a>
-	) : undefined;
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
@@ -1273,72 +256,16 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						title={`Task progress: ${task.progress}%`}
 					/>
 				)}
-				{/* Stop (interrupt) button - quick action outside dropdown */}
-				{canInterrupt && (
-					<button
-						class="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
-						onClick={interruptSession}
-						title="Interrupt generation (task stays active, type your suggestions)"
-						disabled={interrupting}
-						data-testid="task-stop-button"
-					>
-						<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-							<rect x="6" y="6" width="12" height="12" rx="1" />
-						</svg>
-					</button>
-				)}
-				{/* Reactivate button - standalone, shown for completed/cancelled tasks */}
-				{canReactivate && (
-					<button
-						class="py-1 px-2.5 rounded-lg text-xs bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-						onClick={() => void reactivateTask()}
-						disabled={reactivating}
-						data-testid="task-reactivate-button"
-						title="Reactivate task"
-					>
-						{reactivating ? (
-							'Reactivating…'
-						) : (
-							<>
-								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-									/>
-								</svg>
-								Reactivate
-							</>
-						)}
-					</button>
-				)}
-				{/* Gear button - toggles info panel below header */}
-				<button
-					class={`p-1.5 rounded transition-colors ${
-						isInfoPanelOpen
-							? 'bg-blue-600 text-white'
-							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
-					}`}
-					onClick={() => setIsInfoPanelOpen(!isInfoPanelOpen)}
-					title="Task info and actions"
-					data-testid="task-info-panel-trigger"
-				>
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-						/>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-						/>
-					</svg>
-				</button>
+				<TaskHeaderActions
+					canInterrupt={canInterrupt}
+					interrupting={interrupting}
+					onInterrupt={interruptSession}
+					canReactivate={canReactivate}
+					reactivating={reactivating}
+					onReactivate={reactivateTask}
+					isInfoPanelOpen={isInfoPanelOpen}
+					onToggleInfoPanel={() => setIsInfoPanelOpen(!isInfoPanelOpen)}
+				/>
 			</div>
 
 			{/* Info panel — expands below header when gear is clicked */}
@@ -1397,29 +324,14 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 			{/* Action bar — shown when awaiting human review/approval */}
 			{group?.submittedForReview && (
-				<>
-					<ActionBar
-						type="review"
-						title="Review the PR and approve or provide feedback below"
-						primaryAction={{
-							label: 'Approve',
-							onClick: approveReviewedTask,
-							loading: approving,
-							variant: 'approve',
-						}}
-						secondaryAction={{
-							label: 'Reject',
-							onClick: rejectModal.open,
-							disabled: rejecting || approving,
-						}}
-						meta={reviewPrMeta}
-					/>
-					{reviewError && (
-						<div class="px-4 py-1.5 bg-red-900/20 border-b border-red-800/30 flex-shrink-0">
-							<span class="text-xs text-red-400">{reviewError}</span>
-						</div>
-					)}
-				</>
+				<TaskReviewBar
+					task={task}
+					approving={approving}
+					rejecting={rejecting}
+					onApprove={approveReviewedTask}
+					onOpenRejectModal={rejectModal.open}
+					reviewError={reviewError}
+				/>
 			)}
 
 			{/* Dependencies */}
@@ -1479,9 +391,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* Scroll-to-bottom button — shown when user has scrolled up.
-				    bottomClass="bottom-4" because HumanInputArea is a sibling
-				    outside this container, not an overlapping footer. */}
+				{/* Scroll-to-bottom button */}
 				<div
 					class="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
 					style={{ bottom: '1rem' }}
