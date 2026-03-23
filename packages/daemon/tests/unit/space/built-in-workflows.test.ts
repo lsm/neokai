@@ -591,14 +591,14 @@ describe('Coding Workflow export/import round-trip', () => {
 		const exported = exportWorkflow(wf, mockAgents);
 
 		const verifyToPlan = exported.transitions.find(
-			(t) => t.fromStep === 'Verify & Test' && t.toStep === 'Plan'
+			(t) => t.fromNode === 'Verify & Test' && t.toNode === 'Plan'
 		);
 		expect(verifyToPlan).toBeDefined();
 		expect(verifyToPlan!.isCyclic).toBe(true);
 
 		// Non-cyclic transitions should not have isCyclic
 		const verifyToDone = exported.transitions.find(
-			(t) => t.fromStep === 'Verify & Test' && t.toStep === 'Done'
+			(t) => t.fromNode === 'Verify & Test' && t.toNode === 'Done'
 		);
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.isCyclic).toBeUndefined();
@@ -640,7 +640,7 @@ describe('Coding Workflow export/import round-trip', () => {
 
 		// Re-import using the same mechanism as seedBuiltInWorkflows but from the exported format
 		const stepNameToId = new Map<string, string>();
-		for (const step of exported.steps) {
+		for (const step of exported.nodes) {
 			stepNameToId.set(step.name, `reimport-${step.name}`);
 		}
 
@@ -651,20 +651,20 @@ describe('Coding Workflow export/import round-trip', () => {
 			spaceId: SPACE_ID,
 			name: exported.name,
 			description: exported.description,
-			steps: exported.steps.map((s) => ({
+			steps: exported.nodes.map((s) => ({
 				id: stepNameToId.get(s.name)!,
 				name: s.name,
 				agentId: agentNameToId.get(s.agentRef) ?? s.agentRef,
 				instructions: s.instructions,
 			})),
 			transitions: exported.transitions.map((t) => ({
-				from: stepNameToId.get(t.fromStep)!,
-				to: stepNameToId.get(t.toStep)!,
+				from: stepNameToId.get(t.fromNode)!,
+				to: stepNameToId.get(t.toNode)!,
 				condition: t.condition,
 				order: t.order,
 				isCyclic: t.isCyclic,
 			})),
-			startStepId: stepNameToId.get(exported.startStep),
+			startStepId: stepNameToId.get(exported.startNode),
 			rules: [],
 			tags: exported.tags,
 		});
@@ -704,20 +704,20 @@ describe('Coding Workflow export/import round-trip', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Test Workflow',
-			steps: [
+			nodes: [
 				{ agentRef: 'Planner', name: 'Plan' },
 				{ agentRef: 'General', name: 'Verify' },
 			],
 			transitions: [
 				{
-					fromStep: 'Verify',
-					toStep: 'Plan',
+					fromNode: 'Verify',
+					toNode: 'Plan',
 					condition: { type: 'task_result', expression: 'failed' },
 					order: 0,
 					isCyclic: true,
 				},
 			],
-			startStep: 'Plan',
+			startNode: 'Plan',
 			rules: [],
 			tags: ['test'],
 		};
@@ -730,19 +730,19 @@ describe('Coding Workflow export/import round-trip', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Test Workflow',
-			steps: [
+			nodes: [
 				{ agentRef: 'Planner', name: 'Plan' },
 				{ agentRef: 'General', name: 'Verify' },
 			],
 			transitions: [
 				{
-					fromStep: 'Verify',
-					toStep: 'Plan',
+					fromNode: 'Verify',
+					toNode: 'Plan',
 					condition: { type: 'task_result' },
 					order: 0,
 				},
 			],
-			startStep: 'Plan',
+			startNode: 'Plan',
 			rules: [],
 			tags: ['test'],
 		};

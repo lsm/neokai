@@ -202,9 +202,12 @@ export function exportWorkflow(
 	workflow: SpaceWorkflow,
 	agents: SpaceAgent[]
 ): ExportedSpaceWorkflow {
+	// Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const nodes = workflow.nodes ?? (workflow as any).steps ?? [];
 	// Build a map from node UUID → node name
 	const nodeIdToName = new Map<string, string>();
-	for (const node of workflow.nodes) {
+	for (const node of nodes) {
 		nodeIdToName.set(node.id, node.name);
 	}
 
@@ -218,7 +221,7 @@ export function exportWorkflow(
 	// Multi-agent nodes (agents[] non-empty) export an `agents` array.
 	// Single-agent nodes export a scalar `agentRef` (backward-compatible shorthand).
 	// Channels are exported as-is (they already use role strings, not UUIDs).
-	const exportedNodes: ExportedWorkflowNode[] = workflow.nodes.map((node) => {
+	const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
 		const exported: ExportedWorkflowNode = { name: node.name };
 
 		if (node.agents && node.agents.length > 0) {
@@ -260,8 +263,10 @@ export function exportWorkflow(
 		return exported;
 	});
 
-	// Export startNodeId UUID → node name
-	const startNode = nodeIdToName.get(workflow.startNodeId) ?? workflow.startNodeId;
+	// Export startNodeId UUID → node name (support both new startNodeId and legacy startStepId)
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const startId = workflow.startNodeId ?? (workflow as any).startStepId;
+	const startNode = nodeIdToName.get(startId) ?? startId;
 
 	// Export rules — strip `id`, remap appliesTo node UUIDs → node names
 	const exportedRules: ExportedWorkflowRule[] = workflow.rules.map((rule) => {
