@@ -14,7 +14,7 @@ import { ROLE_COLORS } from '../../lib/task-constants';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import type { TurnBlock } from '../../hooks/useTurnBlocks';
 
-interface Props {
+export interface TurnSummaryBlockProps {
 	turn: TurnBlock;
 	onClick: (turn: TurnBlock) => void;
 	isSelected?: boolean;
@@ -57,8 +57,9 @@ function StatBadge({
 	);
 }
 
-// Inline SVG icons (no external dep needed)
+// Inline SVG icons (Heroicons v1 solid, 20×20 viewBox)
 function WrenchIcon(): JSX.Element {
+	// Heroicons v1 solid "cog" — represents tool/settings operations
 	return (
 		<svg
 			xmlns="http://www.w3.org/2000/svg"
@@ -69,7 +70,7 @@ function WrenchIcon(): JSX.Element {
 		>
 			<path
 				fill-rule="evenodd"
-				d="M5.293 3.293a1 1 0 011.414 0L10 6.586l3.293-3.293a1 1 0 111.414 1.414L11.414 8l3.293 3.293a1 1 0 01-1.414 1.414L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414L8.586 8 5.293 4.707a1 1 0 010-1.414z"
+				d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
 				clip-rule="evenodd"
 			/>
 		</svg>
@@ -77,6 +78,7 @@ function WrenchIcon(): JSX.Element {
 }
 
 function BrainIcon(): JSX.Element {
+	// Heroicons v1 solid "light-bulb" — represents thinking/reasoning
 	return (
 		<svg
 			xmlns="http://www.w3.org/2000/svg"
@@ -85,7 +87,7 @@ function BrainIcon(): JSX.Element {
 			fill="currentColor"
 			aria-hidden="true"
 		>
-			<path d="M10 2a8 8 0 100 16A8 8 0 0010 2zm0 14a6 6 0 110-12 6 6 0 010 12z" />
+			<path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.001z" />
 		</svg>
 	);
 }
@@ -112,7 +114,11 @@ function ChatIcon(): JSX.Element {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function TurnSummaryBlock({ turn, onClick, isSelected = false }: Props): JSX.Element {
+export function TurnSummaryBlock({
+	turn,
+	onClick,
+	isSelected = false,
+}: TurnSummaryBlockProps): JSX.Element {
 	const roleConfig = ROLE_COLORS[turn.agentRole] ?? {
 		border: 'border-l-gray-500',
 		label: turn.agentRole,
@@ -166,7 +172,7 @@ export function TurnSummaryBlock({ turn, onClick, isSelected = false }: Props): 
 					data-testid="turn-block-agent-name"
 					class={`truncate text-sm font-semibold ${roleConfig.labelColor}`}
 				>
-					{roleConfig.label || turn.agentRole}
+					{turn.agentLabel || turn.agentRole}
 				</span>
 
 				{turn.lastAction && (

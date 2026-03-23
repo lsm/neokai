@@ -323,11 +323,14 @@ describe('TurnSummaryBlock', () => {
 			expect(nameEl!.className).toContain(expectedClass);
 		});
 
-		it('renders Human label for human turn', () => {
-			const turn = makeTurn({ agentRole: 'human', agentLabel: 'Human' });
+		it('renders agentLabel (not ROLE_COLORS label) for human turn', () => {
+			// agentLabel is set to a custom string that differs from ROLE_COLORS['human'].label
+			// to verify the component uses turn.agentLabel, not a re-derived ROLE_COLORS lookup
+			const turn = makeTurn({ agentRole: 'human', agentLabel: 'Human (GPT-4)' });
 			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
 			const nameEl = container.querySelector('[data-testid="turn-block-agent-name"]');
-			expect(nameEl!.textContent).toBe('Human');
+			// Must show the custom agentLabel, NOT the ROLE_COLORS-derived 'Human'
+			expect(nameEl!.textContent).toBe('Human (GPT-4)');
 		});
 
 		it('falls back to agentRole text for unknown role', () => {
