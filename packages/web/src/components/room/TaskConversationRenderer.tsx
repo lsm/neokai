@@ -194,12 +194,18 @@ export function TaskConversationRenderer({
 
 	const handleLoadEarlier = useCallback(() => {
 		if (scrollContainerRef?.current) {
+			// Snapshot scroll state and signal loading only when the container is mounted.
+			// onLoadingOlderChange?.(true) must be paired with a later ?.(false) call.
+			// The pairing is guaranteed via scrollRestoreRef: the effect below only calls
+			// ?.(false) when scrollRestoreRef.current is non-null, and scrollRestoreRef is
+			// only set here. Calling ?.(true) without setting scrollRestoreRef would leave
+			// isLoadingOlder permanently stuck true if the container ref is null at effect time.
 			scrollRestoreRef.current = {
 				scrollHeight: scrollContainerRef.current.scrollHeight,
 				scrollTop: scrollContainerRef.current.scrollTop,
 			};
+			onLoadingOlderChange?.(true);
 		}
-		onLoadingOlderChange?.(true);
 		loadEarlier();
 	}, [loadEarlier, scrollContainerRef, onLoadingOlderChange]);
 

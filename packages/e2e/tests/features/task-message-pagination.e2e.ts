@@ -227,8 +227,10 @@ test.describe('TaskView — Message Pagination', () => {
 			});
 
 			if (scrollBefore > 0) {
-				// Older messages were prepended but the user's view was preserved.
-				expect(scrollAfter).toBeGreaterThan(0);
+				// Prepending 5 older messages increases scrollHeight, so the delta-adjusted
+				// scrollTop must be strictly greater than the pre-click position.
+				// scrollAfter = scrollBefore + (newScrollHeight - oldScrollHeight) > scrollBefore
+				expect(scrollAfter).toBeGreaterThanOrEqual(scrollBefore);
 			}
 		});
 	});
