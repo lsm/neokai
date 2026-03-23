@@ -157,7 +157,11 @@ export function computeChannelEdgePoints(
 	const toPos = nodePositions[channel.toStepId];
 	if (!toPos) return null;
 
-	// Handle Task Agent source (special virtual hub on the left side)
+	// Handle Task Agent source (special virtual hub on the left side).
+	// Task Agent routes to the target's top-center (not side port), so we use
+	// a proportional offset (40-50% of distance) to ensure a smooth curve.
+	// This differs from regular node-to-node channels which use a fixed CHANNEL_CP_OFFSET
+	// since they connect side ports horizontally.
 	if (channel.fromStepId === 'task-agent') {
 		const sx = TASK_AGENT_X;
 		const sy = toPos.y + toPos.height / 2;
@@ -267,29 +271,33 @@ export function EdgeRenderer({
 				>
 					<path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
 				</marker>
-				{/* Channel edge arrowhead markers — teal colored, distinct from transition markers */}
-				<marker
-					id={`${markerPrefix}-channel-end`}
-					viewBox="0 0 10 10"
-					refX="10"
-					refY="5"
-					markerWidth="6"
-					markerHeight="6"
-					orient="auto-start-reverse"
-				>
-					<path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
-				</marker>
-				<marker
-					id={`${markerPrefix}-channel-start`}
-					viewBox="0 0 10 10"
-					refX="0"
-					refY="5"
-					markerWidth="6"
-					markerHeight="6"
-					orient="auto-start-reverse"
-				>
-					<path d="M 10 0 L 0 5 L 10 10 z" fill={CHANNEL_EDGE_COLOR} />
-				</marker>
+				{/* Channel edge arrowhead markers — only render when channels are present */}
+				{channels.length > 0 && (
+					<marker
+						id={`${markerPrefix}-channel-end`}
+						viewBox="0 0 10 10"
+						refX="10"
+						refY="5"
+						markerWidth="6"
+						markerHeight="6"
+						orient="auto-start-reverse"
+					>
+						<path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
+					</marker>
+				)}
+				{channels.length > 0 && (
+					<marker
+						id={`${markerPrefix}-channel-start`}
+						viewBox="0 0 10 10"
+						refX="0"
+						refY="5"
+						markerWidth="6"
+						markerHeight="6"
+						orient="auto-start-reverse"
+					>
+						<path d="M 10 0 L 0 5 L 10 10 z" fill={CHANNEL_EDGE_COLOR} />
+					</marker>
+				)}
 			</defs>
 
 			{transitions.map((transition) => {

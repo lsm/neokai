@@ -184,16 +184,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const channels = node.step.channels;
 			if (!channels) continue;
 			for (const channel of channels) {
-				// Check if this channel involves task-agent (bidirectional only)
-				const hasTaskAgent =
-					(channel.from === 'task-agent' || channel.to === 'task-agent') &&
-					channel.direction === 'bidirectional';
-				if (hasTaskAgent) {
-					// Add one edge per node (break after first matching channel)
+				// Only include channels where task-agent is the source, and use the actual
+				// channel.direction (not hardcoded bidirectional).
+				if (channel.from === 'task-agent') {
 					result.push({
 						fromStepId: 'task-agent',
 						toStepId: node.step.localId,
-						direction: 'bidirectional',
+						direction: channel.direction,
 					});
 					break;
 				}

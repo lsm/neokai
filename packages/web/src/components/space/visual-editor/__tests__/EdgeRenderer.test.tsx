@@ -198,8 +198,9 @@ describe('EdgeRenderer — rendering', () => {
 		const { container } = renderEdges();
 		const defs = container.querySelector('defs');
 		expect(defs).not.toBeNull();
-		// Should have 7 markers: always, human, condition, task_result, selected, channel-end, channel-start
-		expect(defs!.querySelectorAll('marker')).toHaveLength(7);
+		// Should have 5 markers: always, human, condition, task_result, selected
+		// (channel-end and channel-start are only rendered when channels prop is provided)
+		expect(defs!.querySelectorAll('marker')).toHaveLength(5);
 	});
 
 	it('uses testid data-testid="edge-{id}" on each group', () => {
