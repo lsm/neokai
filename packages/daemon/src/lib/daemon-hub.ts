@@ -51,8 +51,11 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	'session.deleted': { sessionId: string };
 
-	// SDK events — message may include a neokai-injected `timestamp` field from the DB layer
-	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number } };
+	// SDK events — message may carry a neokai-injected `timestamp` from the DB layer.
+	// The SDK defines timestamp?: string (ISO 8601) on user messages; the daemon overrides it
+	// with a number (epoch ms) when replaying persisted messages. The intersection keeps both
+	// possibilities visible to future subscribers so they know to handle either form.
+	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number | string } };
 
 	// Auth events (global events - use 'global' as sessionId)
 	'auth.changed': {

@@ -290,8 +290,9 @@ export class SDKMessageRepository {
 		return rows.map((row) => ({
 			...(JSON.parse(row.sdk_message) as SDKMessage),
 			dbId: row.id,
+			// DB timestamp (epoch ms) overrides the SDK's ISO string timestamp for persisted messages
 			timestamp: new Date(row.timestamp).getTime(),
-		}));
+		})) as Array<SDKMessage & { dbId: string; timestamp: number }>;
 	}
 
 	/**
