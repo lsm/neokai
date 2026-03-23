@@ -171,8 +171,7 @@ function makeStepConfig(
 	role: string,
 	groupId: string,
 	workflowRunId: string,
-	injector: (sessionId: string, message: string) => Promise<void>,
-	taskAgentInjector?: (message: string) => Promise<void>
+	injector: (sessionId: string, message: string) => Promise<void>
 ): StepAgentToolsConfig {
 	return {
 		mySessionId: sessionId,
@@ -183,7 +182,6 @@ function makeStepConfig(
 		getGroupId: () => groupId,
 		workflowRunRepo: tdb.workflowRunRepo,
 		messageInjector: injector,
-		injectToTaskAgent: taskAgentInjector ?? (async () => {}),
 	};
 }
 
@@ -1337,7 +1335,6 @@ describe('data reload and DB-based validation', () => {
 			getGroupId: () => group.id, // Still returns correct group ID
 			workflowRunRepo: freshRunRepo,
 			messageInjector: injector,
-			injectToTaskAgent: async () => {},
 		};
 
 		const handlers = createStepAgentToolHandlers(config);
@@ -1483,7 +1480,6 @@ describe('error paths — missing group ID', () => {
 			getGroupId: () => undefined,
 			workflowRunRepo: tdb.workflowRunRepo,
 			messageInjector: injector,
-			injectToTaskAgent: async () => {},
 		};
 
 		const handlers = createStepAgentToolHandlers(config);
@@ -1505,7 +1501,6 @@ describe('error paths — missing group ID', () => {
 			getGroupId: () => undefined,
 			workflowRunRepo: tdb.workflowRunRepo,
 			messageInjector: async () => {},
-			injectToTaskAgent: async () => {},
 		};
 
 		const handlers = createStepAgentToolHandlers(config);
