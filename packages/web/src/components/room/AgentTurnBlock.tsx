@@ -124,6 +124,7 @@ function NestedMessageRenderer({
 							}
 							variant="default"
 							isOutputRemoved={resultData?.isOutputRemoved || false}
+							disableExpand
 						/>
 					);
 				})}
