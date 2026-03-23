@@ -2612,20 +2612,15 @@ function runMigration45(db: BunDatabase): void {
 		return;
 	}
 
-	// Check if already migrated by testing for absence of old table
-	if (!tableExists(db, 'space_workflow_steps')) {
-		return; // Already migrated (table was renamed)
-	}
-
+	// Issue PRAGMA before BEGIN so it takes effect (SQLite ignores PRAGMA inside a transaction)
+	db.exec(`PRAGMA foreign_keys = OFF`);
 	db.exec(`BEGIN`);
 	try {
-		db.exec(`PRAGMA foreign_keys = OFF`);
-		try {
-			// -------------------------------------------------------------------------
-			// 1. Rename space_workflow_steps -> space_workflow_nodes
-			// -------------------------------------------------------------------------
-			db.exec(`DROP TABLE IF EXISTS space_workflow_nodes_new`);
-			db.exec(`
+		// -------------------------------------------------------------------------
+		// 1. Rename space_workflow_steps -> space_workflow_nodes
+		// -------------------------------------------------------------------------
+		db.exec(`DROP TABLE IF EXISTS space_workflow_nodes_new`);
+		db.exec(`
 				CREATE TABLE space_workflow_nodes_new (
 					id TEXT PRIMARY KEY,
 					workflow_id TEXT NOT NULL,
@@ -2639,27 +2634,27 @@ function runMigration45(db: BunDatabase): void {
 					FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 				)
 			`);
-			db.exec(`
+		db.exec(`
 				INSERT INTO space_workflow_nodes_new
 				SELECT id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at
 				FROM space_workflow_steps
 			`);
-			db.exec(`DROP TABLE space_workflow_steps`);
-			db.exec(`ALTER TABLE space_workflow_nodes_new RENAME TO space_workflow_nodes`);
-			db.exec(
-				`CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_workflow_id ON space_workflow_nodes(workflow_id)`
-			);
-			db.exec(
-				`CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_order ON space_workflow_nodes(workflow_id, order_index)`
-			);
+		db.exec(`DROP TABLE space_workflow_steps`);
+		db.exec(`ALTER TABLE space_workflow_nodes_new RENAME TO space_workflow_nodes`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_workflow_id ON space_workflow_nodes(workflow_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_order ON space_workflow_nodes(workflow_id, order_index)`
+		);
 
-			// -------------------------------------------------------------------------
-			// 2. Rename space_workflows.start_step_id -> start_node_id
-			// Also preserve columns added by M30 (layout) and M36 (max_iterations)
-			// -------------------------------------------------------------------------
-			if (tableHasColumn(db, 'space_workflows', 'start_step_id')) {
-				db.exec(`DROP TABLE IF EXISTS space_workflows_new`);
-				db.exec(`
+		// -------------------------------------------------------------------------
+		// 2. Rename space_workflows.start_step_id -> start_node_id
+		// Also preserve columns added by M30 (layout) and M36 (max_iterations)
+		// -------------------------------------------------------------------------
+		if (tableHasColumn(db, 'space_workflows', 'start_step_id')) {
+			db.exec(`DROP TABLE IF EXISTS space_workflows_new`);
+			db.exec(`
 					CREATE TABLE space_workflows_new (
 						id TEXT PRIMARY KEY,
 						space_id TEXT NOT NULL,
@@ -2674,26 +2669,26 @@ function runMigration45(db: BunDatabase): void {
 						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 					)
 				`);
-				db.exec(`
+			db.exec(`
 					INSERT INTO space_workflows_new
 					SELECT id, space_id, name, description, start_step_id, config, layout, max_iterations, created_at, updated_at
 					FROM space_workflows
 				`);
-				db.exec(`DROP TABLE space_workflows`);
-				db.exec(`ALTER TABLE space_workflows_new RENAME TO space_workflows`);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`
-				);
-			}
+			db.exec(`DROP TABLE space_workflows`);
+			db.exec(`ALTER TABLE space_workflows_new RENAME TO space_workflows`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`
+			);
+		}
 
-			// -------------------------------------------------------------------------
-			// 3. Rename space_workflow_transitions.from_step_id -> from_node_id
-			//                          and space_workflow_transitions.to_step_id -> to_node_id
-			// Also preserve is_cyclic column added by M38
-			// -------------------------------------------------------------------------
-			if (tableHasColumn(db, 'space_workflow_transitions', 'from_step_id')) {
-				db.exec(`DROP TABLE IF EXISTS space_workflow_transitions_new`);
-				db.exec(`
+		// -------------------------------------------------------------------------
+		// 3. Rename space_workflow_transitions.from_step_id -> from_node_id
+		//                          and space_workflow_transitions.to_step_id -> to_node_id
+		// Also preserve is_cyclic column added by M38
+		// -------------------------------------------------------------------------
+		if (tableHasColumn(db, 'space_workflow_transitions', 'from_step_id')) {
+			db.exec(`DROP TABLE IF EXISTS space_workflow_transitions_new`);
+			db.exec(`
 					CREATE TABLE space_workflow_transitions_new (
 						id TEXT PRIMARY KEY,
 						workflow_id TEXT NOT NULL,
@@ -2709,28 +2704,28 @@ function runMigration45(db: BunDatabase): void {
 						FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 					)
 				`);
-				db.exec(`
+			db.exec(`
 					INSERT INTO space_workflow_transitions_new
 					SELECT id, workflow_id, from_step_id, to_step_id, condition, order_index, is_cyclic, created_at, updated_at
 					FROM space_workflow_transitions
 				`);
-				db.exec(`DROP TABLE space_workflow_transitions`);
-				db.exec(`ALTER TABLE space_workflow_transitions_new RENAME TO space_workflow_transitions`);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_workflow_id ON space_workflow_transitions(workflow_id)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_node ON space_workflow_transitions(workflow_id, from_node_id)`
-				);
-			}
+			db.exec(`DROP TABLE space_workflow_transitions`);
+			db.exec(`ALTER TABLE space_workflow_transitions_new RENAME TO space_workflow_transitions`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_workflow_id ON space_workflow_transitions(workflow_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_transitions_from_node ON space_workflow_transitions(workflow_id, from_node_id)`
+			);
+		}
 
-			// -------------------------------------------------------------------------
-			// 4. Rename space_workflow_runs.current_step_id -> current_node_id
-			// Also preserve columns added by M35 (iteration_count, max_iterations) and M37 (goal_id)
-			// -------------------------------------------------------------------------
-			if (tableHasColumn(db, 'space_workflow_runs', 'current_step_id')) {
-				db.exec(`DROP TABLE IF EXISTS space_workflow_runs_new`);
-				db.exec(`
+		// -------------------------------------------------------------------------
+		// 4. Rename space_workflow_runs.current_step_id -> current_node_id
+		// Also preserve columns added by M35 (iteration_count, max_iterations) and M37 (goal_id)
+		// -------------------------------------------------------------------------
+		if (tableHasColumn(db, 'space_workflow_runs', 'current_step_id')) {
+			db.exec(`DROP TABLE IF EXISTS space_workflow_runs_new`);
+			db.exec(`
 					CREATE TABLE space_workflow_runs_new (
 						id TEXT PRIMARY KEY,
 						space_id TEXT NOT NULL,
@@ -2752,34 +2747,34 @@ function runMigration45(db: BunDatabase): void {
 						FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 					)
 				`);
-				db.exec(`
+			db.exec(`
 					INSERT INTO space_workflow_runs_new
 					SELECT id, space_id, workflow_id, title, description, current_step_index, current_step_id, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at, completed_at
 					FROM space_workflow_runs
 				`);
-				db.exec(`DROP TABLE space_workflow_runs`);
-				db.exec(`ALTER TABLE space_workflow_runs_new RENAME TO space_workflow_runs`);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_goal_id ON space_workflow_runs(goal_id)`
-				);
-			}
+			db.exec(`DROP TABLE space_workflow_runs`);
+			db.exec(`ALTER TABLE space_workflow_runs_new RENAME TO space_workflow_runs`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_goal_id ON space_workflow_runs(goal_id)`
+			);
+		}
 
-			// -------------------------------------------------------------------------
-			// 5. Rename space_tasks.workflow_step_id -> workflow_node_id
-			// Also preserves goal_id column added by M34
-			// -------------------------------------------------------------------------
-			if (tableHasColumn(db, 'space_tasks', 'workflow_step_id')) {
-				db.exec(`DROP TABLE IF EXISTS space_tasks_new`);
-				db.exec(`
+		// -------------------------------------------------------------------------
+		// 5. Rename space_tasks.workflow_step_id -> workflow_node_id
+		// Also preserves goal_id column added by M34
+		// -------------------------------------------------------------------------
+		if (tableHasColumn(db, 'space_tasks', 'workflow_step_id')) {
+			db.exec(`DROP TABLE IF EXISTS space_tasks_new`);
+			db.exec(`
 					CREATE TABLE space_tasks_new (
 						id TEXT PRIMARY KEY,
 						space_id TEXT NOT NULL,
@@ -2820,7 +2815,7 @@ function runMigration45(db: BunDatabase): void {
 						FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
 					)
 				`);
-				db.exec(`
+			db.exec(`
 					INSERT INTO space_tasks_new
 					SELECT id, space_id, title, description, status, priority, task_type, assigned_agent,
 								 custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, goal_id,
@@ -2829,32 +2824,32 @@ function runMigration45(db: BunDatabase): void {
 								 created_at, started_at, completed_at, updated_at
 					FROM space_tasks
 				`);
-				db.exec(`DROP TABLE space_tasks`);
-				db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
-				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
-				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`
-				);
-				db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
-				);
-			}
+			db.exec(`DROP TABLE space_tasks`);
+			db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`
+			);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+			);
+		}
 
-			// -------------------------------------------------------------------------
-			// 6. Rename space_session_groups.current_step_id -> current_node_id
-			// Also preserves status column added by M40
-			// -------------------------------------------------------------------------
-			if (tableHasColumn(db, 'space_session_groups', 'current_step_id')) {
-				db.exec(`DROP TABLE IF EXISTS space_session_groups_new`);
-				db.exec(`
+		// -------------------------------------------------------------------------
+		// 6. Rename space_session_groups.current_step_id -> current_node_id
+		// Also preserves status column added by M40
+		// -------------------------------------------------------------------------
+		if (tableHasColumn(db, 'space_session_groups', 'current_step_id')) {
+			db.exec(`DROP TABLE IF EXISTS space_session_groups_new`);
+			db.exec(`
 					CREATE TABLE space_session_groups_new (
 						id TEXT PRIMARY KEY,
 						space_id TEXT NOT NULL,
@@ -2870,26 +2865,26 @@ function runMigration45(db: BunDatabase): void {
 						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 					)
 				`);
-				db.exec(`
+			db.exec(`
 					INSERT INTO space_session_groups_new
 					SELECT id, space_id, name, description, workflow_run_id, current_step_id, task_id, status, created_at, updated_at
 					FROM space_session_groups
 				`);
-				db.exec(`DROP TABLE space_session_groups`);
-				db.exec(`ALTER TABLE space_session_groups_new RENAME TO space_session_groups`);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
-				);
-				db.exec(
-					`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
-				);
-			}
-		} finally {
-			db.exec(`PRAGMA foreign_keys = ON`);
+			db.exec(`DROP TABLE space_session_groups`);
+			db.exec(`ALTER TABLE space_session_groups_new RENAME TO space_session_groups`);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
+			);
+			db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
+			);
 		}
+
 		db.exec(`COMMIT`);
 	} catch (e) {
 		db.exec(`ROLLBACK`);
 		throw e;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
 	}
 }
