@@ -4,9 +4,11 @@
  * Verifies data-fetching, permission flag derivation, and action handler stubs.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/preact';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, waitFor, act, cleanup } from '@testing-library/preact';
 import { useTaskViewData } from '../useTaskViewData';
+import { navigateToRoom } from '../../lib/router';
+import { toast } from '../../lib/toast';
 
 // -------------------------------------------------------
 // Mocks
@@ -237,5 +239,264 @@ describe('useTaskViewData', () => {
 		});
 
 		expect(mockOnEvent).toHaveBeenCalledWith('room.task.update', expect.any(Function));
+	});
+});
+
+describe('useTaskViewData — action handlers', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockClear();
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		vi.mocked(navigateToRoom).mockClear();
+		vi.mocked(toast.success).mockClear();
+		vi.mocked(toast.info).mockClear();
+		vi.mocked(toast.error).mockClear();
+
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask('in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup() };
+			if (method === 'session.get') return { session: null };
+			return {};
+		});
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('completeTask calls task.setStatus with correct payload', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.completeTask('Done');
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+			status: 'completed',
+			result: 'Done',
+			mode: 'manual',
+		});
+		expect(toast.success).toHaveBeenCalledWith('Task completed');
+		expect(navigateToRoom).toHaveBeenCalledWith('room-1');
+	});
+
+	it('completeTask uses fallback result text when summary is empty', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.completeTask('');
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith(
+			'task.setStatus',
+			expect.objectContaining({ result: 'Marked complete by user' })
+		);
+	});
+
+	it('cancelTask calls task.cancel and navigates', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.cancelTask();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.cancel', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+		});
+		expect(toast.info).toHaveBeenCalledWith('Task cancelled');
+		expect(navigateToRoom).toHaveBeenCalledWith('room-1');
+	});
+
+	it('archiveTask calls task.setStatus with archived and navigates', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.archiveTask();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+			status: 'archived',
+			mode: 'manual',
+		});
+		expect(toast.info).toHaveBeenCalledWith('Task archived');
+		expect(navigateToRoom).toHaveBeenCalledWith('room-1');
+	});
+
+	it('setTaskStatusManually calls task.setStatus and navigates when archived', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.setTaskStatusManually('archived');
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+			status: 'archived',
+			mode: 'manual',
+		});
+		expect(navigateToRoom).toHaveBeenCalledWith('room-1');
+	});
+
+	it('setTaskStatusManually does NOT navigate when status is not archived', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.setTaskStatusManually('completed');
+		});
+
+		expect(navigateToRoom).not.toHaveBeenCalled();
+	});
+
+	it('reactivateTask calls task.setStatus with in_progress', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.reactivateTask();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.setStatus', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+			status: 'in_progress',
+			mode: 'manual',
+		});
+		expect(toast.success).toHaveBeenCalledWith('Task reactivated');
+	});
+
+	it('reactivateTask shows error toast on failure', async () => {
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask('completed') };
+			if (method === 'task.getGroup') return { group: null };
+			if (method === 'task.setStatus') throw new Error('Server error');
+			return {};
+		});
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.reactivateTask();
+		});
+
+		expect(toast.error).toHaveBeenCalledWith('Server error');
+	});
+
+	it('interruptSession calls task.interruptSession', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.interruptSession();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.interruptSession', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+		});
+	});
+
+	it('approveReviewedTask calls task.approve and bumps conversationKey', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		const initialKey = result.current.conversationKey;
+
+		await act(async () => {
+			await result.current.approveReviewedTask();
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.approve', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+		});
+		expect(result.current.conversationKey).toBe(initialKey + 1);
+	});
+
+	it('approveReviewedTask sets reviewError on failure', async () => {
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask() };
+			if (method === 'task.getGroup') return { group: makeGroup() };
+			if (method === 'task.approve') throw new Error('Approve failed');
+			return {};
+		});
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		await act(async () => {
+			await result.current.approveReviewedTask();
+		});
+
+		expect(result.current.reviewError).toBe('Approve failed');
+	});
+
+	it('rejectReviewedTask calls task.reject and bumps conversationKey', async () => {
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		const initialKey = result.current.conversationKey;
+
+		await act(async () => {
+			await result.current.rejectReviewedTask('Not good enough');
+		});
+
+		expect(mockRequest).toHaveBeenCalledWith('task.reject', {
+			roomId: 'room-1',
+			taskId: 'task-1',
+			feedback: 'Not good enough',
+		});
+		expect(result.current.conversationKey).toBe(initialKey + 1);
+	});
+
+	it('rejectReviewedTask is idempotent when already rejecting', async () => {
+		// Make reject take a long time so we can call it twice concurrently.
+		// Use an object property to avoid TypeScript control-flow narrowing to `never`.
+		const resolveRef: { current: (() => void) | null } = { current: null };
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask() };
+			if (method === 'task.getGroup') return { group: makeGroup() };
+			if (method === 'task.reject') {
+				return new Promise<void>((resolve) => {
+					resolveRef.current = resolve;
+				});
+			}
+			return {};
+		});
+
+		const { result } = renderHook(() => useTaskViewData('room-1', 'task-1'));
+		await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+		// Start first reject (does not await)
+		act(() => {
+			void result.current.rejectReviewedTask('feedback');
+		});
+
+		await waitFor(() => expect(result.current.rejecting).toBe(true));
+
+		// Second call should be ignored (guard: if (rejecting) return)
+		await act(async () => {
+			await result.current.rejectReviewedTask('second call');
+		});
+
+		// Only one task.reject call should have been made
+		const rejectCalls = mockRequest.mock.calls.filter(([m]) => m === 'task.reject');
+		expect(rejectCalls).toHaveLength(1);
+
+		// Resolve the first reject
+		resolveRef.current?.();
 	});
 });

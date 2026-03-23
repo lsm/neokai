@@ -21,7 +21,11 @@ import { useMessageMaps } from '../../hooks/useMessageMaps';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { getModelLabel } from '../../lib/session-utils';
 import { useGroupMessages } from '../../hooks/useGroupMessages';
-import { parseGroupMessage, type TaskMeta } from '../../lib/parse-group-message';
+import {
+	parseGroupMessage,
+	type ParsedGroupMessage,
+	type TaskMeta,
+} from '../../lib/parse-group-message';
 import { ROLE_COLORS } from '../../lib/task-constants';
 
 export { parseGroupMessage } from '../../lib/parse-group-message';
@@ -44,7 +48,7 @@ interface TaskConversationRendererProps {
 }
 
 function getTaskMeta(msg: SDKMessage): TaskMeta | null {
-	const meta = (msg as SDKMessage & { _taskMeta?: TaskMeta })._taskMeta;
+	const meta = (msg as ParsedGroupMessage)._taskMeta;
 	return meta ?? null;
 }
 

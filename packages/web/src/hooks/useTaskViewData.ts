@@ -6,7 +6,7 @@
  * same logic without duplicating code.
  */
 
-import type { NeoTask, SessionInfo, TaskStatus } from '@neokai/shared';
+import type { NeoTask, RoomGoal, SessionInfo, TaskStatus } from '@neokai/shared';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
 import { useModal } from './useModal';
@@ -34,7 +34,7 @@ export interface UseTaskViewDataResult {
 	leaderSession: SessionInfo | null;
 	isLoading: boolean;
 	error: string | null;
-	associatedGoal: ReturnType<typeof roomStore.goalByTaskId.value.get> | null;
+	associatedGoal: RoomGoal | null;
 	conversationKey: number;
 	// Action handlers
 	approveReviewedTask: () => Promise<void>;
