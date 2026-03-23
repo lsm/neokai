@@ -48,7 +48,7 @@ import type {
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
-import { resolveStepAgents } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { inferProviderForModel } from '../../providers/registry';
 
@@ -85,7 +85,7 @@ export interface TaskAgentContext {
 // ---------------------------------------------------------------------------
 
 function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
-	const stepAgents = resolveStepAgents(step);
+	const stepAgents = resolveNodeAgents(step);
 	let agentLabel: string;
 	if (stepAgents.length === 1) {
 		const a = agents.find((ag) => ag.id === stepAgents[0].agentId);

@@ -230,11 +230,11 @@ export class SpaceWorkflowManager {
 
 		// Channel validation (after agent validation so roles are already collected)
 		if (step.channels && step.channels.length > 0) {
-			this.validateStepChannels(step, index, knownRoles);
+			this.validateNodeChannels(step, index, knownRoles);
 		}
 	}
 
-	private validateStepChannels(
+	private validateNodeChannels(
 		step: WorkflowStepInput,
 		stepIndex: number,
 		/**

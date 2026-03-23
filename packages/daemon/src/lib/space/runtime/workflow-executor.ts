@@ -27,7 +27,7 @@ import type {
 	WorkflowStep,
 	WorkflowStepAgent,
 } from '@neokai/shared';
-import { resolveStepAgents } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 
@@ -444,7 +444,7 @@ export class WorkflowExecutor {
 
 		// Resolve agents for this step: supports both agentId (single-agent shorthand)
 		// and agents[] (multi-agent parallel execution).
-		const stepAgents = resolveStepAgents(nextStep);
+		const stepAgents = resolveNodeAgents(nextStep);
 
 		// Create one pending SpaceTask per agent. All tasks share the same workflowRunId
 		// and workflowStepId so SpaceRuntime can track them as a group.
