@@ -205,12 +205,24 @@ export function TaskConversationRenderer({
 
 	// After rawMessages changes (triggered by loadEarlier), restore scroll position
 	// so older prepended messages don't cause a jarring jump to the top.
+	// IMPORTANT: onLoadingOlderChange?.(false) must be called on ALL exit paths so
+	// isLoadingOlder never gets stuck true (which would permanently disable auto-scroll).
 	useEffect(() => {
-		if (!scrollRestoreRef.current || !scrollContainerRef?.current) return;
+		if (!scrollRestoreRef.current) return;
+		if (!scrollContainerRef?.current) {
+			// Container unmounted between handleLoadEarlier and this effect — clear the flag.
+			scrollRestoreRef.current = null;
+			onLoadingOlderChange?.(false);
+			return;
+		}
 		const { scrollHeight, scrollTop } = scrollRestoreRef.current;
 		scrollRestoreRef.current = null;
 		requestAnimationFrame(() => {
-			if (!scrollContainerRef.current) return;
+			if (!scrollContainerRef.current) {
+				// Container unmounted between rAF scheduling and rAF execution — clear the flag.
+				onLoadingOlderChange?.(false);
+				return;
+			}
 			const newScrollHeight = scrollContainerRef.current.scrollHeight;
 			scrollContainerRef.current.scrollTop = scrollTop + (newScrollHeight - scrollHeight);
 			onLoadingOlderChange?.(false);
