@@ -96,6 +96,7 @@ function NestedMessageRenderer({
 					<ThinkingBlock
 						key={`thinking-${idx}`}
 						content={(block as { thinking: string }).thinking}
+						compact={true}
 					/>
 				))}
 
