@@ -90,6 +90,11 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 1: Create workflow with visual editor ──────────────────────────
 
+	// NOTE: When the Task Agent pinned node feature is implemented (Tasks 4.1-4.3), the
+	// toHaveCount assertions in this test will need to add +1 to account for the always-
+	// present Task Agent node. For example, "3" Add-Step clicks will produce 4 nodes
+	// (Task Agent + 3 regular nodes), not 3. Update line ~111 accordingly.
+
 	test('Create workflow with visual editor', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -176,6 +181,9 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 2: Node positions are restored after save and reopen ──────────
+
+	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
+	// assertion on line ~250 will need to change from 2 to 3 (adds Task Agent node).
 
 	test('Node positions are restored after save and reopen', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
@@ -280,6 +288,12 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 3: Load template in visual editor ──────────────────────────────
+
+	// NOTE: When the Task Agent pinned node feature is implemented:
+	// - The toHaveCount on line ~316 will need to change from 2 to 3 (adds Task Agent node)
+	// - The template-picker-button visibility assertion below will be unreachable because
+	//   the Task Agent node is always present, so the canvas is never truly "empty"
+	//   and the picker is hidden immediately on editor open.
 
 	test('Load template in visual editor', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
@@ -386,6 +400,9 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 5: Visual editor validation — missing name ────────────────────
 
+	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
+	// assertion on line ~412 will need to change from 1 to 2 (adds Task Agent node).
+
 	test('Visual editor shows error when saving without name', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -410,6 +427,9 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 6: Visual editor validation — missing agent ───────────────────
+
+	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
+	// assertion on line ~442 will need to change from 1 to 2 (adds Task Agent node).
 
 	test('Visual editor shows error when saving without agent assigned', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
@@ -603,9 +623,9 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(channelsSection).toBeVisible({ timeout: 2000 });
 
 		// Find the channel entry that references task-agent
-		// ChannelTopologyBadge truncates "task-agent" to "task-age…"
+		// The channel list truncates role strings (like "task-agent" → "task-age…")
 		const taskAgentChannelEntry = channelsSection.locator('[data-testid="channel-entry"]').filter({
-			has: editor.locator('text=task-age'),
+			has: page.locator('text=task-age'),
 		});
 		await expect(taskAgentChannelEntry).toBeVisible({ timeout: 2000 });
 
