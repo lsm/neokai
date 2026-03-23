@@ -7,6 +7,7 @@
  * - Load template in visual editor (auto-layout with nodes and edges)
  * - Toggle between List and Visual modes (mode switching with confirmation)
  * - Validation errors when saving incomplete workflows
+ * - Task Agent pinned node visibility and interactions (Change 3 of workflow graph model)
  *
  * Setup: creates a Space via RPC in beforeEach (infrastructure).
  * Cleanup: deletes the Space via RPC in afterEach.
@@ -15,6 +16,13 @@
  * - All test actions go through the UI (clicks, inputs, navigation)
  * - All assertions check visible DOM state
  * - RPC is only used in beforeEach/afterEach for test infrastructure
+ *
+ * Task Agent Node Tests:
+ * - Task Agent node is always visible when opening the visual editor
+ * - Task Agent node cannot be deleted via keyboard
+ * - Adding a new node shows Task Agent channel edges on the canvas
+ * - Task Agent node has distinct visual styling (purple border, pinned-node class)
+ * - Channels to Task Agent can be removed via the config panel
  */
 
 import type { Page } from '@playwright/test';
@@ -424,5 +432,156 @@ test.describe('Visual Workflow Editor', () => {
 
 		// Editor should remain open
 		await expect(editor).toBeVisible();
+	});
+
+	// ─── Task Agent Node Tests ───────────────────────────────────────────────
+
+	// ─── Test 7: Task Agent node is always visible when opening the visual editor ───
+
+	test('Task Agent node is always visible when opening the visual editor', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// The Task Agent pinned node should be visible even on an empty canvas
+		// It has a distinct data attribute to identify it
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// The Task Agent node should also have the data-task-agent-node attribute
+		await expect(taskAgentNode).toHaveAttribute('data-task-agent-node', 'true');
+
+		// Task Agent node should display "Task Agent" as its name
+		await expect(taskAgentNode.locator('text=Task Agent')).toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Test 8: Task Agent node cannot be deleted via keyboard ─────────────
+
+	test('Task Agent node cannot be deleted via keyboard', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// First add a regular node so we have something to select and potentially delete
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		// Select the Task Agent node
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await taskAgentNode.click();
+
+		// Try to delete via Delete key
+		await page.keyboard.press('Delete');
+
+		// Task Agent node should still be visible after Delete key
+		await expect(taskAgentNode).toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Test 9: Adding a new node shows Task Agent channel edges on the canvas ───
+
+	test('Adding a new node shows Task Agent channel edges on the canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// The Task Agent node should already be visible
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// Add a new node via "Add Step" button
+		await editor.getByTestId('add-step-button').click();
+
+		// Wait for the node to appear
+		const nodes = editor.locator('[data-testid^="workflow-node-"]');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		// Click the new node to select it and open the config panel
+		await nodes.first().click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+
+		// The ChannelTopologyBadge should show a channel to/from Task Agent
+		// Look for "task-agent" text in the channel topology badge
+		const channelBadge = editor.getByTestId('channel-topology-badge');
+		await expect(channelBadge).toBeVisible({ timeout: 2000 });
+		await expect(channelBadge.locator('text=task-agent')).toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Test 10: Task Agent node has distinct visual styling ───────────────
+
+	test('Task Agent node has distinct visual styling', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// The Task Agent node should have a distinct border color (purple)
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// Check for the distinct styling class - Task Agent uses purple border
+		// The Task Agent node should have border-purple-500 class
+		await expect(taskAgentNode).toHaveClass(/border-purple-500/);
+
+		// Also verify it has the pinned-node marker class
+		await expect(taskAgentNode).toHaveClass(/pinned-node/);
+	});
+
+	// ─── Test 11: Channels to Task Agent can be removed via config panel ───
+
+	test('Channels to Task Agent can be removed via config panel', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node that will have a Task Agent channel
+		await editor.getByTestId('add-step-button').click();
+
+		// Wait for node and select it to open config panel
+		const nodes = editor.locator('[data-testid^="workflow-node-"]');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		// Configure the node with an agent first
+		await nodes.first().click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+		await editor.getByTestId('close-button').click();
+
+		// Now add a second node
+		await editor.getByTestId('add-step-button').click();
+		await expect(nodes).toHaveCount(2, { timeout: 3000 });
+
+		// Select the second node
+		await nodes.nth(1).click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+
+		// Verify Task Agent channel exists in the badge
+		const channelBadge = editor.getByTestId('channel-topology-badge');
+		await expect(channelBadge).toBeVisible({ timeout: 2000 });
+
+		// Find and click the remove button for the Task Agent channel
+		// The channel entry should contain "task-agent"
+		const taskAgentChannelEntry = channelBadge.locator('[data-testid="channel-entry"]').filter({
+			has: page.locator('text=task-agent'),
+		});
+		await expect(taskAgentChannelEntry).toBeVisible({ timeout: 2000 });
+
+		// Click the remove button on that channel entry
+		const removeBtn = taskAgentChannelEntry.locator('[data-testid="remove-channel-button"]');
+		await expect(removeBtn).toBeVisible({ timeout: 2000 });
+		await removeBtn.click();
+
+		// Verify the Task Agent channel is no longer in the badge
+		await expect(channelBadge.locator('text=task-agent')).not.toBeVisible({ timeout: 2000 });
 	});
 });
