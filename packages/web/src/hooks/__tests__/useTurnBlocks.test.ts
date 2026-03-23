@@ -9,7 +9,7 @@
  * that parseGroupMessage can parse (or a known non-JSON type like 'status').
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/preact';
 import {
 	useTurnBlocks,
@@ -315,8 +315,8 @@ describe('useTurnBlocks', () => {
 			items.forEach((item) => expect(item.type).toBe('runtime'));
 		});
 
-		it('runtime messages do not split agent turns that share the same authorSessionId', () => {
-			// Two agent messages from the same session with a runtime message before them
+		it('runtime message before same-session agent messages does not split the turn', () => {
+			// Runtime message arrives BEFORE any agent message — emitted immediately, turn intact
 			const msgs = [
 				makeStatusMessage(),
 				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
@@ -328,6 +328,56 @@ describe('useTurnBlocks', () => {
 			expect(items[0].type).toBe('runtime');
 			const turn = asTurn(items[1]);
 			expect(turn.messageCount).toBe(2);
+		});
+
+		it('runtime message mid-turn does not fragment the agent turn', () => {
+			// Status update arrives between two messages from the same session.
+			// The turn should remain one cohesive block (not split into two).
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeStatusMessage({ createdAt: 2000 }),
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 3000 }),
+			];
+			const items = renderUseTurnBlocks(msgs);
+			// 1 turn (2 agent msgs merged) + 1 runtime (emitted after the turn)
+			expect(items).toHaveLength(2);
+			expect(items[0].type).toBe('turn');
+			const turn = asTurn(items[0]);
+			expect(turn.messageCount).toBe(2);
+			expect(items[1].type).toBe('runtime');
+		});
+
+		it('multiple runtime messages mid-turn are all emitted after the turn', () => {
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeStatusMessage({ createdAt: 2000 }),
+				makeRateLimitedMessage({ createdAt: 3000 }),
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 4000 }),
+			];
+			const items = renderUseTurnBlocks(msgs);
+			// 1 turn + 2 runtime items (emitted after the turn that caused the flush)
+			expect(items).toHaveLength(3);
+			expect(items[0].type).toBe('turn');
+			expect(asTurn(items[0]).messageCount).toBe(2);
+			expect(items[1].type).toBe('runtime');
+			expect(items[2].type).toBe('runtime');
+		});
+
+		it('mid-turn runtime messages appear between turns when a new agent follows', () => {
+			// [agent1, status, agent2] — status was buffered during agent1's turn,
+			// emitted between the two turns once agent2 starts speaking.
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker', createdAt: 1000 }),
+				makeStatusMessage({ createdAt: 2000 }),
+				makeAgentMessage({ authorRole: 'leader', authorSessionId: 'leader', createdAt: 3000 }),
+			];
+			const items = renderUseTurnBlocks(msgs);
+			expect(items).toHaveLength(3);
+			expect(items[0].type).toBe('turn');
+			expect(asTurn(items[0]).sessionId).toBe('worker');
+			expect(items[1].type).toBe('runtime');
+			expect(items[2].type).toBe('turn');
+			expect(asTurn(items[2]).sessionId).toBe('leader');
 		});
 	});
 
@@ -451,6 +501,16 @@ describe('useTurnBlocks', () => {
 				const items = renderUseTurnBlocks(msgs);
 				expect(asTurn(items[0]).agentLabel).toBe(expectedLabels[i]);
 			}
+		});
+
+		it('agentLabel falls back to raw agentRole for unknown roles', () => {
+			// An unregistered role not present in ROLE_COLORS silently falls back to the
+			// raw role string rather than throwing — this covers future SDK role additions.
+			const msgs = [makeAgentMessage({ authorRole: 'unknown-agent', authorSessionId: 'sess-x' })];
+			const items = renderUseTurnBlocks(msgs);
+			const turn = asTurn(items[0]);
+			expect(turn.agentRole).toBe('unknown-agent');
+			expect(turn.agentLabel).toBe('unknown-agent');
 		});
 
 		it('startTime is timestamp of first message in the turn', () => {
@@ -705,6 +765,47 @@ describe('useTurnBlocks', () => {
 			const msgs = [makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' })];
 			const items = renderUseTurnBlocks(msgs, true);
 			expect(asTurn(items[0]).isError).toBe(false);
+		});
+
+		it('detects assistant-level error even when it is not the last message in the turn', () => {
+			// An SDKAssistantMessage can carry error:'billing_error' mid-turn before a result
+			// arrives. The turn must still report isError=true in this case.
+			const errorMsg = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-1',
+				type: 'assistant',
+				content: { error: 'billing_error' },
+			});
+			const followupMsg = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-1',
+				type: 'assistant',
+				// no error field — simulates a retry/continuation message
+			});
+			const items = renderUseTurnBlocks([errorMsg, followupMsg], true);
+			const turn = asTurn(items[0]);
+			expect(turn.isError).toBe(true);
+			expect(turn.errorMessage).toBe('billing_error');
+		});
+
+		it('result-level error takes precedence over an earlier assistant-level error', () => {
+			// Both an assistant error and a result error are present; result should win.
+			const errorAssistant = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-1',
+				type: 'assistant',
+				content: { error: 'billing_error' },
+			});
+			const resultError = makeResultMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-1',
+				isError: true,
+				errors: ['max_turns exceeded'],
+			});
+			const items = renderUseTurnBlocks([errorAssistant, resultError], true);
+			const turn = asTurn(items[0]);
+			expect(turn.isError).toBe(true);
+			expect(turn.errorMessage).toBe('max_turns exceeded');
 		});
 	});
 

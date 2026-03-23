@@ -6,8 +6,8 @@
  *
  * Handles multi-agent interleaving: a new turn starts whenever authorSessionId changes
  * from the previous non-runtime message. Runtime messages (status, rate_limited,
- * model_fallback, leader_summary — identified by authorRole === 'system') appear as
- * RuntimeMessage items inline between turn blocks.
+ * model_fallback, leader_summary — identified by authorRole === 'system') are buffered
+ * and emitted at turn boundaries, so they never fragment a single agent's turn.
  */
 
 import { useMemo } from 'preact/hooks';
@@ -57,9 +57,9 @@ export interface TurnBlock {
 	 * received yet (i.e. the agent is still running and endTime is null).
 	 */
 	isActive: boolean;
-	/** True when the turn ended with an error (result message with is_error === true). */
+	/** True when any message in the turn carried an error. */
 	isError: boolean;
-	/** Error text extracted from the result message, or null. */
+	/** Error text extracted from the first error found in the turn, or null. */
 	errorMessage: string | null;
 	/** All parsed SDKMessages belonging to this turn, in order. */
 	messages: SDKMessage[];
@@ -138,25 +138,45 @@ function extractLastToolName(msg: SDKMessage): string | null {
 }
 
 /**
- * Check whether the message is a session-end result message with is_error=true,
- * and extract a human-readable error string if available.
+ * Extract error info from a single message.
+ * Handles both SDKResultError (is_error=true) and SDKAssistantMessage with an error field
+ * (e.g. billing_error, authentication_failed surfaced before a result message arrives).
  */
 function extractErrorInfo(msg: SDKMessage): { isError: boolean; errorMessage: string | null } {
-	if (msg.type !== 'result') {
-		// Also catch assistant-level errors (e.g., billing_error surfaced before a result)
-		const m = msg as { error?: string };
-		if (typeof m.error === 'string') {
-			return { isError: true, errorMessage: m.error };
-		}
-		return { isError: false, errorMessage: null };
+	if (msg.type === 'result') {
+		const resultMsg = msg as { is_error?: boolean; errors?: string[] };
+		if (!resultMsg.is_error) return { isError: false, errorMessage: null };
+		const errorText =
+			Array.isArray(resultMsg.errors) && resultMsg.errors.length > 0 ? resultMsg.errors[0] : null;
+		return { isError: true, errorMessage: errorText };
 	}
 
-	const resultMsg = msg as { is_error?: boolean; errors?: string[]; result?: string };
-	if (!resultMsg.is_error) return { isError: false, errorMessage: null };
+	// Assistant-level errors (e.g. billing_error) can appear before a result message.
+	const m = msg as { error?: string };
+	if (typeof m.error === 'string') {
+		return { isError: true, errorMessage: m.error };
+	}
 
-	const errorText =
-		Array.isArray(resultMsg.errors) && resultMsg.errors.length > 0 ? resultMsg.errors[0] : null;
-	return { isError: true, errorMessage: errorText };
+	return { isError: false, errorMessage: null };
+}
+
+/**
+ * Scan all messages in a turn for errors. Returns the last error found so that
+ * a result-level error always takes precedence over an earlier assistant-level error.
+ */
+function extractTurnErrorInfo(msgs: SDKMessage[]): {
+	isError: boolean;
+	errorMessage: string | null;
+} {
+	let result: { isError: boolean; errorMessage: string | null } = {
+		isError: false,
+		errorMessage: null,
+	};
+	for (const msg of msgs) {
+		const info = extractErrorInfo(msg);
+		if (info.isError) result = info;
+	}
+	return result;
 }
 
 /** True when the message list for a turn contains at least one result message. */
@@ -187,6 +207,11 @@ interface TurnAccumulator {
 /**
  * Transforms a flat SessionGroupMessage[] into a structured TurnBlockItem[].
  *
+ * Runtime messages (status, rate_limited, model_fallback, leader_summary) are
+ * buffered while an agent turn is in progress and emitted only when the turn ends
+ * (i.e. when a different agent starts speaking). This prevents a status update
+ * arriving mid-turn from fragmenting what should be one cohesive turn block.
+ *
  * @param messages - Raw messages from useGroupMessages. Must already be sorted by createdAt.
  * @param isAtTail - Whether these messages represent the current tail of the conversation.
  *   With LiveQuery (the current implementation of useGroupMessages), this is always true
@@ -203,17 +228,26 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 
 		const items: TurnBlockItem[] = [];
 		let current: TurnAccumulator | null = null;
+		// Runtime messages seen while a turn is open are buffered here.
+		// They are emitted after the turn is flushed so that a status update
+		// arriving mid-turn does not fragment the turn into two separate blocks.
+		let pendingRuntime: RuntimeMessage[] = [];
 
-		/** Flush the current accumulator into items as a TurnBlockItem. */
-		const flushTurn = (): void => {
-			if (!current) return;
+		/** Flush the current accumulator, then drain any buffered runtime items. */
+		const flushTurnAndRuntime = (): void => {
+			if (!current) {
+				// No open turn — drain any buffered runtime items immediately.
+				for (const rt of pendingRuntime) {
+					items.push(rt);
+				}
+				pendingRuntime = [];
+				return;
+			}
 
 			const { sessionId, agentRole, firstMsgUuid, startTime, msgs } = current;
 			const lastMsg = msgs[msgs.length - 1] ?? null;
 			const agentLabel = ROLE_COLORS[agentRole]?.label ?? agentRole;
-			const { isError, errorMessage } = lastMsg
-				? extractErrorInfo(lastMsg)
-				: { isError: false, errorMessage: null };
+			const { isError, errorMessage } = extractTurnErrorInfo(msgs);
 
 			const id = firstMsgUuid ?? `${sessionId}-${startTime}`;
 
@@ -242,6 +276,12 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 			});
 
 			current = null;
+
+			// Emit buffered runtime messages after the turn they interrupted.
+			for (const rt of pendingRuntime) {
+				items.push(rt);
+			}
+			pendingRuntime = [];
 		};
 
 		for (let i = 0; i < parsedMessages.length; i++) {
@@ -250,10 +290,19 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 
 			// ── Runtime messages ──────────────────────────────────────────────────
 			// Messages with authorRole === 'system' (status, rate_limited,
-			// model_fallback, leader_summary) render inline and do not belong to any turn.
+			// model_fallback, leader_summary) render inline and do not belong to a turn.
+			//
+			// If a turn is currently open, buffer the runtime message rather than
+			// flushing the turn — status updates frequently arrive mid-turn during
+			// tool execution and should not fragment a cohesive agent turn.
 			if (!meta || meta.authorRole === 'system') {
-				flushTurn();
-				items.push({ type: 'runtime', message: msg, index: i });
+				if (current) {
+					// Buffer: emit after the current turn is flushed.
+					pendingRuntime.push({ type: 'runtime', message: msg, index: i });
+				} else {
+					// No open turn — emit immediately at the current position.
+					items.push({ type: 'runtime', message: msg, index: i });
+				}
 				continue;
 			}
 
@@ -261,7 +310,7 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 
 			// ── Turn boundary: new session starts speaking ────────────────────────
 			if (current && current.sessionId !== authorSessionId) {
-				flushTurn();
+				flushTurnAndRuntime();
 			}
 
 			// ── Open a new turn accumulator ───────────────────────────────────────
@@ -291,8 +340,8 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 			current.msgs.push(msg);
 		}
 
-		// Flush any remaining accumulator.
-		flushTurn();
+		// Flush any remaining accumulator and drain any buffered runtime items.
+		flushTurnAndRuntime();
 
 		// ── Post-process: active turn detection ──────────────────────────────────
 		// The last turn block is "active" if:
@@ -315,5 +364,8 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 		}
 
 		return items;
-	}, [messages, messages.length, isAtTail]);
+		// useGroupMessages always returns a new array reference on every delta
+		// (via spread/filter/map), so the `messages` reference dep already captures
+		// all length and content changes. `messages.length` is intentionally omitted.
+	}, [messages, isAtTail]);
 }
