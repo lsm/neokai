@@ -129,16 +129,46 @@ function NestedMessageRenderer({
 					);
 				})}
 
-				{/* Text blocks */}
-				{textBlocks.length > 0 && (
-					<div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
-						{textBlocks.map((block, idx) => (
-							<div key={idx} class="prose prose-sm dark:prose-invert max-w-full">
-								{(block as { text: string }).text}
+				{/* Text blocks - rendered like thinking block: header + one-line preview */}
+				{textBlocks.map((block, idx) => {
+					const text = (block as { text: string }).text.trim();
+					if (!text) return null;
+					return (
+						<div
+							key={`text-${idx}`}
+							class="border rounded-lg overflow-hidden bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
+						>
+							<div class="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-900/20">
+								<svg
+									class="w-4 h-4 flex-shrink-0 text-green-600 dark:text-green-400"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										strokeWidth={2}
+										d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+									/>
+								</svg>
+								<span class="text-sm font-semibold text-green-900 dark:text-green-100">
+									Assistant
+								</span>
 							</div>
-						))}
-					</div>
-				)}
+							<div class="relative border-t border-green-200 dark:border-green-800">
+								<div class="p-3 bg-white dark:bg-gray-900">
+									<div
+										class="text-sm text-green-800 dark:text-green-200 prose prose-sm prose-p:my-0 dark:prose-invert [&>*]:my-0 whitespace-normal break-words line-clamp-1"
+										style="max-width: 100%"
+									>
+										<MarkdownRenderer content={text} />
+									</div>
+								</div>
+							</div>
+						</div>
+					);
+				})}
 			</div>
 		);
 	}
