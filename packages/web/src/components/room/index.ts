@@ -23,3 +23,5 @@ export { TurnSummaryBlock } from './TurnSummaryBlock';
 export type { TurnSummaryBlockProps } from './TurnSummaryBlock';
 // @public - Library export
 export { RuntimeMessageRenderer } from './RuntimeMessageRenderer';
+// @public - Library export
+export { TaskViewV2 } from './TaskViewV2';
