@@ -196,7 +196,11 @@ function paginationReducer(state: PaginationState, action: PaginationAction): Pa
 				// silently shifting when a late-arriving added message (e.g. a backdated
 				// subagent child) sorts into the hidden region and pushes the boundary
 				// forward without hiddenOlderCount being updated.
-				const boundaryId = hidden > 0 ? String(msgs[hidden].id) : null;
+				//
+				// Guard: `hidden < msgs.length` handles the case where the preceding
+				// `removed` step eliminated all visible messages (msgs.length === hidden).
+				// In that situation there is no boundary to anchor — treat as fully visible.
+				const boundaryId = hidden > 0 && hidden < msgs.length ? String(msgs[hidden].id) : null;
 
 				msgs = [...msgs, ...action.added];
 				const sorted = sortMessages(msgs);

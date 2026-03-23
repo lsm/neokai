@@ -842,6 +842,46 @@ describe('useGroupMessages', () => {
 			expect(result.current.hasOlder).toBe(false);
 		});
 
+		it('does not crash when a combined removed+added delta removes all visible messages', () => {
+			// Regression for: msgs[hidden] is undefined when removed eliminates all
+			// visible messages before the added/sort step reads msgs[hidden].id.
+			// State: [A, B, C], hidden=2 → C is the only visible message.
+			// Delta: remove C and add D in the same event.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 1 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3)],
+					version: 1,
+				});
+			});
+
+			// pageSize=1, 3 top-level → hidden=[1,2], visible=[3]
+			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.messages[0].id).toBe(3);
+
+			// Remove the only visible message and simultaneously add a new one.
+			const newMsg = makeMessage(4);
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					removed: [makeMessage(3)],
+					added: [newMsg],
+					version: 2,
+				});
+			});
+
+			// No crash. After removal hidden=2, msgs=[1,2]; after add+sort msgs=[1,2,4].
+			// boundaryId=null (hidden >= msgs.length after removal), so sort does not
+			// re-anchor — all of [1,2,4] are evaluated by topLevelCutoffIndex on the
+			// next snapshot, but here we just verify stability.
+			// hiddenOlderCount stays at 2 (msgs[2]=4 is visible).
+			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.messages[0].id).toBe(4);
+		});
+
 		it('delta-added child with createdAt in hidden region is placed in hidden region, not visible window', () => {
 			// 5 top-level messages, pageSize=2 → hidden=[1,2,3], visible=[4,5].
 			// A subagent child arrives via delta with createdAt between msg2 and msg3,
