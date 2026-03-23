@@ -474,6 +474,22 @@ describe('NodeConfigPanel', () => {
 			).toBe(true);
 		});
 
+		it('preserves existing channels when adding an agent if channels are already set', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1' }],
+				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			// Should have 2 agents, and existing channels should be preserved
+			expect(updatedStep.agents).toHaveLength(2);
+			expect(updatedStep.channels?.length).toBe(1);
+			expect(updatedStep.channels?.[0].from).toBe('coder');
+		});
+
 		it('shows channels section in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
