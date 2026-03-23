@@ -7,7 +7,7 @@
  * - Expandable via "Show more" button at bottom edge
  */
 
-import { useState, useRef, useLayoutEffect } from 'preact/hooks';
+import { useState, useRef, useLayoutEffect, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
 interface ThinkingBlockProps {
@@ -48,6 +48,14 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 		}
 	}, [content, previewMaxHeight]);
 
+	// In compact mode, truncate content to first line with "..."
+	const displayContent = useMemo(() => {
+		if (!compact) return content;
+		const firstLineEnd = content.indexOf('\n');
+		if (firstLineEnd === -1) return content;
+		return content.slice(0, firstLineEnd);
+	}, [content, compact]);
+
 	const charCount = content.length;
 
 	return (
@@ -87,7 +95,8 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 					style={!isExpanded && needsTruncation ? { maxHeight: `${previewMaxHeight + 24}px` } : {}}
 				>
 					<pre ref={contentRef} class={cn('text-sm whitespace-pre-wrap font-mono', colors.text)}>
-						{content}
+						{displayContent}
+						{compact && content.indexOf('\n') !== -1 ? '...' : ''}
 					</pre>
 				</div>
 
