@@ -631,7 +631,7 @@ test.describe('Visual Workflow Editor', () => {
 		// NodeConfigPanel does NOT truncate (unlike ChannelTopologyBadge); Playwright's
 		// text= does a case-insensitive substring match, so 'task-age' matches 'task-agent'
 		const taskAgentChannelEntry = channelsSection.locator('[data-testid="channel-entry"]').filter({
-			has: page.locator('text=task-age'),
+			has: page.locator('text=task-agent'),
 		});
 		await expect(taskAgentChannelEntry).toBeVisible({ timeout: 2000 });
 
