@@ -6,7 +6,7 @@
  *
  * What is genuinely new here (beyond existing step-agent-tools.test.ts / task-agent-tools.test.ts):
  *   - Suite 1: Two simultaneous groups in the same DB — verifies group-scoped isolation
- *              holistically rather than per-tool. send_feedback test confirms that overlapping
+ *              holistically rather than per-tool. send_message test confirms that overlapping
  *              role names in different groups are never confused.
  *   - Suite 3: Multi-turn coder↔reviewer exchange (3 rounds) — exercises the full protocol.
  *   - Suite 5: Full hub-spoke assign→reply→follow-up exchange across multiple turns.
@@ -343,7 +343,7 @@ describe('cross-group isolation', () => {
 		expect(messages[0].sessionId).toBe('session-coder-c');
 	});
 
-	test('send_feedback never reaches group B members (group scoping)', async () => {
+	test('send_message never reaches group B members (group scoping)', async () => {
 		const { sessionGroupRepo } = tdb;
 
 		// Group A: coder ↔ reviewer (bidirectional)
@@ -399,7 +399,7 @@ describe('cross-group isolation', () => {
 		);
 		const handlers = createStepAgentToolHandlers(config);
 
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'review this' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'review this' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
@@ -454,13 +454,13 @@ describe('channel direction enforcement', () => {
 		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, workflowRunId, injector);
 		const handlers = createStepAgentToolHandlers(config);
 
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'please review' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'please review' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
 		expect(messages).toHaveLength(1);
 		expect(messages[0].sessionId).toBe('session-reviewer');
-		expect(messages[0].message).toContain('[Feedback from coder]');
+		expect(messages[0].message).toContain('[Message from coder]');
 		expect(messages[0].message).toContain('please review');
 	});
 
@@ -499,7 +499,7 @@ describe('channel direction enforcement', () => {
 		);
 		const handlers = createStepAgentToolHandlers(config);
 
-		const result = await handlers.send_feedback({ target: 'coder', message: 'feedback' });
+		const result = await handlers.send_message({ target: 'coder', message: 'feedback' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -507,7 +507,7 @@ describe('channel direction enforcement', () => {
 		expect(messages).toHaveLength(0);
 	});
 
-	test('no channels declared blocks all send_feedback calls', async () => {
+	test('no channels declared blocks all send_message calls', async () => {
 		const { sessionGroupRepo } = tdb;
 
 		const group = sessionGroupRepo.createGroup({
@@ -532,7 +532,7 @@ describe('channel direction enforcement', () => {
 		const config = makeStepConfig(tdb, 'session-coder', 'coder', group.id, workflowRunId, injector);
 		const handlers = createStepAgentToolHandlers(config);
 
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'hi' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hi' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -594,7 +594,7 @@ describe('bidirectional point-to-point A↔B', () => {
 		);
 		const aliceHandlers = createStepAgentToolHandlers(aliceConfig);
 
-		const r1 = await aliceHandlers.send_feedback({ target: 'bob', message: 'hello bob' });
+		const r1 = await aliceHandlers.send_message({ target: 'bob', message: 'hello bob' });
 		const d1 = JSON.parse(r1.content[0].text);
 		expect(d1.success).toBe(true);
 
@@ -602,7 +602,7 @@ describe('bidirectional point-to-point A↔B', () => {
 		const bobConfig = makeStepConfig(tdb, 'session-bob', 'bob', group.id, workflowRunId, injector);
 		const bobHandlers = createStepAgentToolHandlers(bobConfig);
 
-		const r2 = await bobHandlers.send_feedback({ target: 'alice', message: 'hello alice' });
+		const r2 = await bobHandlers.send_message({ target: 'alice', message: 'hello alice' });
 		const d2 = JSON.parse(r2.content[0].text);
 		expect(d2.success).toBe(true);
 
@@ -611,11 +611,11 @@ describe('bidirectional point-to-point A↔B', () => {
 		const bobReceived = messages.filter((m) => m.sessionId === 'session-bob');
 
 		expect(aliceReceived).toHaveLength(1);
-		expect(aliceReceived[0].message).toContain('[Feedback from bob]');
+		expect(aliceReceived[0].message).toContain('[Message from bob]');
 		expect(aliceReceived[0].message).toContain('hello alice');
 
 		expect(bobReceived).toHaveLength(1);
-		expect(bobReceived[0].message).toContain('[Feedback from alice]');
+		expect(bobReceived[0].message).toContain('[Message from alice]');
 		expect(bobReceived[0].message).toContain('hello bob');
 	});
 
@@ -648,19 +648,19 @@ describe('bidirectional point-to-point A↔B', () => {
 		const coderHandlers = createStepAgentToolHandlers(
 			makeStepConfig(tdb, 'session-coder', 'coder', group.id, workflowRunId, injector)
 		);
-		await coderHandlers.send_feedback({ target: 'reviewer', message: 'PR ready for review' });
+		await coderHandlers.send_message({ target: 'reviewer', message: 'PR ready for review' });
 
 		// Round 2: reviewer gives feedback
 		const reviewerHandlers = createStepAgentToolHandlers(
 			makeStepConfig(tdb, 'session-reviewer', 'reviewer', group.id, workflowRunId, injector)
 		);
-		await reviewerHandlers.send_feedback({
+		await reviewerHandlers.send_message({
 			target: 'coder',
 			message: 'Please fix the type error on line 42',
 		});
 
 		// Round 3: coder confirms fix
-		await coderHandlers.send_feedback({ target: 'reviewer', message: 'Fixed — see updated PR' });
+		await coderHandlers.send_message({ target: 'reviewer', message: 'Fixed — see updated PR' });
 
 		// Verify complete exchange
 		const reviewerMessages = messages.filter((m) => m.sessionId === 'session-reviewer');
@@ -738,7 +738,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 			makeStepConfig(tdb, 'session-hub', 'hub', group.id, workflowRunId, injector)
 		);
 
-		const result = await hubHandlers.send_feedback({ target: '*', message: 'broadcast task' });
+		const result = await hubHandlers.send_message({ target: '*', message: 'broadcast task' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
@@ -751,7 +751,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 		// All messages attributed to hub
 		messages.forEach((m) => {
-			expect(m.message).toContain('[Feedback from hub]');
+			expect(m.message).toContain('[Message from hub]');
 			expect(m.message).toContain('broadcast task');
 		});
 	});
@@ -773,7 +773,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', group.id, workflowRunId, injector)
 		);
 
-		const result = await spokeBHandlers.send_feedback({ target: 'hub', message: 'reply' });
+		const result = await spokeBHandlers.send_message({ target: 'hub', message: 'reply' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -797,7 +797,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 			makeStepConfig(tdb, 'session-spoke-b', 'spoke-b', group.id, workflowRunId, injector)
 		);
 
-		const result = await spokeBHandlers.send_feedback({
+		const result = await spokeBHandlers.send_message({
 			target: 'spoke-c',
 			message: 'cross-spoke message',
 		});
@@ -823,7 +823,7 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		);
 
 		// Send to only B and C (not D)
-		const result = await hubHandlers.send_feedback({
+		const result = await hubHandlers.send_message({
 			target: ['spoke-b', 'spoke-c'],
 			message: 'targeted broadcast',
 		});
@@ -905,7 +905,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 			makeStepConfig(tdb, 'session-lead', 'lead', group.id, workflowRunId, injector)
 		);
 
-		const result = await leadHandlers.send_feedback({
+		const result = await leadHandlers.send_message({
 			target: '*',
 			message: 'assigned tasks to all workers',
 		});
@@ -938,21 +938,21 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		const workerBHandlers = createStepAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, workflowRunId, injector)
 		);
-		const r1 = await workerBHandlers.send_feedback({ target: 'lead', message: 'worker-b done' });
+		const r1 = await workerBHandlers.send_message({ target: 'lead', message: 'worker-b done' });
 		expect(JSON.parse(r1.content[0].text).success).toBe(true);
 
 		// Worker C replies
 		const workerCHandlers = createStepAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-c', 'worker-c', group.id, workflowRunId, injector)
 		);
-		const r2 = await workerCHandlers.send_feedback({ target: 'lead', message: 'worker-c done' });
+		const r2 = await workerCHandlers.send_message({ target: 'lead', message: 'worker-c done' });
 		expect(JSON.parse(r2.content[0].text).success).toBe(true);
 
 		// Worker D replies
 		const workerDHandlers = createStepAgentToolHandlers(
 			makeStepConfig(tdb, 'session-worker-d', 'worker-d', group.id, workflowRunId, injector)
 		);
-		const r3 = await workerDHandlers.send_feedback({ target: 'lead', message: 'worker-d done' });
+		const r3 = await workerDHandlers.send_message({ target: 'lead', message: 'worker-d done' });
 		expect(JSON.parse(r3.content[0].text).success).toBe(true);
 
 		// All three replies delivered to lead
@@ -984,7 +984,7 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 			makeStepConfig(tdb, 'session-worker-b', 'worker-b', group.id, workflowRunId, injector)
 		);
 
-		const result = await workerBHandlers.send_feedback({
+		const result = await workerBHandlers.send_message({
 			target: 'worker-c',
 			message: 'cross-spoke attempt',
 		});
@@ -1017,13 +1017,13 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 		);
 
 		// Lead assigns to all
-		await leadHandlers.send_feedback({ target: '*', message: 'start your tasks' });
+		await leadHandlers.send_message({ target: '*', message: 'start your tasks' });
 
 		// Worker B reports back
-		await workerBHandlers.send_feedback({ target: 'lead', message: 'task complete' });
+		await workerBHandlers.send_message({ target: 'lead', message: 'task complete' });
 
 		// Lead follows up with worker B
-		await leadHandlers.send_feedback({ target: 'worker-b', message: 'great work, merge it' });
+		await leadHandlers.send_message({ target: 'worker-b', message: 'great work, merge it' });
 
 		const workerBInbox = messages.filter((m) => m.sessionId === 'session-worker-b');
 		const leadInbox = messages.filter((m) => m.sessionId === 'session-lead');
@@ -1098,8 +1098,8 @@ describe('concurrent message injection — both messages delivered', () => {
 
 		// Fire both simultaneously
 		const [rA, rB] = await Promise.all([
-			senderAHandlers.send_feedback({ target: 'target', message: 'message from A' }),
-			senderBHandlers.send_feedback({ target: 'target', message: 'message from B' }),
+			senderAHandlers.send_message({ target: 'target', message: 'message from A' }),
+			senderBHandlers.send_message({ target: 'target', message: 'message from B' }),
 		]);
 
 		expect(JSON.parse(rA.content[0].text).success).toBe(true);
@@ -1150,8 +1150,8 @@ describe('concurrent message injection — both messages delivered', () => {
 
 		// Two sends in parallel to different targets
 		const [r1, r2] = await Promise.all([
-			hubHandlers.send_feedback({ target: 'spoke-x', message: 'task for X' }),
-			hubHandlers.send_feedback({ target: 'spoke-y', message: 'task for Y' }),
+			hubHandlers.send_message({ target: 'spoke-x', message: 'task for X' }),
+			hubHandlers.send_message({ target: 'spoke-y', message: 'task for Y' }),
 		]);
 
 		expect(JSON.parse(r1.content[0].text).success).toBe(true);
@@ -1300,7 +1300,7 @@ describe('data reload and DB-based validation', () => {
 		expect(resolver.canSend('coder', 'tester')).toBe(false);
 	});
 
-	test('send_feedback works correctly using re-fetched group data', async () => {
+	test('send_message works correctly using re-fetched group data', async () => {
 		const { sessionGroupRepo } = tdb;
 
 		const group = sessionGroupRepo.createGroup({
@@ -1341,7 +1341,7 @@ describe('data reload and DB-based validation', () => {
 		};
 
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({
+		const result = await handlers.send_message({
 			target: 'reviewer',
 			message: 'post-reload check',
 		});
@@ -1470,7 +1470,7 @@ describe('error paths — missing group ID', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	test('send_feedback returns structured error when getGroupId returns undefined', async () => {
+	test('send_message returns structured error when getGroupId returns undefined', async () => {
 		const { messages, injector } = makeMessageCapture();
 
 		// getGroupId returns undefined — simulates race before group is created
@@ -1487,7 +1487,7 @@ describe('error paths — missing group ID', () => {
 		};
 
 		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_feedback({ target: 'reviewer', message: 'hello' });
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
