@@ -42,6 +42,7 @@ Allow adding the same agent definition multiple times to a single workflow node,
 - `role` is required and validated as unique within a node
 - Same `agentId` can appear multiple times if `role` is different
 - Shared types compile cleanly
+- **Note:** Backward compatibility for existing data without `role` is not required — this feature is not yet in production
 
 **Dependencies:** Milestone 2 (types are `WorkflowNodeAgent`)
 
@@ -156,7 +157,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 - Backward compatible: old exports without override fields import cleanly
 - Tests cover all scenarios
 
-**Dependencies:** Task 5.2, Task 5.3
+**Dependencies:** Task 5.3 (must complete first to ensure frontend serialization field names are settled before backend export/import is updated)
 
 **Agent type:** coder
 

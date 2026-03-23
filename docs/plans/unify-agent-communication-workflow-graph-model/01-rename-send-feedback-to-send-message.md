@@ -81,26 +81,6 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 1.3: Update system prompt text and remaining references
+### ~~Task 1.3: Collapsed into Task 1.1~~
 
-**Description:** Search the entire codebase for any remaining references to `send_feedback` (outside of `docs/plans/` historical plans) and update them. This includes system prompt strings, UI text, and any other files.
-
-**Subtasks:**
-1. Run `bun install` at worktree root.
-2. Search entire codebase for `send_feedback` excluding `docs/plans/`.
-3. Update any references found in:
-   - Task Agent system prompt text (`packages/daemon/src/lib/space/agents/task-agent.ts`)
-   - Any other system prompt or instruction text
-   - Shared type comments if any
-4. Run `bun run typecheck`, `bun run lint`, and full test suite for affected packages.
-
-**Acceptance Criteria:**
-- Zero references to `send_feedback` remain outside `docs/plans/`
-- All tests pass
-- System prompts use `send_message` terminology
-
-**Dependencies:** Task 1.1, Task 1.2
-
-**Agent type:** coder
-
-Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+Task 1.3 (system prompt text updates) has been merged into Task 1.1 since it already covers `task-agent.ts` and the full codebase sweep for remaining references. Task 1.1 subtask 6 now serves as the catch-all for any remaining references outside `docs/plans/`.

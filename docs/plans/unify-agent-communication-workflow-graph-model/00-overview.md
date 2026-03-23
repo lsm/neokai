@@ -43,7 +43,13 @@ Milestones 1 and 2 can proceed in parallel. Milestones 5 and 6 can also proceed 
 
 ## Total Estimated Task Count
 
-~24 tasks across 6 milestones.
+~23 tasks across 6 milestones (Task 1.3 collapsed into Task 1.1).
+
+## Important Context
+
+- **No backward compatibility required**: This feature is not yet in production. No migration paths or fallback strategies are needed for existing data.
+- **DB migrations must use the create-copy-drop-rename pattern** (NOT `ALTER TABLE RENAME COLUMN`) — consistent with all existing migrations in the project.
+- **Channel direction type values** are `'one-way' | 'bidirectional'` (NOT `'unidirectional'`) — see `packages/shared/src/types/space.ts`.
 
 ## Key Files (by area)
 

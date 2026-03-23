@@ -22,8 +22,9 @@ Make the Task Agent a visible, configurable participant in the visual workflow e
 **Subtasks:**
 1. Run `bun install` at worktree root.
 2. In `packages/shared/src/types/space.ts`:
-   - Add an optional `taskAgentNode` field to `SpaceWorkflow` (or handle it as a virtual/computed node in the frontend)
-   - Alternatively, define a constant ID for the Task Agent node (e.g., `TASK_AGENT_NODE_ID = '__task_agent__'`) that is always present
+   - Define a constant `TASK_AGENT_NODE_ID = '__task_agent__'` — the Task Agent is a **virtual node** that is never persisted in the DB's `space_workflow_nodes` table
+   - The Task Agent node is injected at runtime by the frontend (serialization) and by the backend (channel resolution at workflow run start)
+   - Task Agent channels ARE persisted as regular `WorkflowChannel` entries (with `from: 'task-agent'` or `to: 'task-agent'` roles) — these are the same channels auto-generated in Milestone 3's Task 3.3; M4 makes them user-visible and editable in the frontend, replacing the backend-only auto-generation with persisted, user-manageable channel entries
 3. In `packages/web/src/components/space/visual-editor/types.ts`:
    - Add any types needed for the Task Agent node representation
 4. In `packages/web/src/components/space/visual-editor/serialization.ts`:

@@ -2,13 +2,15 @@
 
 ## Goal
 
-Show channel direction (bidirectional vs unidirectional) visually on the canvas edges in the visual workflow editor. Bidirectional channels display double-headed arrows; unidirectional channels display a single arrowhead. This makes the messaging topology inspectable at a glance.
+Show channel direction (bidirectional vs one-way) visually on the canvas edges in the visual workflow editor. Bidirectional channels display double-headed arrows; one-way channels display a single arrowhead. This makes the messaging topology inspectable at a glance.
 
 ## Scope
 
 - Render channel edges (distinct from transition edges) on the canvas
-- Bidirectional channels: double-headed arrow on the edge
-- Unidirectional channels: single arrowhead on the edge
+- Bidirectional channels (`direction: 'bidirectional'`): double-headed arrow on the edge
+- One-way channels (`direction: 'one-way'`): single arrowhead on the edge
+
+**IMPORTANT:** The actual type values in `packages/shared/src/types/space.ts` are `'one-way' | 'bidirectional'` — use these exact string literals in all comparisons, NOT `'unidirectional'`.
 - Channel edges use a different visual style from transition edges (e.g., dashed lines, different colors)
 - Channels to/from the Task Agent node are rendered as edges like any other channel
 - Edge labels or tooltips show channel participants (e.g., "coder <-> reviewer")
@@ -26,22 +28,22 @@ Show channel direction (bidirectional vs unidirectional) visually on the canvas 
    - Render channel edges with a distinct style:
      - Dashed stroke pattern to differentiate from solid transition edges
      - Color: green or teal for channels (distinct from blue/yellow/purple transition colors)
-   - For **bidirectional** channels: render with `marker-start` and `marker-end` (double arrowheads)
-   - For **unidirectional** channels: render with `marker-end` only (single arrowhead pointing to target)
+   - For **bidirectional** channels (`direction === 'bidirectional'`): render with `marker-start` and `marker-end` (double arrowheads)
+   - For **one-way** channels (`direction === 'one-way'`): render with `marker-end` only (single arrowhead pointing to target)
    - Add SVG marker definitions for channel arrowheads (distinct from transition arrowheads)
    - Channel edges connect between the side ports of nodes (left/right) rather than top/bottom to avoid confusion with transition edges
 3. Add `data-testid` attributes for channel edges: `data-testid="channel-edge-{from}-{to}"`
 4. Run `bun run typecheck` and `bun run lint`.
 5. Write unit tests:
    - Test bidirectional channel renders two arrowheads
-   - Test unidirectional channel renders one arrowhead
+   - Test one-way channel renders one arrowhead
    - Test channel edges use dashed style
    - Test channel edges are distinct from transition edges
 
 **Acceptance Criteria:**
 - Channel edges rendered with correct arrowhead direction
 - Visual distinction between channel edges and transition edges
-- Both bidirectional and unidirectional styles are correct
+- Both bidirectional and one-way styles are correct
 
 **Dependencies:** Milestone 4 (Task Agent visible as node with channels)
 
@@ -76,7 +78,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Acceptance Criteria:**
 - Channel edges appear on the canvas for all declared channels
-- Direction (bidirectional/unidirectional) is visually correct
+- Direction (bidirectional/one-way) is visually correct
 - Task Agent channel edges render properly
 - No visual clutter when many channels exist
 
@@ -96,7 +98,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 1. Run `bun install` at worktree root.
 2. Add e2e test scenarios:
    - Create a workflow with bidirectional channels, verify double-arrowhead edges appear
-   - Create a workflow with unidirectional channels, verify single-arrowhead edges appear
+   - Create a workflow with one-way channels, verify single-arrowhead edges appear
    - Verify Task Agent channel edges are rendered
    - Verify channel edges are visually distinct from transition edges (check CSS/data attributes)
    - Verify channel direction changes are reflected immediately when editing channels in the config panel

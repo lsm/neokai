@@ -39,6 +39,7 @@ This is the largest mechanical change in the project. Key renames:
    - `ExportedWorkflowStepAgent` -> `ExportedWorkflowNodeAgent`
    - `startStepId` -> `startNodeId` in `SpaceWorkflow`, `CreateSpaceWorkflowParams`, `UpdateSpaceWorkflowParams`
    - `steps` -> `nodes` in `SpaceWorkflow`, `CreateSpaceWorkflowParams`, `UpdateSpaceWorkflowParams`
+   - Rename `workflowStepId` -> `workflowNodeId` in `SpaceTask`, `CreateSpaceTaskParams`, `UpdateSpaceTaskParams`
    - Update all JSDoc comments referencing "step" to "node"
 3. In `packages/shared/src/types/space-utils.ts`:
    - Update all references to the renamed types
@@ -51,6 +52,7 @@ This is the largest mechanical change in the project. Key renames:
 - All `WorkflowStep*` types renamed to `WorkflowNode*` in shared package
 - `startStepId` -> `startNodeId` everywhere in shared types
 - `steps` -> `nodes` in workflow interfaces
+- `workflowStepId` -> `workflowNodeId` in `SpaceTask`, `CreateSpaceTaskParams`, `UpdateSpaceTaskParams`
 - Shared package tests pass
 
 **Dependencies:** None
@@ -73,13 +75,16 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Renames columns `from_step_id` -> `from_node_id` and `to_step_id` -> `to_node_id` in `space_workflow_transitions`
    - Renames column `workflow_step_id` -> `workflow_node_id` in any tables that reference it (check `space_workflow_runs`, session groups, etc.)
    - Recreates affected indexes with new names
-   - Uses SQLite's `ALTER TABLE RENAME` where supported; for column renames (SQLite 3.25+), use `ALTER TABLE RENAME COLUMN`
+   - **IMPORTANT:** Follow the project's established create-copy-drop-rename migration pattern (see `migrations.ts` lines 381, 572, 737, 790 for examples). Do NOT use `ALTER TABLE RENAME COLUMN` — instead: create new table with new column names, copy data, drop old table, rename new table. This ensures compatibility across all SQLite versions bundled by Bun.
+   - Renames column `workflow_step_id` -> `workflow_node_id` in `space_tasks` table (FK to `space_workflow_nodes`)
 3. Update the migration registration/version number.
 4. Run `bun run typecheck`.
 
 **Acceptance Criteria:**
+- Migration uses the create-copy-drop-rename pattern (NOT `ALTER TABLE RENAME COLUMN`)
 - Migration runs cleanly on a fresh DB and on an existing DB with `space_workflow_steps` data
 - All renamed tables and columns are accessible with new names
+- `workflow_step_id` in `space_tasks` is renamed to `workflow_node_id`
 - Indexes are recreated
 
 **Dependencies:** None (can proceed in parallel with Task 2.1)
@@ -104,9 +109,12 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Update TypeScript interfaces and method names that reference "step"
 3. In `packages/daemon/src/storage/repositories/space-agent-repository.ts`:
    - Update any references to step-related DB columns
-4. Check other repositories in `packages/daemon/src/storage/repositories/` for step references.
-5. Run `bun run typecheck`.
-6. Run repository tests: `cd packages/daemon && bun test tests/unit/storage/space-agent-repository.test.ts`
+4. In `packages/daemon/src/storage/repositories/space-task-repository.ts`:
+   - Update `workflow_step_id` -> `workflow_node_id` in all SQL queries
+   - Update `workflowStepId` -> `workflowNodeId` in TypeScript mappings (e.g., line 357)
+5. Check other repositories in `packages/daemon/src/storage/repositories/` for step references.
+6. Run `bun run typecheck`.
+7. Run repository tests: `cd packages/daemon && bun test tests/unit/storage/space-agent-repository.test.ts tests/unit/storage/space-task-repository.test.ts`
 
 **Acceptance Criteria:**
 - All SQL queries use new table/column names
@@ -131,11 +139,14 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Replace all `WorkflowStep` -> `WorkflowNode` type references
    - Rename variables and function parameters from `step` to `node`
    - Update `startStepId` -> `startNodeId`
+   - Update `workflowStepId` -> `workflowNodeId` references (e.g., line 464)
 3. Update `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
    - Same renames
-4. Update `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
-   - Same renames for types, method parameters, and internal variables
-5. Update `packages/daemon/src/lib/space/agents/task-agent.ts`:
+   - Update all `workflowStepId` -> `workflowNodeId` references
+4. Update `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`:
+   - Rename step -> node in types, method parameters, internal variables (e.g., line 898 `workflowStepId` -> `workflowNodeId`)
+5. Search for any manager file under `packages/daemon/src/lib/space/managers/` that references workflow steps and update it.
+6. Update `packages/daemon/src/lib/space/agents/task-agent.ts`:
    - System prompt text: "step" -> "node"
    - Type references
 6. Update `packages/daemon/src/lib/space/export-format.ts`:
@@ -171,7 +182,9 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Variable names from `step` to `node`
 5. Update `packages/web/src/components/space/WorkflowRulesEditor.tsx`:
    - Step references in `appliesTo` UI
-6. Update `packages/web/src/components/space/visual-editor/` files:
+6. Update `packages/web/src/components/space/SpaceTaskPane.tsx`:
+   - Rename `task.workflowStepId` -> `task.workflowNodeId` (e.g., line 341)
+7. Update `packages/web/src/components/space/visual-editor/` files:
    - `serialization.ts` -- step -> node in serialization/deserialization
    - `layout.ts` -- step -> node
    - `NodeConfigPanel.tsx` -- `WorkflowStepAgent` -> `WorkflowNodeAgent`
@@ -208,6 +221,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - `space/workflow-executor.test.ts`
    - `space/export-format.test.ts`
    - `storage/space-agent-repository.test.ts`
+   - `storage/space-task-repository.test.ts`
    - `rpc-handlers/space-agent-handlers.test.ts`
    - `lib/space-agent-manager.test.ts`
    - `helpers/space-agent-schema.ts`
