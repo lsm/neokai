@@ -230,6 +230,13 @@ describe('TurnSummaryBlock', () => {
 			const root = container.querySelector('[data-testid="turn-block"]');
 			expect(root!.className).not.toContain('ring-blue-500');
 		});
+
+		it('does NOT apply ring when isSelected prop is omitted (default=false)', () => {
+			const turn = makeTurn();
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).not.toContain('ring-blue-500');
+		});
 	});
 
 	// ── Error state ───────────────────────────────────────────────────────────
@@ -252,6 +259,18 @@ describe('TurnSummaryBlock', () => {
 			const turn = makeTurn({ isError: false, errorMessage: null });
 			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
 			// No red text anywhere
+			expect(container.querySelector('.text-red-400')).toBeNull();
+		});
+
+		it('applies red border but no error message div when isError=true and errorMessage=null', () => {
+			// This edge case is reachable: useTurnBlocks can set isError=true with errorMessage=null
+			// when error detection fires but no text is extractable.
+			const turn = makeTurn({ isError: true, errorMessage: null });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			// Border-red-800 class still applied
+			const root = container.querySelector('[data-testid="turn-block"]');
+			expect(root!.className).toContain('border-red-800');
+			// But no red message div rendered (guarded by turn.isError && turn.errorMessage)
 			expect(container.querySelector('.text-red-400')).toBeNull();
 		});
 	});
@@ -314,6 +333,7 @@ describe('TurnSummaryBlock', () => {
 			['human', 'text-green-400'],
 			['craft', 'text-blue-400'],
 			['lead', 'text-purple-400'],
+			['system', 'text-gray-500'],
 		];
 
 		it.each(roles)('applies correct label color for role=%s', (role, expectedClass) => {
@@ -338,6 +358,16 @@ describe('TurnSummaryBlock', () => {
 			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
 			const nameEl = container.querySelector('[data-testid="turn-block-agent-name"]');
 			expect(nameEl!.textContent).toBe('custom-agent');
+		});
+
+		it('falls back to agentRole when agentLabel is empty string (system role quirk)', () => {
+			// ROLE_COLORS['system'].label is '' — useTurnBlocks propagates this as agentLabel.
+			// The component uses `turn.agentLabel || turn.agentRole`, so the empty agentLabel
+			// causes the agentRole string 'system' to be rendered instead.
+			const turn = makeTurn({ agentRole: 'system', agentLabel: '' });
+			const { container } = render(<TurnSummaryBlock turn={turn} onClick={vi.fn()} />);
+			const nameEl = container.querySelector('[data-testid="turn-block-agent-name"]');
+			expect(nameEl!.textContent).toBe('system');
 		});
 	});
 
