@@ -249,7 +249,21 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 								{group.feedbackIteration > 0 && `iteration ${group.feedbackIteration}`}
 							</p>
 							{group.submittedForReview && !task.activeSession && (
-								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
+								<span class="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-300 bg-amber-900/40 border border-amber-600/50 px-2.5 py-1 rounded-lg animate-pulse">
+									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+										/>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+										/>
+									</svg>
 									Awaiting your review
 								</span>
 							)}
@@ -412,45 +426,210 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 									No messages yet
 								</div>
 							) : (
-								turnBlocks.map((item) => {
-									if (item.type === 'turn') {
-										return (
-											<TurnSummaryBlock
-												key={item.turn.id}
-												turn={item.turn}
-												onClick={handleTurnClick}
-												isSelected={selectedTurn?.id === item.turn.id}
-											/>
-										);
-									}
-									// runtime message
-									return <RuntimeMessageRenderer key={item.index} message={item} />;
-								})
+								(() => {
+									let turnNumber = 0;
+									return turnBlocks.map((item) => {
+										if (item.type === 'turn') {
+											turnNumber++;
+											return (
+												<TurnSummaryBlock
+													key={item.turn.id}
+													turn={item.turn}
+													onClick={handleTurnClick}
+													isSelected={selectedTurn?.id === item.turn.id}
+													turnNumber={turnNumber}
+												/>
+											);
+										}
+										return <RuntimeMessageRenderer key={item.index} message={item} />;
+									});
+								})()
 							)}
 						</div>
 					) : (
 						<div class="flex-1 flex items-center justify-center text-center p-8">
 							<div>
-								<p class="text-gray-400 mb-1">
-									{task.status === 'review'
-										? 'Loading conversation history…'
-										: 'No active agent group'}
-								</p>
-								<p class="text-sm text-gray-500">
-									{task.status === 'pending'
-										? 'Waiting for the runtime to pick up this task.'
-										: task.status === 'completed'
-											? 'This task has been completed.'
-											: task.status === 'needs_attention'
-												? 'This task needs attention.'
-												: task.status === 'review'
-													? 'If this takes too long, try reloading the page.'
-													: task.status === 'draft'
-														? 'This task is a draft and has not been scheduled yet.'
-														: task.status === 'cancelled'
-															? 'This task was cancelled.'
-															: 'No agent group has been spawned yet.'}
-								</p>
+								{task.status === 'pending' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-dark-700 p-3">
+												<svg
+													class="w-6 h-6 text-gray-500"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-gray-400 mb-1">Waiting for the runtime to pick up this task</p>
+										<p class="text-sm text-gray-500">
+											The task will be processed automatically when a worker is available.
+										</p>
+									</>
+								)}
+								{task.status === 'completed' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-emerald-900/30 p-3">
+												<svg
+													class="w-6 h-6 text-emerald-400"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-emerald-400 mb-1">Task completed</p>
+										<p class="text-sm text-gray-500">
+											This task has finished executing. Check the PR link above for results.
+										</p>
+									</>
+								)}
+								{task.status === 'needs_attention' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-amber-900/30 p-3">
+												<svg
+													class="w-6 h-6 text-amber-400"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-amber-400 mb-1">This task needs your attention</p>
+										<p class="text-sm text-gray-500">
+											Please review the task and take appropriate action.
+										</p>
+									</>
+								)}
+								{task.status === 'review' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-blue-900/30 p-3">
+												<svg
+													class="w-6 h-6 text-blue-400 animate-pulse"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+													/>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-blue-400 mb-1">Awaiting your review</p>
+										<p class="text-sm text-gray-500">
+											The worker has submitted this task for review. Approve or reject above.
+										</p>
+									</>
+								)}
+								{task.status === 'draft' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-dark-700 p-3">
+												<svg
+													class="w-6 h-6 text-gray-500"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-gray-400 mb-1">This task is a draft</p>
+										<p class="text-sm text-gray-500">
+											Draft tasks have not been scheduled yet. Edit the task to schedule it.
+										</p>
+									</>
+								)}
+								{task.status === 'cancelled' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-dark-700 p-3">
+												<svg
+													class="w-6 h-6 text-gray-500"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M6 18L18 6M6 6l12 12"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-gray-400 mb-1">This task was cancelled</p>
+										<p class="text-sm text-gray-500">
+											No further action will be taken on this task.
+										</p>
+									</>
+								)}
+								{task.status === 'in_progress' && (
+									<>
+										<div class="mb-3 flex justify-center">
+											<div class="rounded-full bg-blue-900/30 p-3">
+												<svg
+													class="w-6 h-6 text-blue-400 animate-spin"
+													fill="none"
+													stroke="currentColor"
+													viewBox="0 0 24 24"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+													/>
+												</svg>
+											</div>
+										</div>
+										<p class="text-blue-400 mb-1">Task in progress</p>
+										<p class="text-sm text-gray-500">
+											The worker is actively processing this task.
+										</p>
+									</>
+								)}
 							</div>
 						</div>
 					)}
@@ -458,10 +637,10 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 				</div>
 
 				{/* Scroll controls */}
-				<div
-					class="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
-					style={{ bottom: '1rem' }}
-				>
+				<div class="absolute right-4 flex flex-col items-center gap-2" style={{ bottom: '1rem' }}>
+					{showScrollButton && (
+						<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-0" />
+					)}
 					{/* Autoscroll toggle */}
 					<button
 						class={`p-2 rounded-full shadow-lg transition-colors ${
@@ -481,9 +660,6 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 							/>
 						</svg>
 					</button>
-					{showScrollButton && (
-						<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-0" />
-					)}
 				</div>
 
 				{/* Slide-out panel — overlays the turn blocks area */}
@@ -493,6 +669,7 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 					agentLabel={selectedTurn?.agentLabel}
 					agentRole={selectedTurn?.agentRole}
 					onClose={handleClosePanel}
+					widthClass="w-full sm:w-[70%] lg:w-1/2"
 				/>
 			</div>
 

@@ -15,9 +15,17 @@ interface Props {
 	agentLabel?: string;
 	agentRole?: string;
 	onClose: () => void;
+	widthClass?: string;
 }
 
-export function SlideOutPanel({ isOpen, sessionId, agentLabel, agentRole, onClose }: Props) {
+export function SlideOutPanel({
+	isOpen,
+	sessionId,
+	agentLabel,
+	agentRole,
+	onClose,
+	widthClass = 'w-full sm:w-1/2',
+}: Props) {
 	const closeButtonRef = useRef<HTMLButtonElement>(null);
 	const panelRef = useRef<HTMLDivElement>(null);
 	// Track the element that opened the panel so focus can be restored on close
@@ -99,7 +107,7 @@ export function SlideOutPanel({ isOpen, sessionId, agentLabel, agentRole, onClos
 				aria-label={`Session chat for ${displayLabel}`}
 				class={[
 					'absolute top-0 right-0 h-full z-20',
-					'w-full sm:w-1/2',
+					widthClass,
 					'flex flex-col',
 					'bg-gray-900 border-l border-gray-700 shadow-2xl',
 					'transition-transform duration-300',
