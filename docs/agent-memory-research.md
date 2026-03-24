@@ -157,7 +157,7 @@ ORDER BY v.distance;
 
 > **Note:** Do not confuse this API with **sqlite-vec** (`asg017/sqlite-vec`), which uses `CREATE VIRTUAL TABLE ... USING vec0(...)`. sqlite-vector uses ordinary tables + `vector_init()` + `vector_quantize_scan()`. The two libraries have entirely different SQL interfaces.
 
-**Note on sqlite-vec vs. sqlite-vector:** sqlite-vec (by Alex Garcia, `asg017/sqlite-vec`) is the original extension, now merged into SQLite core as `vec1` at sqlite.org. Both are stable. sqlite-vector is newer and faster with quantization; sqlite-vec has broader ecosystem integration. Either can work for Phase 2.
+**Note on sqlite-vec vs. vec1 vs. sqlite-vector:** `asg017/sqlite-vec` and the SQLite.org `vec1` extension are **separate projects** — vec1 was not derived from or merged from sqlite-vec. Both provide vector search for SQLite via similar virtual-table interfaces, but are independently developed codebases. Neither is production-stable: sqlite-vec is at v0.1.x alpha (upstream explicitly warns "expect breaking changes"), and vec1 is pre-release ("testing is very insufficient"). sqlite-vector (sqliteai) uses a different, BLOB-column-based API and is the only option here with a quantization-optimised query path; treat it as the most performance-relevant candidate for Phase 2, but validate its stability before committing.
 
 #### Bun + Native SQLite Extension Constraint ⚠️
 
@@ -647,8 +647,8 @@ Revisit: Chroma embedded (viable fallback if sqlite-vector Bun compat is painful
 ## 10. References
 
 - [sqlite-vector (sqliteai)](https://github.com/sqliteai/sqlite-vector) — Quantized in-process vector search; 17× faster than sqlite-vec with preload
-- [sqlite-vec (asg017)](https://github.com/asg017/sqlite-vec) — Original SQLite vector extension; now `vec1` in SQLite core
-- [vec1 — official SQLite vector extension](https://sqlite.org/vec1)
+- [sqlite-vec (asg017)](https://github.com/asg017/sqlite-vec) — SQLite vector extension, v0.1.x alpha (breaking changes expected); separate codebase from vec1
+- [vec1 — SQLite.org vector extension](https://sqlite.org/vec1) — Independent SQLite.org project (not derived from sqlite-vec); pre-release, testing described as insufficient
 - [sqlite-rag (sqliteai)](https://github.com/sqliteai/sqlite-rag) — Hybrid FTS5 + vector search reference implementation
 - [sqlite-memory (sqliteai)](https://github.com/sqliteai/sqlite-memory) — Markdown-based agent memory with offline-first sync
 - [Hybrid FTS5 + vector search — Alex Garcia's blog](https://alexgarcia.xyz/blog/2024/sqlite-vec-hybrid-search/index.html)
