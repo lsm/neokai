@@ -63,6 +63,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 
 // ---- Mocks ----
 
@@ -345,9 +346,15 @@ describe('VisualWorkflowEditor', () => {
 			// The workflow has one edge (step-1 → step-2); confirm it renders before deletion
 			expect(container.querySelector('[data-edge-id]')).toBeTruthy();
 
-			// Select the non-start node (the one without the start badge)
+			// Select step-2 (the non-start regular node).
+			// Skip the Task Agent virtual node (data-testid="workflow-node-__task_agent__")
+			// since it is always present and has no start badge.
 			const nodes = getAllByTestId(/^workflow-node-/);
-			const nonStartNode = nodes.find((n) => !n.querySelector('[data-testid="start-badge"]'))!;
+			const nonStartNode = nodes.find(
+				(n) =>
+					!n.querySelector('[data-testid="start-badge"]') &&
+					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			)!;
 			fireEvent.click(nonStartNode);
 
 			// Initiate delete

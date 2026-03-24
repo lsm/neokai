@@ -27,7 +27,7 @@ import type {
 	WorkflowTransition,
 	WorkflowConditionType,
 } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
@@ -543,14 +543,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			setError('Workflow name is required.');
 			return;
 		}
-		if (nodes.length === 0) {
+		// Exclude the Task Agent virtual node from validation — it's never persisted.
+		const regularNodes = nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID);
+
+		if (regularNodes.length === 0) {
 			setError('A workflow must have at least one step.');
 			return;
 		}
 
 		// Validate each step has an agent assigned (single or multi-agent)
-		for (let i = 0; i < nodes.length; i++) {
-			const step = nodes[i].step;
+		for (let i = 0; i < regularNodes.length; i++) {
+			const step = regularNodes[i].step;
 			const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
 			if (!hasMultiAgent && !step.agentId) {
 				setError(`Step ${i + 1} requires an agent.`);

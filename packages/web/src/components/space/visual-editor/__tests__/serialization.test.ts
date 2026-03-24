@@ -16,6 +16,7 @@ import {
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
 import type { SpaceWorkflow, WorkflowNode, WorkflowTransition, WorkflowRule } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
@@ -77,16 +78,18 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 // ---------------------------------------------------------------------------
 
 describe('workflowToVisualState', () => {
-	it('creates one node per step', () => {
+	it('creates one node per step (plus Task Agent virtual node)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.nodes).toHaveLength(2);
-		expect(state.nodes[0].step.id).toBe('s1');
-		expect(state.nodes[1].step.id).toBe('s2');
+		// Task Agent virtual node is always injected as the first node
+		expect(state.nodes).toHaveLength(3);
+		expect(state.nodes[0].step.id).toBe('__task_agent__');
+		expect(state.nodes.find((n) => n.step.id === 's1')?.step.id).toBe('s1');
+		expect(state.nodes.find((n) => n.step.id === 's2')?.step.id).toBe('s2');
 	});
 
 	it('creates one edge per transition', () => {
@@ -248,7 +251,7 @@ describe('workflowToVisualState', () => {
 		expect(state.tags).toEqual(['coding', 'review']);
 	});
 
-	it('assigns fresh localIds to each node', () => {
+	it('assigns fresh localIds to each node (including Task Agent)', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [],
@@ -256,7 +259,8 @@ describe('workflowToVisualState', () => {
 		});
 		const state = workflowToVisualState(wf);
 		const localIds = state.nodes.map((n) => n.step.localId);
-		expect(new Set(localIds).size).toBe(2); // all unique
+		// Task Agent + 2 regular nodes = 3 unique localIds
+		expect(new Set(localIds).size).toBe(3);
 	});
 });
 
@@ -796,7 +800,8 @@ describe('multi-agent step serialization', () => {
 			],
 		});
 		const state = workflowToVisualState(workflow);
-		const step = state.nodes[0].step;
+		// Use find() — Task Agent virtual node is injected at index 0
+		const step = state.nodes.find((n) => n.step.id === 's1')!.step;
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
 		expect(step.agents![1].agentId).toBe('a2');
@@ -820,7 +825,8 @@ describe('multi-agent step serialization', () => {
 			],
 		});
 		const state = workflowToVisualState(workflow);
-		const step = state.nodes[0].step;
+		// Use find() — Task Agent virtual node is injected at index 0
+		const step = state.nodes.find((n) => n.step.id === 's1')!.step;
 		expect(step.channels).toHaveLength(2);
 		expect(step.channels![0]).toEqual({
 			from: 'coder',
@@ -897,8 +903,10 @@ describe('multi-agent step serialization', () => {
 			nodes: [makeStep('s1', 'Code', 'agent-coder')],
 		});
 		const state = workflowToVisualState(workflow);
-		expect(state.nodes[0].step.agentId).toBe('agent-coder');
-		expect(state.nodes[0].step.agents).toBeUndefined();
+		// Use find() — Task Agent virtual node is injected at index 0
+		const s1Node = state.nodes.find((n) => n.step.id === 's1')!;
+		expect(s1Node.step.agentId).toBe('agent-coder');
+		expect(s1Node.step.agents).toBeUndefined();
 
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.nodes![0].agentId).toBe('agent-coder');
@@ -940,5 +948,116 @@ describe('multi-agent step serialization', () => {
 			to: ['coder', 'qa'],
 			direction: 'bidirectional',
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task Agent virtual node — serialization / deserialization
+// ---------------------------------------------------------------------------
+
+describe('Task Agent virtual node', () => {
+	it('workflowToVisualState always injects Task Agent as first node', () => {
+		const wf = makeWorkflow({ nodes: [makeStep('s1')], startNodeId: 's1' });
+		const state = workflowToVisualState(wf);
+		expect(state.nodes[0].step.id).toBe(TASK_AGENT_NODE_ID);
+		expect(state.nodes[0].step.localId).toBe(TASK_AGENT_NODE_ID);
+		expect(state.nodes[0].step.name).toBe('Task Agent');
+	});
+
+	it('Task Agent node is present even for empty workflow', () => {
+		const wf = makeWorkflow({ nodes: [], startNodeId: '' });
+		const state = workflowToVisualState(wf);
+		expect(state.nodes).toHaveLength(1);
+		expect(state.nodes[0].step.id).toBe(TASK_AGENT_NODE_ID);
+	});
+
+	it('Task Agent is positioned above regular nodes (lower y value)', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			transitions: [makeTransition('s1', 's2')],
+			startNodeId: 's1',
+			layout: { s1: { x: 300, y: 200 }, s2: { x: 300, y: 400 } },
+		});
+		const state = workflowToVisualState(wf);
+		const taskAgentPos = state.nodes[0].position;
+		const s1Pos = state.nodes.find((n) => n.step.id === 's1')!.position;
+		expect(taskAgentPos.y).toBeLessThan(s1Pos.y);
+	});
+
+	it('visualStateToCreateParams strips Task Agent node from persisted nodes', () => {
+		const wf = makeWorkflow({ nodes: [makeStep('s1'), makeStep('s2')], startNodeId: 's1' });
+		const state = workflowToVisualState(wf);
+
+		// Task Agent must be in the visual state
+		expect(state.nodes.some((n) => n.step.id === TASK_AGENT_NODE_ID)).toBe(true);
+
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		// Task Agent must NOT be in the persisted nodes
+		expect(params.nodes!.every((n) => n.id !== TASK_AGENT_NODE_ID)).toBe(true);
+		expect(params.nodes).toHaveLength(2);
+	});
+
+	it('visualStateToUpdateParams strips Task Agent node from persisted nodes', () => {
+		const wf = makeWorkflow({ nodes: [makeStep('s1')], startNodeId: 's1' });
+		const state = workflowToVisualState(wf);
+
+		const params = visualStateToUpdateParams(state);
+		expect(params.nodes!.every((n) => n.id !== TASK_AGENT_NODE_ID)).toBe(true);
+		expect(params.nodes).toHaveLength(1);
+	});
+
+	it('Task Agent is excluded from the persisted layout', () => {
+		const wf = makeWorkflow({ nodes: [makeStep('s1')], startNodeId: 's1' });
+		const state = workflowToVisualState(wf);
+
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(Object.keys(params.layout!)).not.toContain(TASK_AGENT_NODE_ID);
+	});
+
+	it('serialization round-trip preserves regular nodes and excludes Task Agent', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1', 'Coder', 'agent-coder'), makeStep('s2', 'Reviewer', 'agent-reviewer')],
+			transitions: [makeTransition('s1', 's2')],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+
+		// Regular nodes preserved
+		expect(params.nodes!.find((n) => n.id === 's1')).toMatchObject({
+			name: 'Coder',
+			agentId: 'agent-coder',
+		});
+		expect(params.nodes!.find((n) => n.id === 's2')).toMatchObject({
+			name: 'Reviewer',
+			agentId: 'agent-reviewer',
+		});
+		// Task Agent not present
+		expect(params.nodes!.some((n) => n.id === TASK_AGENT_NODE_ID)).toBe(false);
+	});
+
+	it('Task Agent node in state does not affect startNodeId resolution', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			startNodeId: 's2',
+		});
+		const state = workflowToVisualState(wf);
+		expect(state.startNodeId).toBe('s2');
+
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		expect(params.startNodeId).toBe('s2');
+	});
+
+	it('Task Agent node in state does not corrupt transitions', () => {
+		const wf = makeWorkflow({
+			nodes: [makeStep('s1'), makeStep('s2')],
+			transitions: [makeTransition('s1', 's2')],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+
+		expect(params.transitions).toHaveLength(1);
+		expect(params.transitions![0]).toMatchObject({ from: 's1', to: 's2' });
 	});
 });

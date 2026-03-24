@@ -1,10 +1,15 @@
 /**
  * Unit tests for the DAG auto-layout algorithm.
+ *
+ * Note: autoLayout always injects the Task Agent virtual node (TASK_AGENT_NODE_ID)
+ * pinned at the top-center of the canvas. All `result.size` assertions include this
+ * virtual node (+1 compared to the count of workflow nodes passed in).
  */
 
 import { describe, it, expect } from 'vitest';
 import { autoLayout } from '../layout.ts';
 import type { WorkflowNode, WorkflowTransition } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,19 +28,46 @@ function makeTransition(from: string, to: string): WorkflowTransition {
 // ---------------------------------------------------------------------------
 
 describe('autoLayout', () => {
-	it('returns empty map for empty workflow', () => {
+	it('returns a map with only the Task Agent for empty workflow', () => {
 		const result = autoLayout([], [], 'start');
-		expect(result.size).toBe(0);
+		// Even with no regular nodes, the Task Agent virtual node is always added
+		expect(result.size).toBe(1);
+		expect(result.has(TASK_AGENT_NODE_ID)).toBe(true);
 	});
 
 	it('places a single node at the start position', () => {
 		const steps = [makeStep('a')];
 		const result = autoLayout(steps, [], 'a');
-		expect(result.size).toBe(1);
+		// Task Agent + 1 regular node
+		expect(result.size).toBe(2);
 		const pos = result.get('a')!;
 		expect(pos).toBeDefined();
 		expect(pos.x).toBeGreaterThanOrEqual(0);
 		expect(pos.y).toBeGreaterThanOrEqual(0);
+	});
+
+	it('Task Agent is pinned above the highest regular node', () => {
+		const steps = [makeStep('a'), makeStep('b')];
+		const transitions = [makeTransition('a', 'b')];
+		const result = autoLayout(steps, transitions, 'a');
+
+		const taskAgentPos = result.get(TASK_AGENT_NODE_ID)!;
+		const ya = result.get('a')!.y;
+		expect(taskAgentPos).toBeDefined();
+		// Task Agent should be above (smaller y) the first regular layer
+		expect(taskAgentPos.y).toBeLessThan(ya);
+	});
+
+	it('Task Agent is centered horizontally relative to the widest layer', () => {
+		const steps = [makeStep('a'), makeStep('b'), makeStep('c')];
+		const transitions = [makeTransition('a', 'b'), makeTransition('a', 'c')];
+		const result = autoLayout(steps, transitions, 'a');
+
+		const taskAgentPos = result.get(TASK_AGENT_NODE_ID)!;
+		const xb = result.get('b')!.x;
+		const xc = result.get('c')!.x;
+		// Task Agent should be centered between b and c (the widest layer)
+		expect(taskAgentPos.x).toBeCloseTo((xb + xc) / 2, 0);
 	});
 
 	describe('linear chain layout', () => {
@@ -44,7 +76,8 @@ describe('autoLayout', () => {
 			const transitions = [makeTransition('a', 'b'), makeTransition('b', 'c')];
 			const result = autoLayout(steps, transitions, 'a');
 
-			expect(result.size).toBe(3);
+			// Task Agent + 3 regular nodes
+			expect(result.size).toBe(4);
 			const ya = result.get('a')!.y;
 			const yb = result.get('b')!.y;
 			const yc = result.get('c')!.y;
@@ -79,7 +112,8 @@ describe('autoLayout', () => {
 			const transitions = [makeTransition('a', 'b'), makeTransition('a', 'c')];
 			const result = autoLayout(steps, transitions, 'a');
 
-			expect(result.size).toBe(3);
+			// Task Agent + 3 regular nodes
+			expect(result.size).toBe(4);
 			const yb = result.get('b')!.y;
 			const yc = result.get('c')!.y;
 			expect(yb).toBe(yc); // same layer → same y
@@ -136,7 +170,8 @@ describe('autoLayout', () => {
 			const transitions = [makeTransition('a', 'b')];
 			const result = autoLayout(steps, transitions, 'a');
 
-			expect(result.size).toBe(4);
+			// Task Agent + 4 regular nodes
+			expect(result.size).toBe(5);
 			const maxReachableY = Math.max(result.get('a')!.y, result.get('b')!.y);
 			expect(result.get('orphan1')!.y).toBeGreaterThan(maxReachableY);
 			expect(result.get('orphan2')!.y).toBeGreaterThan(maxReachableY);
@@ -158,7 +193,8 @@ describe('autoLayout', () => {
 		it('all nodes are assigned positions even with no transitions', () => {
 			const steps = ['a', 'b', 'c'].map(makeStep);
 			const result = autoLayout(steps, [], 'a');
-			expect(result.size).toBe(3);
+			// Task Agent + 3 regular nodes
+			expect(result.size).toBe(4);
 			for (const id of ['a', 'b', 'c']) {
 				const pos = result.get(id);
 				expect(pos).toBeDefined();
@@ -174,7 +210,8 @@ describe('autoLayout', () => {
 			const transitions = [makeTransition('a', 'b'), makeTransition('b', 'a')];
 			expect(() => autoLayout(steps, transitions, 'a')).not.toThrow();
 			const result = autoLayout(steps, transitions, 'a');
-			expect(result.size).toBe(2);
+			// Task Agent + 2 regular nodes
+			expect(result.size).toBe(3);
 		});
 
 		it('assigns distinct positions to nodes in a cycle', () => {
@@ -185,7 +222,8 @@ describe('autoLayout', () => {
 				makeTransition('c', 'a'),
 			];
 			const result = autoLayout(steps, transitions, 'a');
-			expect(result.size).toBe(3);
+			// Task Agent + 3 regular nodes
+			expect(result.size).toBe(4);
 			const positions = [...result.values()];
 			// No two nodes share the exact same position
 			for (let i = 0; i < positions.length; i++) {
@@ -201,7 +239,8 @@ describe('autoLayout', () => {
 			const transitions = [makeTransition('a', 'b'), makeTransition('a', 'a')];
 			expect(() => autoLayout(steps, transitions, 'a')).not.toThrow();
 			const result = autoLayout(steps, transitions, 'a');
-			expect(result.size).toBe(2);
+			// Task Agent + 2 regular nodes
+			expect(result.size).toBe(3);
 		});
 
 		it('handles larger diamond+cycle graph without overlaps', () => {
@@ -218,7 +257,8 @@ describe('autoLayout', () => {
 			];
 			expect(() => autoLayout(steps, transitions, 'a')).not.toThrow();
 			const result = autoLayout(steps, transitions, 'a');
-			expect(result.size).toBe(4);
+			// Task Agent + 4 regular nodes
+			expect(result.size).toBe(5);
 
 			// No two nodes share the exact same (x, y)
 			const positions = [...result.values()];
@@ -236,8 +276,8 @@ describe('autoLayout', () => {
 			const steps = ['a', 'b'].map(makeStep);
 			const transitions = [makeTransition('a', 'b')];
 			const result = autoLayout(steps, transitions, 'nonexistent');
-			// No node is reachable — both are orphans, still get positions
-			expect(result.size).toBe(2);
+			// Task Agent + 2 regular nodes (both are orphans, still get positions)
+			expect(result.size).toBe(3);
 		});
 
 		it('transitions referencing unknown step IDs are ignored', () => {
@@ -245,14 +285,16 @@ describe('autoLayout', () => {
 			const transitions = [makeTransition('a', 'b'), makeTransition('a', 'zzz')];
 			expect(() => autoLayout(steps, transitions, 'a')).not.toThrow();
 			const result = autoLayout(steps, transitions, 'a');
-			expect(result.size).toBe(2);
+			// Task Agent + 2 regular nodes
+			expect(result.size).toBe(3);
 		});
 
 		it('returns correct positions for a two-step linear workflow', () => {
 			const steps = [makeStep('start'), makeStep('end')];
 			const transitions = [makeTransition('start', 'end')];
 			const result = autoLayout(steps, transitions, 'start');
-			expect(result.size).toBe(2);
+			// Task Agent + 2 regular nodes
+			expect(result.size).toBe(3);
 			expect(result.get('start')!.y).toBeLessThan(result.get('end')!.y);
 		});
 	});

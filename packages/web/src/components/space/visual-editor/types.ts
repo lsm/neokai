@@ -2,6 +2,24 @@
  * Shared types for the visual editor canvas and nodes.
  */
 
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+
+/**
+ * Represents the Task Agent virtual node in the visual editor.
+ *
+ * The Task Agent node is always present in the visual editor — it is pinned
+ * to the top-center of the canvas and cannot be deleted by the user.
+ * It is never persisted in the backend (stripped during serialization).
+ */
+export interface TaskAgentVisualNode {
+	/** Always `TASK_AGENT_NODE_ID` — used to identify this node uniquely. */
+	id: typeof TASK_AGENT_NODE_ID;
+	/** Display name shown in the canvas. */
+	name: 'Task Agent';
+	/** Virtual nodes are never stored in the DB. */
+	virtual: true;
+}
+
 export interface Point {
 	x: number;
 	y: number;

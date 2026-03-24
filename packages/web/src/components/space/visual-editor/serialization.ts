@@ -26,6 +26,7 @@
  *   same state and expect the generated IDs to match.
  */
 
+import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type {
 	SpaceWorkflow,
 	CreateSpaceWorkflowParams,
@@ -34,7 +35,6 @@ import type {
 	WorkflowNodeAgent,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import { rulesToDrafts } from '../WorkflowRulesEditor';
@@ -100,6 +100,8 @@ export interface VisualEditorState {
  *   exactly from the stored layout. Steps missing from a partial layout fall back
  *   to `autoLayout` positions (autoLayout is only invoked when needed).
  * - All `WorkflowCondition` fields are preserved verbatim on the edges.
+ * - The Task Agent virtual node is always injected as the first node, pinned at
+ *   the top-center of the canvas. It is never stored in the backend.
  */
 export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorState {
 	// Determine whether auto-layout is needed (any step missing from layout)
@@ -130,6 +132,20 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		return { step, position };
 	});
 
+	// Always inject the Task Agent virtual node at the top-center of the canvas.
+	// Its position is computed relative to the layout so it sits above all other nodes.
+	const taskAgentPosition = computeTaskAgentPosition(layoutMap, layoutFallback, workflow.nodes);
+	const taskAgentNode: VisualNode = {
+		step: {
+			localId: TASK_AGENT_NODE_ID,
+			id: TASK_AGENT_NODE_ID,
+			name: 'Task Agent',
+			agentId: '',
+			instructions: '',
+		},
+		position: taskAgentPosition,
+	};
+
 	// Preserve the full WorkflowCondition (all fields) to avoid silent data loss
 	const edges: VisualEdge[] = workflow.transitions.map((t) => ({
 		fromStepKey: t.from,
@@ -143,12 +159,56 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		workflow.nodes.find((s) => s.id === workflow.startNodeId)?.id ?? workflow.nodes[0]?.id ?? '';
 
 	return {
-		nodes,
+		// Task Agent node is always first — pinned to the top of the canvas.
+		nodes: [taskAgentNode, ...nodes],
 		edges,
 		startNodeId: startKey,
 		rules: rulesToDrafts(workflow.rules ?? []),
 		tags: workflow.tags ?? [],
 	};
+}
+
+/**
+ * Compute the canvas position for the Task Agent virtual node.
+ *
+ * The Task Agent is placed above the highest (smallest y) node in the layout,
+ * centered horizontally. When no nodes exist yet, it defaults to the canvas origin.
+ */
+function computeTaskAgentPosition(
+	layoutMap: SpaceWorkflow['layout'],
+	layoutFallback: Map<string, Point>,
+	workflowNodes: SpaceWorkflow['nodes']
+): Point {
+	const TASK_AGENT_Y_OFFSET = 120;
+	const DEFAULT_CENTER_X = 400;
+
+	if (workflowNodes.length === 0) {
+		return { x: DEFAULT_CENTER_X, y: 0 };
+	}
+
+	// Collect all known x positions and the minimum y to place the Task Agent above them
+	let minY = Infinity;
+	let sumX = 0;
+	let count = 0;
+
+	for (const node of workflowNodes) {
+		let pos: Point | undefined;
+		if (layoutMap && layoutMap[node.id]) {
+			pos = { x: layoutMap[node.id].x, y: layoutMap[node.id].y };
+		} else {
+			pos = layoutFallback.get(node.id);
+		}
+		if (pos) {
+			sumX += pos.x;
+			count++;
+			if (pos.y < minY) minY = pos.y;
+		}
+	}
+
+	const centerX = count > 0 ? sumX / count : DEFAULT_CENTER_X;
+	const y = minY === Infinity ? 0 : Math.max(0, minY - TASK_AGENT_Y_OFFSET);
+
+	return { x: centerX, y };
 }
 
 // ============================================================================
@@ -207,9 +267,15 @@ function buildWorkflowFields(state: VisualEditorState): {
 } {
 	const generatedIds = new Map<string, string>();
 
+	// Strip the Task Agent virtual node — it is never persisted to the backend.
+	// Edges referencing TASK_AGENT_NODE_ID are also dropped (dangling edge logic below).
+	const persistableNodes = state.nodes.filter(
+		(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+	);
+
 	// Assign persisted IDs to all nodes
 	const nodeMap = new Map<string, { node: VisualNode; persistedId: string }>();
-	for (const node of state.nodes) {
+	for (const node of persistableNodes) {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = resolveStepId(node, generatedIds);
 		nodeMap.set(key, { node, persistedId });
@@ -232,8 +298,8 @@ function buildWorkflowFields(state: VisualEditorState): {
 		keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
 	}
 
-	// Build steps
-	const nodes = state.nodes.map((node, i) => {
+	// Build steps (Task Agent virtual node already excluded in persistableNodes)
+	const nodes = persistableNodes.map((node, i) => {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = nodeMap.get(key)!.persistedId;
 		const hasMultiAgent = Array.isArray(node.step.agents) && node.step.agents.length > 0;
@@ -252,7 +318,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 
 	// Build a position lookup for target nodes (used to compute transition order)
 	const positionByKey = new Map<string, Point>();
-	for (const node of state.nodes) {
+	for (const node of persistableNodes) {
 		const key = node.step.id ?? node.step.localId;
 		positionByKey.set(key, node.position);
 	}
@@ -297,21 +363,21 @@ function buildWorkflowFields(state: VisualEditorState): {
 		}
 	}
 
-	// Build layout
+	// Build layout (Task Agent virtual node excluded — not persisted)
 	const layout: Record<string, { x: number; y: number }> = {};
-	for (const node of state.nodes) {
+	for (const node of persistableNodes) {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = nodeMap.get(key)!.persistedId;
 		layout[persistedId] = { x: node.position.x, y: node.position.y };
 	}
 
-	// Resolve startNodeId — prefer exact key match, then localId match, then first node
+	// Resolve startNodeId — prefer exact key match, then localId match, then first persistable node
 	const startEntry =
 		nodeMap.get(state.startNodeId) ??
 		localIdMap.get(state.startNodeId) ??
-		(state.nodes.length > 0
+		(persistableNodes.length > 0
 			? {
-					persistedId: nodeMap.get(state.nodes[0].step.id ?? state.nodes[0].step.localId)!
+					persistedId: nodeMap.get(persistableNodes[0].step.id ?? persistableNodes[0].step.localId)!
 						.persistedId,
 				}
 			: null);
