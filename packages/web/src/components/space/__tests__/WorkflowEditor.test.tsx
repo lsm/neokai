@@ -6,7 +6,7 @@
  * - Add step button adds a new step card
  * - Remove step removes the card
  * - Reorder: move up / move down
- * - Agent dropdown (via WorkflowStepCard) excludes 'leader' agent
+ * - Agent dropdown (via WorkflowNodeCard) excludes 'leader' agent
  * - Template selection pre-fills steps
  * - Save calls spaceStore.createWorkflow with correct params
  * - Save calls spaceStore.updateWorkflow when editing

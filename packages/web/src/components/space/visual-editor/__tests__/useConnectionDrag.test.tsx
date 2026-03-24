@@ -30,7 +30,7 @@ import type { ViewportState } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
 import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { NodeDraft } from '../../WorkflowNodeCard';
 
 vi.mock('../../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -48,7 +48,7 @@ function makeAgent(id: string, name = 'Agent'): SpaceAgent {
 	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
 }
 
-function makeStep(localId: string, name = 'Step'): StepDraft {
+function makeStep(localId: string, name = 'Step'): NodeDraft {
 	return { localId, name, agentId: 'agent-1', instructions: '' };
 }
 

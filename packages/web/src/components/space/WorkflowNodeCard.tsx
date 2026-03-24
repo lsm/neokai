@@ -1,7 +1,7 @@
 /**
- * WorkflowStepCard Component
+ * WorkflowNodeCard Component
  *
- * A single step card in the workflow editor.
+ * A single node card in the workflow editor.
  * Supports collapsed (summary) and expanded (edit) modes.
  *
  * Collapsed: step number, agent name, gate type icons
@@ -15,10 +15,10 @@ import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
 import type { ConditionDraft } from './visual-editor/GateConfig';
 
 // ============================================================================
-// Draft Types (used by WorkflowEditor + WorkflowStepCard)
+// Draft Types (used by WorkflowEditor + WorkflowNodeCard)
 // ============================================================================
 
-export interface StepDraft {
+export interface NodeDraft {
 	/** Stable local key for React rendering — not sent to the server */
 	localId: string;
 	/** Existing step ID when editing an existing workflow */
@@ -37,9 +37,9 @@ export interface StepDraft {
 // Multi-agent helpers
 // ============================================================================
 
-/** Returns true when this step has multiple agents configured. */
-export function isMultiAgentStep(step: StepDraft): boolean {
-	return Array.isArray(step.agents) && step.agents.length > 0;
+/** Returns true when this node has multiple agents configured. */
+export function isMultiAgentNode(node: NodeDraft): boolean {
+	return Array.isArray(node.agents) && node.agents.length > 0;
 }
 
 // Re-export ConditionDraft so existing importers don't break
@@ -120,30 +120,30 @@ function ChevronUp() {
 // ============================================================================
 
 interface MultiAgentSectionProps {
-	step: StepDraft;
+	node: NodeDraft;
 	agents: SpaceAgent[];
-	onUpdate: (step: StepDraft) => void;
+	onUpdate: (node: NodeDraft) => void;
 }
 
-function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
-	const stepAgents = step.agents ?? [];
+function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
+	const nodeAgents = node.agents ?? [];
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
-		onUpdate({ ...step, agents: next, agentId: '' });
+		onUpdate({ ...node, agents: next, agentId: '' });
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
-		if (stepAgents.some((a) => a.agentId === agentId)) return;
-		updateAgents([...stepAgents, { agentId }]);
+		if (nodeAgents.some((a) => a.agentId === agentId)) return;
+		updateAgents([...nodeAgents, { agentId }]);
 	}
 
 	function removeAgent(agentId: string) {
-		const next = stepAgents.filter((a) => a.agentId !== agentId);
+		const next = nodeAgents.filter((a) => a.agentId !== agentId);
 		if (next.length === 0) {
 			// Switch back to single-agent mode: restore agentId from the removed agent and
-			// clear channels (orphaned channels on a single-agent step are semantically invalid)
-			onUpdate({ ...step, agents: undefined, agentId, channels: undefined });
+			// clear channels (orphaned channels on a single-agent node are semantically invalid)
+			onUpdate({ ...node, agents: undefined, agentId, channels: undefined });
 		} else {
 			updateAgents(next);
 		}
@@ -151,29 +151,29 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 
 	function updateAgentInstructions(agentId: string, instructions: string) {
 		updateAgents(
-			stepAgents.map((a) =>
+			nodeAgents.map((a) =>
 				a.agentId === agentId ? { ...a, instructions: instructions || undefined } : a
 			)
 		);
 	}
 
-	const usedIds = new Set(stepAgents.map((a) => a.agentId));
+	const usedIds = new Set(nodeAgents.map((a) => a.agentId));
 	const availableAgents = agents.filter((a) => !usedIds.has(a.id));
 
 	return (
 		<div class="space-y-2">
 			<div class="flex items-center justify-between">
 				<label class="text-xs font-medium text-gray-400">
-					Agents <span class="text-gray-600">({stepAgents.length})</span>
+					Agents <span class="text-gray-600">({nodeAgents.length})</span>
 				</label>
-				{stepAgents.length === 1 && (
+				{nodeAgents.length === 1 && (
 					<button
 						type="button"
 						onClick={() =>
 							onUpdate({
-								...step,
+								...node,
 								agents: undefined,
-								agentId: stepAgents[0]?.agentId ?? '',
+								agentId: nodeAgents[0]?.agentId ?? '',
 								channels: undefined,
 							})
 						}
@@ -186,7 +186,7 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 
 			{/* Agent list */}
 			<div class="space-y-1.5">
-				{stepAgents.map((sa) => {
+				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
 					return (
 						<div key={sa.agentId} class="bg-dark-800 border border-dark-600 rounded p-2 space-y-1">
@@ -245,7 +245,7 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 			)}
 
 			{/* Channels section */}
-			<ChannelsSection step={step} agents={agents} onUpdate={onUpdate} />
+			<ChannelsSection node={node} agents={agents} onUpdate={onUpdate} />
 		</div>
 	);
 }
@@ -255,9 +255,9 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 // ============================================================================
 
 interface ChannelsSectionProps {
-	step: StepDraft;
+	node: NodeDraft;
 	agents: SpaceAgent[];
-	onUpdate: (step: StepDraft) => void;
+	onUpdate: (node: NodeDraft) => void;
 }
 
 /** Human-readable label for a channel direction. */
@@ -270,18 +270,18 @@ function formatTo(to: string | string[]): string {
 	return Array.isArray(to) ? `[${to.join(', ')}]` : to;
 }
 
-function ChannelsSection({ step, agents, onUpdate }: ChannelsSectionProps) {
-	const channels = step.channels ?? [];
-	const stepAgents = step.agents ?? [];
+function ChannelsSection({ node, agents, onUpdate }: ChannelsSectionProps) {
+	const channels = node.channels ?? [];
+	const nodeAgents = node.agents ?? [];
 
-	// Collect known roles from step agents (+ wildcard)
+	// Collect known roles from node agents (+ wildcard)
 	const knownRoles = [
 		'*',
-		...stepAgents.map((sa) => agents.find((a) => a.id === sa.agentId)?.role ?? sa.agentId),
+		...nodeAgents.map((sa) => agents.find((a) => a.id === sa.agentId)?.role ?? sa.agentId),
 	];
 
 	function updateChannels(next: WorkflowChannel[]) {
-		onUpdate({ ...step, channels: next.length > 0 ? next : undefined });
+		onUpdate({ ...node, channels: next.length > 0 ? next : undefined });
 	}
 
 	function removeChannel(index: number) {
@@ -438,34 +438,34 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 // Main Component
 // ============================================================================
 
-interface WorkflowStepCardProps {
-	step: StepDraft;
-	stepIndex: number;
+interface WorkflowNodeCardProps {
+	node: NodeDraft;
+	nodeIndex: number;
 	isFirst: boolean;
 	isLast: boolean;
 	expanded: boolean;
-	/** Condition on the transition coming INTO this step. Null for the first step. */
+	/** Condition on the transition coming INTO this node. Null for the first node. */
 	entryCondition: ConditionDraft | null;
-	/** Condition on the transition going OUT from this step. Null for the last step. */
+	/** Condition on the transition going OUT from this node. Null for the last node. */
 	exitCondition: ConditionDraft | null;
 	/** All space agents, excluding 'leader' */
 	agents: SpaceAgent[];
 	onToggleExpand: () => void;
-	onUpdate: (step: StepDraft) => void;
-	/** Called when entry condition changes — updates transition[stepIndex-1] */
+	onUpdate: (node: NodeDraft) => void;
+	/** Called when entry condition changes — updates transition[nodeIndex-1] */
 	onUpdateEntryCondition: (cond: ConditionDraft) => void;
-	/** Called when exit condition changes — updates transition[stepIndex] */
+	/** Called when exit condition changes — updates transition[nodeIndex] */
 	onUpdateExitCondition: (cond: ConditionDraft) => void;
 	onMoveUp: () => void;
 	onMoveDown: () => void;
 	onRemove: () => void;
-	/** When true, the Remove button is disabled (e.g. only one step remains) */
+	/** When true, the Remove button is disabled (e.g. only one node remains) */
 	disableRemove?: boolean;
 }
 
-export function WorkflowStepCard({
-	step,
-	stepIndex,
+export function WorkflowNodeCard({
+	node,
+	nodeIndex,
 	isFirst,
 	isLast,
 	expanded,
@@ -480,9 +480,9 @@ export function WorkflowStepCard({
 	onMoveDown,
 	onRemove,
 	disableRemove = false,
-}: WorkflowStepCardProps) {
-	const multi = isMultiAgentStep(step);
-	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
+}: WorkflowNodeCardProps) {
+	const multi = isMultiAgentNode(node);
+	const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
 
 	return (
 		<div class="border border-dark-700 rounded-lg overflow-hidden">
@@ -496,19 +496,19 @@ export function WorkflowStepCard({
 			>
 				{/* Step number */}
 				<span class="w-5 h-5 flex items-center justify-center rounded-full bg-dark-700 text-xs font-semibold text-gray-400 flex-shrink-0">
-					{stepIndex + 1}
+					{nodeIndex + 1}
 				</span>
 
 				{/* Step info */}
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-1.5 min-w-0 flex-wrap">
 						<span class="text-xs font-medium text-gray-200 truncate">
-							{step.name || 'Unnamed Step'}
+							{node.name || 'Unnamed Node'}
 						</span>
 						<span class="text-xs text-gray-600 flex-shrink-0">·</span>
 						{multi ? (
 							<span class="flex items-center gap-1 flex-wrap">
-								{step.agents!.map((a) => {
+								{node.agents!.map((a) => {
 									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId;
 									return (
 										<span
@@ -562,7 +562,7 @@ export function WorkflowStepCard({
 						onClick={onRemove}
 						disabled={disableRemove}
 						class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-						title="Remove step"
+						title="Remove node"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
@@ -586,12 +586,12 @@ export function WorkflowStepCard({
 				<div class="px-4 py-4 bg-dark-900 space-y-4">
 					{/* Name */}
 					<div class="space-y-1">
-						<label class="text-xs font-medium text-gray-400">Step Name</label>
+						<label class="text-xs font-medium text-gray-400">Node Name</label>
 						<input
 							type="text"
-							value={step.name}
+							value={node.name}
 							onInput={(e) =>
-								onUpdate({ ...step, name: (e.currentTarget as HTMLInputElement).value })
+								onUpdate({ ...node, name: (e.currentTarget as HTMLInputElement).value })
 							}
 							placeholder="e.g. Plan the approach"
 							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
@@ -600,7 +600,7 @@ export function WorkflowStepCard({
 
 					{/* Agent(s) */}
 					{multi ? (
-						<MultiAgentSection step={step} agents={agents} onUpdate={onUpdate} />
+						<MultiAgentSection node={node} agents={agents} onUpdate={onUpdate} />
 					) : (
 						<div class="space-y-1">
 							<div class="flex items-center justify-between">
@@ -608,9 +608,9 @@ export function WorkflowStepCard({
 								<button
 									type="button"
 									onClick={() => {
-										const firstId = step.agentId;
+										const firstId = node.agentId;
 										const existing: WorkflowNodeAgent[] = firstId ? [{ agentId: firstId }] : [];
-										onUpdate({ ...step, agents: existing, agentId: '' });
+										onUpdate({ ...node, agents: existing, agentId: '' });
 									}}
 									class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
 								>
@@ -618,9 +618,9 @@ export function WorkflowStepCard({
 								</button>
 							</div>
 							<select
-								value={step.agentId}
+								value={node.agentId}
 								onChange={(e) =>
-									onUpdate({ ...step, agentId: (e.currentTarget as HTMLSelectElement).value })
+									onUpdate({ ...node, agentId: (e.currentTarget as HTMLSelectElement).value })
 								}
 								class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
 							>
@@ -657,14 +657,14 @@ export function WorkflowStepCard({
 							Instructions <span class="font-normal text-gray-600">(optional)</span>
 						</label>
 						<textarea
-							value={step.instructions}
+							value={node.instructions}
 							onInput={(e) =>
 								onUpdate({
-									...step,
+									...node,
 									instructions: (e.currentTarget as HTMLTextAreaElement).value,
 								})
 							}
-							placeholder="Step-specific instructions appended to the agent's system prompt…"
+							placeholder="Node-specific instructions appended to the agent's system prompt…"
 							rows={4}
 							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
 						/>

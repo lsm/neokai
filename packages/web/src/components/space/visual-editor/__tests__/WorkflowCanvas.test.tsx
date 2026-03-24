@@ -22,7 +22,7 @@ import { useState } from 'preact/hooks';
 import type { SpaceAgent, WorkflowTransition } from '@neokai/shared';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { NodeDraft } from '../../WorkflowNodeCard';
 import type { ViewportState } from '../types';
 
 vi.mock('../../../../lib/utils', () => ({
@@ -39,7 +39,7 @@ function makeAgent(id: string, name: string): SpaceAgent {
 	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
 }
 
-function makeStep(localId: string, name: string): StepDraft {
+function makeStep(localId: string, name: string): NodeDraft {
 	return { localId, name, agentId: 'agent-1', instructions: '' };
 }
 
