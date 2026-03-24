@@ -130,12 +130,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Create factory function for per-room goal managers
 	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
-		return new GoalManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
+		return new GoalManager(
+			deps.db.getDatabase(),
+			roomId,
+			deps.reactiveDb,
+			deps.db.getShortIdAllocator()
+		);
 	};
 
 	// Create factory function for per-room task managers (used by goal review handlers)
 	const goalTaskManagerFactory: GoalTaskManagerFactory = (roomId: string) => {
-		return new TaskManager(deps.db.getDatabase(), roomId, deps.reactiveDb);
+		return new TaskManager(
+			deps.db.getDatabase(),
+			roomId,
+			deps.reactiveDb,
+			deps.db.getShortIdAllocator()
+		);
 	};
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);

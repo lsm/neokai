@@ -17,6 +17,7 @@ import {
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import type { ShortIdAllocator } from '../../short-id-allocator';
 import type {
 	RoomGoal,
 	GoalStatus,
@@ -45,10 +46,11 @@ export class GoalManager {
 	constructor(
 		private db: BunDatabase,
 		private roomId: string,
-		reactiveDb: ReactiveDatabase
+		reactiveDb: ReactiveDatabase,
+		shortIdAllocator?: ShortIdAllocator
 	) {
-		this.goalRepo = new GoalRepository(db, reactiveDb);
-		this.taskRepo = new TaskRepository(db, reactiveDb);
+		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
+		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
 	}
 
 	/**

@@ -11,6 +11,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import type { ShortIdAllocator } from '../../short-id-allocator';
 import type {
 	NeoTask,
 	TaskStatus,
@@ -57,9 +58,10 @@ export class TaskManager {
 	constructor(
 		private db: BunDatabase,
 		private roomId: string,
-		private reactiveDb: ReactiveDatabase
+		private reactiveDb: ReactiveDatabase,
+		shortIdAllocator?: ShortIdAllocator
 	) {
-		this.taskRepo = new TaskRepository(db, this.reactiveDb);
+		this.taskRepo = new TaskRepository(db, this.reactiveDb, shortIdAllocator);
 	}
 
 	/**
