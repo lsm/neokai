@@ -33,6 +33,17 @@ const CUSTOM_AGENT_FEATURES: SessionFeatures = {
 // Config
 // ============================================================================
 
+/**
+ * Per-slot overrides from a `WorkflowNodeAgent` entry.
+ * Applied on top of the base `SpaceAgent` config when spawning a specific slot.
+ */
+export interface SlotOverrides {
+	/** Override the agent's default model for this slot */
+	model?: string;
+	/** Override the agent's default system prompt for this slot */
+	systemPrompt?: string;
+}
+
 export interface CustomAgentConfig {
 	/** The custom Space agent definition */
 	customAgent: SpaceAgent;
@@ -53,6 +64,12 @@ export interface CustomAgentConfig {
 	workspacePath: string;
 	/** Summaries of previously completed tasks for context */
 	previousTaskSummaries?: string[];
+	/**
+	 * Optional per-slot overrides from the `WorkflowNodeAgent` entry.
+	 * When provided, `model` replaces the agent's default model and `systemPrompt`
+	 * replaces the agent's default system prompt for this execution slot.
+	 */
+	slotOverrides?: SlotOverrides;
 }
 
 // ============================================================================
@@ -334,15 +351,23 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
  * room-runtime pattern where the initial user message is sent after session start.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
-	const { customAgent, space, sessionId, workspacePath } = config;
+	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
 
-	const model = customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+	// Apply per-slot overrides: slot model takes precedence over agent default.
+	const model =
+		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	const behavioralPrompt = buildCustomAgentSystemPrompt(customAgent);
+	// Apply per-slot systemPrompt override: slot override replaces agent's default system prompt.
+	// The override is applied by building the prompt with a modified agent copy.
+	const agentForPrompt: SpaceAgent =
+		slotOverrides?.systemPrompt !== undefined
+			? { ...customAgent, systemPrompt: slotOverrides.systemPrompt }
+			: customAgent;
+	const behavioralPrompt = buildCustomAgentSystemPrompt(agentForPrompt);
 
 	// When custom tools are configured, use the agent/agents pattern so the SDK
 	// enforces the allowlist. Otherwise, fall back to the simple preset path.
@@ -418,6 +443,12 @@ export interface ResolveAgentInitConfig {
 	workflow?: SpaceWorkflow | null;
 	/** Summaries of previously completed tasks */
 	previousTaskSummaries?: string[];
+	/**
+	 * Optional per-slot overrides from the `WorkflowNodeAgent` entry for this execution slot.
+	 * When provided, the slot's `model` and/or `systemPrompt` replace the base agent's defaults.
+	 * Used when the same agent appears multiple times in a node with different per-slot configs.
+	 */
+	slotOverrides?: SlotOverrides;
 }
 
 /**
@@ -442,6 +473,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		workflowRun,
 		workflow,
 		previousTaskSummaries,
+		slotOverrides,
 	} = config;
 
 	if (!task.customAgentId) {
@@ -464,6 +496,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		sessionId,
 		workspacePath,
 		previousTaskSummaries,
+		slotOverrides,
 	});
 }
 

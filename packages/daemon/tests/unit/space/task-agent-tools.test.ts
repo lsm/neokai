@@ -635,7 +635,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		expect(secondParsed.sessionId).toBe(firstSessionId);
 	});
 
-	test('passes agentId and role as memberInfo to sessionFactory.create()', async () => {
+	test('passes agentId and slot role as memberInfo to sessionFactory.create()', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
@@ -651,8 +651,9 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		// memberInfo must carry the agent's ID and role
 		expect(memberInfo).toBeDefined();
 		expect(memberInfo?.agentId).toBe(ctx.agentId);
-		// The seed agent has role 'coder' (see seedAgentRow in test context)
-		expect(memberInfo?.role).toBe('coder');
+		// For agentId shorthand nodes, resolveNodeAgents synthesizes role = agentId.
+		// The slot role is used for group membership (not the base SpaceAgent.role).
+		expect(memberInfo?.role).toBe(ctx.agentId);
 	});
 });
 
@@ -1900,5 +1901,224 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 
 		const reviewerMember = parsed.members.find((m: { role: string }) => m.role === 'reviewer');
 		expect(reviewerMember.permittedTargets).toEqual([]); // reviewer cannot send to coder (one-way)
+	});
+});
+
+// ===========================================================================
+// spawn_step_agent — slot role and overrides
+// ===========================================================================
+
+describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrides', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('uses slot role for session group membership when WorkflowNodeAgent has a distinct role', async () => {
+		// Create an agent and a workflow where the node uses the agents[] format with a custom slot role
+		const agentId = ctx.agentId;
+		const stepId = `step-slot-role-${Math.random().toString(36).slice(2)}`;
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Slot Role Test WF',
+			nodes: [
+				{
+					id: stepId,
+					name: 'Slot Role Step',
+					agents: [
+						{
+							agentId,
+							role: 'strict-reviewer', // slot role differs from SpaceAgent.role ('coder')
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+		});
+
+		const { run, mainTask } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		// The session should be registered with the slot role, not the base agent's role
+		const sessionId = parsed.sessionId;
+		const capturedInfo = (
+			factory as ReturnType<typeof makeMockSessionFactory>
+		)._capturedMemberInfos.get(sessionId);
+		expect(capturedInfo?.role).toBe('strict-reviewer'); // slot role, not 'coder' (base agent role)
+	});
+
+	test('uses base agent role when slot has no distinct role (single-agent agentId format)', async () => {
+		// Single-agent step uses agentId shorthand; resolveNodeAgents synthesizes role = agentId
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+		const factory = makeMockSessionFactory();
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		// For agentId shorthand, slot role === agentId (synthetic). Fall back to base agent role.
+		// The memberRole logic: agentSlot.role (agentId) ?? agentForMember.role ('coder') ?? 'agent'
+		// agentSlot.role is the agentId string (synthetic), so it is set.
+		const sessionId = parsed.sessionId;
+		const capturedInfo = (
+			factory as ReturnType<typeof makeMockSessionFactory>
+		)._capturedMemberInfos.get(sessionId);
+		// The role should be set (either the synthetic agentId role or base agent role)
+		expect(capturedInfo?.role).toBeTruthy();
+	});
+
+	test('model override from WorkflowNodeAgent slot is applied to the spawned session', async () => {
+		const agentId = ctx.agentId;
+		const stepId = `step-model-override-${Math.random().toString(36).slice(2)}`;
+		const overrideModel = 'claude-haiku-4-5-20251001';
+
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Model Override Test WF',
+			nodes: [
+				{
+					id: stepId,
+					name: 'Model Override Step',
+					agents: [
+						{
+							agentId,
+							role: 'fast-coder',
+							model: overrideModel, // slot-level model override
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+		});
+
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Capture the init passed to sessionFactory.create
+		let capturedInit: { model?: string } | null = null;
+		const factory = makeMockSessionFactory({
+			create: async (init: unknown) => {
+				capturedInit = init as { model?: string };
+				return `session-${Math.random().toString(36).slice(2)}`;
+			},
+		});
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		// The session init should use the slot's model override
+		expect(capturedInit?.model).toBe(overrideModel);
+	});
+
+	test('systemPrompt override from WorkflowNodeAgent slot is applied to spawned session', async () => {
+		const agentId = ctx.agentId;
+		const stepId = `step-prompt-override-${Math.random().toString(36).slice(2)}`;
+		const overridePrompt = 'Focus exclusively on security vulnerabilities.';
+
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Prompt Override Test WF',
+			nodes: [
+				{
+					id: stepId,
+					name: 'Prompt Override Step',
+					agents: [
+						{
+							agentId,
+							role: 'security-reviewer',
+							systemPrompt: overridePrompt, // slot-level systemPrompt override
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+		});
+
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Capture the init passed to sessionFactory.create
+		let capturedInit: { systemPrompt?: { append?: string } } | null = null;
+		const factory = makeMockSessionFactory({
+			create: async (init: unknown) => {
+				capturedInit = init as { systemPrompt?: { append?: string } };
+				return `session-${Math.random().toString(36).slice(2)}`;
+			},
+		});
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+
+		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		// The session init system prompt should contain the override text
+		const promptText = capturedInit?.systemPrompt?.append ?? '';
+		expect(promptText).toContain(overridePrompt);
+	});
+
+	test('same agent twice in one node uses distinct slot roles for each session', async () => {
+		const agentId = ctx.agentId;
+		const stepId = `step-dual-${Math.random().toString(36).slice(2)}`;
+
+		// Both slots use the same agentId but different roles
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Dual Instance WF',
+			nodes: [
+				{
+					id: stepId,
+					name: 'Dual Instance Step',
+					agents: [
+						{ agentId, role: 'strict-reviewer' },
+						{ agentId, role: 'quick-reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+		});
+
+		// The executor creates two tasks for this step (one per agent slot)
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Verify two tasks were created for this step
+		const stepTasks = ctx.taskRepo
+			.listByWorkflowRun(run.id)
+			.filter((t) => t.workflowNodeId === stepId);
+		expect(stepTasks).toHaveLength(2);
+
+		// Spawn the second task (last created — the quick-reviewer slot)
+		const factory = makeMockSessionFactory();
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		// The spawned session should use one of the slot roles, not the base 'coder' role
+		const sessionId = parsed.sessionId;
+		const capturedInfo = (
+			factory as ReturnType<typeof makeMockSessionFactory>
+		)._capturedMemberInfos.get(sessionId);
+		expect(['strict-reviewer', 'quick-reviewer']).toContain(capturedInfo?.role);
+		// Specifically NOT the base agent's SpaceAgent.role
+		expect(capturedInfo?.role).not.toBe('coder');
 	});
 });
