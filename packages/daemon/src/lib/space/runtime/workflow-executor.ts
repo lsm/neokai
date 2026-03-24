@@ -437,8 +437,8 @@ export class WorkflowExecutor {
 			}
 		}
 
-		// Persist new currentStepId
-		const updatedRun = this.workflowRunRepo.updateCurrentStep(this.run.id, nextStep.id);
+		// Persist new currentNodeId
+		const updatedRun = this.workflowRunRepo.updateCurrentNode(this.run.id, nextStep.id);
 		if (!updatedRun) throw new Error('Failed to persist step ID update');
 		this.run = updatedRun;
 

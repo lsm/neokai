@@ -163,11 +163,11 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
-	describe('updateCurrentStep', () => {
-		it('updates the current step ID', () => {
+	describe('updateCurrentNode', () => {
+		it('updates the current node ID', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
-			const updated = repo.updateCurrentStep(run.id, 'step-abc');
-			expect(updated!.currentNodeId).toBe('step-abc');
+			const updated = repo.updateCurrentNode(run.id, 'node-abc');
+			expect(updated!.currentNodeId).toBe('node-abc');
 		});
 	});
 
@@ -274,12 +274,12 @@ describe('SpaceWorkflowRunRepository', () => {
 			});
 
 			repo.updateStatus(run.id, 'in_progress');
-			repo.updateCurrentStep(run.id, 'step-xyz');
+			repo.updateCurrentNode(run.id, 'node-xyz');
 
 			const updated = repo.getRun(run.id)!;
 			expect(updated.goalId).toBe('goal-456');
 			expect(updated.status).toBe('in_progress');
-			expect(updated.currentNodeId).toBe('step-xyz');
+			expect(updated.currentNodeId).toBe('node-xyz');
 		});
 
 		it('goalId is included when listing runs by space', () => {
