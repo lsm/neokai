@@ -302,10 +302,12 @@ describe('Leader Agent', () => {
 
 		it('instructs leader to verify PR mergeability before submit_for_review (simple code review)', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('gh pr checks');
-			expect(prompt).toContain('mergeable,mergeStateStatus');
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
 			expect(prompt).toContain('CI checks are failing');
 			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
 		});
 
 		it('instructs leader to verify PR mergeability before submit_for_review (orchestration code review)', () => {
@@ -320,18 +322,22 @@ describe('Leader Agent', () => {
 					}),
 				})
 			);
-			expect(prompt).toContain('gh pr checks');
-			expect(prompt).toContain('mergeable,mergeStateStatus');
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
 			expect(prompt).toContain('CI checks are failing');
 			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
 		});
 
 		it('instructs leader to verify PR mergeability before submit_for_review (plan review)', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
-			expect(prompt).toContain('gh pr checks');
-			expect(prompt).toContain('mergeable,mergeStateStatus');
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
 			expect(prompt).toContain('CI checks are failing');
 			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
 		});
 
 		it('instructs leader to verify PR mergeability before submit_for_review (plan review with reviewers)', () => {
@@ -347,10 +353,12 @@ describe('Leader Agent', () => {
 					}),
 				})
 			);
-			expect(prompt).toContain('gh pr checks');
-			expect(prompt).toContain('mergeable,mergeStateStatus');
+			expect(prompt).toContain(
+				'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup'
+			);
 			expect(prompt).toContain('CI checks are failing');
 			expect(prompt).toContain('merge conflicts');
+			expect(prompt).toContain('BEHIND');
 		});
 	});
 

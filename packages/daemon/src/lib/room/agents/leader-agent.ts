@@ -261,6 +261,31 @@ function leaderPlanReviewGuidelinesSection(reviewerNames: string[], helperNames:
 	return leaderPlanReviewSimpleSection(helperNames);
 }
 
+/**
+ * Shared prompt block instructing the leader to verify PR mergeability
+ * before calling `submit_for_review`. Used in all four review sections
+ * (simple/orchestration × code/plan) to ensure consistent behavior.
+ *
+ * Uses a single `gh pr view --json mergeable,mergeStateStatus,statusCheckRollup`
+ * command, matching the runtime gate in checkPrIsMergeable, so the leader's
+ * proactive check and the gate use the same data source.
+ *
+ * @param stepLabel - e.g. "Step 5" (orchestration) or "step 5" (numbered list)
+ * @param asSubList - true to format as an indented sub-list (for numbered-step sections)
+ */
+function prMergeabilityCheckBlock(stepLabel: string, asSubList: boolean): string {
+	const indent = asSubList ? '   ' : '';
+	return `${indent}**Before calling \`submit_for_review\`**, run one command to verify the PR is ready:
+${indent}\`\`\`
+${indent}gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup
+${indent}\`\`\`
+${indent}Then check the output:
+${indent}- If \`mergeStateStatus\` is \`DIRTY\` or \`CONFLICTING\` → send to worker: "PR has merge conflicts. Rebase and force push: \`git fetch && git rebase origin/<base-branch>\`."
+${indent}- If \`mergeStateStatus\` is \`BEHIND\` → send to worker: "PR branch is behind base. Rebase and force push: \`git fetch && git rebase origin/<base-branch>\`."
+${indent}- If any \`statusCheckRollup\` entry has \`conclusion: FAILURE\` or \`conclusion: TIMED_OUT\` → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+${indent}- Only call \`submit_for_review\` when \`mergeStateStatus\` is \`CLEAN\` (or \`UNKNOWN\`) and no checks have failed.`;
+}
+
 function leaderPlanReviewOrchestrationSection(
 	reviewerNames: string[],
 	helperNames: string[]
@@ -311,12 +336,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 5: Verify PR Mergeability (before submit_for_review)
 
-Before calling \`submit_for_review\`, verify the PR is ready to merge:
-- Check CI: \`gh pr checks <PR_NUMBER>\`
-- Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
-- If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
-- If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
-- Only call \`submit_for_review\` when CI passes and no conflicts exist.
+${prMergeabilityCheckBlock('Step 5', false)}
 
 Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`;
 }
@@ -337,12 +357,7 @@ ${helperSection}## Plan Review Guidelines
    - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
    - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL for human approval.
    - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
-5. **Before calling \`submit_for_review\`**, verify the PR is ready to merge:
-   - Check CI: \`gh pr checks <PR_NUMBER>\`
-   - Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
-   - If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
-   - If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
-   - Only call \`submit_for_review\` when CI passes and no conflicts exist.
+5. ${prMergeabilityCheckBlock('step 5', true)}
 6. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
 7. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
 
@@ -406,12 +421,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ### Step 5: Verify PR Mergeability (before submit_for_review)
 
-Before calling \`submit_for_review\`, verify the PR is ready to merge:
-- Check CI: \`gh pr checks <PR_NUMBER>\`
-- Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
-- If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
-- If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
-- Only call \`submit_for_review\` when CI passes and no conflicts exist.`;
+${prMergeabilityCheckBlock('Step 5', false)}`;
 }
 
 function leaderCodeReviewSimpleSection(helperNames: string[]): string {
@@ -430,12 +440,7 @@ ${helperSection}## Code Review Guidelines
    - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
    - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL.
    - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
-5. **Before calling \`submit_for_review\`**, verify the PR is ready to merge:
-   - Check CI: \`gh pr checks <PR_NUMBER>\`
-   - Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
-   - If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
-   - If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
-   - Only call \`submit_for_review\` when CI passes and no conflicts exist.
+5. ${prMergeabilityCheckBlock('step 5', true)}
 
 - Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound
 - Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`;
@@ -1158,7 +1163,7 @@ export function createLeaderAgentInit(
 			description:
 				'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
 			prompt: buildLeaderSystemPrompt(config),
-			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob'],
+			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob', 'Bash'],
 			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
 		};
 
