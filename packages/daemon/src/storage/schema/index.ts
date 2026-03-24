@@ -15,6 +15,8 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/sh
 export { runMigrations } from './migrations';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations';
+// knip-ignore-next-line
+export { runMigration47 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults

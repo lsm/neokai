@@ -2931,7 +2931,7 @@ function runMigration46(db: BunDatabase): void {
  *
  * Idempotent: ALTER TABLE is guarded by tableHasColumn(); CREATE TABLE/INDEX use IF NOT EXISTS.
  */
-function runMigration47(db: BunDatabase): void {
+export function runMigration47(db: BunDatabase): void {
 	// On existing DBs, ALTER TABLE adds the column; on fresh DBs the column is already
 	// present in the CREATE TABLE statement in createTables(), so tableHasColumn() guards
 	// prevent a duplicate-column error.
