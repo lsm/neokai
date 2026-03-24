@@ -2377,6 +2377,41 @@ describe('Room Agent Tools', () => {
 			expect(result.error).toContain('not a recurring mission');
 		});
 
+		it('should return error when setting schedule on measurable goal', async () => {
+			const created = parseResult(
+				await handlers.create_goal({
+					title: 'Measurable goal',
+					mission_type: 'measurable',
+					structured_metrics: [{ name: 'kpi', target: 100 }],
+				})
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(
+				await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not a recurring mission');
+		});
+
+		it('should set schedule with timezone parameter', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Timezone test', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(
+				await handlers.set_schedule({
+					goal_id: goalId,
+					cron_expression: '0 9 * * *',
+					timezone: 'America/New_York',
+				})
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect((goal.schedule as Record<string, unknown>).timezone).toBe('America/New_York');
+		});
+
 		it('should return error for invalid cron expression', async () => {
 			const created = parseResult(
 				await handlers.create_goal({ title: 'Bad cron', mission_type: 'recurring' })
@@ -2427,6 +2462,35 @@ describe('Room Agent Tools', () => {
 			expect(result.error).toContain('not a recurring mission');
 		});
 
+		it('should allow pausing a recurring mission without a schedule set', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'No schedule yet', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			// pause_schedule does not check for schedule existence — this is a no-op but succeeds
+			const result = parseResult(await handlers.pause_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.schedulePaused).toBe(true);
+		});
+
+		it('should allow double-pause (idempotent)', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Double pause', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' });
+			await handlers.pause_schedule({ goal_id: goalId });
+
+			// Pause again — should be a no-op
+			const result = parseResult(await handlers.pause_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.schedulePaused).toBe(true);
+		});
+
 		it('should return error for non-existent goal', async () => {
 			const result = parseResult(await handlers.pause_schedule({ goal_id: 'no-such' }));
 			expect(result.success).toBe(false);
@@ -2446,6 +2510,22 @@ describe('Room Agent Tools', () => {
 			await handlers.pause_schedule({ goal_id: goalId });
 
 			// Resume it
+			const result = parseResult(await handlers.resume_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.schedulePaused).toBe(false);
+		});
+
+		it('should allow resuming a non-paused scheduled mission (idempotent)', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Not paused', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			// Set a schedule but do not pause it
+			await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' });
+
+			// Resume without having paused — should be a no-op
 			const result = parseResult(await handlers.resume_schedule({ goal_id: goalId }));
 			expect(result.success).toBe(true);
 			const goal = result.goal as Record<string, unknown>;
