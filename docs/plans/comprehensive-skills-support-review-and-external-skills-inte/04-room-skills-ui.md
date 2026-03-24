@@ -8,31 +8,47 @@ Extend the Room Settings panel with a "Skills" section that shows all globally-r
 
 ---
 
-### Task 4.1: Room Skills Store Hook
+### Task 4.1: Room Skills LiveQuery Store and Hook
 
 **Agent type:** coder
 
 **Description:**
-Add a client-side hook `useRoomSkills` that fetches the global skill list and the room's skill overrides, merges them into a unified "effective skill list", and provides a setter to update room overrides.
+Add a client-side store and hook `useRoomSkills` that subscribes to the `skills.byRoom` LiveQuery for real-time skill updates (including per-room overrides merged at the DB layer). This follows ADR 0001 — no manual RPC polling for DB-backed state.
+
+**How LiveQuery replaces manual merging:**
+The `skills.byRoom` named query (registered in Task 2.4) already JOINs `skills` with `room_skill_overrides` and returns the effective `enabled` state and `overriddenByRoom` flag per skill. The frontend does not need to merge two lists — it receives the pre-merged result from the server and gets live deltas on any change (skill added globally, override changed, skill deleted).
 
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
-2. Create `packages/web/src/hooks/useRoomSkills.ts`:
-   - Uses `connectionManager` to call `skills.list` RPC to get all global skills
-   - Uses `connectionManager` to call `room.getSkillOverrides` RPC to get room-level overrides
-   - Returns `{ skills: EffectiveRoomSkill[]; isLoading: boolean; updateOverride: (skillId, enabled) => Promise<void> }`
-   - `EffectiveRoomSkill = AppSkill & { effectivelyEnabled: boolean; overriddenByRoom: boolean }`
-   - `updateOverride` calls `room.setSkillOverrides` and updates local state
-3. Write unit tests in `packages/web/src/hooks/useRoomSkills.test.ts` using mocked connection manager.
+2. Add a `roomSkills` signal and subscription logic to `packages/web/src/lib/room-store.ts` (following the same pattern as `goals` and `tasks` subscriptions):
+   - Signal: `readonly roomSkills = signal<EffectiveRoomSkill[]>([])`
+   - Where `EffectiveRoomSkill = AppSkill & { effectivelyEnabled: boolean; overriddenByRoom: boolean }`
+   - In `subscribeRoom(roomId)`: generate `skillsSubId = \`skills-byRoom-${roomId}\``
+   - Register `liveQuery.snapshot` and `liveQuery.delta` handlers with stale-event guard (check `activeSubscriptionIds`)
+   - Issue `liveQuery.subscribe` RPC with `queryName: 'skills.byRoom'`, `params: [roomId]`, `subscriptionId: skillsSubId`
+   - Register reconnection handler (`hub.onConnection`) to re-subscribe on reconnect
+   - In `unsubscribeRoom(roomId)`: remove `skillsSubId` from `activeSubscriptionIds`, call `liveQuery.unsubscribe`
+3. Create `packages/web/src/hooks/useRoomSkills.ts`:
+   - Thin hook over `roomStore.roomSkills` signal
+   - Returns `{ skills: EffectiveRoomSkill[]; setOverride: (skillId, enabled) => Promise<void>; clearOverride: (skillId) => Promise<void> }`
+   - `setOverride` calls `room.setSkillOverride` RPC (update triggers LiveQuery delta automatically)
+   - `clearOverride` calls `room.clearSkillOverride` RPC
+4. Write unit tests in `packages/web/src/hooks/useRoomSkills.test.ts`:
+   - Test that snapshot events populate the skills signal
+   - Test that delta events (add/remove/update) are applied correctly
+   - Test stale-event guard (events after unsubscribe are discarded)
+   - Test `setOverride` and `clearOverride` call correct RPCs
 
 **Acceptance criteria:**
-- Hook merges global skills with room overrides correctly
-- `updateOverride` persists changes via RPC
-- Unit tests cover the merge logic
+- Room skills are delivered via `liveQuery.subscribe` (not one-shot RPC fetch)
+- Snapshot and delta handlers follow the stale-event guard pattern
+- Reconnection handler re-subscribes on reconnect
+- `setOverride` / `clearOverride` mutate via RPC; LiveQuery pushes the update back automatically
+- Unit tests pass
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 2.3: Skills RPC Handlers", "Task 3.2: Room-Level Skill Enablement Persistence"]
+**depends_on:** ["Task 2.4: LiveQuery Integration for Skills Tables", "Task 3.2: Room-Level Skill Enablement Persistence (room_skill_overrides table)"]
 
 ---
 

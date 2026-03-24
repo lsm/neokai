@@ -8,35 +8,45 @@ Build the Skills management UI in the global Settings panel so users can add, co
 
 ---
 
-### Task 5.1: Skills Store and Hook
+### Task 5.1: Global Skills LiveQuery Store and Hook
 
 **Agent type:** coder
 
 **Description:**
-Create a client-side store and hook for managing the global Skills registry, used by the Settings UI components.
+Create a client-side store and hook for managing the global Skills registry that uses the `skills.list` LiveQuery for real-time updates. Mutations (add, update, remove, setEnabled) go through the CRUD RPC handlers; the LiveQuery subscription automatically receives deltas after each mutation. This follows ADR 0001 — no manual `skills.list` polling.
 
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
 2. Create `packages/web/src/lib/skills-store.ts`:
-   - Signal-based store with `skills: Signal<AppSkill[]>`, `isLoading: Signal<boolean>`, `error: Signal<string | null>`
-   - `loadSkills()`: calls `skills.list` RPC and updates signal
-   - `addSkill(params: CreateSkillParams)`: calls `skills.add` RPC, updates store
-   - `updateSkill(id, params)`: calls `skills.update` RPC, updates store
-   - `removeSkill(id)`: calls `skills.remove` RPC, updates store
-   - `setEnabled(id, enabled)`: calls `skills.setEnabled` RPC, updates store
-3. Create `packages/web/src/hooks/useSkills.ts` — thin hook over the store for component use.
+   - Signal-based store: `readonly skills = signal<AppSkill[]>([])`, `readonly isLoading = signal<boolean>(true)`, `readonly error = signal<string | null>(null)`
+   - `subscribe()`: issues `liveQuery.subscribe` with `queryName: 'skills.list'`, `params: []`, `subscriptionId: 'skills-global'`
+     - Registers `liveQuery.snapshot` handler: sets `skills.value = event.rows` and `isLoading.value = false`
+     - Registers `liveQuery.delta` handler: applies `added` / `removed` / `updated` diffs to `skills.value`
+     - Registers reconnection handler via `hub.onConnection` to re-subscribe on reconnect
+   - `unsubscribe()`: calls `liveQuery.unsubscribe`, clears signal
+   - Mutation methods (these trigger LiveQuery deltas automatically):
+     - `addSkill(params: CreateSkillParams): Promise<AppSkill>` — calls `skills.add` RPC
+     - `updateSkill(id, params): Promise<AppSkill>` — calls `skills.update` RPC
+     - `removeSkill(id): Promise<boolean>` — calls `skills.remove` RPC
+     - `setEnabled(id, enabled): Promise<AppSkill>` — calls `skills.setEnabled` RPC
+   - Export a singleton `skillsStore` instance
+3. Create `packages/web/src/hooks/useSkills.ts` — thin hook that calls `skillsStore.subscribe()` on mount / `unsubscribe()` on unmount; returns `{ skills, isLoading, error }` signals.
 4. Write unit tests in `packages/web/src/lib/skills-store.test.ts`:
-   - Test each action with mocked connection manager
-   - Test optimistic updates and error rollback
+   - Test snapshot sets the skills signal
+   - Test delta add/remove/update applies correctly
+   - Test that mutations call the correct RPC endpoints
+   - Test that reconnection triggers re-subscribe
 
 **Acceptance criteria:**
-- Skills store and hook are implemented
-- All CRUD operations wire through RPC
+- Skills are delivered via `liveQuery.subscribe` (not one-shot RPC fetch)
+- Snapshot and delta handlers correctly maintain the `skills` signal
+- Reconnection re-subscribes automatically
+- All four mutation methods call correct RPCs; LiveQuery pushes updates back
 - Unit tests pass
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 2.3: Skills RPC Handlers"]
+**depends_on:** ["Task 2.4: LiveQuery Integration for Skills Tables"]
 
 ---
 

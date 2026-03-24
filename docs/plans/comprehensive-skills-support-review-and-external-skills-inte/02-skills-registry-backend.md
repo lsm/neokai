@@ -132,3 +132,112 @@ Add RPC handlers for Skills CRUD operations so the web UI can manage skills via 
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
 **depends_on:** ["Task 2.2: SkillRepository (SQLite) and SkillsManager"]
+
+---
+
+### Task 2.4: LiveQuery Integration for Skills Tables
+
+**Agent type:** coder
+
+**Description:**
+Wire the `skills` and `room_skill_overrides` tables into the ReactiveDatabase and LiveQuery systems so that any mutation automatically pushes real-time updates to subscribed frontend clients. This implements ADR 0001: "The database is the message bus."
+
+**Subtasks (ordered):**
+
+1. Run `bun install` at the worktree root.
+2. Update `packages/daemon/src/storage/reactive-database.ts` — add entries to `METHOD_TABLE_MAP` for every `SkillRepository` write method:
+   - `insertSkill: 'skills'`
+   - `updateSkill: 'skills'`
+   - `deleteSkill: 'skills'`
+   - `upsertRoomSkillOverride: 'room_skill_overrides'`
+   - `deleteRoomSkillOverride: 'room_skill_overrides'`
+3. Add named queries to `NAMED_QUERY_REGISTRY` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`:
+
+   **`skills.list`** (0 params) — all global skills, ordered by `built_in DESC, created_at ASC`:
+   ```sql
+   SELECT id, name, display_name AS displayName, description,
+          source_type AS sourceType, config, enabled, built_in AS builtIn,
+          created_at AS createdAt
+   FROM skills
+   ORDER BY built_in DESC, created_at ASC
+   ```
+   Row mapper: parse `config` JSON field; coerce `enabled` and `builtIn` from integer to boolean.
+
+   **`skills.byRoom`** (1 param: `roomId`) — all global skills with per-room override applied:
+   ```sql
+   SELECT s.id, s.name, s.display_name AS displayName, s.description,
+          s.source_type AS sourceType, s.config, s.built_in AS builtIn,
+          s.created_at AS createdAt,
+          CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
+          CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
+   FROM skills s
+   LEFT JOIN room_skill_overrides rso ON rso.skill_id = s.id AND rso.room_id = ?
+   ORDER BY s.built_in DESC, s.created_at ASC
+   ```
+   Row mapper: parse `config` JSON; coerce `enabled`, `builtIn`, `overriddenByRoom` to booleans.
+
+4. Add authorization guard in `liveQuery.subscribe` handler for `skills.byRoom`: verify the requesting client has access to `roomId` (same pattern as `goals.byRoom`).
+5. Run `bun run typecheck`.
+6. Write unit tests:
+   - Test `skills.list` query returns correct rows for a seeded DB
+   - Test `skills.byRoom` returns global `enabled` when no room override exists
+   - Test `skills.byRoom` returns room override `enabled` when override exists
+   - Test ReactiveDatabase emits `change:skills` when a skill is inserted/updated/deleted
+
+**Acceptance criteria:**
+- `skills` and `room_skill_overrides` in `METHOD_TABLE_MAP`
+- `skills.list` and `skills.byRoom` registered in `NAMED_QUERY_REGISTRY` with correct SQL and row mappers
+- `skills.byRoom` authorization guard matches existing room query guards
+- Unit tests pass
+- `bun run typecheck` passes
+- Changes are on a feature branch with a GitHub PR created via `gh pr create`
+
+**depends_on:** ["Task 2.3: Skills RPC Handlers"]
+
+---
+
+### Task 2.5: Job Queue for Async Skill Validation
+
+**Agent type:** coder
+
+**Description:**
+Implement a `SKILL_VALIDATE` job queue so that when a skill is added or updated, background validation runs asynchronously (checking that a plugin path exists and is accessible, or that an MCP server command is on PATH) without blocking the RPC response. Follows the `JobQueueProcessor` + `JobQueueRepository` pattern.
+
+**Subtasks (ordered):**
+
+1. Run `bun install` at the worktree root.
+2. Add to `packages/daemon/src/lib/job-queue-constants.ts`:
+   ```ts
+   export const SKILL_VALIDATE = 'skill.validate';
+   ```
+3. Create `packages/daemon/src/lib/job-handlers/skill-validate.handler.ts`:
+   - Payload: `{ skillId: string }`
+   - Fetch the skill from `SkillsManager`; throw if not found
+   - For `plugin` skills: check `fs.access(pluginPath)` — fail job if path is inaccessible
+   - For `mcp_server` skills: check that `command` resolves via `which`/`Bun.which()` — fail job if not found; skip if command is an absolute path that exists
+   - For `builtin` skills: no-op (always valid)
+   - On success: return `{ valid: true, skillId }`
+   - On failure: throw descriptive error (job processor will retry then mark dead)
+4. Register the handler in `packages/daemon/src/app.ts`:
+   ```ts
+   jobProcessor.register(SKILL_VALIDATE, (job) => handleSkillValidate(job, skillsManager));
+   ```
+5. In `SkillsManager.addSkill()` and `SkillsManager.updateSkill()`: after persisting, enqueue a `SKILL_VALIDATE` job via `jobQueue.enqueue({ queue: SKILL_VALIDATE, payload: { skillId } })`.
+6. Add a `validationStatus` field to `AppSkill`: `'pending' | 'valid' | 'invalid' | 'unknown'`. Default `'pending'` on create; updated to `'valid'`/`'invalid'` when the job completes. The job handler updates this via `SkillsManager.updateSkill()`.
+7. Run `bun run typecheck`.
+8. Write unit tests in `packages/daemon/tests/unit/job-handlers/skill-validate.handler.test.ts`:
+   - Test that a valid plugin path passes
+   - Test that a non-existent plugin path fails (job throws)
+   - Test that a missing MCP command fails (job throws)
+   - Test that builtin always passes
+
+**Acceptance criteria:**
+- `SKILL_VALIDATE` queue constant defined
+- Job handler implemented and registered in app
+- `addSkill` / `updateSkill` enqueue a validation job after persist
+- `validationStatus` field added to `AppSkill` type and reflected in `skills` table schema
+- Unit tests pass
+- `bun run typecheck` passes
+- Changes are on a feature branch with a GitHub PR created via `gh pr create`
+
+**depends_on:** ["Task 2.2: SkillRepository (SQLite) and SkillsManager"]

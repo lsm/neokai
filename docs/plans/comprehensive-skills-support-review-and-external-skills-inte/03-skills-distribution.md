@@ -59,35 +59,45 @@ Extend `QueryOptionsBuilder` to pull enabled skills from `SkillsManager` and inj
 
 ---
 
-### Task 3.2: Room-Level Skill Enablement Persistence
+### Task 3.2: Room-Level Skill Enablement Persistence (room_skill_overrides table)
 
 **Agent type:** coder
 
 **Description:**
-Add per-room skill enablement configuration. A room can override the global enabled/disabled state of any registered skill. This is stored in the room's `config` JSON column.
+Add per-room skill enablement configuration. A room can override the global enabled/disabled state of any registered skill. Overrides must live in a **dedicated `room_skill_overrides` table** (not the room `config` JSON blob) so LiveQuery can reactively JOIN it with the `skills` table in the `skills.byRoom` named query.
+
+**Why a dedicated table instead of room config JSON:**
+The LiveQuery engine tracks changes at the table level. If overrides were stored in the room `config` JSON column, the `skills.byRoom` query would not automatically re-execute when an override changes (it only watches `skills`, not `rooms`). A dedicated table triggers the correct change event.
 
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
-2. Add `RoomSkillOverride = { skillId: string; enabled: boolean }` type to `packages/shared/src/types/skills.ts`.
-3. Add `skillOverrides?: RoomSkillOverride[]` to the `Room` type's `config` shape (or define a `RoomConfig` interface in `packages/shared/src/types/neo.ts`).
-4. Update `RoomManager` to expose `getSkillOverrides(roomId)` and `setSkillOverrides(roomId, overrides)` methods that read/write to the room's `config.skillOverrides`.
+2. Add `RoomSkillOverride = { skillId: string; roomId: string; enabled: boolean }` type to `packages/shared/src/types/skills.ts`.
+3. Create `packages/daemon/src/storage/repositories/room-skill-override-repository.ts` with:
+   - `ensureTable()` — creates `room_skill_overrides` table: `skill_id TEXT`, `room_id TEXT`, `enabled INTEGER NOT NULL`, `PRIMARY KEY (skill_id, room_id)`, `FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE`, `FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE`
+   - `getOverrides(roomId): Promise<RoomSkillOverride[]>`
+   - `upsertOverride(roomId, skillId, enabled): Promise<void>` — INSERT OR REPLACE
+   - `deleteOverride(roomId, skillId): Promise<void>`
+   - `deleteAllForRoom(roomId): Promise<void>`
+4. Register `RoomSkillOverrideRepository` in `packages/daemon/src/app.ts` and call `ensureTable()` on startup.
 5. Add RPC handlers to `packages/daemon/src/lib/rpc-handlers/room-handlers.ts`:
    - `room.getSkillOverrides` → `{ roomId: string }` → `{ overrides: RoomSkillOverride[] }`
-   - `room.setSkillOverrides` → `{ roomId: string; overrides: RoomSkillOverride[] }` → `{ success: boolean }`
-6. Update `packages/shared/src/api.ts` with the two new RPC types.
+   - `room.setSkillOverride` → `{ roomId: string; skillId: string; enabled: boolean }` → `{ success: boolean }` (single upsert)
+   - `room.clearSkillOverride` → `{ roomId: string; skillId: string }` → `{ success: boolean }` (remove override, revert to global)
+6. Update `packages/shared/src/api.ts` with the three new RPC types.
 7. Run `bun run typecheck`.
-8. Write unit tests for the new RoomManager methods and RPC handlers.
+8. Write unit tests for `RoomSkillOverrideRepository` and the new RPC handlers.
 
 **Acceptance criteria:**
-- `RoomSkillOverride` type defined in shared
-- RoomManager can read/write skill overrides from room config
-- Two new RPC handlers exposed and registered
+- `room_skill_overrides` table created via `RoomSkillOverrideRepository.ensureTable()`
+- `RoomSkillOverride` type in shared package
+- Three new RPC handlers exposed and registered
+- Cascade deletes work: deleting a room or skill removes its overrides
 - Unit tests pass
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 2.1: AppSkill Types in Shared Package"]
+**depends_on:** ["Task 2.1: AppSkill Types in Shared Package", "Task 2.4: LiveQuery Integration for Skills Tables"]
 
 ---
 
