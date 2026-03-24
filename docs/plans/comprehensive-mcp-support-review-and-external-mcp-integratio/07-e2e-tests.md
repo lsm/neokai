@@ -21,22 +21,16 @@ Write a Playwright E2E test that exercises the full flow: open global settings, 
 
 1. Run `bun install` at the worktree root.
 2. Create `packages/e2e/tests/features/app-mcp-registry.e2e.ts`.
-3. In `beforeEach`, create a test room via `hub.request('room.create', ...)`.
-4. Navigate to Global Settings → "Application MCP Servers" section.
-5. Click "Add MCP Server":
-   - Name: `test-mcp-echo`
-   - Source type: `stdio`
-   - Command: `echo`
-   - Args: `hello`
-   - Leave enabled: true
-   - Click Save.
-6. Verify the entry appears in the list with the correct name and an enabled indicator.
+3. In `beforeEach`, seed a test MCP entry via `hub.request('mcp.registry.create', { name: 'fetch-mcp', ... })` — reuse the `fetch-mcp` server that is already seeded on daemon startup (see Task 6.2), or ensure it is present via the RPC. This is a real stdio MCP server (`npx @tokenizin/mcp-npx-fetch`) that produces valid MCP protocol responses, making it suitable for E2E testing. Do **not** use `echo` or other non-MCP commands as the stdio command — they produce invalid MCP protocol output and will cause the SDK to reject the server.
+4. Create a test room via `hub.request('room.create', ...)`.
+5. Navigate to Global Settings → "Application MCP Servers" section.
+6. Verify the `fetch-mcp` entry appears in the list with an enabled indicator (it was seeded on startup).
 7. Navigate to the test room's settings panel → "MCP Servers" section.
-8. Verify `test-mcp-echo` appears in the room's MCP list with global-default enabled state.
-9. Toggle the server off for the room, then toggle it back on.
-10. Open the room chat (or check the session's tool availability via a visible indicator — e.g., the Tools Modal or a system message listing active MCP tools).
-11. Verify `test-mcp-echo` tools are listed as active.
-12. In `afterEach`, delete the test MCP entry via `hub.request('mcp.registry.delete', ...)` and delete the room.
+8. Verify `fetch-mcp` appears in the room's MCP list with the global-default enabled state.
+9. Toggle the server off for the room, verify the toggle state updates in the UI.
+10. Toggle the server back on, verify the toggle state reverts.
+11. Open the room chat — once a session is running, check the Tools Modal (or equivalent visible tool list) and verify `fetch-mcp` tools are listed as active.
+12. In `afterEach`, delete the test room. Do not delete `fetch-mcp` from the registry — it is a permanent seed entry.
 13. Ensure the test follows E2E rules: all assertions on visible DOM state, no direct API calls except in setup/teardown hooks.
 
 **Acceptance criteria:**

@@ -72,7 +72,8 @@ On daemon startup, if no web-search MCP entry exists in the registry, optionally
    }
    ```
 4. The seed is idempotent — if entries already exist (by name), skip creation.
-5. Write unit tests that verify the seed function is idempotent and creates expected entries on a fresh registry.
+5. **Verify package names at implementation time** — `@tokenizin/mcp-npx-fetch` and `@modelcontextprotocol/server-brave-search` are the expected packages as of plan creation but npm package names can change. The implementing agent must verify these packages exist on npm and are still the recommended choices per the Task 6.1 evaluation document before hardcoding them.
+6. Write unit tests that verify the seed function is idempotent and creates expected entries on a fresh registry.
 
 **Acceptance criteria:**
 - On first daemon start, `fetch-mcp` and `brave-search` entries appear in the registry.
@@ -99,12 +100,15 @@ Update `planner-agent.ts` so the Planner and its plan-writer sub-agent have acce
 3. In the plan-writer sub-agent definition (`buildPlanWriterAgentDef`), add the web-search MCP server names to the agent's allowed tool wildcards (e.g., `'fetch-mcp__*'`, `'brave-search__*'`) so the plan-writer can call those tools.
 4. In `packages/daemon/src/lib/room/runtime/room-runtime.ts`, when constructing `PlannerAgentConfig`, query `appMcpManager.getWebSearchMcpConfigs()` (a new helper on `AppMcpLifecycleManager` that filters registry entries tagged as web-search, or simply returns all enabled entries matching names `fetch-mcp` and `brave-search`).
 5. Add `getWebSearchMcpConfigs(): Record<string, McpServerConfig>` to `AppMcpLifecycleManager` that returns enabled entries with `name` in `['fetch-mcp', 'brave-search']` (or any entry with description containing "search" or "fetch" — make the filter configurable via a `tags` field added to `AppMcpServer` type if preferred).
-6. Write unit tests verifying the planner session init includes web-search MCP servers when they are enabled in the registry.
-7. Write an online test that starts a planner session with a mock web-search MCP and verifies the tool appears in the session's available tools.
+6. **Update `restoreMcpServersForGroup()`** in `packages/daemon/src/lib/room/runtime/room-runtime.ts`: This method reconstructs MCP servers for active sessions after a daemon restart. It currently restores the `planner-tools` server. Update it to also call `appMcpManager.getWebSearchMcpConfigs()` and include those servers in the restored MCP map, so web-search tools are available to the planner after daemon restart without requiring a fresh session.
+7. Write unit tests verifying the planner session init includes web-search MCP servers when they are enabled in the registry.
+8. Write an online test that starts a planner session with a mock web-search MCP and verifies the tool appears in the session's available tools.
+9. Write a unit test for `restoreMcpServersForGroup()` that verifies web-search MCP servers are included in the restored session.
 
 **Acceptance criteria:**
 - Planner sessions have `fetch-mcp` tools available (when `fetch-mcp` is enabled in registry).
 - Plan-writer sub-agent can call web-search tools during codebase exploration.
+- After daemon restart, web-search tools are restored to active planner sessions (tested via unit test on `restoreMcpServersForGroup`).
 - No regression in existing planner behavior (create_task, update_task, remove_task tools still work).
 - Unit and online tests pass.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.

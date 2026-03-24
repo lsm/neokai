@@ -6,8 +6,8 @@ NeoKai currently supports MCP servers defined in project-level `.mcp.json` or `~
 
 This plan audits the current MCP system, then implements:
 1. A daemon-managed **Application-Level MCP Registry** (SQLite-backed) for CRUD on named MCP server configs.
-2. A **Lifecycle Manager** that spawns/healthchecks stdio MCP server processes and integrates them into room/session contexts.
-3. A **Web UI** for adding, editing, enabling/disabling, and deleting application-level MCPs.
+2. A **Lifecycle Manager** that converts registry entries to SDK configs, integrates them into room/session and space/task-agent contexts, and provides error feedback for failed MCP servers.
+3. A **Web UI** for adding, editing, enabling/disabling, and deleting application-level MCPs (including secure env-var editor for API keys).
 4. **Room/session MCP enablement**: per-room opt-in from the registry.
 5. **Web search for the Planner** via a bundled or user-configured web-search MCP server.
 
@@ -39,7 +39,12 @@ No existing MCP file-based flows are removed — the registry is additive.
 - Milestone 4 (room integration) must land before 5 (UI reflects per-room state) and 7 (E2E test).
 - Milestone 5 (UI) can be developed in parallel with 6 (planner search) after milestone 4 is done.
 - Milestone 7 (E2E) depends on all prior milestones.
+- **Task 6.1** (web search evaluation) has **no dependencies** and can start in parallel with Milestone 2 from day one.
+
+## Audit Feedback Loop
+
+Milestone 1 (Audit) should complete before implementation milestones begin. If the audit uncovers a critical architectural gap not covered by this plan, implementation tasks should be adjusted before proceeding with the affected milestone. The audit document (`docs/mcp-audit.md`) serves as the authoritative reference for implementation decisions.
 
 ## Total Estimated Task Count
 
-18 tasks across 7 milestones.
+19 tasks across 7 milestones (added Task 3.4 for space module integration).

@@ -37,4 +37,6 @@ Conduct a thorough audit of the current MCP support in NeoKai. Produce a structu
 
 **Depends on:** (none)
 
-**Notes:** Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+**Notes:**
+- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+- **Feedback loop:** If the audit uncovers a critical architectural gap not already addressed in this plan (e.g., a third injection path, an undocumented session type that uses MCPs, a constraint that invalidates the proposed merge strategy), the implementing agent must flag it explicitly in `docs/mcp-audit.md` under a "**Plan Adjustments Required**" section. The plan owner should review that section before Milestone 2 implementation begins. This ensures audit findings feed back into the implementation milestones rather than being silently discarded.
