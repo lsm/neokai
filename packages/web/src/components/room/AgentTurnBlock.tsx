@@ -28,6 +28,34 @@ import { IconButton } from '../ui/IconButton.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import type { TurnBlock } from '../../hooks/useTurnBlocks';
 
+const EMPTY_TOOL_RESULTS = new Map<string, unknown>();
+
+function normalizeWS(s: string): string {
+	return s.replace(/\s+/g, ' ').trim();
+}
+
+function isRenderable(msg: SDKMessage): boolean {
+	if (msg.type === 'result') {
+		return (msg as SDKMessage & { is_error?: boolean }).is_error === true;
+	}
+	if (msg.type === 'system') {
+		const sub = (msg as SDKMessage & { subtype?: string }).subtype;
+		return sub !== 'init' && sub !== 'task_started';
+	}
+	if (msg.type === 'user') {
+		const msgContent = (msg as SDKMessage & { message?: { content?: unknown } }).message?.content;
+		if (Array.isArray(msgContent)) {
+			return msgContent.some((b) => (b as { type: string }).type !== 'tool_result');
+		}
+		return typeof msgContent === 'string';
+	}
+	if (msg.type === 'assistant') {
+		const msgContent = (msg as SDKMessage & { message?: { content?: unknown[] } }).message?.content;
+		return Array.isArray(msgContent) && msgContent.length > 0;
+	}
+	return true;
+}
+
 interface AgentTurnBlockProps {
 	turn: TurnBlock;
 	className?: string;
@@ -229,7 +257,6 @@ function NestedMessageRenderer({
 					if (!text) return null;
 					// Skip if this text matches the input prompt (duplicate of User card)
 					// Normalize whitespace for comparison to handle formatting differences
-					const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
 					if (inputText && normalizeWS(text) === normalizeWS(inputText)) return null;
 					return (
 						<div key={`text-${idx}`}>
@@ -285,7 +312,6 @@ function NestedMessageRenderer({
 			}
 
 			// Normalize whitespace for comparison
-			const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 			// Render non-tool-result content blocks, skipping:
 			// 1. Duplicates of inputText
@@ -420,7 +446,7 @@ function NestedMessageRenderer({
 }
 
 export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps) {
-	const colors = getRoleColors(turn.agentRole);
+	const colors = useMemo(() => getRoleColors(turn.agentRole), [turn.agentRole]);
 
 	// Extract the first user message as input prompt, rest are nested messages
 	const { inputMessage, nestedMessages } = useMemo(() => {
@@ -622,38 +648,6 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 						// Track seen texts for deduplication across nested messages
 						const seenTexts = new Set<string>();
 
-						// Determine which messages will actually render something visible.
-						// NestedMessageRenderer returns null for:
-						//   - result messages that are not errors
-						//   - user messages whose content is entirely tool_result blocks
-						//   - system messages with subtype 'init' or 'task_started'
-						// Slicing raw messages would cause the "last 3" to appear as fewer
-						// visible items. Instead, identify the last 3 renderable messages
-						// and show everything from the earliest of those onward.
-						const isRenderable = (msg: SDKMessage): boolean => {
-							if (msg.type === 'result') {
-								return (msg as SDKMessage & { is_error?: boolean }).is_error === true;
-							}
-							if (msg.type === 'system') {
-								const sub = (msg as SDKMessage & { subtype?: string }).subtype;
-								return sub !== 'init' && sub !== 'task_started';
-							}
-							if (msg.type === 'user') {
-								const content = (msg as SDKMessage & { message?: { content?: unknown } }).message
-									?.content;
-								if (Array.isArray(content)) {
-									return content.some((b) => (b as { type: string }).type !== 'tool_result');
-								}
-								return typeof content === 'string';
-							}
-							if (msg.type === 'assistant') {
-								const content = (msg as SDKMessage & { message?: { content?: unknown[] } }).message
-									?.content;
-								return Array.isArray(content) && content.length > 0;
-							}
-							return true;
-						};
-
 						// Only show last 3 renderable messages
 						const MESSAGES_TO_SHOW = 3;
 						const renderableIndices = nestedMessages.reduce<number[]>((acc, msg, idx) => {
@@ -686,7 +680,7 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 											<NestedMessageRenderer
 												key={msg.uuid || `nested-${actualIdx}`}
 												message={msg}
-												toolResultsMap={new Map()}
+												toolResultsMap={EMPTY_TOOL_RESULTS}
 												isLast={isLastAssistant}
 												inputText={inputText}
 												seenTexts={seenTexts}
