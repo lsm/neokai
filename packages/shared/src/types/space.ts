@@ -160,6 +160,12 @@ export interface SpaceTask {
 	assignedAgent?: 'coder' | 'general';
 	/** ID of a custom Space agent assigned to execute this task */
 	customAgentId?: string;
+	/**
+	 * The `WorkflowNodeAgent.role` of the specific agent slot that spawned this task.
+	 * Stored at task creation time so `spawn_step_agent` can unambiguously map the task
+	 * back to the correct slot even when the same `agentId` appears multiple times in the node.
+	 */
+	slotRole?: string;
 	/** ID of the workflow run that spawned this task (if any) */
 	workflowRunId?: string;
 	/** ID of the workflow node that spawned this task (if any) */
@@ -221,6 +227,11 @@ export interface CreateSpaceTaskParams {
 	assignedAgent?: 'coder' | 'general';
 	/** Custom Space agent to execute this task */
 	customAgentId?: string;
+	/**
+	 * The `WorkflowNodeAgent.role` of the specific slot that spawned this task.
+	 * See `SpaceTask.slotRole` for details.
+	 */
+	slotRole?: string;
 	/** Workflow run that spawned this task */
 	workflowRunId?: string;
 	/** Workflow node that spawned this task */
@@ -585,15 +596,9 @@ export interface WorkflowNodeAgent {
 	 * a numeric suffix is appended automatically (e.g. `"coder"` → `"coder-2"`).
 	 */
 	role: string;
-	/**
-	 * Override the agent's default model for this slot.
-	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
-	 */
+	/** Override the agent's default model for this slot. */
 	model?: string;
-	/**
-	 * Override the agent's default system prompt for this slot.
-	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
-	 */
+	/** Override the agent's default system prompt for this slot. */
 	systemPrompt?: string;
 	/** Per-agent instructions override — appended to the agent's system prompt */
 	instructions?: string;
@@ -887,15 +892,9 @@ export interface ExportedWorkflowNodeAgent {
 	 * Must be unique across all agents in the same exported node.
 	 */
 	role: string;
-	/**
-	 * Override the agent's default model for this slot.
-	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
-	 */
+	/** Override the agent's default model for this slot. */
 	model?: string;
-	/**
-	 * Override the agent's default system prompt for this slot.
-	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
-	 */
+	/** Override the agent's default system prompt for this slot. */
 	systemPrompt?: string;
 	/** Per-agent instructions override */
 	instructions?: string;

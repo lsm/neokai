@@ -1970,8 +1970,8 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		expect(parsed.success).toBe(true);
 
 		// For agentId shorthand, slot role === agentId (synthetic). Fall back to base agent role.
-		// The memberRole logic: agentSlot.role (agentId) ?? agentForMember.role ('coder') ?? 'agent'
-		// agentSlot.role is the agentId string (synthetic), so it is set.
+		// memberRole = agentSlot.role (synthetic: equals agentId) || agentForMember.role ('coder') || 'agent'
+		// agentSlot.role is the synthetic agentId string, so it is always set for agentId shorthand nodes.
 		const sessionId = parsed.sessionId;
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
@@ -2073,7 +2073,11 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		expect(promptText).toContain(overridePrompt);
 	});
 
-	test('same agent twice in one node uses distinct slot roles for each session', async () => {
+	test('same agent twice in one node: last task uses its own slot role (not the first slot)', async () => {
+		// Regression test for the slot disambiguation bug:
+		// When the same agentId appears twice in a node with different slot roles,
+		// spawn_step_agent must select the task's own slot role — not always the first match.
+		// The fix stores slotRole on the task at creation time so the lookup is exact.
 		const agentId = ctx.agentId;
 		const stepId = `step-dual-${Math.random().toString(36).slice(2)}`;
 
@@ -2099,26 +2103,29 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		// The executor creates two tasks for this step (one per agent slot)
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Verify two tasks were created for this step
+		// Verify two tasks were created with the correct slotRole each
 		const stepTasks = ctx.taskRepo
 			.listByWorkflowRun(run.id)
-			.filter((t) => t.workflowNodeId === stepId);
+			.filter((t) => t.workflowNodeId === stepId)
+			.sort((a, b) => a.createdAt - b.createdAt);
 		expect(stepTasks).toHaveLength(2);
+		expect(stepTasks[0]?.slotRole).toBe('strict-reviewer');
+		expect(stepTasks[1]?.slotRole).toBe('quick-reviewer');
 
-		// Spawn the second task (last created — the quick-reviewer slot)
+		// spawn_step_agent picks stepTasks[last] = the quick-reviewer task
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 		const result = await handlers.spawn_step_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
-		// The spawned session should use one of the slot roles, not the base 'coder' role
+		// The spawned session must use 'quick-reviewer' — NOT 'strict-reviewer' (the first slot),
+		// confirming that slotRole-based lookup picks the correct slot.
 		const sessionId = parsed.sessionId;
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
 		)._capturedMemberInfos.get(sessionId);
-		expect(['strict-reviewer', 'quick-reviewer']).toContain(capturedInfo?.role);
-		// Specifically NOT the base agent's SpaceAgent.role
+		expect(capturedInfo?.role).toBe('quick-reviewer');
 		expect(capturedInfo?.role).not.toBe('coder');
 	});
 });

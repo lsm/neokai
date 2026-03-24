@@ -582,6 +582,31 @@ describe('createCustomAgentInit — slotOverrides', () => {
 		// Still uses agent/agents path
 		expect(init.agents).toBeDefined();
 	});
+
+	it('systemPrompt override works with agent/agents path (custom tools) — override lands in agents[key].prompt', () => {
+		// When SpaceAgent.tools is set, createCustomAgentInit uses the agent/agents pattern.
+		// The behavioral prompt (including the systemPrompt override) is placed in
+		// agentDef.prompt, NOT in init.systemPrompt.append — this code path must be tested
+		// separately from the simple (no-tools) path.
+		const config = makeConfig({
+			customAgent: makeAgent({
+				name: 'CodeReviewer',
+				tools: ['Read', 'Bash'],
+				systemPrompt: 'Original agent instructions.',
+			}),
+			slotOverrides: { systemPrompt: 'Slot-level security focus.' },
+		});
+		const init = createCustomAgentInit(config);
+		// Must use agent/agents path
+		expect(init.agents).toBeDefined();
+		// systemPrompt.append is not used on this path
+		expect(init.systemPrompt?.append).toBeUndefined();
+		// The override must appear in agentDef.prompt
+		const agentKey = Object.keys(init.agents!)[0];
+		const agentDef = init.agents![agentKey];
+		expect(agentDef?.prompt).toContain('Slot-level security focus.');
+		expect(agentDef?.prompt).not.toContain('Original agent instructions.');
+	});
 });
 
 // ============================================================================

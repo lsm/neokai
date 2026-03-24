@@ -307,16 +307,20 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				effectiveTask.description = instructions;
 			}
 
-			// Find the WorkflowNodeAgent slot that matches this task's agent.
-			// The slot holds the per-slot role (used for channel routing and group membership)
-			// and optional model/systemPrompt overrides that supersede the base agent config.
-			const agentSlot = nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
+			// Find the WorkflowNodeAgent slot that spawned this task.
+			// When slotRole is stored on the task (migration 46+), use it for an exact match.
+			// This correctly handles nodes where the same agentId appears multiple times with
+			// different slot roles (e.g. "strict-reviewer" and "quick-reviewer"): each task
+			// was created with its own slotRole, so the lookup is unambiguous.
+			// For tasks created before migration 46 (no slotRole), fall back to find-by-agentId,
+			// which always returns the first matching slot — acceptable for legacy data.
+			const agentSlot = effectiveTask.slotRole
+				? nodeAgents.find((a) => a.role === effectiveTask.slotRole)
+				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
 
 			// Extract slot-level overrides (model and systemPrompt) if present.
-			const slotOverrides =
-				agentSlot?.model !== undefined || agentSlot?.systemPrompt !== undefined
-					? { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt }
-					: undefined;
+			// Always construct the object — undefined values are handled downstream.
+			const slotOverrides = { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt };
 
 			// Generate a new session ID for the sub-session.
 			// Note: the factory may assign a different ID internally. All subsequent code
