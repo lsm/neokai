@@ -68,7 +68,10 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}$`));
 
 		// Verify dashboard view is shown (room tab bar visible)
-		await expect(page.locator('button:has-text("Overview")')).toBeVisible({ timeout: 10000 });
+		// Use the tab-specific selector to avoid matching mobile bottom tabs
+		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Reload page
 		await page.reload();
@@ -78,7 +81,9 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}$`));
 
 		// Verify dashboard view is still shown
-		await expect(page.locator('button:has-text("Overview")')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test('Room Agent URL is /room/:id/agent and survives page refresh', async ({ page }) => {
