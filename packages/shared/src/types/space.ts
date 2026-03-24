@@ -578,6 +578,22 @@ export interface WorkflowNodeAgent {
 }
 
 /**
+ * The stable ID used for the Task Agent virtual node in the visual editor.
+ *
+ * The Task Agent is a **virtual node** — it is never persisted in the DB's
+ * `space_workflow_nodes` table. Instead it is:
+ *   - Injected at runtime by the frontend (during deserialization)
+ *   - Injected at runtime by the backend (during channel resolution at workflow run start)
+ *   - Stripped from the persisted node list during serialization
+ *
+ * Task Agent **channels** ARE persisted as regular `WorkflowChannel` entries
+ * (with `from: 'task-agent'` or `to: 'task-agent'` roles). These replace the
+ * backend-only auto-generation introduced in Milestone 3 with persisted,
+ * user-manageable channel entries visible in the frontend.
+ */
+export const TASK_AGENT_NODE_ID = '__task_agent__';
+
+/**
  * A directed messaging channel between agents in a workflow node.
  * Channels define which agents may send messages to which other agents.
  * `from` and `to` reference agent roles (matching `SpaceAgent.role`) or the

@@ -22,6 +22,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import type { ComponentChildren, JSX, RefObject } from 'preact';
 import type { WorkflowTransition } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
 import type { WorkflowNodeProps, PortType } from './WorkflowNode';
@@ -331,6 +332,9 @@ export function WorkflowCanvas({
 	// Selecting a node clears the edge selection (mutually exclusive).
 	const handleNodeSelect = useCallback(
 		(stepId: string) => {
+			// Task Agent is a virtual node — skip selection so it never gets a
+			// visual highlight ring or enters the keyboard-Delete path.
+			if (stepId === TASK_AGENT_NODE_ID) return;
 			setSelectedNodeId(stepId);
 			onNodeSelect?.(stepId);
 			// Clear edge selection to prevent dual Delete handlers from both firing
