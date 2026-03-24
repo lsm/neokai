@@ -380,9 +380,6 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 5: Visual editor validation — missing name ────────────────────
 
-	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
-	// assertion on line ~412 will need to change from 1 to 2 (adds Task Agent node).
-
 	test('Visual editor shows error when saving without name', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -408,9 +405,6 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 6: Visual editor validation — missing agent ───────────────────
-
-	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
-	// assertion on line ~442 will need to change from 1 to 2 (adds Task Agent node).
 
 	test('Visual editor shows error when saving without agent assigned', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
