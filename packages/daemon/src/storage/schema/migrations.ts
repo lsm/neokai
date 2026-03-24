@@ -194,6 +194,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// to include 'rate_limited' and 'usage_limited'. These new statuses let the runtime
 	// surface API limit state in the UI and enable auto-resume on tick.
 	runMigration49(db);
+
+	// Migration 50: Create app_mcp_servers table for application-level MCP server registry.
+	// This table stores MCP server configurations that are available globally.
+	// Idempotent via CREATE TABLE IF NOT EXISTS.
+	runMigration50(db);
 }
 
 /**
@@ -3138,4 +3143,28 @@ export function runMigration49(db: BunDatabase): void {
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
 	);
+}
+
+/**
+ * Migration 50: Create app_mcp_servers table for application-level MCP server registry.
+ * This table stores MCP server configurations that are available globally to any room or session.
+ * Idempotent via CREATE TABLE IF NOT EXISTS.
+ */
+export function runMigration50(db: BunDatabase): void {
+	db.exec(`
+    CREATE TABLE IF NOT EXISTS app_mcp_servers (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT,
+      source_type TEXT NOT NULL CHECK(source_type IN ('stdio', 'sse', 'http')),
+      command TEXT,
+      args TEXT,
+      env TEXT,
+      url TEXT,
+      headers TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER,
+      updated_at INTEGER
+    )
+  `);
 }

@@ -447,7 +447,8 @@ describe('TaskInfoPanel', () => {
 				/>
 			);
 
-			expect(container.textContent).toContain('Model:');
+			// Should show Worker: label with Model: for worker session
+			expect(container.textContent).toMatch(/Worker:.*Model:/);
 			// Mock shows the model id
 			expect(container.querySelector('[data-testid="model-selector-mock"]')).toBeTruthy();
 		});

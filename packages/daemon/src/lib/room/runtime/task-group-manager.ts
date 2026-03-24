@@ -156,10 +156,6 @@ export interface TaskGroupManagerConfig {
 	model?: string;
 	/** Leader provider (auto-detected from model if omitted) */
 	provider?: string;
-	/** Worker model (defaults to model if not set) */
-	workerModel?: string;
-	/** Worker provider (auto-detected from workerModel if omitted) */
-	workerProvider?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID. Used to get CURRENT task data at route time. */
@@ -183,8 +179,6 @@ export class TaskGroupManager {
 	readonly workspacePath: string;
 	private _model?: string;
 	private _provider?: string;
-	private _workerModel?: string;
-	private _workerProvider?: string;
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.groupRepo = config.groupRepo;
@@ -198,8 +192,6 @@ export class TaskGroupManager {
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
 		this._provider = config.provider;
-		this._workerModel = config.workerModel;
-		this._workerProvider = config.workerProvider;
 		this.daemonHub = config.daemonHub;
 	}
 
@@ -217,30 +209,6 @@ export class TaskGroupManager {
 	updateModel(model: string | undefined, provider?: string): void {
 		this._model = model;
 		this._provider = provider;
-	}
-
-	/** Get the current model for worker sessions */
-	get workerModel(): string | undefined {
-		return this._workerModel;
-	}
-
-	/** Get the current provider for worker sessions */
-	get workerProvider(): string | undefined {
-		return this._workerProvider;
-	}
-
-	/** Update the model and provider for worker sessions (e.g., when user changes worker model mid-task) */
-	updateWorkerModel(model: string | undefined, provider?: string): void {
-		this._workerModel = model;
-		this._workerProvider = provider;
-	}
-
-	/**
-	 * Get the effective model to use for worker sessions.
-	 * Returns workerModel if set, otherwise falls back to model.
-	 */
-	getWorkerModel(): string | undefined {
-		return this._workerModel ?? this._model;
 	}
 
 	/**

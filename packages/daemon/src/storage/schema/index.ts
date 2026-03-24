@@ -21,6 +21,8 @@ export { runMigration47 } from './migrations';
 export { runMigration48 } from './migrations';
 // knip-ignore-next-line
 export { runMigration49 } from './migrations';
+// knip-ignore-next-line
+export { runMigration50 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -328,6 +330,23 @@ export function createTables(db: BunDatabase): void {
         kind TEXT NOT NULL,
         payload_json TEXT,
         created_at INTEGER NOT NULL
+      )
+    `);
+
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS app_mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        source_type TEXT NOT NULL CHECK(source_type IN ('stdio', 'sse', 'http')),
+        command TEXT,
+        args TEXT,
+        env TEXT,
+        url TEXT,
+        headers TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER,
+        updated_at INTEGER
       )
     `);
 
