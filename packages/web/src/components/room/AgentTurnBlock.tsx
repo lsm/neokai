@@ -11,7 +11,7 @@
  * - general: slate
  */
 
-import { useMemo } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
@@ -72,6 +72,51 @@ function getRoleColors(role: string) {
 	}
 }
 
+function formatMsgTime(timestamp: number): string {
+	if (!timestamp) return '';
+	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function CopyButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	const handleCopy = () => {
+		navigator.clipboard.writeText(text).then(() => {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 1500);
+		});
+	};
+	return (
+		<button
+			onClick={(e) => {
+				e.stopPropagation();
+				handleCopy();
+			}}
+			class="p-0.5 rounded text-gray-400 hover:text-gray-200 transition-colors"
+			title={copied ? 'Copied!' : 'Copy'}
+		>
+			{copied ? (
+				<svg
+					class="w-3.5 h-3.5 text-green-400"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+				</svg>
+			) : (
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+					/>
+				</svg>
+			)}
+		</button>
+	);
+}
+
 /**
  * Renders a single nested message from the sub-agent execution
  * This is copied from SubagentBlock.tsx - same logic
@@ -89,6 +134,9 @@ function NestedMessageRenderer({
 	inputText?: string | null;
 	seenTexts?: Set<string>;
 }) {
+	const timestamp = (message as { timestamp?: number }).timestamp ?? 0;
+	const timeLabel = formatMsgTime(timestamp);
+
 	// Handle assistant messages
 	if (message.type === 'assistant') {
 		const apiMessage = message.message;
@@ -147,28 +195,33 @@ function NestedMessageRenderer({
 					const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
 					if (inputText && normalizeWS(text) === normalizeWS(inputText)) return null;
 					return (
-						<div
-							key={`text-${idx}`}
-							class={cn(
-								messageSpacing.assistant.bubble.combined,
-								messageColors.assistant.background,
-								messageColors.assistant.text,
-								borderRadius.message.bubble,
-								'w-full'
-							)}
-						>
-							{isLast ? (
-								<div class="prose prose-sm max-w-full overflow-x-auto">
-									<MarkdownRenderer content={text} />
-								</div>
-							) : (
-								<div
-									class="prose prose-sm prose-p:my-0 [&>*]:my-0 whitespace-normal break-words line-clamp-1"
-									style="max-width: 100%"
-								>
-									<MarkdownRenderer content={text} />
-								</div>
-							)}
+						<div key={`text-${idx}`}>
+							<div
+								class={cn(
+									messageSpacing.assistant.bubble.combined,
+									messageColors.assistant.background,
+									messageColors.assistant.text,
+									borderRadius.message.bubble,
+									'w-full'
+								)}
+							>
+								{isLast ? (
+									<div class="prose prose-sm max-w-full overflow-x-auto">
+										<MarkdownRenderer content={text} />
+									</div>
+								) : (
+									<div
+										class="prose prose-sm prose-p:my-0 [&>*]:my-0 whitespace-normal break-words line-clamp-1"
+										style="max-width: 100%"
+									>
+										<MarkdownRenderer content={text} />
+									</div>
+								)}
+							</div>
+							<div class="flex items-center gap-1 mt-0.5 px-1">
+								{timeLabel && <span class="text-xs text-gray-500">{timeLabel}</span>}
+								<CopyButton text={text} />
+							</div>
 						</div>
 					);
 				})}
@@ -222,8 +275,11 @@ function NestedMessageRenderer({
 				}
 			});
 
+			const copyText = textBlocks
+				.map((b) => (b as Record<string, unknown>).text as string)
+				.join('\n');
 			return (
-				<div class="flex justify-end">
+				<div class="flex flex-col items-end">
 					<div
 						class={cn(
 							messageSpacing.user.bubble.combined,
@@ -242,6 +298,10 @@ function NestedMessageRenderer({
 							);
 						})}
 					</div>
+					<div class="flex items-center gap-1 mt-0.5 px-1">
+						<CopyButton text={copyText} />
+						{timeLabel && <span class="text-xs text-gray-500">{timeLabel}</span>}
+					</div>
 				</div>
 			);
 		}
@@ -249,7 +309,7 @@ function NestedMessageRenderer({
 		// Handle string content
 		if (typeof content === 'string') {
 			return (
-				<div class="flex justify-end">
+				<div class="flex flex-col items-end">
 					<div
 						class={cn(
 							messageSpacing.user.bubble.combined,
@@ -261,6 +321,10 @@ function NestedMessageRenderer({
 						)}
 					>
 						{content}
+					</div>
+					<div class="flex items-center gap-1 mt-0.5 px-1">
+						<CopyButton text={content} />
+						{timeLabel && <span class="text-xs text-gray-500">{timeLabel}</span>}
 					</div>
 				</div>
 			);
@@ -600,6 +664,20 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 							</div>
 						);
 					})()}
+
+				{/* Turn timing footer */}
+				{turn.startTime > 0 && (
+					<div class="border-t border-gray-200 dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+						<span>{formatMsgTime(turn.startTime)}</span>
+						{turn.endTime && (
+							<>
+								<span>→</span>
+								<span>{formatMsgTime(turn.endTime)}</span>
+								<span class="ml-auto">{Math.round((turn.endTime - turn.startTime) / 1000)}s</span>
+							</>
+						)}
+					</div>
+				)}
 			</div>
 		</div>
 	);
