@@ -127,7 +127,9 @@ test.describe('TaskView — Message Pagination', () => {
 			await expect(page.getByText('Message number 1', { exact: true })).toBeVisible({
 				timeout: 10000,
 			});
-			await expect(page.locator('text=Message number 3')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByText('Message number 3', { exact: true })).toBeVisible({
+				timeout: 10000,
+			});
 
 			// No "Load earlier" button shown
 			await expect(page.getByTestId('load-earlier-messages')).not.toBeVisible();
@@ -162,7 +164,9 @@ test.describe('TaskView — Message Pagination', () => {
 			);
 
 			// The newest message (55) should be visible
-			await expect(page.locator('text=Message number 55')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByText('Message number 55', { exact: true })).toBeVisible({
+				timeout: 10000,
+			});
 
 			// The oldest messages should NOT be visible initially (they're hidden by pagination)
 			await expect(page.getByText('Message number 1', { exact: true })).not.toBeVisible();
@@ -181,7 +185,9 @@ test.describe('TaskView — Message Pagination', () => {
 			await expect(page.getByTestId('load-earlier-messages')).toBeVisible({ timeout: 10000 });
 
 			// Verify newest message (55) is visible
-			await expect(page.locator('text=Message number 55')).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText('Message number 55', { exact: true })).toBeVisible({
+				timeout: 5000,
+			});
 
 			// Scroll the container all the way to the bottom first. Status messages are thin
 			// divider rows (~24px each) and the task chrome varies by environment, so content
@@ -218,7 +224,7 @@ test.describe('TaskView — Message Pagination', () => {
 			await expect(page.getByTestId('load-earlier-messages')).not.toBeVisible();
 
 			// Verify newest messages are still present (they should not have disappeared)
-			await expect(page.locator('text=Message number 55')).toBeVisible();
+			await expect(page.getByText('Message number 55', { exact: true })).toBeVisible();
 
 			// Verify scroll position was preserved (not jumped to top).
 			// Only assert when scrollBefore > 0 — if the container was too short to
