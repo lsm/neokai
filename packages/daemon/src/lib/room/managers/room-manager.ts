@@ -131,6 +131,7 @@ export class RoomManager {
 
 		const toSummary = (task: NeoTask): TaskSummary => ({
 			id: task.id,
+			shortId: task.shortId,
 			title: task.title,
 			status: task.status,
 			priority: task.priority,
