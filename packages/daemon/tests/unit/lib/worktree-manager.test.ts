@@ -6,6 +6,7 @@
 
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
 import { WorktreeManager } from '../../../src/lib/worktree-manager';
+import { Logger } from '../../../src/lib/logger';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 
@@ -28,6 +29,8 @@ mock.module('simple-git', () => ({
 // Mock fs functions
 let existsSyncResults: Map<string, boolean>;
 let mkdirSyncSpy: ReturnType<typeof mock>;
+let writeFileSyncSpy: ReturnType<typeof spyOn>;
+let readFileSyncSpy: ReturnType<typeof spyOn>;
 
 describe('WorktreeManager', () => {
 	let manager: WorktreeManager;
@@ -56,6 +59,14 @@ describe('WorktreeManager', () => {
 		// Mock mkdirSync
 		mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as unknown as string);
 
+		// Mock writeFileSync — suppress sentinel writes in unit tests
+		writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+
+		// Mock readFileSync — default: return the normalized gitRoot so no collision
+		readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
+			() => '/test/repo' as unknown as Buffer
+		);
+
 		// Mock homedir
 		homedirSpy = spyOn(os, 'homedir').mockReturnValue('/home/testuser');
 	});
@@ -63,8 +74,15 @@ describe('WorktreeManager', () => {
 	afterEach(() => {
 		existsSyncSpy.mockRestore();
 		mkdirSyncSpy.mockRestore();
+		writeFileSyncSpy.mockRestore();
+		readFileSyncSpy.mockRestore();
 		homedirSpy.mockRestore();
 	});
+
+	// Helper: compute short key via the public method so path expectations stay in sync
+	function shortKeyFor(repoPath: string): string {
+		return manager.getProjectShortKey(repoPath);
+	}
 
 	describe('constructor', () => {
 		it('should create manager instance', () => {
@@ -114,6 +132,52 @@ describe('WorktreeManager', () => {
 		});
 	});
 
+	describe('getProjectShortKey', () => {
+		it('should return the same key for the same path (deterministic)', () => {
+			const path = '/Users/alice/code/my-project';
+			expect(manager.getProjectShortKey(path)).toBe(manager.getProjectShortKey(path));
+		});
+
+		it('should use the basename of the path as the human-readable prefix', () => {
+			const key = manager.getProjectShortKey('/Users/alice/code/my-project');
+			expect(key.startsWith('my-project-')).toBe(true);
+		});
+
+		it('should return a string containing only safe filesystem characters', () => {
+			const key = manager.getProjectShortKey('/Users/alice/some.weird path/my@project!');
+			// Only alphanumeric, hyphens, underscores, and the separator '-' between parts
+			expect(key).toMatch(/^[a-zA-Z0-9_-]+$/);
+		});
+
+		it('should be shorter than the full encoded path', () => {
+			const path = '/Users/alice/very/long/directory/structure/my-project';
+			const shortKey = manager.getProjectShortKey(path);
+			const encoded = '-Users-alice-very-long-directory-structure-my-project';
+			expect(shortKey.length).toBeLessThan(encoded.length);
+		});
+
+		it('should produce an 8-char hex hash suffix (no BigInt truncation)', () => {
+			const key = manager.getProjectShortKey('/test/repo');
+			// Format: {prefix}-{8 hex chars}
+			const parts = key.split('-');
+			const hash = parts[parts.length - 1];
+			expect(hash).toMatch(/^[0-9a-f]{8}$/);
+		});
+
+		it('should produce different keys for different paths', () => {
+			const key1 = manager.getProjectShortKey('/Users/alice/project-a');
+			const key2 = manager.getProjectShortKey('/Users/bob/project-a');
+			// Same basename but different full paths → different hashes
+			expect(key1).not.toBe(key2);
+		});
+
+		it('should sanitize special characters in basename', () => {
+			const key = manager.getProjectShortKey('/home/user/my.project@v2');
+			// dots and @ should be replaced with '-'
+			expect(key).toMatch(/^[a-zA-Z0-9_-]+-[0-9a-f]{8}$/);
+		});
+	});
+
 	describe('createWorktree', () => {
 		it('should return null for non-git repository', async () => {
 			existsSyncResults.set('/test/path/.git', false);
@@ -127,10 +191,13 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should create worktree directory if it does not exist', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', false);
+			// project dir does not exist → triggers mkdirSync + writeFileSync
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, false);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
@@ -145,13 +212,19 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should throw if worktree directory already exists', async () => {
+			const shortKey = shortKeyFor('/test/repo');
+			const normalizedGitRoot = '/test/repo';
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			// project dir exists, sentinel exists, same repo — no collision
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				true
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue(normalizedGitRoot as unknown as Buffer);
 
 			await expect(
 				manager.createWorktree({
@@ -162,13 +235,17 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should succeed with auto-generated branch name when no stale branch exists', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 			// checkBranchExists returns empty → no stale branch, then worktree add succeeds
 			mockGitRaw
 				.mockResolvedValueOnce('') // checkBranchExists — branch does not exist
@@ -185,13 +262,17 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should delete stale custom branch and reuse original name', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 			// checkBranchExists returns the stale branch; branch -D goes through mockGitBranch
 			mockGitRaw
 				.mockResolvedValueOnce('  custom-branch\n') // checkBranchExists — stale branch found
@@ -210,13 +291,17 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should delete stale auto-generated branch and reuse original name', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 			mockGitRaw
 				.mockResolvedValueOnce('  session/session-123\n') // checkBranchExists — stale auto branch
 				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
@@ -234,13 +319,17 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should delete stale task branch and reuse task branch name', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 			mockGitRaw
 				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — stale task branch
 				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
@@ -257,13 +346,17 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should fall back to UUID branch name when branch -D is rejected (branch checked out elsewhere)', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 			mockGitRaw
 				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — branch found
 				.mockResolvedValue(''); // worktree add succeeds with fallback branch name
@@ -283,13 +376,17 @@ describe('WorktreeManager', () => {
 		});
 
 		it('should return WorktreeMetadata on success', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 			mockGitRaw.mockResolvedValue('');
 
 			const result = await manager.createWorktree({
@@ -300,20 +397,24 @@ describe('WorktreeManager', () => {
 
 			expect(result).toEqual({
 				isWorktree: true,
-				worktreePath: '/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				worktreePath: `/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				mainRepoPath: '/test/repo',
 				branch: 'my-branch',
 			});
 		});
 
 		it('should cleanup on failure', async () => {
+			const shortKey = shortKeyFor('/test/repo');
 			existsSyncResults.set('/test/repo/.git', true);
-			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, true);
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
+			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
 
 			// First call for worktree add fails
 			mockGitRaw
@@ -322,7 +423,7 @@ describe('WorktreeManager', () => {
 
 			// After failure, worktree dir exists (partially created)
 			existsSyncResults.set(
-				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/session-123`,
 				true
 			);
 
@@ -653,6 +754,162 @@ describe('WorktreeManager', () => {
 					branch: 'session/test',
 				})
 			).rejects.toThrow('Failed to check commits');
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// getWorktreeBaseDir — collision detection
+	// All three scenarios use the existing fs mocks from the outer beforeEach.
+	// ---------------------------------------------------------------------------
+	describe('getWorktreeBaseDir collision detection', () => {
+		let loggerWarnSpy: ReturnType<typeof spyOn>;
+
+		beforeEach(() => {
+			// Spy on Logger.prototype.warn to capture collision warnings
+			loggerWarnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			loggerWarnSpy.mockRestore();
+		});
+
+		it('no collision: first call creates sentinel and returns short-key path', async () => {
+			const repoPath = '/Users/alice/my-app';
+			const shortKey = manager.getProjectShortKey(repoPath);
+
+			// Git root detection
+			existsSyncResults.set(`${repoPath}/.git`, true);
+			mockGitRevparse.mockResolvedValue('.git');
+
+			// project dir does NOT exist yet → triggers mkdirSync + writeFileSync
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, false);
+			// worktrees dir also doesn't exist
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-1`, false);
+			mockGitRaw.mockResolvedValue('');
+
+			const result = await manager.createWorktree({
+				sessionId: 'sess-1',
+				repoPath,
+			});
+
+			// Worktree path uses the short key
+			expect(result?.worktreePath).toBe(
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-1`
+			);
+			// Sentinel was written
+			expect(writeFileSyncSpy).toHaveBeenCalledWith(
+				`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`,
+				repoPath
+			);
+			// No collision warning
+			expect(loggerWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining('collision'));
+		});
+
+		it('same repo second call: sentinel matches, returns same short-key path', async () => {
+			const repoPath = '/Users/bob/cool-lib';
+			const shortKey = manager.getProjectShortKey(repoPath);
+
+			// Git root detection
+			existsSyncResults.set(`${repoPath}/.git`, true);
+			mockGitRevparse.mockResolvedValue('.git');
+
+			// project dir EXISTS, sentinel EXISTS, sentinel contains the SAME repo path
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			readFileSyncSpy.mockReturnValue(repoPath as unknown as Buffer);
+
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-2`, false);
+			mockGitRaw.mockResolvedValue('');
+
+			const result = await manager.createWorktree({
+				sessionId: 'sess-2',
+				repoPath,
+			});
+
+			// Same short-key path returned
+			expect(result?.worktreePath).toBe(
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-2`
+			);
+			// No collision warning
+			expect(loggerWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining('collision'));
+		});
+
+		it('collision: sentinel belongs to different repo → logs warning and uses full encoding', async () => {
+			// Repo path B whose shortKey dir is pre-occupied by repo path A
+			const repoPathB = '/Users/carol/projects/app';
+			const shortKey = manager.getProjectShortKey(repoPathB);
+			const repoPathA = '/Users/dan/projects/other-app'; // occupies the shortKey dir
+
+			// Git root detection for B
+			existsSyncResults.set(`${repoPathB}/.git`, true);
+			mockGitRevparse.mockResolvedValue('.git');
+
+			// project dir EXISTS with sentinel pointing to A (not B)
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
+			readFileSyncSpy.mockReturnValue(repoPathA as unknown as Buffer);
+
+			// Fallback encoded path for B: '-Users-carol-projects-app'
+			const encodedB = '-Users-carol-projects-app';
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${encodedB}/worktrees`, false);
+			existsSyncResults.set(
+				`/home/testuser/.neokai/projects/${encodedB}/worktrees/sess-collision`,
+				false
+			);
+			mockGitRaw.mockResolvedValue('');
+
+			const result = await manager.createWorktree({
+				sessionId: 'sess-collision',
+				repoPath: repoPathB,
+			});
+
+			// Should use the full encoded fallback, NOT the short key
+			expect(result?.worktreePath).toBe(
+				`/home/testuser/.neokai/projects/${encodedB}/worktrees/sess-collision`
+			);
+			expect(result?.worktreePath).not.toContain(shortKey);
+
+			// Warning must have been logged
+			expect(loggerWarnSpy).toHaveBeenCalledWith(
+				expect.stringContaining(`Short key collision detected for "${shortKey}"`)
+			);
+		});
+
+		it('dir exists but no sentinel (older NeoKai): writes sentinel and returns short-key path', async () => {
+			const repoPath = '/Users/eve/legacy-app';
+			const shortKey = manager.getProjectShortKey(repoPath);
+
+			// Git root detection
+			existsSyncResults.set(`${repoPath}/.git`, true);
+			mockGitRevparse.mockResolvedValue('.git');
+
+			// project dir EXISTS but no sentinel file
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, false);
+
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+			existsSyncResults.set(
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-legacy`,
+				false
+			);
+			mockGitRaw.mockResolvedValue('');
+
+			const result = await manager.createWorktree({
+				sessionId: 'sess-legacy',
+				repoPath,
+			});
+
+			// Short-key path is returned
+			expect(result?.worktreePath).toBe(
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-legacy`
+			);
+			// Sentinel was written (to "adopt" the existing dir)
+			expect(writeFileSyncSpy).toHaveBeenCalledWith(
+				`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`,
+				repoPath
+			);
 		});
 	});
 });
