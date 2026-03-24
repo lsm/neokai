@@ -111,6 +111,10 @@ code change is required.
 - No structured code intelligence API accessible programmatically from the NeoKai daemon
 - Agents have no code intelligence in the default NeoKai configuration today
 - LSP document sync (§3.3) must be handled explicitly if NeoKai manages LSP servers directly
+- Call hierarchy (`callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls`) not
+  accessible — requires a real language server; no SDK equivalent
+- Workspace-wide symbol search (`workspace/symbol`) not accessible — the SDK's `Grep` tool
+  is text-only and has no awareness of symbol kinds or scopes
 
 ---
 
@@ -357,6 +361,12 @@ the MCP `mcp__${serverName}__${toolName}` convention (verified from CLI binary, 
 `mcp__ide__getDiagnostics` pattern); if the server is registered as `lsp`, tools are called
 `mcp__lsp__hover`, `mcp__lsp__goto_definition`, etc.
 
+**Coordinate system**: All LSP positions use **0-indexed** line and character numbers. This
+differs from most editors and file viewers (including the `Read` tool output), which display
+1-indexed line numbers. An agent reading that a symbol is on "line 45" in a `Read` result
+must pass `line: 44` to LSP tools. Tool descriptions and the system prompt should make this
+explicit to avoid off-by-one errors.
+
 ```typescript
 // packages/daemon/src/lib/lsp/lsp-mcp-server.ts
 
@@ -474,7 +484,7 @@ Agent working on TypeScript codebase:
 10. Agent calls mcp__lsp__diagnostics to verify no type errors remain after edits
 ```
 
-### 3.5 Integration Points in NeoKai
+### 3.6 Integration Points in NeoKai
 
 **1. Per-session MCP registration with shared LspManager**
 
