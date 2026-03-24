@@ -189,6 +189,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// causing UNIQUE constraint failures when two different rooms each create their first task.
 	// Short IDs are scoped to their parent room, so uniqueness must be (room_id, short_id).
 	runMigration48(db);
+
+	// Migration 49: Create app_mcp_servers table for application-level MCP server registry.
+	runMigration49(db);
 }
 
 /**
@@ -3008,4 +3011,29 @@ export function runMigration48(db: BunDatabase): void {
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
 		);
 	}
+}
+
+/**
+ * Migration 49: Create app_mcp_servers table for application-level MCP server registry.
+ *
+ * This table stores MCP server configurations registered at the application level,
+ * available to any room or session. Idempotent via CREATE TABLE IF NOT EXISTS.
+ */
+function runMigration49(db: BunDatabase): void {
+	db.exec(`
+    CREATE TABLE IF NOT EXISTS app_mcp_servers (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT,
+      source_type TEXT NOT NULL CHECK(source_type IN ('stdio', 'sse', 'http')),
+      command TEXT,
+      args TEXT,
+      env TEXT,
+      url TEXT,
+      headers TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER,
+      updated_at INTEGER
+    )
+  `);
 }
