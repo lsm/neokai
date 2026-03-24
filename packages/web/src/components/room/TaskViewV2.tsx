@@ -154,7 +154,7 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 	}, []);
 
 	const handleTurnClick = useCallback((turn: TurnBlock) => {
-		setSelectedTurn(turn);
+		setSelectedTurn((prev) => (prev?.id === turn.id ? null : turn));
 	}, []);
 
 	if (isLoading) {
