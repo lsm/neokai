@@ -172,7 +172,8 @@ const DB_SCHEMA = `
 		pr_number INTEGER,
 		pr_created_at INTEGER,
 		short_id TEXT,
-		updated_at INTEGER
+		updated_at INTEGER,
+		restrictions TEXT
 	);
 	CREATE TABLE session_groups (
 		id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
