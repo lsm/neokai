@@ -30,7 +30,7 @@ import type { ViewportState } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
 import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { StepDraft } from '../../WorkflowNodeCard';
 
 vi.mock('../../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),

@@ -3,7 +3,7 @@
  *
  * A right-anchored slide-in panel that appears when a workflow node is selected
  * in the visual editor. Provides inline editing of all step properties using
- * the same field layout as the WorkflowStepCard expanded view.
+ * the same field layout as the WorkflowNodeCard expanded view.
  *
  * Features:
  * - Step Name input
@@ -17,8 +17,8 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowStepCard';
-import { isMultiAgentStep } from '../WorkflowStepCard';
+import type { StepDraft } from '../WorkflowNodeCard';
+import { isMultiAgentStep } from '../WorkflowNodeCard';
 import { GateConfig } from './GateConfig';
 import type { ConditionDraft } from './GateConfig';
 
@@ -34,12 +34,12 @@ export interface NodeConfigPanelProps {
 	isStartNode: boolean;
 	/**
 	 * When true, the entry gate shows "Workflow starts here" (no selector).
-	 * Mirrors the WorkflowStepCard terminal message for the first step.
+	 * Mirrors the WorkflowNodeCard terminal message for the first step.
 	 */
 	isFirstStep?: boolean;
 	/**
 	 * When true, the exit gate shows "Workflow ends here" (no selector).
-	 * Mirrors the WorkflowStepCard terminal message for the last step.
+	 * Mirrors the WorkflowNodeCard terminal message for the last step.
 	 */
 	isLastStep?: boolean;
 	onUpdate: (step: StepDraft) => void;

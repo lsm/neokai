@@ -2,7 +2,7 @@
  * GateConfig
  *
  * Shared sub-form for configuring workflow transition conditions (entry/exit gates).
- * Extracted so both WorkflowStepCard (list editor) and NodeConfigPanel (visual editor)
+ * Extracted so both WorkflowNodeCard (list editor) and NodeConfigPanel (visual editor)
  * can reuse the same UI without duplication.
  */
 

@@ -33,7 +33,7 @@ import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
-import type { StepDraft } from '../WorkflowStepCard';
+import type { StepDraft } from '../WorkflowNodeCard';
 import type { ConditionDraft } from './GateConfig';
 import type { ViewportState, Point } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';

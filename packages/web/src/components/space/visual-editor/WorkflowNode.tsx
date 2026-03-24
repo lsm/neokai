@@ -16,8 +16,8 @@
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowStepCard';
-import { isMultiAgentStep } from '../WorkflowStepCard';
+import type { StepDraft } from '../WorkflowNodeCard';
+import { isMultiAgentStep } from '../WorkflowNodeCard';
 import type { Point } from './types';
 
 // ============================================================================

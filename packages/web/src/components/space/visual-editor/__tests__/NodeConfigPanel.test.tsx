@@ -22,7 +22,7 @@ import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { SpaceAgent } from '@neokai/shared';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { StepDraft } from '../../WorkflowNodeCard';
 import type { ConditionDraft } from '../GateConfig';
 
 afterEach(() => cleanup());

@@ -35,7 +35,7 @@ import type {
 	WorkflowChannel,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowStepCard';
+import type { StepDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import { rulesToDrafts } from '../WorkflowRulesEditor';
 import type { Point } from './types';

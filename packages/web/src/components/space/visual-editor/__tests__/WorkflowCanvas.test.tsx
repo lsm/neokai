@@ -22,7 +22,7 @@ import { useState } from 'preact/hooks';
 import type { SpaceAgent, WorkflowTransition } from '@neokai/shared';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { StepDraft } from '../../WorkflowNodeCard';
 import type { ViewportState } from '../types';
 
 vi.mock('../../../../lib/utils', () => ({

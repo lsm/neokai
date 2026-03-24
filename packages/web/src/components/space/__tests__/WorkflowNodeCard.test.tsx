@@ -1,5 +1,5 @@
 /**
- * Unit tests for WorkflowStepCard
+ * Unit tests for WorkflowNodeCard
  *
  * Tests:
  * - Collapsed view: step number, agent name, gate icons
@@ -15,8 +15,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { SpaceAgent } from '@neokai/shared';
-import { WorkflowStepCard } from '../WorkflowStepCard';
-import type { StepDraft, ConditionDraft } from '../WorkflowStepCard';
+import { WorkflowNodeCard } from '../WorkflowNodeCard';
+import type { StepDraft, ConditionDraft } from '../WorkflowNodeCard';
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -49,7 +49,7 @@ const defaultAgents: SpaceAgent[] = [
 	makeAgent('agent-3', 'general', 'general'),
 ];
 
-function makeProps(overrides: Partial<Parameters<typeof WorkflowStepCard>[0]> = {}) {
+function makeProps(overrides: Partial<Parameters<typeof WorkflowNodeCard>[0]> = {}) {
 	return {
 		step: makeStep(),
 		stepIndex: 1,
@@ -70,39 +70,39 @@ function makeProps(overrides: Partial<Parameters<typeof WorkflowStepCard>[0]> = 
 	};
 }
 
-describe('WorkflowStepCard', () => {
+describe('WorkflowNodeCard', () => {
 	afterEach(() => {
 		cleanup();
 	});
 
 	describe('collapsed view', () => {
 		it('renders step number (1-based)', () => {
-			const { getByText } = render(<WorkflowStepCard {...makeProps({ stepIndex: 2 })} />);
+			const { getByText } = render(<WorkflowNodeCard {...makeProps({ stepIndex: 2 })} />);
 			expect(getByText('3')).toBeTruthy();
 		});
 
 		it('renders agent name in collapsed view', () => {
-			const { getByText } = render(<WorkflowStepCard {...makeProps()} />);
+			const { getByText } = render(<WorkflowNodeCard {...makeProps()} />);
 			expect(getByText('planner')).toBeTruthy();
 		});
 
 		it('renders step name in collapsed view', () => {
 			const { getByText } = render(
-				<WorkflowStepCard {...makeProps({ step: makeStep({ name: 'My Awesome Step' }) })} />
+				<WorkflowNodeCard {...makeProps({ step: makeStep({ name: 'My Awesome Step' }) })} />
 			);
 			expect(getByText('My Awesome Step')).toBeTruthy();
 		});
 
 		it('shows "Unnamed Step" when name is empty', () => {
 			const { getByText } = render(
-				<WorkflowStepCard {...makeProps({ step: makeStep({ name: '' }) })} />
+				<WorkflowNodeCard {...makeProps({ step: makeStep({ name: '' }) })} />
 			);
 			expect(getByText('Unnamed Step')).toBeTruthy();
 		});
 
 		it('calls onToggleExpand when header clicked', () => {
 			const onToggleExpand = vi.fn();
-			const { container } = render(<WorkflowStepCard {...makeProps({ onToggleExpand })} />);
+			const { container } = render(<WorkflowNodeCard {...makeProps({ onToggleExpand })} />);
 			const header = container.querySelector('.cursor-pointer') as HTMLElement;
 			fireEvent.click(header);
 			expect(onToggleExpand).toHaveBeenCalledOnce();
@@ -110,62 +110,62 @@ describe('WorkflowStepCard', () => {
 
 		it('calls onMoveUp when up button clicked', () => {
 			const onMoveUp = vi.fn();
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ onMoveUp })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ onMoveUp })} />);
 			fireEvent.click(getByTitle('Move up'));
 			expect(onMoveUp).toHaveBeenCalledOnce();
 		});
 
 		it('calls onMoveDown when down button clicked', () => {
 			const onMoveDown = vi.fn();
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ onMoveDown })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ onMoveDown })} />);
 			fireEvent.click(getByTitle('Move down'));
 			expect(onMoveDown).toHaveBeenCalledOnce();
 		});
 
 		it('disables move up button for first step', () => {
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ isFirst: true })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ isFirst: true })} />);
 			expect((getByTitle('Move up') as HTMLButtonElement).disabled).toBe(true);
 		});
 
 		it('disables move down button for last step', () => {
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ isLast: true })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ isLast: true })} />);
 			expect((getByTitle('Move down') as HTMLButtonElement).disabled).toBe(true);
 		});
 
 		it('calls onRemove when remove button clicked', () => {
 			const onRemove = vi.fn();
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ onRemove })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ onRemove })} />);
 			fireEvent.click(getByTitle('Remove step'));
 			expect(onRemove).toHaveBeenCalledOnce();
 		});
 
 		it('disables Remove button when disableRemove is true', () => {
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ disableRemove: true })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ disableRemove: true })} />);
 			expect((getByTitle('Remove step') as HTMLButtonElement).disabled).toBe(true);
 		});
 
 		it('enables Remove button when disableRemove is false', () => {
-			const { getByTitle } = render(<WorkflowStepCard {...makeProps({ disableRemove: false })} />);
+			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ disableRemove: false })} />);
 			expect((getByTitle('Remove step') as HTMLButtonElement).disabled).toBe(false);
 		});
 
 		it('shows human gate icon when entry condition is human', () => {
 			const { getByTitle } = render(
-				<WorkflowStepCard {...makeProps({ entryCondition: { type: 'human' } })} />
+				<WorkflowNodeCard {...makeProps({ entryCondition: { type: 'human' } })} />
 			);
 			expect(getByTitle('Entry: Human Approval')).toBeTruthy();
 		});
 
 		it('shows condition gate icon when exit condition is shell condition', () => {
 			const { getByTitle } = render(
-				<WorkflowStepCard {...makeProps({ exitCondition: { type: 'condition' } })} />
+				<WorkflowNodeCard {...makeProps({ exitCondition: { type: 'condition' } })} />
 			);
 			expect(getByTitle('Exit: Shell Condition')).toBeTruthy();
 		});
 
 		it('does not show gate icons for always conditions', () => {
 			const { container } = render(
-				<WorkflowStepCard
+				<WorkflowNodeCard
 					{...makeProps({
 						entryCondition: { type: 'always' },
 						exitCondition: { type: 'always' },
@@ -181,19 +181,19 @@ describe('WorkflowStepCard', () => {
 	describe('expanded view', () => {
 		it('shows expanded body when expanded=true', () => {
 			const { getByPlaceholderText } = render(
-				<WorkflowStepCard {...makeProps({ expanded: true })} />
+				<WorkflowNodeCard {...makeProps({ expanded: true })} />
 			);
 			expect(getByPlaceholderText('e.g. Plan the approach')).toBeTruthy();
 		});
 
 		it('does not show expanded body when expanded=false', () => {
-			const { container } = render(<WorkflowStepCard {...makeProps({ expanded: false })} />);
+			const { container } = render(<WorkflowNodeCard {...makeProps({ expanded: false })} />);
 			const textarea = container.querySelector('textarea');
 			expect(textarea).toBeNull();
 		});
 
 		it('renders agent dropdown with all passed agents', () => {
-			const { container } = render(<WorkflowStepCard {...makeProps({ expanded: true })} />);
+			const { container } = render(<WorkflowNodeCard {...makeProps({ expanded: true })} />);
 			const selects = container.querySelectorAll('select');
 			// Agent select + entry gate select + exit gate select = 3 selects
 			const agentSelect = selects[0] as HTMLSelectElement;
@@ -205,7 +205,7 @@ describe('WorkflowStepCard', () => {
 
 		it('shows currently selected agent in dropdown', () => {
 			const step = makeStep({ agentId: 'agent-2' });
-			const { container } = render(<WorkflowStepCard {...makeProps({ step, expanded: true })} />);
+			const { container } = render(<WorkflowNodeCard {...makeProps({ step, expanded: true })} />);
 			const agentSelect = container.querySelectorAll('select')[0];
 			expect(agentSelect.value).toBe('agent-2');
 		});
@@ -213,7 +213,7 @@ describe('WorkflowStepCard', () => {
 		it('calls onUpdate when agent changed', () => {
 			const onUpdate = vi.fn();
 			const { container } = render(
-				<WorkflowStepCard {...makeProps({ expanded: true, onUpdate })} />
+				<WorkflowNodeCard {...makeProps({ expanded: true, onUpdate })} />
 			);
 			const agentSelect = container.querySelectorAll('select')[0];
 			fireEvent.change(agentSelect, { target: { value: 'agent-2' } });
@@ -223,7 +223,7 @@ describe('WorkflowStepCard', () => {
 		it('calls onUpdate when name changed', () => {
 			const onUpdate = vi.fn();
 			const { getByPlaceholderText } = render(
-				<WorkflowStepCard {...makeProps({ expanded: true, onUpdate })} />
+				<WorkflowNodeCard {...makeProps({ expanded: true, onUpdate })} />
 			);
 			const nameInput = getByPlaceholderText('e.g. Plan the approach');
 			fireEvent.input(nameInput, { target: { value: 'New Name' } });
@@ -233,7 +233,7 @@ describe('WorkflowStepCard', () => {
 		it('calls onUpdate when instructions changed', () => {
 			const onUpdate = vi.fn();
 			const { container } = render(
-				<WorkflowStepCard {...makeProps({ expanded: true, onUpdate })} />
+				<WorkflowNodeCard {...makeProps({ expanded: true, onUpdate })} />
 			);
 			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 			fireEvent.input(textarea, { target: { value: 'Do the thing.' } });
@@ -244,14 +244,14 @@ describe('WorkflowStepCard', () => {
 
 		it('renders "Workflow starts here" for first step entry gate', () => {
 			const { getByText } = render(
-				<WorkflowStepCard {...makeProps({ expanded: true, isFirst: true, entryCondition: null })} />
+				<WorkflowNodeCard {...makeProps({ expanded: true, isFirst: true, entryCondition: null })} />
 			);
 			expect(getByText('Workflow starts here')).toBeTruthy();
 		});
 
 		it('renders "Workflow ends here" for last step exit gate', () => {
 			const { getByText } = render(
-				<WorkflowStepCard {...makeProps({ expanded: true, isLast: true, exitCondition: null })} />
+				<WorkflowNodeCard {...makeProps({ expanded: true, isLast: true, exitCondition: null })} />
 			);
 			expect(getByText('Workflow ends here')).toBeTruthy();
 		});
@@ -259,7 +259,7 @@ describe('WorkflowStepCard', () => {
 		describe('gate config — condition type', () => {
 			it('shows shell expression input when condition type is "condition"', () => {
 				const { getByPlaceholderText } = render(
-					<WorkflowStepCard
+					<WorkflowNodeCard
 						{...makeProps({
 							expanded: true,
 							entryCondition: { type: 'condition', expression: '' },
@@ -271,7 +271,7 @@ describe('WorkflowStepCard', () => {
 
 			it('does not show shell expression input for "always" type', () => {
 				const { container } = render(
-					<WorkflowStepCard
+					<WorkflowNodeCard
 						{...makeProps({
 							expanded: true,
 							entryCondition: { type: 'always' },
@@ -286,7 +286,7 @@ describe('WorkflowStepCard', () => {
 			it('calls onUpdateEntryCondition when entry gate type changed', () => {
 				const onUpdateEntryCondition = vi.fn();
 				const { container } = render(
-					<WorkflowStepCard
+					<WorkflowNodeCard
 						{...makeProps({
 							expanded: true,
 							entryCondition: { type: 'always' },
@@ -306,7 +306,7 @@ describe('WorkflowStepCard', () => {
 			it('calls onUpdateExitCondition when exit gate type changed', () => {
 				const onUpdateExitCondition = vi.fn();
 				const { container } = render(
-					<WorkflowStepCard
+					<WorkflowNodeCard
 						{...makeProps({
 							expanded: true,
 							exitCondition: { type: 'always' },
@@ -322,7 +322,7 @@ describe('WorkflowStepCard', () => {
 
 			it('shows "Requires human approval" hint for human type', () => {
 				const { getByText } = render(
-					<WorkflowStepCard
+					<WorkflowNodeCard
 						{...makeProps({
 							expanded: true,
 							entryCondition: { type: 'human' },
@@ -334,7 +334,7 @@ describe('WorkflowStepCard', () => {
 
 			it('shows "fires automatically" hint for always type', () => {
 				const { getAllByText } = render(
-					<WorkflowStepCard
+					<WorkflowNodeCard
 						{...makeProps({
 							expanded: true,
 							entryCondition: { type: 'always' },

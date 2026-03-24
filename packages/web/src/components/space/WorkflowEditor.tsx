@@ -5,7 +5,7 @@
  *
  * Features:
  * - Name and description fields
- * - Vertical step list with expandable WorkflowStepCards
+ * - Vertical step list with expandable WorkflowNodeCards
  * - Add Step button
  * - "Start from template" options
  * - Save / Cancel
@@ -15,8 +15,8 @@ import { useState } from 'preact/hooks';
 import type { SpaceWorkflow, SpaceAgent } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
-import { WorkflowStepCard } from './WorkflowStepCard';
-import type { StepDraft, ConditionDraft } from './WorkflowStepCard';
+import { WorkflowNodeCard } from './WorkflowNodeCard';
+import type { StepDraft, ConditionDraft } from './WorkflowNodeCard';
 import { WorkflowRulesEditor } from './WorkflowRulesEditor';
 import type { RuleDraft } from './WorkflowRulesEditor';
 import { rulesToDrafts } from './WorkflowRulesEditor';
@@ -520,7 +520,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 					<div class="space-y-2">
 						{steps.map((step, i) => (
-							<WorkflowStepCard
+							<WorkflowNodeCard
 								key={step.localId}
 								step={step}
 								stepIndex={i}

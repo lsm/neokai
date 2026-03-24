@@ -1,7 +1,7 @@
 /**
- * WorkflowStepCard Component
+ * WorkflowNodeCard Component
  *
- * A single step card in the workflow editor.
+ * A single node card in the workflow editor.
  * Supports collapsed (summary) and expanded (edit) modes.
  *
  * Collapsed: step number, agent name, gate type icons
@@ -15,7 +15,7 @@ import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
 import type { ConditionDraft } from './visual-editor/GateConfig';
 
 // ============================================================================
-// Draft Types (used by WorkflowEditor + WorkflowStepCard)
+// Draft Types (used by WorkflowEditor + WorkflowNodeCard)
 // ============================================================================
 
 export interface StepDraft {
@@ -37,7 +37,7 @@ export interface StepDraft {
 // Multi-agent helpers
 // ============================================================================
 
-/** Returns true when this step has multiple agents configured. */
+/** Returns true when this node has multiple agents configured. */
 export function isMultiAgentStep(step: StepDraft): boolean {
 	return Array.isArray(step.agents) && step.agents.length > 0;
 }
@@ -142,7 +142,7 @@ function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 		const next = stepAgents.filter((a) => a.agentId !== agentId);
 		if (next.length === 0) {
 			// Switch back to single-agent mode: restore agentId from the removed agent and
-			// clear channels (orphaned channels on a single-agent step are semantically invalid)
+			// clear channels (orphaned channels on a single-agent node are semantically invalid)
 			onUpdate({ ...step, agents: undefined, agentId, channels: undefined });
 		} else {
 			updateAgents(next);
@@ -438,15 +438,15 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 // Main Component
 // ============================================================================
 
-interface WorkflowStepCardProps {
+interface WorkflowNodeCardProps {
 	step: StepDraft;
 	stepIndex: number;
 	isFirst: boolean;
 	isLast: boolean;
 	expanded: boolean;
-	/** Condition on the transition coming INTO this step. Null for the first step. */
+	/** Condition on the transition coming INTO this node. Null for the first node. */
 	entryCondition: ConditionDraft | null;
-	/** Condition on the transition going OUT from this step. Null for the last step. */
+	/** Condition on the transition going OUT from this node. Null for the last node. */
 	exitCondition: ConditionDraft | null;
 	/** All space agents, excluding 'leader' */
 	agents: SpaceAgent[];
@@ -459,11 +459,11 @@ interface WorkflowStepCardProps {
 	onMoveUp: () => void;
 	onMoveDown: () => void;
 	onRemove: () => void;
-	/** When true, the Remove button is disabled (e.g. only one step remains) */
+	/** When true, the Remove button is disabled (e.g. only one node remains) */
 	disableRemove?: boolean;
 }
 
-export function WorkflowStepCard({
+export function WorkflowNodeCard({
 	step,
 	stepIndex,
 	isFirst,
@@ -480,7 +480,7 @@ export function WorkflowStepCard({
 	onMoveDown,
 	onRemove,
 	disableRemove = false,
-}: WorkflowStepCardProps) {
+}: WorkflowNodeCardProps) {
 	const multi = isMultiAgentStep(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
 
@@ -503,7 +503,7 @@ export function WorkflowStepCard({
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-1.5 min-w-0 flex-wrap">
 						<span class="text-xs font-medium text-gray-200 truncate">
-							{step.name || 'Unnamed Step'}
+							{step.name || 'Unnamed Node'}
 						</span>
 						<span class="text-xs text-gray-600 flex-shrink-0">·</span>
 						{multi ? (
@@ -562,7 +562,7 @@ export function WorkflowStepCard({
 						onClick={onRemove}
 						disabled={disableRemove}
 						class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-						title="Remove step"
+						title="Remove node"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
@@ -586,7 +586,7 @@ export function WorkflowStepCard({
 				<div class="px-4 py-4 bg-dark-900 space-y-4">
 					{/* Name */}
 					<div class="space-y-1">
-						<label class="text-xs font-medium text-gray-400">Step Name</label>
+						<label class="text-xs font-medium text-gray-400">Node Name</label>
 						<input
 							type="text"
 							value={step.name}
@@ -664,7 +664,7 @@ export function WorkflowStepCard({
 									instructions: (e.currentTarget as HTMLTextAreaElement).value,
 								})
 							}
-							placeholder="Step-specific instructions appended to the agent's system prompt…"
+							placeholder="Node-specific instructions appended to the agent's system prompt…"
 							rows={4}
 							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
 						/>

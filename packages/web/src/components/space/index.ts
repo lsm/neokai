@@ -13,9 +13,9 @@ export { SpaceTaskPane } from './SpaceTaskPane';
 export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';
 export { WorkflowList } from './WorkflowList';
 export { WorkflowRulesEditor, makeEmptyRule, rulesToDrafts } from './WorkflowRulesEditor';
-export { WorkflowStepCard } from './WorkflowStepCard';
+export { WorkflowNodeCard } from './WorkflowNodeCard';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
 export { downloadBundle, pickImportFile } from './export-import-utils';
 
 export type { RuleDraft } from './WorkflowRulesEditor';
-export type { StepDraft, ConditionDraft } from './WorkflowStepCard';
+export type { StepDraft, ConditionDraft } from './WorkflowNodeCard';
