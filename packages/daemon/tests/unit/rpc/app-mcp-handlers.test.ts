@@ -305,6 +305,13 @@ describe('mcp.registry.update', () => {
 		const handler = h.get('mcp.registry.update')!;
 		await expect(handler({ id: 'nonexistent-id' }, {})).rejects.toThrow('MCP server not found');
 	});
+
+	it('does NOT emit changed when no update fields are provided (no-op)', async () => {
+		const handler = handlers.get('mcp.registry.update')!;
+		// Only id, no actual update fields
+		await handler({ id: MCP_ENTRY.id }, {});
+		expect(emit).not.toHaveBeenCalled();
+	});
 });
 
 describe('mcp.registry.delete', () => {
