@@ -2996,19 +2996,29 @@ export class RoomRuntime {
 			// First execution (executionNumber === 1) always goes through the planner to
 			// establish the initial plan.
 			if (execution.executionNumber > 1 && prevCompleted) {
-				const clonedCount = await this.reuseExecutionPlan(
-					goal,
-					execution.id,
-					prevCompleted.taskIds
-				);
-				if (clonedCount > 0) {
-					log.info(
-						`Recurring mission ${goal.id}: execution ${execution.executionNumber} started with ${clonedCount} reused tasks`
+				try {
+					const clonedCount = await this.reuseExecutionPlan(
+						goal,
+						execution.id,
+						prevCompleted.taskIds
 					);
-				} else {
-					// No tasks to clone (e.g., previous execution had no tasks) — fall back to planning
+					if (clonedCount > 0) {
+						log.info(
+							`Recurring mission ${goal.id}: execution ${execution.executionNumber} started with ${clonedCount} reused tasks`
+						);
+					} else {
+						// No tasks to clone (e.g., previous execution had no tasks) — fall back to planning
+						log.warn(
+							`Recurring mission ${goal.id}: no tasks to reuse from previous execution — falling back to planning`
+						);
+						await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+					}
+				} catch (err) {
+					// Plan reuse failed (e.g., DB error mid-clone) — fall back to planning
+					// so the execution isn't orphaned with no tasks and no group.
 					log.warn(
-						`Recurring mission ${goal.id}: no tasks to reuse from previous execution — falling back to planning`
+						`Recurring mission ${goal.id}: plan reuse failed — falling back to planning`,
+						err
 					);
 					await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
 				}
@@ -3430,6 +3440,13 @@ export class RoomRuntime {
 		// Second pass: update dependsOn to use new task IDs
 		for (const prevTask of executionTasks) {
 			if (prevTask.dependsOn && prevTask.dependsOn.length > 0) {
+				const droppedDeps = prevTask.dependsOn.filter((depId) => !oldToNewIdMap.has(depId));
+				if (droppedDeps.length > 0) {
+					log.warn(
+						`[reuseExecutionPlan] Dropped unresolvable dependencies for cloned task "${prevTask.title}": ${droppedDeps.join(', ')}`
+					);
+				}
+
 				const newDependsOn = prevTask.dependsOn
 					.map((depId) => oldToNewIdMap.get(depId))
 					.filter(Boolean) as string[];

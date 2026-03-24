@@ -852,9 +852,9 @@ describe('Recurring Missions: plan reuse for subsequent executions', () => {
 
 		const exec1 = ctx.goalManager.getActiveExecution(goal.id);
 
-		// Create a task but don't link any tasks to execution (simulating planning failure)
-		// The orphan guard won't trigger since we haven't exceeded 5 minutes
-		// Instead, manually complete the empty execution
+		// Don't create any additional tasks — the execution will have no tasks.
+		// Manually complete the empty execution to simulate a planning failure scenario.
+		// The orphan guard won't trigger since we haven't exceeded 5 minutes.
 		ctx.goalManager.completeExecution(exec1!.id, 'No tasks created');
 
 		await ctx.runtime.tick();
