@@ -13,7 +13,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
 import type { NodeDraft, ConditionDraft } from '../WorkflowNodeCard';
@@ -346,5 +347,159 @@ describe('WorkflowNodeCard', () => {
 				expect(getAllByText('Transition fires automatically.').length).toBeGreaterThan(0);
 			});
 		});
+	});
+});
+
+// ============================================================================
+// Per-slot override indicators in collapsed header
+// ============================================================================
+
+describe('WorkflowNodeCard — collapsed header override indicators', () => {
+	afterEach(() => cleanup());
+
+	it('shows slot role name in collapsed badge (not agent name)', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'strict-reviewer' },
+				{ agentId: 'agent-2', role: 'quick-reviewer' },
+			],
+		});
+		const { container } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
+		expect(container.textContent).toContain('strict-reviewer');
+		expect(container.textContent).toContain('quick-reviewer');
+	});
+
+	it('does not show override-dot when no slot has overrides', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'coder' },
+				{ agentId: 'agent-2', role: 'reviewer' },
+			],
+		});
+		const { queryAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: false })} />
+		);
+		expect(queryAllByTestId('override-dot')).toHaveLength(0);
+	});
+
+	it('shows override-dot on slot with model override', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' },
+				{ agentId: 'agent-2', role: 'reviewer' },
+			],
+		});
+		const { getAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: false })} />
+		);
+		// Only the first slot has overrides
+		expect(getAllByTestId('override-dot')).toHaveLength(1);
+	});
+
+	it('shows override-dot on slot with systemPrompt override', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'coder', systemPrompt: 'Be strict.' }],
+		});
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
+		expect(getByTestId('override-dot')).toBeTruthy();
+	});
+
+	it('shows override-dot on each slot that has overrides (multiple)', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' },
+				{ agentId: 'agent-2', role: 'reviewer', systemPrompt: 'Review carefully.' },
+			],
+		});
+		const { getAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: false })} />
+		);
+		expect(getAllByTestId('override-dot')).toHaveLength(2);
+	});
+});
+// ============================================================================
+// Per-slot override section expand/collapse in expanded card view
+// ============================================================================
+
+describe('WorkflowNodeCard — expanded view per-slot override section', () => {
+	afterEach(() => cleanup());
+
+	it('does not show slot-overrides section before toggle is clicked', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'planner' }],
+		});
+		const { queryByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: true })} />);
+		expect(queryByTestId('slot-overrides')).toBeNull();
+	});
+
+	it('shows slot-overrides section after toggle button is clicked', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'planner' }],
+		});
+		const { getByTestId, queryByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
+		);
+		expect(queryByTestId('slot-overrides')).toBeNull();
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+		expect(queryByTestId('slot-overrides')).toBeTruthy();
+	});
+
+	it('hides slot-overrides section after second toggle click', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'planner' }],
+		});
+		const { getByTestId, queryByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
+		);
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+		expect(queryByTestId('slot-overrides')).toBeTruthy();
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+		expect(queryByTestId('slot-overrides')).toBeNull();
+	});
+
+	it('override section stays expanded after slot role is renamed', async () => {
+		function Wrapper() {
+			const [step, setStep] = useState(
+				makeStep({ agentId: '', agents: [{ agentId: 'agent-1', role: 'planner' }] })
+			);
+			return <WorkflowNodeCard {...makeProps({ node: step, expanded: true, onUpdate: setStep })} />;
+		}
+		const { getByTestId, queryByTestId } = render(<Wrapper />);
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+		expect(queryByTestId('slot-overrides')).toBeTruthy();
+		await act(async () => {
+			fireEvent.input(getByTestId('agent-role-input'), {
+				target: { value: 'lead-planner' },
+			});
+		});
+		expect(queryByTestId('slot-overrides')).toBeTruthy();
+	});
+
+	it('model input inside slot-overrides calls onUpdate with updated model', async () => {
+		const onUpdate = vi.fn();
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'coder' }],
+		});
+		const { getByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: true, onUpdate })} />
+		);
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+		await act(async () => {
+			fireEvent.input(getByTestId('agent-model-input'), {
+				target: { value: 'claude-opus-4-6' },
+			});
+		});
+		expect(onUpdate).toHaveBeenCalled();
+		const updated = onUpdate.mock.calls[0][0] as NodeDraft;
+		expect(updated.agents?.[0].model).toBe('claude-opus-4-6');
 	});
 });

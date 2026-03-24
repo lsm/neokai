@@ -385,13 +385,20 @@ export function WorkflowNode({
 				{multi ? (
 					<div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
 						{step.agents!.map((sa) => {
-							const name = agents.find((a) => a.id === sa.agentId)?.name ?? sa.agentId;
+							const hasOverrides = !!(sa.model || sa.systemPrompt);
 							return (
 								<span
-									key={sa.agentId}
-									class="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"
+									key={sa.role}
+									class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-900/40 text-amber-300' : 'bg-gray-700 text-gray-300'}`}
+									title={hasOverrides ? `${sa.role} (has overrides)` : sa.role}
 								>
-									{name}
+									{sa.role}
+									{hasOverrides && (
+										<span
+											data-testid="override-indicator"
+											class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+										/>
+									)}
 								</span>
 							);
 						})}

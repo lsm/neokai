@@ -8,6 +8,7 @@
  * Expanded: name input, agent dropdown, entry/exit gate selectors, instructions
  */
 
+import { useState, useCallback } from 'preact/hooks';
 import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
 import type { WorkflowConditionType } from '@neokai/shared';
 import { cn } from '../../lib/utils';
@@ -128,6 +129,18 @@ interface MultiAgentSectionProps {
 function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	const nodeAgents = node.agents ?? [];
 
+	// Track which slots have their override fields expanded (keyed by role)
+	const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
+
+	const toggleSlotExpanded = useCallback((role: string) => {
+		setExpandedSlots((prev) => {
+			const next = new Set(prev);
+			if (next.has(role)) next.delete(role);
+			else next.add(role);
+			return next;
+		});
+	}, []);
+
 	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...node, agents: next, agentId: '' });
 	}
@@ -135,7 +148,8 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		const baseRole = agentInfo?.role ?? agentId;
+		// Guard against agents with empty role strings to avoid indistinguishable slot names
+		const baseRole = agentInfo?.role?.trim() || agentId;
 		// Ensure the slot role is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
 		const usedRoles = new Set(nodeAgents.map((a) => a.role));
@@ -171,6 +185,20 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 		);
 	}
 
+	function updateAgentModel(role: string, model: string) {
+		updateAgents(
+			nodeAgents.map((a) => (a.role === role ? { ...a, model: model || undefined } : a))
+		);
+	}
+
+	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
+		updateAgents(
+			nodeAgents.map((a) =>
+				a.role === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
+			)
+		);
+	}
+
 	// All agents are available; same agent may be added multiple times with different roles.
 	const availableAgents = agents;
 
@@ -202,17 +230,72 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 			<div class="space-y-1.5">
 				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
+					const hasOverrides = !!(sa.model || sa.systemPrompt);
+					const isExpanded = expandedSlots.has(sa.role);
 					return (
-						<div key={sa.role} class="bg-dark-800 border border-dark-600 rounded p-2 space-y-1">
-							<div class="flex items-center justify-between">
-								<span class="text-xs font-medium text-gray-200">
-									{agentInfo?.name ?? sa.agentId}
-									{agentInfo && <span class="text-gray-500 ml-1">({sa.role})</span>}
-								</span>
+						<div
+							key={sa.role}
+							class={`rounded p-2 space-y-1 border ${hasOverrides ? 'bg-amber-950/20 border-amber-700/40' : 'bg-dark-800 border-dark-600'}`}
+						>
+							{/* Header: role input + override badge + remove */}
+							<div class="flex items-center gap-1">
+								<input
+									type="text"
+									value={sa.role}
+									onInput={(e) => {
+										const oldRole = sa.role;
+										const newRole = (e.currentTarget as HTMLInputElement).value;
+										// Keep the override section expanded after a rename by migrating the key
+										setExpandedSlots((prev) => {
+											if (!prev.has(oldRole)) return prev;
+											const next = new Set(prev);
+											next.delete(oldRole);
+											next.add(newRole);
+											return next;
+										});
+										updateAgents(
+											nodeAgents.map((a) => (a.role === oldRole ? { ...a, role: newRole } : a))
+										);
+									}}
+									placeholder="slot role"
+									data-testid="agent-role-input"
+									class="flex-1 text-xs font-mono bg-dark-900 border border-dark-700 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600 min-w-0"
+								/>
+								{hasOverrides && (
+									<span class="text-xs text-amber-400 bg-amber-900/40 border border-amber-700/50 rounded px-1 py-0.5 flex-shrink-0">
+										overrides
+									</span>
+								)}
+								<button
+									type="button"
+									onClick={() => toggleSlotExpanded(sa.role)}
+									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
+									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
+									aria-expanded={isExpanded}
+									data-testid="toggle-overrides-button"
+								>
+									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										{isExpanded ? (
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M5 15l7-7 7 7"
+											/>
+										) : (
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M19 9l-7 7-7-7"
+											/>
+										)}
+									</svg>
+								</button>
 								<button
 									type="button"
 									onClick={() => removeAgent(sa.role)}
-									class="text-gray-600 hover:text-red-400 transition-colors"
+									class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
 									title="Remove agent"
 								>
 									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -225,6 +308,9 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 									</svg>
 								</button>
 							</div>
+							{/* Agent name (readonly) */}
+							<p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId}</p>
+							{/* Per-agent instructions */}
 							<input
 								type="text"
 								value={sa.instructions ?? ''}
@@ -234,6 +320,41 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 								placeholder="Per-agent instructions (optional)…"
 								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
 							/>
+							{/* Expandable overrides section */}
+							{isExpanded && (
+								<div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
+									<p class="text-xs text-gray-500 font-medium">Slot overrides</p>
+									<div class="space-y-0.5">
+										<label class="text-xs text-gray-600">Model</label>
+										<input
+											type="text"
+											value={sa.model ?? ''}
+											onInput={(e) =>
+												updateAgentModel(sa.role, (e.currentTarget as HTMLInputElement).value)
+											}
+											placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
+											data-testid="agent-model-input"
+											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+										/>
+									</div>
+									<div class="space-y-0.5">
+										<label class="text-xs text-gray-600">System Prompt</label>
+										<textarea
+											value={sa.systemPrompt ?? ''}
+											onInput={(e) =>
+												updateAgentSystemPrompt(
+													sa.role,
+													(e.currentTarget as HTMLTextAreaElement).value
+												)
+											}
+											placeholder="Override system prompt (leave blank to use agent default)…"
+											data-testid="agent-system-prompt-input"
+											rows={3}
+											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+										/>
+									</div>
+								</div>
+							)}
 						</div>
 					);
 				})}
@@ -521,12 +642,20 @@ export function WorkflowNodeCard({
 							<span class="flex items-center gap-1 flex-wrap">
 								{node.agents!.map((a) => {
 									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId;
+									const hasOverrides = !!(a.model || a.systemPrompt);
 									return (
 										<span
-											key={a.agentId}
-											class="text-xs bg-dark-700 border border-dark-600 text-gray-300 rounded px-1 py-0.5"
+											key={a.role}
+											class={`text-xs border rounded px-1 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-950/30 border-amber-700/50 text-amber-300' : 'bg-dark-700 border-dark-600 text-gray-300'}`}
+											title={`${name} — slot: ${a.role}${hasOverrides ? ' (has overrides)' : ''}`}
 										>
-											{name}
+											<span>{a.role}</span>
+											{hasOverrides && (
+												<span
+													data-testid="override-dot"
+													class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+												/>
+											)}
 										</span>
 									);
 								})}
