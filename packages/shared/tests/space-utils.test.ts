@@ -140,12 +140,12 @@ describe('resolveNodeAgents', () => {
 describe('resolveNodeChannels', () => {
 	test('returns empty array when no channels defined', () => {
 		const node = makeNode({ agentId: 'agent-coder-id' });
-		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(node)).toEqual([]);
 	});
 
 	test('returns empty array when channels is an empty array', () => {
 		const node = makeNode({ agentId: 'agent-coder-id', channels: [] });
-		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(node)).toEqual([]);
 	});
 
 	test('A→B one-way: produces one resolved channel', () => {
@@ -156,7 +156,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(1);
 		expect(result[0]).toMatchObject({
 			fromRole: 'coder',
@@ -176,7 +176,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(2);
 
 		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
@@ -200,7 +200,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(2);
 
 		const toReviewer = result.find((r) => r.toRole === 'reviewer');
@@ -224,7 +224,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 
 		// 2 spokes × 2 directions = 4 channels
 		expect(result).toHaveLength(4);
@@ -254,7 +254,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 
 		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -271,7 +271,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 
 		// coder→reviewer and coder→security (coder→coder self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -295,7 +295,7 @@ describe('resolveNodeChannels', () => {
 				},
 			],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result.every((r) => r.label === 'feedback')).toBe(true);
 	});
 
@@ -304,7 +304,7 @@ describe('resolveNodeChannels', () => {
 			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(0);
 	});
 
@@ -313,7 +313,7 @@ describe('resolveNodeChannels', () => {
 			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'coder', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(0);
 	});
 
@@ -329,7 +329,7 @@ describe('resolveNodeChannels', () => {
 				{ from: 'reviewer', to: 'security', direction: 'one-way' },
 			],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(2);
 		expect(result[0]).toMatchObject({ fromRole: 'coder', toRole: 'reviewer' });
 		expect(result[1]).toMatchObject({ fromRole: 'reviewer', toRole: 'security' });
@@ -337,7 +337,7 @@ describe('resolveNodeChannels', () => {
 
 	test('backward-compat: node with only agentId and no channels resolves channels to []', () => {
 		const node = makeNode({ agentId: 'agent-coder-id' });
-		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(node)).toEqual([]);
 	});
 
 	test('same agentId with different roles routes channels correctly', () => {
@@ -349,7 +349,7 @@ describe('resolveNodeChannels', () => {
 			],
 			channels: [{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(node, allAgents);
+		const result = resolveNodeChannels(node);
 		expect(result).toHaveLength(1);
 		expect(result[0].fromRole).toBe('strict-reviewer');
 		expect(result[0].toRole).toBe('quick-reviewer');
@@ -546,7 +546,7 @@ describe('backward compatibility (nodes with only agentId)', () => {
 			name: 'Legacy Node',
 			agentId: 'agent-coder-id',
 		};
-		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(node)).toEqual([]);
 	});
 
 	test('validateNodeChannels returns no errors for legacy nodes with no channels', () => {

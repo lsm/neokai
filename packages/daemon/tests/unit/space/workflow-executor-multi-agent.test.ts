@@ -151,7 +151,10 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				{
 					id: STEP_MULTI,
 					name: 'Parallel Step',
-					agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					agents: [
+						{ agentId: AGENT_A, role: 'coder' },
+						{ agentId: AGENT_B, role: 'reviewer' },
+					],
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
@@ -187,7 +190,10 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				{
 					id: STEP_MULTI,
 					name: 'Parallel',
-					agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					agents: [
+						{ agentId: AGENT_A, role: 'coder' },
+						{ agentId: AGENT_B, role: 'reviewer' },
+					],
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
@@ -228,8 +234,8 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					name: 'Parallel',
 					instructions: 'Shared fallback',
 					agents: [
-						{ agentId: AGENT_A, instructions: 'Agent A specific' },
-						{ agentId: AGENT_B }, // no per-agent instructions → uses step.instructions
+						{ agentId: AGENT_A, role: 'coder', instructions: 'Agent A specific' },
+						{ agentId: AGENT_B, role: 'reviewer' }, // no per-agent instructions → uses step.instructions
 					],
 				},
 			],
@@ -270,7 +276,11 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				{
 					id: STEP_MULTI,
 					name: 'Triple Parallel',
-					agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }, { agentId: AGENT_C }],
+					agents: [
+						{ agentId: AGENT_A, role: 'coder' },
+						{ agentId: AGENT_B, role: 'reviewer' },
+						{ agentId: AGENT_C, role: 'planner' },
+					],
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
@@ -347,7 +357,10 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					id: STEP_MULTI,
 					name: 'Both Present',
 					agentId: AGENT_A, // should be ignored
-					agents: [{ agentId: AGENT_B }, { agentId: AGENT_C }], // wins
+					agents: [
+						{ agentId: AGENT_B, role: 'reviewer' },
+						{ agentId: AGENT_C, role: 'planner' },
+					], // wins
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
@@ -385,7 +398,10 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				{
 					id: STEP_MULTI,
 					name: 'Parallel',
-					agents: [{ agentId: AGENT_A }, { agentId: AGENT_B }],
+					agents: [
+						{ agentId: AGENT_A, role: 'coder' },
+						{ agentId: AGENT_B, role: 'reviewer' },
+					],
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
@@ -894,12 +910,12 @@ describe('resolveNodeChannels()', () => {
 
 	test('returns empty array when no channels defined', () => {
 		const step = makeStep({ agentId: 'agent-coder-id' });
-		expect(resolveNodeChannels(step, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(step)).toEqual([]);
 	});
 
 	test('returns empty array when channels is an empty array', () => {
 		const step = makeStep({ agentId: 'agent-coder-id', channels: [] });
-		expect(resolveNodeChannels(step, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(step)).toEqual([]);
 	});
 
 	// A → B one-way
@@ -911,7 +927,7 @@ describe('resolveNodeChannels()', () => {
 			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 		expect(result).toHaveLength(1);
 		expect(result[0]).toMatchObject({
 			fromRole: 'coder',
@@ -932,7 +948,7 @@ describe('resolveNodeChannels()', () => {
 			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 		expect(result).toHaveLength(2);
 
 		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
@@ -957,7 +973,7 @@ describe('resolveNodeChannels()', () => {
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 		expect(result).toHaveLength(2);
 
 		// All originate from coder
@@ -978,7 +994,7 @@ describe('resolveNodeChannels()', () => {
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 
 		// 2 spokes × 2 directions = 4 channels
 		expect(result).toHaveLength(4);
@@ -1009,7 +1025,7 @@ describe('resolveNodeChannels()', () => {
 			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 
 		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -1027,7 +1043,7 @@ describe('resolveNodeChannels()', () => {
 			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 
 		// coder→reviewer and coder→security (coder→coder self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -1041,7 +1057,7 @@ describe('resolveNodeChannels()', () => {
 			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step, allAgents);
+		const result = resolveNodeChannels(step);
 		expect(result).toHaveLength(0);
 	});
 });

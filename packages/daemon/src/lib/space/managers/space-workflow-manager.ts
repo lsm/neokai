@@ -191,6 +191,7 @@ export class SpaceWorkflowManager {
 
 		// Format-level validation: always run regardless of agentLookup
 		if (hasAgents) {
+			const seenRoles = new Set<string>();
 			for (let j = 0; j < node.agents!.length; j++) {
 				const entry = node.agents![j];
 				if (!entry.agentId || !entry.agentId.trim()) {
@@ -203,6 +204,12 @@ export class SpaceWorkflowManager {
 						`node[${index}].agents[${j}]: role must be a non-empty string`
 					);
 				}
+				if (seenRoles.has(entry.role)) {
+					throw new WorkflowValidationError(
+						`node[${index}].agents[${j}]: duplicate role "${entry.role}" — each agent slot must have a unique role within the node`
+					);
+				}
+				seenRoles.add(entry.role);
 			}
 		}
 

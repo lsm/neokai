@@ -2190,11 +2190,13 @@ describe('full export→import round-trip', () => {
 		expect(importedAgentIds).not.toContain('src-coder');
 		expect(importedAgentIds).not.toContain('src-reviewer');
 
-		// Per-agent instructions preserved
+		// Per-agent instructions and roles preserved
 		const coderEntry = importedStep.agents!.find((a) => a.agentId === coderImported.id)!;
 		const reviewerEntry = importedStep.agents!.find((a) => a.agentId === reviewerImported.id)!;
 		expect(coderEntry.instructions).toBe('Implement the feature');
+		expect(coderEntry.role).toBe('coder');
 		expect(reviewerEntry.instructions).toBe('Review thoroughly');
+		expect(reviewerEntry.role).toBe('reviewer');
 
 		// Shared step instructions preserved
 		expect(importedStep.instructions).toBe('Collaborate on the task');
@@ -2205,6 +2207,57 @@ describe('full export→import round-trip', () => {
 		expect(importedStep.channels![0].to).toBe('reviewer');
 		expect(importedStep.channels![0].direction).toBe('bidirectional');
 		expect(importedStep.channels![0].label).toBe('feedback');
+	});
+
+	it('import rejects bundle with empty role in agents[] entry (Zod validation)', async () => {
+		const bundle = {
+			version: 1,
+			name: 'Bad Bundle',
+			agents: [{ version: 1, type: 'agent', name: 'Coder', role: 'coder' }],
+			workflows: [
+				{
+					name: 'Bad Workflow',
+					nodes: [
+						{
+							name: 'Bad Node',
+							agents: [{ agentRef: 'Coder', role: '' }], // empty role — must be rejected
+						},
+					],
+					transitions: [],
+					rules: [],
+					tags: [],
+				},
+			],
+		};
+		await expect(
+			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+		).rejects.toThrow();
+	});
+
+	it('import rejects bundle with missing role in agents[] entry (Zod validation)', async () => {
+		const bundle = {
+			version: 1,
+			name: 'Bad Bundle',
+			agents: [{ version: 1, type: 'agent', name: 'Coder', role: 'coder' }],
+			workflows: [
+				{
+					name: 'Bad Workflow',
+					nodes: [
+						{
+							name: 'Bad Node',
+							// @ts-expect-error intentionally omitting required role
+							agents: [{ agentRef: 'Coder' }],
+						},
+					],
+					transitions: [],
+					rules: [],
+					tags: [],
+				},
+			],
+		};
+		await expect(
+			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+		).rejects.toThrow();
 	});
 
 	it('channel topology round-trip: one-way channel preserved', async () => {

@@ -109,19 +109,13 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  * - `* → B`        all agents send to B
  * - `A → *`        A sends to all agents
  *
- * @param node   - The workflow node whose channels are to be resolved.
- * @param agents - **Deprecated.** No longer used in resolution. Channel routing now uses
- *   `WorkflowNodeAgent.role` directly. Pass `[]` or any array — the value is ignored.
- *   This parameter will be removed in a future cleanup.
+ * @param node - The workflow node whose channels are to be resolved.
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
  * @throws {Error} When neither `agentId` nor `agents` is provided on the node
  *   (propagated from `resolveNodeAgents`). Callers should validate nodes before calling this.
  */
-export function resolveNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): ResolvedChannel[] {
+export function resolveNodeChannels(node: WorkflowNode): ResolvedChannel[] {
 	if (!node.channels || node.channels.length === 0) return [];
-
-	// agents param is retained for API compatibility; resolution now uses WorkflowNodeAgent.role directly.
-	void agents;
 
 	const nodeAgents = resolveNodeAgents(node);
 

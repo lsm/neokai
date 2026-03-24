@@ -91,27 +91,33 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		onUpdate({ ...step, agents: next, agentId: '', channels: newChannels });
 	}
 
-	function removeAgent(agentId: string) {
-		const next = stepAgents.filter((a) => a.agentId !== agentId);
+	function removeAgent(role: string) {
+		const removed = stepAgents.find((a) => a.role === role);
+		const next = stepAgents.filter((a) => a.role !== role);
 		if (next.length === 0) {
 			// Switch back to single-agent mode: restore agentId from the removed agent and
 			// clear channels (orphaned channels on a single-agent step are semantically invalid)
-			onUpdate({ ...step, agents: undefined, agentId, channels: undefined });
+			onUpdate({
+				...step,
+				agents: undefined,
+				agentId: removed?.agentId ?? '',
+				channels: undefined,
+			});
 		} else {
 			updateAgents(next);
 		}
 	}
 
-	function updateAgentInstructions(agentId: string, instructions: string) {
+	function updateAgentInstructions(role: string, instructions: string) {
 		updateAgents(
 			stepAgents.map((a) =>
-				a.agentId === agentId ? { ...a, instructions: instructions || undefined } : a
+				a.role === role ? { ...a, instructions: instructions || undefined } : a
 			)
 		);
 	}
 
-	const usedIds = new Set(stepAgents.map((a) => a.agentId));
-	const availableAgents = agents.filter((a) => !usedIds.has(a.id));
+	// All agents are available; same agent may be added multiple times with different roles.
+	const availableAgents = agents;
 
 	if (!multi) {
 		// Single-agent mode
@@ -199,19 +205,19 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
 					return (
 						<div
-							key={sa.agentId}
+							key={sa.role}
 							class="bg-dark-800 border border-dark-600 rounded p-2 space-y-1"
 							data-testid="agent-entry"
 						>
 							<div class="flex items-center justify-between">
 								<span class="text-xs font-medium text-gray-200">
 									{agentInfo?.name ?? sa.agentId}
-									{agentInfo && <span class="text-gray-500 ml-1">({agentInfo.role})</span>}
+									{agentInfo && <span class="text-gray-500 ml-1">({sa.role})</span>}
 								</span>
 								<button
 									type="button"
 									data-testid="remove-agent-button"
-									onClick={() => removeAgent(sa.agentId)}
+									onClick={() => removeAgent(sa.role)}
 									class="text-gray-600 hover:text-red-400 transition-colors"
 									title="Remove agent"
 								>
@@ -230,7 +236,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								data-testid="agent-instructions-input"
 								value={sa.instructions ?? ''}
 								onInput={(e) =>
-									updateAgentInstructions(sa.agentId, (e.currentTarget as HTMLInputElement).value)
+									updateAgentInstructions(sa.role, (e.currentTarget as HTMLInputElement).value)
 								}
 								placeholder="Per-agent instructions (optional)…"
 								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
