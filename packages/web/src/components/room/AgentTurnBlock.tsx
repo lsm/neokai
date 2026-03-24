@@ -588,7 +588,7 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 				{/* Input section */}
 				{inputText && (
 					<div class="p-3">
-						<div class="flex justify-end">
+						<div class="flex flex-col items-end">
 							<div
 								class={cn(
 									messageSpacing.user.bubble.combined,
@@ -602,6 +602,11 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 									<MarkdownRenderer content={inputText} />
 								</div>
 							</div>
+							<MessageActions
+								text={inputText}
+								timestamp={(inputMessage as { timestamp?: number } | null)?.timestamp ?? 0}
+								align="right"
+							/>
 						</div>
 					</div>
 				)}
