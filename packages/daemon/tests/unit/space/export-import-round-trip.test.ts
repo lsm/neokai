@@ -298,6 +298,62 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		}
 	});
 
+	test('maps instructions override to WorkflowNodeInput agents', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-instr',
+			spaceId: 'space-1',
+			name: 'Instructions Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-1',
+							role: 'coder',
+							instructions: 'Focus on auth module only.',
+						},
+						{
+							agentId: 'agent-2',
+							role: 'reviewer',
+							// no instructions
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const exported = exportWorkflow(workflow, agents);
+
+		const importedNameToId = new Map([
+			['Coder Agent', 'new-agent-1'],
+			['Reviewer Agent', 'new-agent-2'],
+		]);
+		const existingNameToId = new Map<string, string>();
+
+		const { params, warnings } = buildWorkflowCreateParams(
+			'space-import',
+			'Instructions Workflow',
+			exported,
+			importedNameToId,
+			existingNameToId
+		);
+
+		expect(warnings).toHaveLength(0);
+		const nodeAgents = params.nodes[0].agents!;
+
+		const coder = nodeAgents.find((a) => a.role === 'coder');
+		expect(coder!.instructions).toBe('Focus on auth module only.');
+
+		const reviewer = nodeAgents.find((a) => a.role === 'reviewer');
+		expect(reviewer!.instructions).toBeUndefined();
+	});
+
 	test('warns when agentRef cannot be resolved', () => {
 		const workflow = makeWorkflowWithoutOverrides();
 		const exported = exportWorkflow(workflow, agents);
@@ -528,5 +584,69 @@ describe('full round-trip: export → import → DB read-back', () => {
 		expect(fastCoder!.agentId).toBe('agent-1');
 		expect(fastCoder!.model).toBe('claude-haiku-4-5');
 		expect(fastCoder!.systemPrompt).toBe('Write quick code.');
+	});
+
+	test('instructions per-slot override persists after import (DB round-trip)', () => {
+		const agent1 = makeTestAgent('agent-1', 'Coder Agent', { spaceId: SPACE_ID });
+		const agent2 = makeTestAgent('agent-2', 'Reviewer Agent', { spaceId: SPACE_ID });
+		const agents = [agent1, agent2];
+
+		const workflow: SpaceWorkflow = {
+			id: 'wf-instr',
+			spaceId: SPACE_ID,
+			name: 'Instructions Round Trip',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-1',
+							role: 'coder',
+							instructions: 'Focus on auth module only.',
+						},
+						{
+							agentId: 'agent-2',
+							role: 'reviewer',
+							// no instructions
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+
+		const exported = exportWorkflow(workflow, agents);
+
+		const importedNameToId = new Map([
+			['Coder Agent', 'agent-1'],
+			['Reviewer Agent', 'agent-2'],
+		]);
+		const existingNameToId = new Map<string, string>();
+
+		const { params, warnings } = buildWorkflowCreateParams(
+			SPACE_ID,
+			'Instructions Round Trip',
+			exported,
+			importedNameToId,
+			existingNameToId
+		);
+		expect(warnings).toHaveLength(0);
+
+		const created = manager.createWorkflow(params);
+		const readBack = repo.getWorkflow(created.id);
+		expect(readBack).not.toBeNull();
+
+		const nodeAgents = readBack!.nodes[0].agents!;
+		const coder = nodeAgents.find((a) => a.role === 'coder');
+		expect(coder!.instructions).toBe('Focus on auth module only.');
+
+		const reviewer = nodeAgents.find((a) => a.role === 'reviewer');
+		expect(reviewer!.instructions).toBeUndefined();
 	});
 });

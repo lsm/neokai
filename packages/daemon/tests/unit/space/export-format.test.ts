@@ -1822,6 +1822,43 @@ describe('round-trip: multi-agent + channels', () => {
 		expect(exported.nodes[0].agents![0].systemPrompt).toBe('Always write tests first.');
 	});
 
+	test('exports per-slot instructions override', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: 'space-1',
+			name: 'Instructions Override',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							instructions: 'Focus on the auth module only.',
+						},
+						{
+							agentId: 'agent-uuid-3',
+							role: 'reviewer',
+							// no instructions
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		expect(exported.nodes[0].agents![0].instructions).toBe('Focus on the auth module only.');
+		expect(exported.nodes[0].agents![1].instructions).toBeUndefined();
+	});
+
 	test('omits model and systemPrompt when not set (backward compat export)', () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
@@ -1913,6 +1950,49 @@ describe('round-trip: multi-agent + channels', () => {
 			expect(node.agents![1].role).toBe('reviewer');
 			expect(node.agents![1].model).toBeUndefined();
 			expect(node.agents![1].systemPrompt).toBeUndefined();
+		}
+	});
+
+	test('instructions slot override survives export → JSON → validate round-trip', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-instructions',
+			spaceId: 'space-1',
+			name: 'Instructions Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							instructions: 'Focus on the auth module only.',
+						},
+						{
+							agentId: 'agent-uuid-3',
+							role: 'reviewer',
+							// no instructions override
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents![0].instructions).toBe('Focus on the auth module only.');
+			expect(result.value.nodes[0].agents![1].instructions).toBeUndefined();
 		}
 	});
 });
