@@ -24,7 +24,7 @@ import {
 	createSpaceAgentSchema,
 	insertSpace,
 	insertWorkflow,
-	insertWorkflowStep,
+	insertWorkflowNode,
 } from '../helpers/space-agent-schema';
 
 // ─── minimal mock types ────────────────────────────────────────────────────
@@ -431,30 +431,30 @@ describe('Space Agent RPC Handlers', () => {
 			);
 		});
 
-		it('throws clear error when agent is referenced by a workflow step', async () => {
+		it('throws clear error when agent is referenced by a workflow node', async () => {
 			insertWorkflow(db, 'wf-1', 'space-1', 'My Workflow');
-			insertWorkflowStep(db, 'step-1', 'wf-1', agentId);
+			insertWorkflowNode(db, 'node-1', 'wf-1', agentId);
 
 			await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
-				/Cannot delete agent.*referenced by workflow steps/
+				/Cannot delete agent.*referenced by workflow nodes/
 			);
 		});
 
 		it('throws and includes workflow names in error when referenced', async () => {
 			insertWorkflow(db, 'wf-2', 'space-1', 'Important Workflow');
-			insertWorkflowStep(db, 'step-2', 'wf-2', agentId);
+			insertWorkflowNode(db, 'node-2', 'wf-2', agentId);
 
 			await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
 				'Important Workflow'
 			);
 		});
 
-		it('allows deletion after the step reference is removed', async () => {
+		it('allows deletion after the node reference is removed', async () => {
 			insertWorkflow(db, 'wf-3', 'space-1', 'Temp Workflow');
-			insertWorkflowStep(db, 'step-3', 'wf-3', agentId);
+			insertWorkflowNode(db, 'node-3', 'wf-3', agentId);
 
-			// Remove the step reference by setting agent_id to NULL
-			db.prepare(`UPDATE space_workflow_nodes SET agent_id = NULL WHERE id = 'step-3'`).run();
+			// Remove the node reference by setting agent_id to NULL
+			db.prepare(`UPDATE space_workflow_nodes SET agent_id = NULL WHERE id = 'node-3'`).run();
 
 			const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
 				id: agentId,

@@ -220,11 +220,23 @@ export class WorktreeManager {
 				throw new Error(`Worktree directory already exists: ${worktreePath}`);
 			}
 
-			// Check if branch already exists (and fallback to UUID if it does)
-			if (customBranchName) {
-				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
-				if (branchExists) {
-					branchName = `session/${safeSessionId}`; // Fallback to UUID-based branch
+			// Check if branch already exists — this can happen when a prior task/session
+			// crashed mid-run and left behind a stale branch whose worktree was already
+			// removed. Delete the stale branch so we can recreate it fresh with the
+			// same (intended) name instead of falling back to an opaque UUID-based name.
+			const branchExists = await this.checkBranchExists(gitRoot, branchName);
+			if (branchExists) {
+				this.logger.warn(`Stale branch detected: ${branchName} — deleting and recreating`);
+				try {
+					await git.branch(['-D', branchName]);
+				} catch {
+					// git refuses -D when the branch is currently checked out in another
+					// living worktree.  Fall back to a unique session-scoped name so the
+					// task can still proceed rather than blocking entirely.
+					this.logger.warn(
+						`Could not delete branch ${branchName} (may be checked out in another worktree) — falling back to session/${safeSessionId}`
+					);
+					branchName = `session/${safeSessionId}`;
 				}
 			}
 
@@ -404,8 +416,8 @@ export class WorktreeManager {
 						await git.raw(['worktree', 'remove', worktree.path, '--force']);
 						cleaned.push(worktree.path);
 
-						// Also try to delete the branch if it's a session branch
-						if (worktree.branch.startsWith('session/')) {
+						// Also try to delete the branch if it's a managed branch (session/ or task/)
+						if (worktree.branch.startsWith('session/') || worktree.branch.startsWith('task/')) {
 							try {
 								await git.branch(['-D', worktree.branch]);
 							} catch {

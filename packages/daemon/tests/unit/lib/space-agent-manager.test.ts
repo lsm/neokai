@@ -15,7 +15,7 @@ import {
 	createSpaceAgentSchema,
 	insertSpace,
 	insertWorkflow,
-	insertWorkflowStep,
+	insertWorkflowNode,
 } from '../helpers/space-agent-schema';
 
 function makeModelInfo(id: string, alias: string, provider = 'anthropic'): ModelInfo {
@@ -269,12 +269,12 @@ describe('SpaceAgentManager', () => {
 			expect(manager.getById(created.value.id)).toBeNull();
 		});
 
-		it('blocks deletion when agent is referenced by workflow steps', async () => {
+		it('blocks deletion when agent is referenced by workflow nodes', async () => {
 			const created = await manager.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			if (!created.ok) throw new Error('create failed');
 
 			insertWorkflow(db, 'wf-1', 'space-1', 'Release Workflow');
-			insertWorkflowStep(db, 'step-1', 'wf-1', created.value.id);
+			insertWorkflowNode(db, 'node-1', 'wf-1', created.value.id);
 
 			const result = manager.delete(created.value.id);
 			expect(result.ok).toBe(false);

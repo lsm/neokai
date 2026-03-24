@@ -192,12 +192,12 @@ test.describe('Visual Workflow Editor', () => {
 				await hub.request('spaceWorkflow.create', {
 					spaceId: sid,
 					name: 'Layout Persist Test',
-					steps: [
+					nodes: [
 						{ id: s1, name: 'Step One', agentId: aId },
 						{ id: s2, name: 'Step Two', agentId: aId },
 					],
 					transitions: [{ id: crypto.randomUUID(), from: s1, to: s2, order: 0 }],
-					startStepId: s1,
+					startNodeId: s1,
 					rules: [],
 					tags: [],
 					layout,
@@ -675,7 +675,7 @@ test.describe('Visual Workflow Editor', () => {
 				await hub.request('spaceWorkflow.create', {
 					spaceId: sid,
 					name: 'Channel vs Transition Test',
-					steps: [
+					nodes: [
 						{
 							id: step1,
 							name: 'Start',
@@ -692,7 +692,7 @@ test.describe('Visual Workflow Editor', () => {
 					transitions: [
 						{ id: trans1, from: step1, to: step2, order: 0, condition: { type: 'always' } },
 					],
-					startStepId: step1,
+					startNodeId: step1,
 					rules: [],
 					tags: [],
 					layout: {

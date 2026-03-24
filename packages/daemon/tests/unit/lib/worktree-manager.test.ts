@@ -161,7 +161,55 @@ describe('WorktreeManager', () => {
 			).rejects.toThrow('already exists');
 		});
 
-		it('should fallback to UUID branch if custom branch exists', async () => {
+		it('should succeed with auto-generated branch name when no stale branch exists', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				false
+			);
+			mockGitRevparse.mockResolvedValue('.git');
+			// checkBranchExists returns empty → no stale branch, then worktree add succeeds
+			mockGitRaw
+				.mockResolvedValueOnce('') // checkBranchExists — branch does not exist
+				.mockResolvedValue(''); // worktree add
+
+			const result = await manager.createWorktree({
+				sessionId: 'session-123',
+				repoPath: '/test/repo',
+				// No custom branch name — uses auto-generated session/session-123
+			});
+
+			expect(result?.branch).toBe('session/session-123');
+			expect(mockGitBranch).not.toHaveBeenCalled();
+		});
+
+		it('should delete stale custom branch and reuse original name', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				false
+			);
+			mockGitRevparse.mockResolvedValue('.git');
+			// checkBranchExists returns the stale branch; branch -D goes through mockGitBranch
+			mockGitRaw
+				.mockResolvedValueOnce('  custom-branch\n') // checkBranchExists — stale branch found
+				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch, not mockGitRaw)
+
+			const result = await manager.createWorktree({
+				sessionId: 'session-123',
+				repoPath: '/test/repo',
+				branchName: 'custom-branch',
+			});
+
+			// Should reuse the original branch name, not fall back to UUID
+			expect(result?.branch).toBe('custom-branch');
+			// git branch -D goes through mockGitBranch
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'custom-branch']);
+		});
+
+		it('should delete stale auto-generated branch and reuse original name', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
 			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
 			existsSyncResults.set(
@@ -170,15 +218,67 @@ describe('WorktreeManager', () => {
 			);
 			mockGitRevparse.mockResolvedValue('.git');
 			mockGitRaw
-				.mockResolvedValueOnce('  custom-branch\n') // Branch exists
-				.mockResolvedValue(''); // git worktree add
+				.mockResolvedValueOnce('  session/session-123\n') // checkBranchExists — stale auto branch
+				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
 
 			const result = await manager.createWorktree({
 				sessionId: 'session-123',
 				repoPath: '/test/repo',
-				branchName: 'custom-branch',
+				// No custom branch name — uses auto-generated session/session-123
 			});
 
+			// Should reuse the auto-generated branch name
+			expect(result?.branch).toBe('session/session-123');
+			// git branch -D goes through mockGitBranch
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+		});
+
+		it('should delete stale task branch and reuse task branch name', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				false
+			);
+			mockGitRevparse.mockResolvedValue('.git');
+			mockGitRaw
+				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — stale task branch
+				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
+
+			const result = await manager.createWorktree({
+				sessionId: 'session-123',
+				repoPath: '/test/repo',
+				branchName: 'task/task-42-implement-feature',
+			});
+
+			// Should reuse the task branch name, not fall back to opaque UUID
+			expect(result?.branch).toBe('task/task-42-implement-feature');
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
+		});
+
+		it('should fall back to UUID branch name when branch -D is rejected (branch checked out elsewhere)', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				false
+			);
+			mockGitRevparse.mockResolvedValue('.git');
+			mockGitRaw
+				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — branch found
+				.mockResolvedValue(''); // worktree add succeeds with fallback branch name
+			// branch -D fails because branch is checked out in another active worktree
+			mockGitBranch.mockRejectedValueOnce(
+				new Error("error: cannot delete branch 'task/task-42' checked out at '/other'")
+			);
+
+			const result = await manager.createWorktree({
+				sessionId: 'session-123',
+				repoPath: '/test/repo',
+				branchName: 'task/task-42-implement-feature',
+			});
+
+			// Should fall back to UUID-based branch so task can still proceed
 			expect(result?.branch).toBe('session/session-123');
 		});
 
@@ -468,6 +568,24 @@ describe('WorktreeManager', () => {
 			const result = await manager.cleanupOrphanedWorktrees('/test/repo');
 
 			expect(result).toContain('/test/repo/.neokai/worktrees/session-1');
+		});
+
+		it('should delete task/ branches for orphaned task worktrees', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+
+			mockGitRevparse.mockResolvedValue('.git');
+			mockGitRaw
+				.mockResolvedValueOnce('') // prune
+				.mockResolvedValueOnce(
+					'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.neokai/worktrees/task-wt\nHEAD def456\nbranch refs/heads/task/task-42-implement-feature\nprunable\n'
+				) // list
+				.mockResolvedValue(''); // remove
+
+			const result = await manager.cleanupOrphanedWorktrees('/test/repo');
+
+			expect(result).toContain('/test/repo/.neokai/worktrees/task-wt');
+			// Should also delete the task/ branch
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
 		});
 
 		it('should throw on cleanup failure', async () => {
