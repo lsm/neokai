@@ -17,7 +17,7 @@ The existing system reads MCP server configs from `.mcp.json` / `settings.json` 
 
 - Stores registry entries in the SQLite `app_mcp_servers` table.
 - At room-chat session startup, `RoomRuntimeService` reads the registry, applies per-room enablement, and passes the resolved `mcpServers` map to `setRuntimeMcpServers()` alongside the existing `room-agent-tools` server.
-- For worker (coder/general) sessions, enabled registry entries are merged into the session's `mcpServers` option in `QueryOptionsBuilder`.
+- For worker (coder/general) sessions, enabled registry entries are injected via `session.setRuntimeMcpServers()` after session creation — preserving the SDK's existing auto-load of file-based MCP servers (`config.mcpServers` remains `undefined`).
 - The Planner and plan-writer sub-agents gain access to web-search tools from a configured web-search MCP entry.
 
 No existing MCP file-based flows are removed — the registry is additive.
@@ -26,7 +26,7 @@ No existing MCP file-based flows are removed — the registry is additive.
 
 1. **Audit and Documentation** — Deep-dive into current MCP flows, document gaps, and produce an audit report.
 2. **Application-Level MCP Registry (Backend)** — SQLite schema, repository, RPC handlers (CRUD + list), and unit tests.
-3. **MCP Lifecycle Manager** — Process spawn/health-check/restart for stdio MCP servers, integration with `AgentSession.setRuntimeMcpServers`, and unit tests.
+3. **MCP Lifecycle Manager** — Convert registry entries to SDK configs, inject via `setRuntimeMcpServers()` into room sessions (Task 3.2), worker sessions (Task 3.3), and space agents (Task 3.4). Validation error reporting for misconfigured entries. Health-check/auto-restart deferred to a future iteration.
 4. **Room and Session MCP Integration** — Per-room enablement stored in the DB, integration in `RoomRuntimeService` and `QueryOptionsBuilder`, and online tests.
 5. **Web UI for MCP Registry** — Settings panel for adding/editing/deleting application-level MCP entries with enable/disable per room.
 6. **Planner Web Search Capability** — Evaluate and integrate a web-search MCP (Brave/DuckDuckGo/Fetch), wire it into Planner and plan-writer agents.

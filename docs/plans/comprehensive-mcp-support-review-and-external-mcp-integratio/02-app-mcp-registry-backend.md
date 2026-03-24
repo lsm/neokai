@@ -58,14 +58,16 @@ Expose the MCP registry via RPC so the frontend and daemon internals can manage 
    - `mcp.registry.update` — updates entry, emits event, returns updated entry
    - `mcp.registry.delete` — removes entry, emits event
    - `mcp.registry.setEnabled` — convenience toggle, updates `enabled` field, emits event
+   - `mcp.registry.listErrors` — returns the current validation errors from `appMcpManager.getStartupErrors()` so the UI can surface a warning badge next to misconfigured entries (requires `appMcpManager` to be passed into the handler context alongside `db`)
 2. Register the handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (call `registerAppMcpHandlers()`).
 3. Add `mcp.registry.changed` event type to `packages/shared/src/message-hub/` event definitions.
 4. Add `mcp.registry.*` request/response types to `packages/shared/src/api.ts`.
 5. Write unit tests in `packages/daemon/tests/unit/rpc/app-mcp-handlers.test.ts` covering each handler with mock DB, verifying events are emitted.
 
 **Acceptance criteria:**
-- All five RPC endpoints are reachable via MessageHub.
+- All six RPC endpoints are reachable via MessageHub (`list`, `create`, `update`, `delete`, `setEnabled`, `listErrors`).
 - `mcp.registry.changed` event is emitted on create/update/delete/toggle.
+- `mcp.registry.listErrors` returns validation errors from `AppMcpLifecycleManager` (note: this handler has a forward dependency on Task 3.1; stub it to return `[]` in this task and complete the wiring in Task 3.1).
 - Unit tests pass with mock DB.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
