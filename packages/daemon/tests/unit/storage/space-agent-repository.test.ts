@@ -12,7 +12,7 @@ import {
 	createSpaceAgentSchema,
 	insertSpace,
 	insertWorkflow,
-	insertWorkflowStep,
+	insertWorkflowNode,
 } from '../helpers/space-agent-schema';
 
 describe('SpaceAgentRepository', () => {
@@ -246,28 +246,28 @@ describe('SpaceAgentRepository', () => {
 	});
 
 	describe('isAgentReferenced', () => {
-		it('returns not-referenced when no steps reference the agent', () => {
+		it('returns not-referenced when no nodes reference the agent', () => {
 			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			const result = repo.isAgentReferenced(agent.id);
 			expect(result.referenced).toBe(false);
 			expect(result.workflowNames).toEqual([]);
 		});
 
-		it('returns referenced with workflow names when steps use the agent', () => {
+		it('returns referenced with workflow names when nodes use the agent', () => {
 			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			insertWorkflow(db, 'wf-1', 'space-1', 'Deploy Workflow');
-			insertWorkflowStep(db, 'step-1', 'wf-1', agent.id);
+			insertWorkflowNode(db, 'step-1', 'wf-1', agent.id);
 
 			const result = repo.isAgentReferenced(agent.id);
 			expect(result.referenced).toBe(true);
 			expect(result.workflowNames).toContain('Deploy Workflow');
 		});
 
-		it('returns unique workflow names even with multiple steps from same workflow', () => {
+		it('returns unique workflow names even with multiple nodes from same workflow', () => {
 			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			insertWorkflow(db, 'wf-2', 'space-1', 'CI Workflow');
-			insertWorkflowStep(db, 'step-a', 'wf-2', agent.id);
-			insertWorkflowStep(db, 'step-b', 'wf-2', agent.id);
+			insertWorkflowNode(db, 'step-a', 'wf-2', agent.id);
+			insertWorkflowNode(db, 'step-b', 'wf-2', agent.id);
 
 			const result = repo.isAgentReferenced(agent.id);
 			expect(result.workflowNames).toHaveLength(1);

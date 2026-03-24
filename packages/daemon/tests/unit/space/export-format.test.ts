@@ -3,15 +3,15 @@
  *
  * Covers:
  * - exportAgent: strips space-specific fields, maps agent.tools (string[]) → exported.tools
- * - exportWorkflow: strips step IDs, remaps step agentId UUID → agent name (agentRef),
- *   remaps transition from/to step UUIDs → step names, remaps startStepId UUID → step name,
- *   remaps rule appliesTo step UUIDs → step names
+ * - exportWorkflow: strips node IDs, remaps node agentId UUID → agent name (agentRef),
+ *   remaps transition from/to node UUIDs → node names, remaps startNodeId UUID → node name,
+ *   remaps rule appliesTo node UUIDs → node names
  * - exportBundle: wraps agents + workflows, adds exportedAt
  * - validateExportedAgent: accepts v1, rejects malformed, version checks
- * - validateExportedWorkflow: accepts v1, rejects malformed, version checks, transitions/startStep
+ * - validateExportedWorkflow: accepts v1, rejects malformed, version checks, transitions/startNode
  * - validateExportBundle: accepts v1, nested agent/workflow validation
  * - Round-trip: export → JSON serialize → deserialize → validate
- * - rule appliesTo round-trip: verify step names in JSON, verify on re-import
+ * - rule appliesTo round-trip: verify node names in JSON, verify on re-import
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -195,27 +195,27 @@ describe('exportWorkflow', () => {
 		expect('updatedAt' in exported).toBe(false);
 	});
 
-	test('strips step IDs', () => {
+	test('strips node IDs', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		for (const step of exported.nodes) {
-			expect('id' in step).toBe(false);
+		for (const node of exported.nodes) {
+			expect('id' in node).toBe(false);
 		}
 	});
 
-	test('strips agentId from steps', () => {
+	test('strips agentId from nodes', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		for (const step of exported.nodes) {
-			expect('agentId' in step).toBe(false);
+		for (const node of exported.nodes) {
+			expect('agentId' in node).toBe(false);
 		}
 	});
 
-	test('retains step name and instructions', () => {
+	test('retains node name and instructions', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -231,11 +231,11 @@ describe('exportWorkflow', () => {
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// step 0: agent-uuid-1 → 'My Coder'
+		// node 0: agent-uuid-1 → 'My Coder'
 		expect(exported.nodes[0].agentRef).toBe('My Coder');
-		// step 1: agent-uuid-3 → 'Reviewer'
+		// node 1: agent-uuid-3 → 'Reviewer'
 		expect(exported.nodes[1].agentRef).toBe('Reviewer');
-		// step 2: agent-uuid-2 → 'Simple Agent'
+		// node 2: agent-uuid-2 → 'Simple Agent'
 		expect(exported.nodes[2].agentRef).toBe('Simple Agent');
 	});
 
@@ -292,7 +292,7 @@ describe('exportWorkflow', () => {
 		expect(exported.startNode).toBe('step-uuid-MISSING');
 	});
 
-	test('remaps rule appliesTo step UUIDs → step names', () => {
+	test('remaps rule appliesTo node UUIDs → node names', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -1090,11 +1090,11 @@ describe('round-trip: export → JSON → validate', () => {
 			expect(result.value.nodes[0].agentRef).toBe('My Coder');
 			expect(result.value.nodes[1].agentRef).toBe('Reviewer');
 			expect(result.value.nodes[2].agentRef).toBe('Simple Agent');
-			// transitions preserved with step names
+			// transitions preserved with node names
 			expect(result.value.transitions).toHaveLength(2);
 			expect(result.value.transitions[0].fromNode).toBe('Code step');
 			expect(result.value.transitions[0].toNode).toBe('Review step');
-			// startStep preserved as step name
+			// startNode preserved as node name
 			expect(result.value.startNode).toBe('Code step');
 		}
 	});
@@ -1149,16 +1149,16 @@ describe('round-trip: export → JSON → validate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// rule appliesTo round-trip (verify step names in JSON)
+// rule appliesTo round-trip (verify node names in JSON)
 // ---------------------------------------------------------------------------
 
 describe('rule appliesTo round-trip', () => {
-	test('step names appear in serialized JSON, not UUIDs', () => {
+	test('node names appear in serialized JSON, not UUIDs', () => {
 		const workflow = makeWorkflow();
 		const exported = exportWorkflow(workflow, []);
 		const json = JSON.stringify(exported);
 
-		// step UUIDs must NOT appear
+		// node UUIDs must NOT appear
 		expect(json).not.toContain('step-uuid-1');
 		expect(json).not.toContain('step-uuid-2');
 		expect(json).not.toContain('step-uuid-3');
@@ -1167,12 +1167,12 @@ describe('rule appliesTo round-trip', () => {
 		expect(json).not.toContain('trans-uuid-1');
 		expect(json).not.toContain('trans-uuid-2');
 
-		// appliesTo must contain step names (strings)
+		// appliesTo must contain node names (strings)
 		const parsed = JSON.parse(json) as { rules: Array<{ appliesTo?: string[] }> };
 		expect(parsed.rules[0].appliesTo).toEqual(['Code step', 'Review step']);
 	});
 
-	test('workflow round-trip preserves rule appliesTo step names', () => {
+	test('workflow round-trip preserves rule appliesTo node names', () => {
 		const workflow = makeWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -1204,16 +1204,16 @@ describe('rule appliesTo round-trip', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Multi-agent step export tests
+// Multi-agent node export tests
 // ---------------------------------------------------------------------------
 
-describe('exportWorkflow — multi-agent steps', () => {
+describe('exportWorkflow — multi-agent nodes', () => {
 	function makeMultiAgentWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		return {
 			id: 'workflow-uuid-ma',
 			spaceId: 'space-uuid-1',
 			name: 'Multi-Agent Workflow',
-			description: 'Tests multi-agent steps',
+			description: 'Tests multi-agent nodes',
 			nodes: [
 				{
 					id: 'step-uuid-1',
@@ -1246,15 +1246,15 @@ describe('exportWorkflow — multi-agent steps', () => {
 		};
 	}
 
-	test('exports multi-agent step as agents array (not agentRef)', () => {
+	test('exports multi-agent node as agents array (not agentRef)', () => {
 		const workflow = makeMultiAgentWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		const step = exported.nodes[0];
-		// Multi-agent step uses agents array, not agentRef
-		expect(step.agents).toHaveLength(2);
-		expect(step.agentRef).toBeUndefined();
+		const node = exported.nodes[0];
+		// Multi-agent node uses agents array, not agentRef
+		expect(node.agents).toHaveLength(2);
+		expect(node.agentRef).toBeUndefined();
 	});
 
 	test('resolves agentId UUIDs to agent names in agents array', () => {
@@ -1262,9 +1262,9 @@ describe('exportWorkflow — multi-agent steps', () => {
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		const step = exported.nodes[0];
-		expect(step.agents![0].agentRef).toBe('My Coder');
-		expect(step.agents![1].agentRef).toBe('Reviewer');
+		const node = exported.nodes[0];
+		expect(node.agents![0].agentRef).toBe('My Coder');
+		expect(node.agents![1].agentRef).toBe('Reviewer');
 	});
 
 	test('preserves per-agent instructions in agents array', () => {
@@ -1276,7 +1276,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 		expect(exported.nodes[0].agents![1].instructions).toBeUndefined();
 	});
 
-	test('falls back to UUID for unresolved agent in multi-agent step', () => {
+	test('falls back to UUID for unresolved agent in multi-agent node', () => {
 		const workflow = makeMultiAgentWorkflow();
 		// Pass no agents — all refs fall back to UUID
 		const exported = exportWorkflow(workflow, []);
@@ -1290,23 +1290,23 @@ describe('exportWorkflow — multi-agent steps', () => {
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		const step = exported.nodes[0];
-		expect(step.channels).toHaveLength(1);
-		expect(step.channels![0].from).toBe('coder');
-		expect(step.channels![0].to).toBe('reviewer');
-		expect(step.channels![0].direction).toBe('bidirectional');
+		const node = exported.nodes[0];
+		expect(node.channels).toHaveLength(1);
+		expect(node.channels![0].from).toBe('coder');
+		expect(node.channels![0].to).toBe('reviewer');
+		expect(node.channels![0].direction).toBe('bidirectional');
 	});
 
-	test('omits channels when step has no channels', () => {
+	test('omits channels when node has no channels', () => {
 		const workflow = makeMultiAgentWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// Single-agent step (step 1) has no channels
+		// Single-agent node (node 1) has no channels
 		expect(exported.nodes[1].channels).toBeUndefined();
 	});
 
-	test('single-agent step with channels exports channels', () => {
+	test('single-agent node with channels exports channels', () => {
 		const workflow = makeMultiAgentWorkflow({
 			nodes: [
 				{
@@ -1322,18 +1322,18 @@ describe('exportWorkflow — multi-agent steps', () => {
 		const agents = [makeAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		const step = exported.nodes[0];
+		const node = exported.nodes[0];
 		// Should still use scalar agentRef (single-agent)
-		expect(step.agentRef).toBe('My Coder');
-		expect(step.agents).toBeUndefined();
+		expect(node.agentRef).toBe('My Coder');
+		expect(node.agents).toBeUndefined();
 		// Channels should be exported as-is
-		expect(step.channels).toHaveLength(1);
-		expect(step.channels![0].from).toBe('coder');
-		expect(step.channels![0].to).toBe('*');
-		expect(step.channels![0].direction).toBe('one-way');
+		expect(node.channels).toHaveLength(1);
+		expect(node.channels![0].from).toBe('coder');
+		expect(node.channels![0].to).toBe('*');
+		expect(node.channels![0].direction).toBe('one-way');
 	});
 
-	test('export produces no agentRef when step has neither agentId nor agents', () => {
+	test('export produces no agentRef when node has neither agentId nor agents', () => {
 		const workflow = makeMultiAgentWorkflow({
 			nodes: [{ id: 'step-uuid-1', name: 'Broken step' } as any],
 			startNodeId: 'step-uuid-1',
@@ -1341,21 +1341,21 @@ describe('exportWorkflow — multi-agent steps', () => {
 		});
 		const exported = exportWorkflow(workflow, []);
 
-		const step = exported.nodes[0];
+		const node = exported.nodes[0];
 		// Neither agentRef nor agents should be set
-		expect(step.agentRef).toBeUndefined();
-		expect(step.agents).toBeUndefined();
+		expect(node.agentRef).toBeUndefined();
+		expect(node.agents).toBeUndefined();
 	});
 
-	test('single-agent step still exports as agentRef shorthand', () => {
+	test('single-agent node still exports as agentRef shorthand', () => {
 		const workflow = makeMultiAgentWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// Step 1 uses agentId shorthand (not agents[])
-		const step = exported.nodes[1];
-		expect(step.agentRef).toBe('Simple Agent');
-		expect(step.agents).toBeUndefined();
+		// Node 1 uses agentId shorthand (not agents[])
+		const node = exported.nodes[1];
+		expect(node.agentRef).toBe('Simple Agent');
+		expect(node.agents).toBeUndefined();
 	});
 
 	test('agent UUIDs do not appear in multi-agent exported JSON', () => {
@@ -1530,7 +1530,7 @@ describe('round-trip: multi-agent + channels', () => {
 		};
 	}
 
-	test('multi-agent step round-trip preserves agents array and channels', () => {
+	test('multi-agent node round-trip preserves agents array and channels', () => {
 		const workflow = makeMultiAgentWorkflowForRoundTrip();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -1540,27 +1540,27 @@ describe('round-trip: multi-agent + channels', () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			const step = result.value.nodes[0];
-			// Multi-agent step preserved
-			expect(step.agents).toHaveLength(2);
-			expect(step.agents![0].agentRef).toBe('My Coder');
-			expect(step.agents![0].instructions).toBe('Implement the feature');
-			expect(step.agents![1].agentRef).toBe('Reviewer');
-			expect(step.agents![1].instructions).toBe('Review the code');
-			// agentRef shorthand absent for multi-agent step
-			expect(step.agentRef).toBeUndefined();
+			const node = result.value.nodes[0];
+			// Multi-agent node preserved
+			expect(node.agents).toHaveLength(2);
+			expect(node.agents![0].agentRef).toBe('My Coder');
+			expect(node.agents![0].instructions).toBe('Implement the feature');
+			expect(node.agents![1].agentRef).toBe('Reviewer');
+			expect(node.agents![1].instructions).toBe('Review the code');
+			// agentRef shorthand absent for multi-agent node
+			expect(node.agentRef).toBeUndefined();
 			// Channels preserved
-			expect(step.channels).toHaveLength(1);
-			expect(step.channels![0].from).toBe('coder');
-			expect(step.channels![0].to).toBe('reviewer');
-			expect(step.channels![0].direction).toBe('bidirectional');
-			expect(step.channels![0].label).toBe('feedback');
+			expect(node.channels).toHaveLength(1);
+			expect(node.channels![0].from).toBe('coder');
+			expect(node.channels![0].to).toBe('reviewer');
+			expect(node.channels![0].direction).toBe('bidirectional');
+			expect(node.channels![0].label).toBe('feedback');
 			// Shared instructions preserved
-			expect(step.instructions).toBe('Collaborate on the feature');
+			expect(node.instructions).toBe('Collaborate on the feature');
 		}
 	});
 
-	test('single-agent step in mixed workflow round-trips as agentRef', () => {
+	test('single-agent node in mixed workflow round-trips as agentRef', () => {
 		const workflow = makeMultiAgentWorkflowForRoundTrip();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
@@ -1570,10 +1570,10 @@ describe('round-trip: multi-agent + channels', () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			const step = result.value.nodes[1];
-			expect(step.agentRef).toBe('Simple Agent');
-			expect(step.agents).toBeUndefined();
-			expect(step.channels).toBeUndefined();
+			const node = result.value.nodes[1];
+			expect(node.agentRef).toBe('Simple Agent');
+			expect(node.agents).toBeUndefined();
+			expect(node.channels).toBeUndefined();
 		}
 	});
 
