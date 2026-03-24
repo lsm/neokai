@@ -295,7 +295,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
 			// but those agents are still SpaceAgent records. Use resolveNodeAgents to get the
 			// correct primary agentId regardless of whether the step uses agentId or agents[].
-			const primaryAgentId = resolveNodeAgents(step)[0]?.agentId;
+			const nodeAgents = resolveNodeAgents(step);
+			const primaryAgentId = nodeAgents[0]?.agentId;
 			const effectiveTask = {
 				...stepTask,
 				customAgentId: stepTask.customAgentId ?? primaryAgentId,
@@ -306,13 +307,32 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				effectiveTask.description = instructions;
 			}
 
+			// Find the WorkflowNodeAgent slot that spawned this task.
+			// When slotRole is stored on the task (migration 46+), use it for an exact match.
+			// This correctly handles nodes where the same agentId appears multiple times with
+			// different slot roles (e.g. "strict-reviewer" and "quick-reviewer"): each task
+			// was created with its own slotRole, so the lookup is unambiguous.
+			// For tasks created before migration 46 (no slotRole), fall back to find-by-agentId,
+			// which always returns the first matching slot — acceptable for legacy data.
+			const agentSlot = effectiveTask.slotRole
+				? nodeAgents.find((a) => a.role === effectiveTask.slotRole)
+				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
+
+			// Extract slot-level overrides (model and systemPrompt) if present.
+			// Always construct the object; undefined values are handled downstream
+			// (createCustomAgentInit guards on !== undefined for each field).
+			// When agentSlot is undefined (stale slotRole: the workflow was edited after
+			// the task was created and the slot no longer exists), both fields are undefined
+			// and no override is applied — the base agent config is used as-is.
+			const slotOverrides = { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt };
+
 			// Generate a new session ID for the sub-session.
 			// Note: the factory may assign a different ID internally. All subsequent code
 			// uses `actualSessionId` returned by sessionFactory.create(), not subSessionId.
 			// The subSessionId is embedded in the init only so the SDK can pre-wire it.
 			const subSessionId = randomUUID();
 
-			// Resolve the agent session init
+			// Resolve the agent session init, applying per-slot overrides when present.
 			let init: AgentSessionInit;
 			try {
 				init = resolveAgentInit({
@@ -323,6 +343,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					workspacePath,
 					workflowRun: run,
 					workflow,
+					slotOverrides,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -334,12 +355,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// should always succeed — null here would be a data inconsistency.
 			const agentForMember = agentManager.getById(effectiveTask.customAgentId!);
 
+			// Use the slot's role (WorkflowNodeAgent.role) for channel routing and group membership.
+			// This ensures that when the same agent appears multiple times in a node with different
+			// slot roles (e.g. "strict-reviewer" and "quick-reviewer"), each session is registered
+			// with its unique slot role so ChannelResolver.canSend() checks work correctly.
+			// Falls back to the base agent's role, then 'agent' if neither is available.
+			const memberRole = agentSlot?.role ?? agentForMember?.role ?? 'agent';
+
 			// Attach step agent peer communication MCP server if a factory is provided.
-			// The server is built with the resolved session ID and agent role so it can
-			// validate channels and inject messages into the correct peer sessions.
-			const agentRole = agentForMember?.role ?? 'agent';
+			// The server is built with the slot role so it can validate channels using the
+			// same role that was registered in the session group.
 			if (buildStepAgentMcpServer) {
-				const stepMcpServer = buildStepAgentMcpServer(subSessionId, agentRole);
+				const stepMcpServer = buildStepAgentMcpServer(subSessionId, memberRole);
 				init = {
 					...init,
 					mcpServers: { ...init.mcpServers, 'step-agent': stepMcpServer },
@@ -351,7 +378,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				actualSessionId = await sessionFactory.create(init, {
 					agentId: effectiveTask.customAgentId ?? undefined,
-					role: agentForMember?.role ?? 'agent',
+					role: memberRole,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

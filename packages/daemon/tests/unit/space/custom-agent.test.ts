@@ -459,6 +459,216 @@ describe('createCustomAgentInit', () => {
 });
 
 // ============================================================================
+// createCustomAgentInit — slot overrides
+// ============================================================================
+
+describe('createCustomAgentInit — slotOverrides', () => {
+	it('model override replaces agent default model', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929' }),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+	});
+
+	it('model override replaces space default model', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: undefined }),
+			space: makeSpace({ defaultModel: 'claude-sonnet-4-5-20250929' }),
+			slotOverrides: { model: 'claude-opus-4-6' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+	});
+
+	it('model override sets correct provider', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929' }),
+			slotOverrides: { model: 'glm-4-flash' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('glm-4-flash');
+		expect(init.provider).toBe('glm');
+	});
+
+	it('systemPrompt override replaces agent default system prompt', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Original agent instructions.' }),
+			slotOverrides: { systemPrompt: 'Override: focus on security.' },
+		});
+		const init = createCustomAgentInit(config);
+		// The override should appear in the append/prompt
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Override: focus on security.');
+		expect(promptText).not.toContain('Original agent instructions.');
+	});
+
+	it('systemPrompt override replaces agent prompt in Agent Instructions section', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Base instructions.' }),
+			slotOverrides: { systemPrompt: 'Slot-specific instructions.' },
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Agent Instructions');
+		expect(promptText).toContain('Slot-specific instructions.');
+	});
+
+	it('empty string systemPrompt override removes agent instructions section', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Some instructions.' }),
+			slotOverrides: { systemPrompt: '' },
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		// Empty override → the Agent Instructions section is not included
+		// (buildCustomAgentSystemPrompt only adds it when systemPrompt is truthy)
+		expect(promptText).not.toContain('Some instructions.');
+	});
+
+	it('undefined slotOverrides leaves base agent model unchanged', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-opus-4-6' }),
+			slotOverrides: undefined,
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+	});
+
+	it('undefined slotOverrides leaves base agent system prompt unchanged', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ systemPrompt: 'Base prompt.' }),
+			slotOverrides: undefined,
+		});
+		const init = createCustomAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Base prompt.');
+	});
+
+	it('partial override: only model provided leaves systemPrompt from agent', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({
+				model: 'claude-sonnet-4-5-20250929',
+				systemPrompt: 'Agent prompt.',
+			}),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Agent prompt.');
+	});
+
+	it('partial override: only systemPrompt provided leaves model from agent', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-opus-4-6', systemPrompt: 'Agent prompt.' }),
+			slotOverrides: { systemPrompt: 'Slot prompt.' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Slot prompt.');
+		expect(promptText).not.toContain('Agent prompt.');
+	});
+
+	it('model override works with agent/agents path (custom tools)', () => {
+		const config = makeConfig({
+			customAgent: makeAgent({ model: 'claude-sonnet-4-5-20250929', tools: ['Read', 'Bash'] }),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = createCustomAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+		// Still uses agent/agents path
+		expect(init.agents).toBeDefined();
+	});
+
+	it('systemPrompt override works with agent/agents path (custom tools) — override lands in agents[key].prompt', () => {
+		// When SpaceAgent.tools is set, createCustomAgentInit uses the agent/agents pattern.
+		// The behavioral prompt (including the systemPrompt override) is placed in
+		// agentDef.prompt, NOT in init.systemPrompt.append — this code path must be tested
+		// separately from the simple (no-tools) path.
+		const config = makeConfig({
+			customAgent: makeAgent({
+				name: 'CodeReviewer',
+				tools: ['Read', 'Bash'],
+				systemPrompt: 'Original agent instructions.',
+			}),
+			slotOverrides: { systemPrompt: 'Slot-level security focus.' },
+		});
+		const init = createCustomAgentInit(config);
+		// Must use agent/agents path
+		expect(init.agents).toBeDefined();
+		// systemPrompt.append is not used on this path
+		expect(init.systemPrompt?.append).toBeUndefined();
+		// The override must appear in agentDef.prompt
+		const agentKey = Object.keys(init.agents!)[0];
+		const agentDef = init.agents![agentKey];
+		expect(agentDef?.prompt).toContain('Slot-level security focus.');
+		expect(agentDef?.prompt).not.toContain('Original agent instructions.');
+	});
+});
+
+// ============================================================================
+// resolveAgentInit — slot overrides pass-through
+// ============================================================================
+
+describe('resolveAgentInit — slotOverrides pass-through', () => {
+	function makeMockAgentManagerForOverrides(agent: SpaceAgent | null): SpaceAgentManager {
+		return {
+			getById: mock(() => agent),
+		} as unknown as SpaceAgentManager;
+	}
+
+	function makeResolveConfigWithOverrides(
+		overrides?: Partial<ResolveAgentInitConfig>
+	): ResolveAgentInitConfig {
+		return {
+			task: makeTask({ customAgentId: 'agent-1' }),
+			space: makeSpace(),
+			agentManager: makeMockAgentManagerForOverrides(makeAgent({ id: 'agent-1' })),
+			sessionId: 'session-override-test',
+			workspacePath: '/workspace/project',
+			workflowRun: null,
+			...overrides,
+		};
+	}
+
+	it('slotOverrides model is applied to the resolved session init', () => {
+		const agent = makeAgent({ id: 'agent-1', model: 'claude-sonnet-4-5-20250929' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+			slotOverrides: { model: 'claude-haiku-4-5-20251001' },
+		});
+		const init = resolveAgentInit(config);
+		expect(init.model).toBe('claude-haiku-4-5-20251001');
+	});
+
+	it('slotOverrides systemPrompt is applied to the resolved session init', () => {
+		const agent = makeAgent({ id: 'agent-1', systemPrompt: 'Base prompt.' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+			slotOverrides: { systemPrompt: 'Slot-specific override.' },
+		});
+		const init = resolveAgentInit(config);
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Slot-specific override.');
+		expect(promptText).not.toContain('Base prompt.');
+	});
+
+	it('no slotOverrides means base agent config is used unchanged', () => {
+		const agent = makeAgent({ id: 'agent-1', model: 'claude-opus-4-6', systemPrompt: 'Base.' });
+		const config = makeResolveConfigWithOverrides({
+			agentManager: makeMockAgentManagerForOverrides(agent),
+		});
+		const init = resolveAgentInit(config);
+		expect(init.model).toBe('claude-opus-4-6');
+		const promptText = init.systemPrompt?.append ?? '';
+		expect(promptText).toContain('Base.');
+	});
+});
+
+// ============================================================================
 // resolveAgentInit
 // ============================================================================
 

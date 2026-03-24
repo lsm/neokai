@@ -173,6 +173,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// - current_step_id -> current_node_id in space_workflow_runs
 	// - current_step_id -> current_node_id in space_session_groups
 	runMigration45(db);
+
+	// Migration 46: Add slot_role column to space_tasks
+	// Stores the WorkflowNodeAgent.role of the slot that spawned a task, enabling
+	// unambiguous slot lookup when the same agentId appears multiple times in a node.
+	runMigration46(db);
 }
 
 /**
@@ -2892,5 +2897,21 @@ function runMigration45(db: BunDatabase): void {
 		throw e;
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 46: Add slot_role column to space_tasks.
+ *
+ * Stores the `WorkflowNodeAgent.role` of the specific agent slot that spawned a task.
+ * This allows `spawn_step_agent` to unambiguously identify the correct slot even when
+ * the same `agentId` appears multiple times in a node with different slot roles and overrides.
+ *
+ * Existing rows get NULL for slot_role (backward compatible — the old lookup-by-agentId
+ * path handles the null case by falling back to the first matching slot).
+ */
+function runMigration46(db: BunDatabase): void {
+	if (!tableHasColumn(db, 'space_tasks', 'slot_role')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN slot_role TEXT`);
 	}
 }

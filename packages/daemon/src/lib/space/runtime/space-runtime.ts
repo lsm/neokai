@@ -343,6 +343,7 @@ export class SpaceRuntime {
 					workflowNodeId: startStep.id,
 					taskType: resolved.taskType,
 					customAgentId: resolved.customAgentId,
+					slotRole: agentEntry.role,
 					status: 'pending',
 					goalId: run.goalId,
 				});
