@@ -16,8 +16,6 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
-import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
-import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // ============================================================
 // Tests
@@ -237,8 +235,7 @@ describe('Recurring Missions: tickRecurringMissions triggers execution', () => {
 			description: 'From previous execution',
 			status: 'completed',
 		});
-		const goalRepo = new GoalRepository(ctx.db as never, noOpReactiveDb);
-		goalRepo.linkTaskToGoal(goal.id, oldTask.id);
+		await ctx.goalManager.linkTaskToGoal(goal.id, oldTask.id);
 
 		ctx.runtime.start();
 		await ctx.runtime.tick();
@@ -553,58 +550,70 @@ describe('replan_goal + recurring mission interaction', () => {
 		expect(updatedGoal!.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
 	});
 
-	test('missionType remains recurring after tick triggers and execution starts', async () => {
-		// Regression test: ensure missionType is NOT changed to 'one_shot' after trigger
+	test('missionType remains recurring through full tick lifecycle: trigger → complete → re-trigger', async () => {
+		// Regression test: verify missionType is NOT changed to 'one_shot' through the
+		// full recurring mission lifecycle:
+		// 1. Phase 2 triggers execution (tick #1)
+		// 2. Tasks complete, Phase 1 completes execution and advances next_run_at (tick #2)
+		// 3. Phase 2 re-triggers new execution (tick #3)
 		const pastTime = Math.floor(Date.now() / 1000) - 60;
 		const goal = await ctx.goalManager.createGoal({
-			title: 'Mission type preservation test',
-			description: 'missionType should stay recurring',
+			title: 'Full lifecycle test',
+			description: 'missionType should stay recurring through all phases',
 			missionType: 'recurring',
 			schedule: { expression: '@daily', timezone: 'UTC' },
 			nextRunAt: pastTime,
 		});
 
+		// ── Phase 2 of tick #1: trigger execution ──────────────────────────────
 		ctx.runtime.start();
 		await ctx.runtime.tick();
 
-		// Verify missionType is still 'recurring' after trigger
-		const updatedGoal = await ctx.goalManager.getGoal(goal.id);
-		expect(updatedGoal?.missionType).toBe('recurring');
-
-		// Verify execution was created
-		const activeExecution = ctx.goalManager.getActiveExecution(goal.id);
-		expect(activeExecution).not.toBeNull();
-		expect(activeExecution?.status).toBe('running');
-	});
-
-	test('missionType remains recurring after execution completes and next_run_at advances', async () => {
-		// Regression test: ensure missionType is NOT changed to 'one_shot' after execution completes
-		const pastTime = Math.floor(Date.now() / 1000) - 60;
-		const goal = await ctx.goalManager.createGoal({
-			title: 'Mission type after completion',
-			description: 'should stay recurring after completion',
-			missionType: 'recurring',
-			schedule: { expression: '@daily', timezone: 'UTC' },
-			nextRunAt: pastTime,
-		});
-
-		// Start execution manually (simulating what tick does)
-		const execution = ctx.goalManager.startExecution(goal.id);
-		expect(execution).not.toBeNull();
-
-		// Verify missionType is still 'recurring' after execution starts
 		let updatedGoal = await ctx.goalManager.getGoal(goal.id);
 		expect(updatedGoal?.missionType).toBe('recurring');
 
-		// Complete the execution
-		ctx.goalManager.completeExecution(execution.id, 'Test completion');
+		const exec1 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec1).not.toBeNull();
+		expect(exec1?.status).toBe('running');
+		expect(exec1?.executionNumber).toBe(1);
 
-		// Verify missionType is still 'recurring' after completion
+		// Simulate task completion: mark the execution's tasks as completed
+		// so Phase 1 will complete the execution on the next tick
+		const taskIds = exec1!.taskIds;
+		for (const taskId of taskIds) {
+			await ctx.taskManager.updateTaskStatus(taskId, 'completed');
+		}
+
+		// ── Phase 1 of tick #2: complete execution and advance next_run_at ──────
+		await ctx.runtime.tick();
+
+		// Execution should now be completed (not running)
+		const exec1After = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec1After).toBeNull(); // no active execution
+
+		// missionType should still be 'recurring'
 		updatedGoal = await ctx.goalManager.getGoal(goal.id);
 		expect(updatedGoal?.missionType).toBe('recurring');
 
-		// Note: next_run_at advancement happens in Phase 1 of tickRecurringMissions
-		// when it detects the execution is complete. Calling completeExecution directly
-		// does not advance next_run_at - that requires a tick.
+		// next_run_at should have been advanced to the future
+		expect(updatedGoal!.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+		// ── Phase 2 of tick #3: re-trigger new execution ───────────────────────
+		// Set next_run_at to the past to trigger again
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+
+		await ctx.runtime.tick();
+
+		const exec2 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec2).not.toBeNull();
+		expect(exec2?.status).toBe('running');
+		expect(exec2?.executionNumber).toBe(2); // second execution
+
+		// missionType should STILL be 'recurring' after re-trigger
+		updatedGoal = await ctx.goalManager.getGoal(goal.id);
+		expect(updatedGoal?.missionType).toBe('recurring');
+		// next_run_at should have been re-advanced by startExecution
+		// (may be equal to oldNextRunAt if both computed at same second; verify it's future)
+		expect(updatedGoal!.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
 	});
 });
