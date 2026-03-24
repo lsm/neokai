@@ -305,9 +305,18 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 - **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
-- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval
-- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
+- **Only P3 nits or no issues** → verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL for human approval
+- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL (let human decide).
 - **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`
+
+### Step 5: Verify PR Mergeability (before submit_for_review)
+
+Before calling \`submit_for_review\`, verify the PR is ready to merge:
+- Check CI: \`gh pr checks <PR_NUMBER>\`
+- Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
+- If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+- If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
+- Only call \`submit_for_review\` when CI passes and no conflicts exist.
 
 Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`;
 }
@@ -326,10 +335,16 @@ ${helperSection}## Plan Review Guidelines
 3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
    - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
-   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.
-   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
-5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
-6. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
+   - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL for human approval.
+   - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
+5. **Before calling \`submit_for_review\`**, verify the PR is ready to merge:
+   - Check CI: \`gh pr checks <PR_NUMBER>\`
+   - Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
+   - If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+   - If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
+   - Only call \`submit_for_review\` when CI passes and no conflicts exist.
+6. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
+7. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
 
 **Phase 2 (task creation)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N", call \`complete_task\` with a summary of the tasks created.`;
 }
@@ -385,9 +400,18 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 - **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
-- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL
-- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
-- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``;
+- **Only P3 nits or no issues** → verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL
+- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL (let human decide).
+- **Fundamentally broken** → \`fail_task\` or \`replan_goal\`
+
+### Step 5: Verify PR Mergeability (before submit_for_review)
+
+Before calling \`submit_for_review\`, verify the PR is ready to merge:
+- Check CI: \`gh pr checks <PR_NUMBER>\`
+- Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
+- If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+- If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
+- Only call \`submit_for_review\` when CI passes and no conflicts exist.`;
 }
 
 function leaderCodeReviewSimpleSection(helperNames: string[]): string {
@@ -404,8 +428,14 @@ ${helperSection}## Code Review Guidelines
 3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
    - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
-   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.
-   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
+   - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL.
+   - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
+5. **Before calling \`submit_for_review\`**, verify the PR is ready to merge:
+   - Check CI: \`gh pr checks <PR_NUMBER>\`
+   - Check conflicts: \`gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus\`
+   - If CI is **failing** → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+   - If **merge conflicts** exist (mergeStateStatus is DIRTY or CONFLICTING) → send to worker: "PR has merge conflicts. Rebase and force push."
+   - Only call \`submit_for_review\` when CI passes and no conflicts exist.
 
 - Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound
 - Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`;
