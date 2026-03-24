@@ -1060,10 +1060,10 @@ export function setupTaskHandlers(
 		// update the status so the task reflects that work is ongoing again.
 		if (task.status === 'review') {
 			try {
-				await taskManager.setTaskStatus(params.taskId, 'in_progress');
+				await taskManager.setTaskStatus(taskId, 'in_progress');
 			} catch (err) {
 				throw new Error(
-					`Failed to transition task ${params.taskId} from review to in_progress: ${String(err)}`
+					`Failed to transition task ${taskId} from review to in_progress: ${String(err)}`
 				);
 			}
 		}

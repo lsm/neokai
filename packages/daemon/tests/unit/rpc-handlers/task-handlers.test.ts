@@ -542,26 +542,26 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			const { setTaskStatus, runtime } = setupWithReviewTask();
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'add error handling' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'add error handling' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
-			expect(runtime.injectMessageToWorker).toHaveBeenCalledWith('task-1', 'add error handling');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+			expect(runtime.injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'add error handling');
 		});
 
 		it('transitions to in_progress and routes message to leader', async () => {
 			const { setTaskStatus, runtime } = setupWithReviewTask();
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'approve and merge', target: 'leader' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'approve and merge', target: 'leader' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
-			expect(runtime.injectMessageToLeader).toHaveBeenCalledWith('task-1', 'approve and merge');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+			expect(runtime.injectMessageToLeader).toHaveBeenCalledWith(TASK_UUID, 'approve and merge');
 		});
 
 		it('throws when status transition from review to in_progress fails', async () => {
@@ -593,14 +593,14 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'go ahead' }, {})
-			).rejects.toThrow('Failed to transition task task-1 from review to in_progress');
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'go ahead' }, {})
+			).rejects.toThrow(`Failed to transition task ${TASK_UUID} from review to in_progress`);
 		});
 
 		it('does not call reviveTaskForMessage for review tasks (sessions are still active)', async () => {
 			const { runtime } = setupWithReviewTask();
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'keep going' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'keep going' }, {});
 
 			expect(runtime.reviveTaskForMessage).not.toHaveBeenCalled();
 		});
