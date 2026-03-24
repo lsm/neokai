@@ -35,7 +35,7 @@ import type {
 	WorkflowChannel,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowNodeCard';
+import type { NodeDraft } from '../WorkflowNodeCard';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import { rulesToDrafts } from '../WorkflowRulesEditor';
 import type { Point } from './types';
@@ -51,7 +51,7 @@ import { autoLayout } from './layout';
  * `step.localId` is used for React keying.
  */
 export interface VisualNode {
-	step: StepDraft;
+	step: NodeDraft;
 	position: Point;
 }
 
@@ -118,7 +118,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		} else {
 			position = layoutFallback.get(s.id) ?? { x: 0, y: 0 };
 		}
-		const step: StepDraft = {
+		const step: NodeDraft = {
 			localId: generateUUID(),
 			id: s.id,
 			name: s.name,

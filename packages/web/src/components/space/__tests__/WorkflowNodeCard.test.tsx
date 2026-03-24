@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { SpaceAgent } from '@neokai/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
-import type { StepDraft, ConditionDraft } from '../WorkflowNodeCard';
+import type { NodeDraft, ConditionDraft } from '../WorkflowNodeCard';
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -33,7 +33,7 @@ function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
 	};
 }
 
-function makeStep(overrides: Partial<StepDraft> = {}): StepDraft {
+function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
 	return {
 		localId: 'local-1',
 		name: 'My Step',
@@ -51,8 +51,8 @@ const defaultAgents: SpaceAgent[] = [
 
 function makeProps(overrides: Partial<Parameters<typeof WorkflowNodeCard>[0]> = {}) {
 	return {
-		step: makeStep(),
-		stepIndex: 1,
+		node: makeStep(),
+		nodeIndex: 1,
 		isFirst: false,
 		isLast: false,
 		expanded: false,
@@ -77,7 +77,7 @@ describe('WorkflowNodeCard', () => {
 
 	describe('collapsed view', () => {
 		it('renders step number (1-based)', () => {
-			const { getByText } = render(<WorkflowNodeCard {...makeProps({ stepIndex: 2 })} />);
+			const { getByText } = render(<WorkflowNodeCard {...makeProps({ nodeIndex: 2 })} />);
 			expect(getByText('3')).toBeTruthy();
 		});
 
@@ -88,16 +88,16 @@ describe('WorkflowNodeCard', () => {
 
 		it('renders step name in collapsed view', () => {
 			const { getByText } = render(
-				<WorkflowNodeCard {...makeProps({ step: makeStep({ name: 'My Awesome Step' }) })} />
+				<WorkflowNodeCard {...makeProps({ node: makeStep({ name: 'My Awesome Step' }) })} />
 			);
 			expect(getByText('My Awesome Step')).toBeTruthy();
 		});
 
-		it('shows "Unnamed Step" when name is empty', () => {
+		it('shows "Unnamed Node" when name is empty', () => {
 			const { getByText } = render(
-				<WorkflowNodeCard {...makeProps({ step: makeStep({ name: '' }) })} />
+				<WorkflowNodeCard {...makeProps({ node: makeStep({ name: '' }) })} />
 			);
-			expect(getByText('Unnamed Step')).toBeTruthy();
+			expect(getByText('Unnamed Node')).toBeTruthy();
 		});
 
 		it('calls onToggleExpand when header clicked', () => {
@@ -135,18 +135,18 @@ describe('WorkflowNodeCard', () => {
 		it('calls onRemove when remove button clicked', () => {
 			const onRemove = vi.fn();
 			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ onRemove })} />);
-			fireEvent.click(getByTitle('Remove step'));
+			fireEvent.click(getByTitle('Remove node'));
 			expect(onRemove).toHaveBeenCalledOnce();
 		});
 
 		it('disables Remove button when disableRemove is true', () => {
 			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ disableRemove: true })} />);
-			expect((getByTitle('Remove step') as HTMLButtonElement).disabled).toBe(true);
+			expect((getByTitle('Remove node') as HTMLButtonElement).disabled).toBe(true);
 		});
 
 		it('enables Remove button when disableRemove is false', () => {
 			const { getByTitle } = render(<WorkflowNodeCard {...makeProps({ disableRemove: false })} />);
-			expect((getByTitle('Remove step') as HTMLButtonElement).disabled).toBe(false);
+			expect((getByTitle('Remove node') as HTMLButtonElement).disabled).toBe(false);
 		});
 
 		it('shows human gate icon when entry condition is human', () => {
@@ -205,7 +205,9 @@ describe('WorkflowNodeCard', () => {
 
 		it('shows currently selected agent in dropdown', () => {
 			const step = makeStep({ agentId: 'agent-2' });
-			const { container } = render(<WorkflowNodeCard {...makeProps({ step, expanded: true })} />);
+			const { container } = render(
+				<WorkflowNodeCard {...makeProps({ node: step, expanded: true })} />
+			);
 			const agentSelect = container.querySelectorAll('select')[0];
 			expect(agentSelect.value).toBe('agent-2');
 		});

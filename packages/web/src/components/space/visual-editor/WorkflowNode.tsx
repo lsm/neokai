@@ -16,8 +16,8 @@
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowNodeCard';
-import { isMultiAgentStep } from '../WorkflowNodeCard';
+import type { NodeDraft } from '../WorkflowNodeCard';
+import { isMultiAgentNode } from '../WorkflowNodeCard';
 import type { Point } from './types';
 
 // ============================================================================
@@ -25,7 +25,7 @@ import type { Point } from './types';
 // ============================================================================
 
 /** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({ step }: { step: StepDraft }) {
+function ChannelTopologyBadge({ step }: { step: NodeDraft }) {
 	const channels = step.channels;
 	if (!channels || channels.length === 0) return null;
 
@@ -60,7 +60,7 @@ export type PortType = 'input' | 'output';
 export interface WorkflowNodeProps {
 	/** Zero-based index within the steps array; used for step number badge */
 	stepIndex: number;
-	step: StepDraft;
+	step: NodeDraft;
 	/** Absolute position in canvas coordinates */
 	position: Point;
 	/** Full agents list — used to resolve the agent name from step.agentId */
@@ -105,7 +105,7 @@ export function WorkflowNode({
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 
-	const multi = isMultiAgentStep(step);
+	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
 
 	// ---- Drag state ----

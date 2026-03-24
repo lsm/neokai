@@ -33,7 +33,7 @@ import { filterAgents, TEMPLATES } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
-import type { StepDraft } from '../WorkflowNodeCard';
+import type { NodeDraft } from '../WorkflowNodeCard';
 import type { ConditionDraft } from './GateConfig';
 import type { ViewportState, Point } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
@@ -274,7 +274,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	function addStep() {
 		const newLocalId = generateUUID();
-		const newStep: StepDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
+		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
 
 		// Capture emptiness before the setNodes call so we can call setStartStepId
 		// outside the updater. State setter calls inside updater functions are side
@@ -327,7 +327,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		[nodes, startNodeId]
 	);
 
-	const handleUpdateNode = useCallback((step: StepDraft) => {
+	const handleUpdateNode = useCallback((step: NodeDraft) => {
 		setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
 	}, []);
 

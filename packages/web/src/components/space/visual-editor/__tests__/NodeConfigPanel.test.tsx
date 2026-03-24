@@ -22,7 +22,7 @@ import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { SpaceAgent } from '@neokai/shared';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
-import type { StepDraft } from '../../WorkflowNodeCard';
+import type { NodeDraft } from '../../WorkflowNodeCard';
 import type { ConditionDraft } from '../GateConfig';
 
 afterEach(() => cleanup());
@@ -35,7 +35,7 @@ function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
 	return { id, spaceId: 'space-1', name, role, createdAt: Date.now(), updatedAt: Date.now() };
 }
 
-function makeStep(overrides: Partial<StepDraft> = {}): StepDraft {
+function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
 	return {
 		localId: 'step-local-1',
 		name: 'My Step',

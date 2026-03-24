@@ -16,7 +16,7 @@ import type { SpaceWorkflow, SpaceAgent } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowNodeCard } from './WorkflowNodeCard';
-import type { StepDraft, ConditionDraft } from './WorkflowNodeCard';
+import type { NodeDraft, ConditionDraft } from './WorkflowNodeCard';
 import { WorkflowRulesEditor } from './WorkflowRulesEditor';
 import type { RuleDraft } from './WorkflowRulesEditor';
 import { rulesToDrafts } from './WorkflowRulesEditor';
@@ -63,7 +63,7 @@ function makeLocalId(): string {
 	return generateUUID();
 }
 
-function makeEmptyStep(): StepDraft {
+function makeEmptyStep(): NodeDraft {
 	return { localId: makeLocalId(), name: '', agentId: '', instructions: '' };
 }
 
@@ -90,20 +90,20 @@ export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
  * Defined outside the component so it is not recreated on each render and
  * is clearly a pure initialization helper, not a reactive dependency.
  *
- * NOTE (Milestone 5): `StepDraft` only carries `agentId` (single-agent format).
+ * NOTE (Milestone 5): `NodeDraft` only carries `agentId` (single-agent format).
  * Multi-agent steps (`agents[]`) and `channels[]` are silently dropped when a workflow
  * is loaded into the editor. Saving such a workflow through the UI would overwrite those
  * fields with the single-agent representation. There is no UI to create multi-agent steps
  * yet, so the practical risk is limited to API-created workflows opened in this editor.
  */
 export function initFromWorkflow(wf: SpaceWorkflow): {
-	steps: StepDraft[];
+	steps: NodeDraft[];
 	transitions: ConditionDraft[];
 	rules: RuleDraft[];
 	tags: string[];
 } {
 	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
-	const ordered: StepDraft[] = [];
+	const ordered: NodeDraft[] = [];
 	const visited = new Set<string>();
 	let currentId: string | undefined = wf.startNodeId;
 
@@ -175,7 +175,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 	const [name, setName] = useState(workflow?.name ?? '');
 	const [description, setDescription] = useState(workflow?.description ?? '');
-	const [steps, setSteps] = useState<StepDraft[]>(initial?.steps ?? [makeEmptyStep()]);
+	const [steps, setSteps] = useState<NodeDraft[]>(initial?.steps ?? [makeEmptyStep()]);
 	const [transitions, setTransitions] = useState<ConditionDraft[]>(initial?.transitions ?? []);
 	const [rules, setRules] = useState<RuleDraft[]>(initial?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
@@ -231,7 +231,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		setExpandedIndex(other);
 	}
 
-	function updateStep(index: number, step: StepDraft) {
+	function updateStep(index: number, step: NodeDraft) {
 		setSteps((prev) => prev.map((s, i) => (i === index ? step : s)));
 	}
 
@@ -273,7 +273,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	// ---- Template ----
 
 	function applyTemplate(template: WorkflowTemplate) {
-		const newSteps: StepDraft[] = template.stepRoles.map((role) => {
+		const newSteps: NodeDraft[] = template.stepRoles.map((role) => {
 			const found = agents.find(
 				(a) => a.name.toLowerCase() === role || a.role.toLowerCase() === role
 			);
@@ -522,8 +522,8 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						{steps.map((step, i) => (
 							<WorkflowNodeCard
 								key={step.localId}
-								step={step}
-								stepIndex={i}
+								node={step}
+								nodeIndex={i}
 								isFirst={i === 0}
 								isLast={i === steps.length - 1}
 								expanded={expandedIndex === i}

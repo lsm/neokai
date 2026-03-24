@@ -17,8 +17,8 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowNodeCard';
-import { isMultiAgentStep } from '../WorkflowNodeCard';
+import type { NodeDraft } from '../WorkflowNodeCard';
+import { isMultiAgentNode } from '../WorkflowNodeCard';
 import { GateConfig } from './GateConfig';
 import type { ConditionDraft } from './GateConfig';
 
@@ -27,7 +27,7 @@ import type { ConditionDraft } from './GateConfig';
 // ============================================================================
 
 export interface NodeConfigPanelProps {
-	step: StepDraft;
+	step: NodeDraft;
 	agents: SpaceAgent[];
 	entryCondition: ConditionDraft | null;
 	exitCondition: ConditionDraft | null;
@@ -42,7 +42,7 @@ export interface NodeConfigPanelProps {
 	 * Mirrors the WorkflowNodeCard terminal message for the last step.
 	 */
 	isLastStep?: boolean;
-	onUpdate: (step: StepDraft) => void;
+	onUpdate: (step: NodeDraft) => void;
 	onUpdateEntryCondition: (cond: ConditionDraft) => void;
 	onUpdateExitCondition: (cond: ConditionDraft) => void;
 	/** Designates this step as the workflow start node */
@@ -57,13 +57,13 @@ export interface NodeConfigPanelProps {
 // ============================================================================
 
 interface AgentsSectionProps {
-	step: StepDraft;
+	step: NodeDraft;
 	agents: SpaceAgent[];
-	onUpdate: (step: StepDraft) => void;
+	onUpdate: (step: NodeDraft) => void;
 }
 
 function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
-	const multi = isMultiAgentStep(step);
+	const multi = isMultiAgentNode(step);
 	const stepAgents = step.agents ?? [];
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
@@ -263,9 +263,9 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 // ============================================================================
 
 interface ChannelsPanelSectionProps {
-	step: StepDraft;
+	step: NodeDraft;
 	agents: SpaceAgent[];
-	onUpdate: (step: StepDraft) => void;
+	onUpdate: (step: NodeDraft) => void;
 }
 
 function ChannelsPanelSection({ step, agents, onUpdate }: ChannelsPanelSectionProps) {
@@ -547,7 +547,7 @@ export function NodeConfigPanel({
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
 
 				{/* Channels (shown when node has agents or has existing channels) */}
-				{(!!step.agentId || isMultiAgentStep(step) || step.channels) && (
+				{(!!step.agentId || isMultiAgentNode(step) || step.channels) && (
 					<ChannelsPanelSection step={step} agents={agents} onUpdate={onUpdate} />
 				)}
 

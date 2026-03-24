@@ -18,4 +18,4 @@ export { ImportPreviewDialog } from './ImportPreviewDialog';
 export { downloadBundle, pickImportFile } from './export-import-utils';
 
 export type { RuleDraft } from './WorkflowRulesEditor';
-export type { StepDraft, ConditionDraft } from './WorkflowNodeCard';
+export type { NodeDraft, ConditionDraft } from './WorkflowNodeCard';
