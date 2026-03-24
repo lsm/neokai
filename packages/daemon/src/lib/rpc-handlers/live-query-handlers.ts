@@ -264,6 +264,7 @@ SELECT
 FROM room_mcp_enablement rme
 JOIN app_mcp_servers ams ON ams.id = rme.server_id
 WHERE rme.room_id = ?
+ORDER BY ams.id ASC
 `.trim();
 
 function mapMcpEnablementRow(row: Record<string, unknown>): Record<string, unknown> {
