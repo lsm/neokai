@@ -1969,15 +1969,15 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
-		// For agentId shorthand, slot role === agentId (synthetic). Fall back to base agent role.
-		// memberRole = agentSlot.role (synthetic: equals agentId) || agentForMember.role ('coder') || 'agent'
-		// agentSlot.role is the synthetic agentId string, so it is always set for agentId shorthand nodes.
+		// For agentId shorthand, resolveNodeAgents synthesizes role = agentId (the UUID string).
+		// spawn_step_agent picks memberRole = agentSlot.role (always set to the synthetic UUID),
+		// so no fallback to agentForMember.role ('coder') ever occurs on this path.
 		const sessionId = parsed.sessionId;
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
 		)._capturedMemberInfos.get(sessionId);
-		// The role should be set (either the synthetic agentId role or base agent role)
-		expect(capturedInfo?.role).toBeTruthy();
+		// The member role must be the synthetic agentId string, not the base SpaceAgent.role ('coder').
+		expect(capturedInfo?.role).toBe(ctx.agentId);
 	});
 
 	test('model override from WorkflowNodeAgent slot is applied to the spawned session', async () => {
@@ -2121,11 +2121,66 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 
 		// The spawned session must use 'quick-reviewer' — NOT 'strict-reviewer' (the first slot),
 		// confirming that slotRole-based lookup picks the correct slot.
+		// Note: this test only covers the last-created (quick-reviewer) task because
+		// spawn_step_agent selects stepTasks[last]. In practice the Task Agent calls
+		// spawn_step_agent once per task; the strict-reviewer task is covered by the
+		// slot-role membership test above which uses the single-agent (agents[]) path.
 		const sessionId = parsed.sessionId;
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
 		)._capturedMemberInfos.get(sessionId);
 		expect(capturedInfo?.role).toBe('quick-reviewer');
 		expect(capturedInfo?.role).not.toBe('coder');
+	});
+
+	test('stale slotRole (slot removed after task creation) falls back to base agent config', async () => {
+		// If the workflow is edited after a task was created and the slot no longer exists,
+		// agentSlot will be undefined. slotOverrides becomes { model: undefined, systemPrompt: undefined }
+		// so no override is applied — the base agent config is used as-is.
+		const agentId = ctx.agentId;
+		const stepId = `step-stale-${Math.random().toString(36).slice(2)}`;
+
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Stale SlotRole WF',
+			nodes: [
+				{
+					id: stepId,
+					name: 'Single Agent Step',
+					agents: [{ agentId, role: 'reviewer', model: 'claude-opus-4-6' }],
+				},
+			],
+			transitions: [],
+			startNodeId: stepId,
+			rules: [],
+		});
+
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Inject a stale slotRole directly via raw SQL (no public API for this scenario —
+		// it simulates the workflow definition being edited and removing the 'reviewer' slot
+		// after the task was already created).
+		ctx.db
+			.prepare(`UPDATE space_tasks SET slot_role = ? WHERE workflow_node_id = ?`)
+			.run('deleted-slot-role', stepId);
+
+		// Capture the init to verify no model override is applied
+		let capturedInit: { model?: string } | null = null;
+		const factory = makeMockSessionFactory({
+			create: async (init: unknown) => {
+				capturedInit = init as { model?: string };
+				return `session-${Math.random().toString(36).slice(2)}`;
+			},
+		});
+
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const parsed = JSON.parse(result.content[0].text);
+
+		// Spawn must succeed — stale slotRole is not a hard error
+		expect(parsed.success).toBe(true);
+		// The slot model override ('claude-opus-4-6') must NOT be applied because the slot
+		// was not found; base agent config is used instead (no model set → DEFAULT_CUSTOM_AGENT_MODEL)
+		expect(capturedInit?.model).not.toBe('claude-opus-4-6');
 	});
 });

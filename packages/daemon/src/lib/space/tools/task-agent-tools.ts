@@ -319,7 +319,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
 
 			// Extract slot-level overrides (model and systemPrompt) if present.
-			// Always construct the object — undefined values are handled downstream.
+			// Always construct the object; undefined values are handled downstream
+			// (createCustomAgentInit guards on !== undefined for each field).
+			// When agentSlot is undefined (stale slotRole: the workflow was edited after
+			// the task was created and the slot no longer exists), both fields are undefined
+			// and no override is applied — the base agent config is used as-is.
 			const slotOverrides = { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt };
 
 			// Generate a new session ID for the sub-session.
