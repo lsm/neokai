@@ -16,22 +16,21 @@
  */
 
 import type { Database } from '../../storage/database';
-import type { AppMcpServer } from '@neokai/shared';
 import type {
+	AppMcpServer,
 	McpServerConfig,
 	McpStdioServerConfig,
 	McpSSEServerConfig,
 	McpHttpServerConfig,
+	ValidationResult,
 } from '@neokai/shared';
+
+// Re-export so callers can import from this module without reaching into shared.
+export type { ValidationResult } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface ValidationResult {
-	valid: boolean;
-	error?: string;
-}
 
 export interface McpStartupError {
 	serverId: string;
@@ -61,10 +60,7 @@ export class AppMcpLifecycleManager {
 				continue;
 			}
 
-			const config = this.convertEntry(entry);
-			if (config !== null) {
-				result[entry.name] = config;
-			}
+			result[entry.name] = this.convertEntry(entry);
 		}
 
 		return result;
@@ -152,7 +148,7 @@ export class AppMcpLifecycleManager {
 	// Private helpers
 	// ---------------------------------------------------------------------------
 
-	private convertEntry(entry: AppMcpServer): McpServerConfig | null {
+	private convertEntry(entry: AppMcpServer): McpServerConfig {
 		switch (entry.sourceType) {
 			case 'stdio': {
 				const config: McpStdioServerConfig = {
@@ -186,8 +182,10 @@ export class AppMcpLifecycleManager {
 				return config;
 			}
 
-			default:
-				return null;
+			default: {
+				const exhaustive: never = entry.sourceType;
+				throw new Error(`convertEntry: unhandled sourceType "${exhaustive}"`);
+			}
 		}
 	}
 }
