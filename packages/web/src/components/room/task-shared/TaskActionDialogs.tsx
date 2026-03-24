@@ -303,6 +303,8 @@ const ALL_TASK_STATUSES: TaskStatus[] = [
 	'cancelled',
 	'archived',
 	'draft',
+	'rate_limited',
+	'usage_limited',
 ];
 
 const STATUS_LABELS: Record<TaskStatus, string> = {

@@ -95,6 +95,10 @@ function getStatusBorderColor(status: TaskStatus): string {
 			return 'border-l-gray-700';
 		case 'archived':
 			return 'border-l-gray-800';
+		case 'rate_limited':
+			return 'border-l-orange-500';
+		case 'usage_limited':
+			return 'border-l-orange-600';
 		default:
 			return 'border-l-transparent';
 	}
