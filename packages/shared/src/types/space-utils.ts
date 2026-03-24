@@ -21,9 +21,9 @@ import type { SpaceAgent, WorkflowChannel, WorkflowNode, WorkflowNodeAgent } fro
  * Wildcard and array `to` declarations are expanded into one entry per resolved pair.
  */
 export interface ResolvedChannel {
-	/** Role of the sending agent (matches SpaceAgent.role) */
+	/** Role of the sending agent (matches WorkflowNodeAgent.role) */
 	fromRole: string;
-	/** Role of the receiving agent (matches SpaceAgent.role) */
+	/** Role of the receiving agent (matches WorkflowNodeAgent.role) */
 	toRole: string;
 	/** Agent ID of the sender */
 	fromAgentId: string;
@@ -110,8 +110,9 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  * - `A → *`        A sends to all agents
  *
  * @param node   - The workflow node whose channels are to be resolved.
- * @param agents - All `SpaceAgent` records in the Space (unused in resolution; kept for API
- *   compatibility with `validateNodeChannels`). Pass `[]` when not available.
+ * @param agents - **Deprecated.** No longer used in resolution. Channel routing now uses
+ *   `WorkflowNodeAgent.role` directly. Pass `[]` or any array — the value is ignored.
+ *   This parameter will be removed in a future cleanup.
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
  * @throws {Error} When neither `agentId` nor `agents` is provided on the node
  *   (propagated from `resolveNodeAgents`). Callers should validate nodes before calling this.

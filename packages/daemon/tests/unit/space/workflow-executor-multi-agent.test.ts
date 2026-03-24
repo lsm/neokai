@@ -491,8 +491,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Start',
 					agents: [
-						{ agentId: AGENT_CODER, instructions: 'Write code' },
-						{ agentId: AGENT_PLANNER, instructions: 'Plan it' },
+						{ agentId: AGENT_CODER, role: 'coder', instructions: 'Write code' },
+						{ agentId: AGENT_PLANNER, role: 'planner', instructions: 'Plan it' },
 					],
 				},
 			],
@@ -521,8 +521,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Start',
 					agents: [
-						{ agentId: AGENT_CODER, instructions: 'Coder task' },
-						{ agentId: AGENT_PLANNER, instructions: 'Planner task' },
+						{ agentId: AGENT_CODER, role: 'coder', instructions: 'Coder task' },
+						{ agentId: AGENT_PLANNER, role: 'planner', instructions: 'Planner task' },
 					],
 				},
 			],
@@ -546,7 +546,10 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Mixed Start',
-					agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+					agents: [
+						{ agentId: AGENT_PLANNER, role: 'planner' },
+						{ agentId: AGENT_CODER, role: 'coder' },
+					],
 				},
 			],
 			transitions: [],
@@ -575,7 +578,10 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Custom Start',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_CUSTOM }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_CUSTOM, role: 'my-custom-role' },
+					],
 				},
 			],
 			transitions: [],
@@ -609,7 +615,10 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Parallel A',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_PLANNER, role: 'planner' },
+					],
 				},
 				{ id: STEP_B, name: 'Next Step', agentId: AGENT_CODER },
 			],
@@ -646,7 +655,10 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Parallel A',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_PLANNER, role: 'planner' },
+					],
 				},
 				{ id: STEP_B, name: 'Next Step', agentId: AGENT_CODER },
 			],
@@ -683,7 +695,10 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Parallel Waiting',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_PLANNER, role: 'planner' },
+					],
 				},
 			],
 			transitions: [],
@@ -717,7 +732,10 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Parallel Fail',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_PLANNER, role: 'planner' },
+					],
 				},
 			],
 			transitions: [],
@@ -750,7 +768,11 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{
 					id: STEP_A,
 					name: 'Triple Parallel',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }, { agentId: AGENT_EXTRA }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_PLANNER, role: 'planner' },
+						{ agentId: AGENT_EXTRA, role: 'extra-role' },
+					],
 				},
 			],
 			transitions: [],
@@ -1242,7 +1264,10 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 				{
 					id: STEP_B,
 					name: 'Implement (multi)',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+					],
 				},
 				{ id: STEP_C, name: 'Finalize (single)', agentId: AGENT_PLANNER },
 			],

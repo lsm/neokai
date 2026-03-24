@@ -198,6 +198,11 @@ export class SpaceWorkflowManager {
 						`node[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
 					);
 				}
+				if (!entry.role || !entry.role.trim()) {
+					throw new WorkflowValidationError(
+						`node[${index}].agents[${j}]: role must be a non-empty string`
+					);
+				}
 			}
 		}
 
@@ -223,7 +228,7 @@ export class SpaceWorkflowManager {
 							`node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
 						);
 					}
-					knownRoles.add(agent.role);
+					knownRoles.add(entry.role);
 				}
 			}
 		}

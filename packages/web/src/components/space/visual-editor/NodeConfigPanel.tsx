@@ -83,7 +83,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
-		if (stepAgents.some((a) => a.agentId === agentId)) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
 		const role = agentInfo?.role ?? agentId;
 		const next = [...stepAgents, { agentId, role }];

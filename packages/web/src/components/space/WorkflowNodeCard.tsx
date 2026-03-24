@@ -134,7 +134,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
-		if (nodeAgents.some((a) => a.agentId === agentId)) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
 		const role = agentInfo?.role ?? agentId;
 		updateAgents([...nodeAgents, { agentId, role }]);

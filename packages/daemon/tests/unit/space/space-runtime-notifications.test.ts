@@ -1328,7 +1328,10 @@ describe('SpaceRuntime — notification events', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel Step',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 				],
 				transitions: [],
@@ -1360,7 +1363,10 @@ describe('SpaceRuntime — notification events', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel Partial',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 				],
 				transitions: [],
@@ -1413,7 +1419,10 @@ describe('SpaceRuntime — notification events', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel Dedup',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 				],
 				transitions: [],
