@@ -9,7 +9,7 @@ This plan audits the current MCP system, then implements:
 2. A **Lifecycle Manager** that converts registry entries to SDK configs, integrates them into room/session and space/task-agent contexts, and provides error feedback for failed MCP servers.
 3. A **Web UI** for adding, editing, enabling/disabling, and deleting application-level MCPs (including secure env-var editor for API keys).
 4. **Room/session MCP enablement**: per-room opt-in from the registry.
-5. **Web search for the Planner** via a bundled or user-configured web-search MCP server.
+5. **Default MCP seeds** (`fetch-mcp`, `brave-search`) as useful out-of-the-box registry entries for end-users, plus documentation confirming that the Planner and plan-writer already have built-in `WebFetch`/`WebSearch` tools.
 
 ## Approach
 
@@ -35,11 +35,11 @@ No existing MCP file-based flows are removed — the registry is additive.
 ## Cross-Milestone Dependencies
 
 - Milestone 2 (registry backend) must land before 3, 4, 5, and 6.
-- Milestone 3 (lifecycle manager) must land before 4 (room integration) and 6 (planner web search).
+- Milestone 3 (lifecycle manager) must land before 4 (room integration) and 6.2 (default MCP seeds).
 - Milestone 4 (room integration) must land before 5 (UI reflects per-room state) and 7 (E2E test).
-- Milestone 5 (UI) can be developed in parallel with 6 (planner search) after milestone 4 is done.
+- Milestone 5 (UI) can be developed in parallel with 6 (default seeds) after milestone 4 is done.
 - Milestone 7 (E2E) depends on all prior milestones.
-- **Task 6.1** (web search evaluation) has **no dependencies** and can start in parallel with Milestone 2 from day one.
+- **Task 6.1** (planner web search documentation) and **Task 6.2** (default MCP seeds) have **no dependencies on each other** and can start as soon as Milestone 2 (Task 6.2) and day one (Task 6.1) allow.
 
 ## Audit Feedback Loop
 

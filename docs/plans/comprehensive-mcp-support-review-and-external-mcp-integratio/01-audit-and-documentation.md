@@ -23,12 +23,12 @@ Conduct a thorough audit of the current MCP support in NeoKai. Produce a structu
 2. Read `packages/daemon/src/lib/agent/query-options-builder.ts` — understand how `getMcpServers()` assembles the `mcpServers` option passed to the SDK, and the special handling for `room_chat` sessions (strict mode, wildcard allow-listing).
 3. Read `packages/daemon/src/lib/agent/agent-session.ts` — understand `setRuntimeMcpServers()` and how runtime MCP servers are merged at query time.
 4. Read `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` — understand how `getEnabledMcpServersConfig()` feeds into `setRuntimeMcpServers()` alongside `room-agent-tools`.
-5. Read `packages/daemon/src/lib/room/agents/planner-agent.ts` — understand the plan-writer sub-agent's tool list and that it lacks any external web search MCP today.
+5. Read `packages/daemon/src/lib/room/agents/planner-agent.ts` — understand the plan-writer sub-agent's tool list. Note: both the Planner and plan-writer already include `WebFetch` and `WebSearch` as built-in tools; document this as an existing capability (not a gap).
 6. Read `packages/daemon/src/lib/room/agents/coder-agent.ts` and `general-agent.ts` — understand how worker agents receive (or don't receive) MCP servers.
 7. Read `packages/daemon/src/lib/rpc-handlers/mcp-handlers.ts` and `settings-handlers.ts` — catalogue all existing MCP-related RPC endpoints.
 8. Read `packages/web/src/components/settings/McpServersSettings.tsx` — understand the existing UI for toggling MCP servers.
 9. Read `packages/shared/src/types/sdk-config.ts` (McpStdioServerConfig, McpSSEServerConfig, McpHttpServerConfig) and `packages/shared/src/types/settings.ts` (FileOnlySettings, McpServerSettings).
-10. Write `docs/mcp-audit.md` covering: (a) how MCPs are registered today, (b) server types supported, (c) tool distribution chain, (d) per-session vs per-room vs global granularity, (e) gaps: no app-level registry, no UI to add servers, no planner web search, no per-room enablement UI.
+10. Write `docs/mcp-audit.md` covering: (a) how MCPs are registered today, (b) server types supported, (c) tool distribution chain, (d) per-session vs per-room vs global granularity, (e) gaps: no app-level registry, no UI to add servers, no per-room enablement UI. **Note:** planner web search is NOT a gap — `WebFetch` and `WebSearch` are already in both the Planner and plan-writer tool lists.
 
 **Acceptance criteria:**
 - `docs/mcp-audit.md` exists and is committed on a feature branch.
