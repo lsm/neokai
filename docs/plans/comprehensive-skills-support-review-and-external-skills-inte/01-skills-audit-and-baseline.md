@@ -33,7 +33,9 @@ Conduct a full code-level audit of the existing Skills, MCP, and Plugin integrat
     - Which agents currently receive the `Skill` tool
     - Current planner `WebSearch` configuration
     - Gaps: no registry, no UI, no plugin management, no per-room skill overrides
-    - Recommended architecture (Skills registry backed by `~/.neokai/skills.json`)
+    - Recommended architecture (Skills registry backed by SQLite `skills` table, using existing repository pattern)
+    - Security considerations: input validation for `pluginPath`, `command`, `env` fields
+    - `strictMcpConfig` compatibility: how skill-injected MCP servers must be handled
 
 **Acceptance criteria:**
 - `docs/architecture/skills-audit.md` is committed and covers all points above
@@ -60,7 +62,7 @@ Design the `AppSkill` data model, the `SkillsManager` interface, and the RPC API
    - `PluginSkillConfig`: `{ pluginPath: string }` — a local plugin directory
    - `McpServerSkillConfig`: `{ command: string; args?: string[]; env?: Record<string, string> }` — an MCP server
 4. Design `SkillsManager` interface: `listSkills()`, `getSkill(id)`, `addSkill(skill)`, `updateSkill(id, updates)`, `removeSkill(id)`, `getEnabledSkills()`.
-5. Design persistence: `~/.neokai/skills.json` (simple JSON file, managed by SkillsManager).
+5. Design persistence: **SQLite** — a new `skills` table in the existing NeoKai database, using the same `Repository` pattern as `goal-repository.ts`. Justify: SQLite is the established persistence pattern in the codebase; it provides concurrency safety via WAL mode; no file-locking or atomic-write logic needed; consistent with all other managers.
 6. Design RPC API: `skills.list`, `skills.add`, `skills.update`, `skills.remove`, `skills.get`.
 7. Design per-room skill enablement: `roomSkills: { skillId: string; enabled: boolean }[]` stored in the `rooms` table's `config` JSON column.
 8. Design session injection: how `PluginSkillConfig` maps to `SDKConfig.plugins`, how `McpServerSkillConfig` maps to `mcpServers`, how `BuiltinSkillConfig` is surfaced.

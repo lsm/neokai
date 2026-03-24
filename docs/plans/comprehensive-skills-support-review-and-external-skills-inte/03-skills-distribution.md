@@ -8,43 +8,54 @@ Inject enabled Skills from the registry into the SDK options when sessions start
 
 ---
 
-### Task 3.1: Skills Injection in QueryOptionsBuilder
+### Task 3.1: Skills Injection in QueryOptionsBuilder (with strictMcpConfig handling)
 
 **Agent type:** coder
 
 **Description:**
 Extend `QueryOptionsBuilder` to pull enabled skills from `SkillsManager` and inject them into the SDK query options (`plugins`, `mcpServers`). This makes Skills available to any agent session.
 
+**Critical: `strictMcpConfig` handling** — `room_chat` sessions use `strictMcpConfig: true`, which causes the SDK to silently block any MCP server not explicitly listed in the session config. Skill-injected MCP servers must be handled to avoid silent failures:
+- Audit where `strictMcpConfig` is set (likely in `packages/daemon/src/lib/room/agents/` or query-options-builder).
+- When MCP server skills are enabled, their server names must appear in the MCP servers map that is built for the session. Since `strictMcpConfig` only allows servers present in the config, injecting them into `mcpServers` is sufficient — but verify this is the case.
+- If `strictMcpConfig` has a separate allowlist, ensure skill-injected servers are added to it.
+- Add a comment in the code explaining this relationship so future developers don't accidentally break it.
+
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
-2. Add `skillsManager: SkillsManager` to `QueryOptionsBuilderContext` interface in `packages/daemon/src/lib/agent/query-options-builder.ts`.
-3. Add a private `buildPluginsFromSkills(): PluginConfig[]` method that:
+2. Read `packages/daemon/src/lib/agent/query-options-builder.ts` and all room agent definitions to locate every place `strictMcpConfig` is set or referenced.
+3. Confirm whether injecting a server into `mcpServers` is sufficient to satisfy `strictMcpConfig`, or if a separate allowlist must also be updated.
+4. Add `skillsManager: SkillsManager` to `QueryOptionsBuilderContext` interface in `packages/daemon/src/lib/agent/query-options-builder.ts`.
+5. Add a private `buildPluginsFromSkills(): PluginConfig[]` method that:
    - Calls `skillsManager.getEnabledSkills()`
    - Filters for `sourceType === 'plugin'`
    - Maps each to `{ type: 'local', path: (skill.config as PluginSkillConfig).pluginPath }`
-4. Add a private `getMcpServersFromSkills(): Record<string, unknown>` method that:
+6. Add a private `getMcpServersFromSkills(): Record<string, McpServerConfig>` method that:
    - Filters enabled skills with `sourceType === 'mcp_server'`
-   - Maps each to a standard MCP server config entry
-5. In `build()`, merge plugins from skills with any existing `config.plugins`.
-6. In `getMcpServers()`, merge MCP servers from skills with existing `config.mcpServers`.
-7. Pass `skillsManager` through from `AgentSession` constructor.
-8. Update `AgentSession` to receive and pass `SkillsManager` into `QueryOptionsBuilderContext`.
-9. Run `bun run typecheck`.
-10. Update unit tests in `packages/daemon/tests/unit/agent/query-options-builder.test.ts`:
+   - Maps each skill to a standard MCP server config entry keyed by `skill.name`
+7. In `build()`, merge plugins from skills with any existing `config.plugins`.
+8. In `getMcpServers()`, merge MCP servers from skills with existing `config.mcpServers`. If `strictMcpConfig` requires an explicit allowlist, add the skill server names there too.
+9. Add a code comment near the MCP injection: `// Skill-injected MCP servers: must appear in mcpServers map for strictMcpConfig sessions to accept them`.
+10. Pass `skillsManager` through from `AgentSession` constructor.
+11. Update `AgentSession` to receive and pass `SkillsManager` into `QueryOptionsBuilderContext`.
+12. Run `bun run typecheck`.
+13. Update unit tests in `packages/daemon/tests/unit/agent/query-options-builder.test.ts`:
     - Test that plugin skills appear in `plugins` option
     - Test that MCP server skills appear in `mcpServers`
     - Test that disabled skills are excluded
+    - **Test that a skill-injected MCP server is not blocked when `strictMcpConfig` is true** (verify it is present in the final config)
 
 **Acceptance criteria:**
 - Enabled plugin skills are injected as `plugins` entries in SDK options
-- Enabled MCP server skills are injected as `mcpServers` entries
+- Enabled MCP server skills are injected as `mcpServers` entries and are NOT silently blocked by `strictMcpConfig`
 - Disabled skills are excluded
-- Unit tests updated and passing
+- Code comment explains `strictMcpConfig` relationship
+- Unit tests updated and passing, including `strictMcpConfig` compatibility test
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 2.2: SkillsManager Service"]
+**depends_on:** ["Task 2.2: SkillRepository (SQLite) and SkillsManager"]
 
 ---
 
@@ -104,4 +115,4 @@ When creating a room session (leader, coder, planner), apply the room's skill ov
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder", "Task 3.2: Room-Level Skill Enablement Persistence"]
+**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder (with strictMcpConfig handling)", "Task 3.2: Room-Level Skill Enablement Persistence"]

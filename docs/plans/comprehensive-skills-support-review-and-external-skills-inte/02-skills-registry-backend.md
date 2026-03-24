@@ -2,7 +2,7 @@
 
 ## Milestone Goal
 
-Implement the `AppSkill` types in the shared package, the `SkillsManager` service in the daemon, and all RPC handlers for CRUD operations. This is the core data layer for the Skills registry.
+Implement the `AppSkill` types in the shared package, the `SkillRepository` (SQLite), the `SkillsManager` service in the daemon, and all RPC handlers for CRUD operations. Persistence follows the established SQLite + repository pattern (same as `goal-repository.ts`). Input validation is enforced at the manager layer to prevent injection attacks.
 
 ## Tasks
 
@@ -42,41 +42,56 @@ Add the `AppSkill` type family and related interfaces to `packages/shared/src/` 
 
 ---
 
-### Task 2.2: SkillsManager Service
+### Task 2.2: SkillRepository (SQLite) and SkillsManager
 
 **Agent type:** coder
 
 **Description:**
-Implement the `SkillsManager` class in `packages/daemon/src/lib/skills-manager.ts`. It persists skills to `~/.neokai/skills.json`, auto-registers built-in skills on first run, and exposes CRUD methods.
+Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` service in the daemon. Persistence follows the existing `goal-repository.ts` pattern — a `skills` table in the NeoKai SQLite database. `SkillsManager` enforces input validation for security-sensitive fields before persisting.
 
 **Subtasks (ordered):**
 
 1. Run `bun install` at the worktree root.
-2. Create `packages/daemon/src/lib/skills-manager.ts` with class `SkillsManager`:
-   - Constructor: `(neokaiConfigDir: string)` — typically `~/.neokai`
-   - Private `skillsFilePath = join(neokaiConfigDir, 'skills.json')`
-   - `load(): Promise<AppSkill[]>` — reads file, parses, validates
-   - `save(skills: AppSkill[]): Promise<void>` — writes file atomically
+2. Create `packages/daemon/src/storage/repositories/skill-repository.ts` following the same pattern as `goal-repository.ts`:
+   - `ensureTable()` — creates `skills` table with columns: `id TEXT PRIMARY KEY`, `name TEXT UNIQUE NOT NULL`, `display_name TEXT NOT NULL`, `description TEXT NOT NULL`, `source_type TEXT NOT NULL`, `config TEXT NOT NULL` (JSON), `enabled INTEGER NOT NULL DEFAULT 1`, `built_in INTEGER NOT NULL DEFAULT 0`, `created_at TEXT NOT NULL`
+   - `findAll(): Promise<AppSkill[]>`
+   - `findById(id: string): Promise<AppSkill | null>`
+   - `findEnabled(): Promise<AppSkill[]>`
+   - `insert(skill: AppSkill): Promise<void>`
+   - `update(id: string, fields: Partial<AppSkill>): Promise<void>`
+   - `delete(id: string): Promise<void>`
+   - Use the shared `Database` instance from `packages/daemon/src/storage/database.ts`; do NOT open a separate DB file.
+3. Create `packages/daemon/src/lib/skills-manager.ts` with class `SkillsManager`:
+   - Constructor: `(repo: SkillRepository)`
    - `listSkills(): Promise<AppSkill[]>`
    - `getSkill(id: string): Promise<AppSkill | null>`
-   - `addSkill(params: CreateSkillParams): Promise<AppSkill>` — generates UUID, sets createdAt, builtIn=false
-   - `updateSkill(id: string, params: UpdateSkillParams): Promise<AppSkill>`
+   - `addSkill(params: CreateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` first, then generates UUID, sets `createdAt`, `builtIn=false`
+   - `updateSkill(id: string, params: UpdateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` on any updated config
    - `removeSkill(id: string): Promise<boolean>` — returns false if built-in or not found
    - `getEnabledSkills(): Promise<AppSkill[]>`
-   - `initializeBuiltins(): Promise<void>` — registers default built-in skills (e.g., a "merge-session" builtin skill wrapping the existing built-in command)
-3. Register `SkillsManager` in `packages/daemon/src/app.ts` — instantiate with `~/.neokai` config dir.
-4. Run `bun run typecheck`.
-5. Write unit tests in `packages/daemon/tests/unit/skills-manager.test.ts`:
-   - Test CRUD operations with a temp directory
+   - `initializeBuiltins(): Promise<void>` — upserts default built-in skills on startup
+   - **Private `validateSkillConfig(sourceType, config)`** — enforces:
+     - `plugin`: `pluginPath` must be an absolute path (starts with `/`), must not contain `../`, must not be empty
+     - `mcp_server`: `command` must be a non-empty non-whitespace string; `args` entries must be strings; `env` keys must match `/^[A-Z_][A-Z0-9_]*$/i` (no injection via env var names); `env` values must be strings
+     - `builtin`: `commandName` must be a non-empty string
+     - Throw a descriptive `Error` on validation failure
+4. Register `SkillRepository` and `SkillsManager` in `packages/daemon/src/app.ts`.
+5. Run `bun run typecheck`.
+6. Write unit tests in `packages/daemon/tests/unit/skills-manager.test.ts`:
+   - Test CRUD operations with an in-memory SQLite DB (use `':memory:'` path in test setup)
    - Test that built-in skills cannot be removed
-   - Test persistence across load/save cycles
+   - Test persistence across load cycles
    - Test `getEnabledSkills()` filtering
+   - **Test all validation rules**: path traversal rejected, empty command rejected, invalid env key rejected
+   - Test that valid configs pass validation
 
 **Acceptance criteria:**
-- `SkillsManager` class is implemented and tested
+- `SkillRepository` uses the shared SQLite DB, not a separate file
+- `SkillsManager` enforces input validation with descriptive errors for invalid configs
 - All CRUD operations work correctly
 - Built-in skills are protected from deletion
-- Unit tests pass (`bun test packages/daemon/tests/unit/skills-manager.test.ts`)
+- Unit tests pass, including all validation boundary cases
+- `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
 **depends_on:** ["Task 2.1: AppSkill Types in Shared Package"]
@@ -106,12 +121,14 @@ Add RPC handlers for Skills CRUD operations so the web UI can manage skills via 
 6. Run `bun run typecheck`.
 7. Write unit tests in `packages/daemon/tests/unit/rpc-handlers/skills-handlers.test.ts`:
    - Mock SkillsManager, test each handler's success and error paths.
+   - Verify that validation errors from `SkillsManager.addSkill` are surfaced as RPC errors.
 
 **Acceptance criteria:**
 - All 6 RPC handlers implemented and registered
 - API types defined in shared package
+- Validation errors returned as proper RPC error responses (not crashes)
 - Unit tests cover success and error cases
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 2.2: SkillsManager Service"]
+**depends_on:** ["Task 2.2: SkillRepository (SQLite) and SkillsManager"]

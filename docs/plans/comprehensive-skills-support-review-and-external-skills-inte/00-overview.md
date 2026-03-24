@@ -23,8 +23,10 @@ NeoKai currently has **no application-level Skills registry**. The term "Skill" 
 
 ## High-Level Approach
 
-- Build an application-level **Skills registry** backed by `~/.neokai/skills.json` (or SQLite)
+- Build an application-level **Skills registry** backed by **SQLite** (new `skills` table, following the same repository pattern as `goals`/`goal-repository.ts`) — not a JSON file, to align with the established persistence pattern and gain native concurrency safety.
 - Support three skill source types: **built-in** (SDK slash commands), **plugin** (local plugin dir via SDK's `plugins` option), **mcp-server** (MCP server used as a skill provider)
+- **Input validation** in `SkillsManager`: `pluginPath` must be an absolute path with no `../` traversal; `command` for MCP servers must be a non-empty non-whitespace string; `env` keys must match `[A-Z_][A-Z0-9_]*` to prevent injection.
+- **`strictMcpConfig` compatibility**: `room_chat` uses `strictMcpConfig` which blocks unlisted MCP servers. Skill-injected MCP servers must be added to the allowed list or `strictMcpConfig` must be conditionally relaxed when skills inject additional MCP servers. This must be handled explicitly in Task 3.1.
 - Add a **Skills Manager** backend service with CRUD operations + RPC handlers
 - Expose Skills configuration via the **Settings UI** (global skills) and **Room Settings** (per-room overrides)
 - Verify and enhance the planner's **WebSearch** capability with explicit prompt guidance
@@ -32,20 +34,23 @@ NeoKai currently has **no application-level Skills registry**. The term "Skill" 
 
 ## Milestones
 
-1. **Skills Audit and Baseline Documentation** — Audit current Skills/MCP/Plugin integration; document the as-is state; identify gaps and establish the target architecture.
-2. **Skills Registry Data Model and Backend** — Define `AppSkill` types, create `SkillsManager` backed by `~/.neokai/skills.json`, and wire up RPC handlers (CRUD + list).
-3. **Skills Distribution to Agent Sessions** — Inject Skills from registry into SDK options (`plugins`, `skills` preload array) for regular sessions; apply room-level enablement overrides.
-4. **Room-Level Skills Enablement** — Add per-room skill enablement config (which registry skills are active for a given room), persist it, and surface it to session init.
-5. **Settings UI: Global Skills Registry** — Build the Skills management UI in the global settings panel (list, add, remove, enable/disable skills).
-6. **Room Settings UI: Per-Room Skill Enablement** — Extend the Room Settings panel to show available registry skills with per-room toggles.
-7. **Planner Web Search Verification and Enhancement** — Confirm the Planner's `WebSearch` tool works end-to-end; add prompt guidance for web search use; write an online test.
+The plan spans 7 milestones across 7 files (01–07):
+
+1. **Skills Audit and Baseline Documentation** (`01-skills-audit-and-baseline.md`) — Audit current Skills/MCP/Plugin integration; document the as-is state; identify gaps and establish the target architecture.
+2. **Skills Registry Data Model and Backend** (`02-skills-registry-backend.md`) — Define `AppSkill` types, create `SkillsManager` backed by SQLite (`SkillRepository`), wire up RPC handlers (CRUD + list), and add input validation.
+3. **Skills Distribution to Agent Sessions** (`03-skills-distribution.md`) — Inject Skills from registry into SDK options (`plugins`, `mcpServers`) for regular sessions; handle `strictMcpConfig` for skill-injected MCP servers; apply room-level enablement overrides.
+4. **Room Settings UI — Per-Room Skill Enablement** (`04-room-skills-ui.md`) — Extend the Room Settings panel to show available registry skills with per-room toggles.
+5. **Settings UI: Global Skills Registry** (`05-global-skills-ui.md`) — Build the Skills management UI in the global settings panel (list, add, remove, enable/disable skills).
+6. **Planner Web Search Verification and Enhancement** (`06-planner-websearch.md`) — Confirm the Planner's `WebSearch` tool works end-to-end; add prompt guidance for web search use; write an online test.
+7. **Integration and Regression** (`07-integration-and-regression.md`) — Full end-to-end integration test, regression checks, and final validation.
 
 ## Cross-Milestone Dependencies
 
-- Milestones 3 and 4 depend on Milestone 2 (data model must exist first)
+- Milestone 3 depends on Milestone 2 (data model must exist first)
+- Milestone 4 depends on Milestones 2 and 3 (RPC handlers and room persistence must exist)
 - Milestone 5 depends on Milestone 2 (RPC handlers must exist)
-- Milestone 6 depends on Milestones 4 and 5
-- Milestone 7 is independent and can proceed in parallel with Milestones 2–6
+- Milestone 6 is independent and can proceed in parallel with Milestones 2–5
+- Milestone 7 depends on all preceding milestones
 
 ## Total Estimated Task Count
 
