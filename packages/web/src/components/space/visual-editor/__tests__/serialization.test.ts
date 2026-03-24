@@ -138,7 +138,7 @@ describe('workflowToVisualState', () => {
 
 	it('does not invoke autoLayout when all steps have stored positions', () => {
 		// This is validated by ensuring position values match the layout exactly.
-		// If autoLayout ran, it would produce different values (50, 50) not (999, 888).
+		// If autoLayout ran, it would produce different values (50, 170) not (999, 888).
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
