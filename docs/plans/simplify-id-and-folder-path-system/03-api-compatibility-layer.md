@@ -52,14 +52,16 @@ URL routing in `packages/web/src/lib/router.ts` uses patterns like `/room/:roomI
 **Description**: Update `task-handlers.ts` to include `shortId` in all task responses and use `resolveTaskId` for all input IDs.
 
 **Subtasks**:
-1. Identify all handler functions in `task-handlers.ts` that receive a task ID as input: `task.get`, `task.cancel`, `task.setStatus`, `task.reject`, `task.getGroup`, `task.sendHumanMessage`, `task.updateDraft`, `task.interruptSession`
+1. Identify all handler functions in `task-handlers.ts` that receive a task ID as input. The complete list includes: `task.get`, `task.cancel`, `task.setStatus`, `task.reject`, `task.getGroup`, `task.sendHumanMessage`, `task.updateDraft`, `task.interruptSession`, **`task.fail`** (line ~206), and **`task.archive`** (line ~317). All of these must use `resolveTaskId`.
 2. For each handler that accepts `taskId`, wrap the raw input: `const resolvedId = resolveTaskId(rawTaskId, roomId, taskRepo)` before using it for DB lookup
-3. Confirm that `task.list` responses already return full `NeoTask` objects — since `rowToTask()` now maps `short_id`, the `shortId` field will be included automatically
-4. For `task.get`, ensure the response includes the `shortId` field
-5. Write unit tests for two handlers: `task.get` (assert response contains `shortId`) and `task.cancel` with a short ID input (assert the correct task is cancelled)
+3. **Explicitly excluded handlers** (note in code comment, no change needed): `task.group.create` and `task.group.addMessage` are non-production/internal handlers that operate on session groups rather than top-level task IDs; they do not need short ID resolution in this milestone.
+4. Confirm that `task.list` responses already return full `NeoTask` objects — since `rowToTask()` now maps `short_id`, the `shortId` field will be included automatically
+5. For `task.get`, ensure the response includes the `shortId` field
+6. Write unit tests for two handlers: `task.get` (assert response contains `shortId`) and `task.cancel` with a short ID input (assert the correct task is cancelled)
 
 **Acceptance Criteria**:
 - `task.get` with a short ID input (`t-1`) returns the correct task
+- `task.fail` and `task.archive` also accept short ID inputs (not just UUIDs)
 - `task.get` response includes `shortId` field
 - `task.list` response items include `shortId` field
 - Unit tests pass
@@ -100,19 +102,22 @@ URL routing in `packages/web/src/lib/router.ts` uses patterns like `/room/:roomI
 **Description**: The web router in `packages/web/src/lib/router.ts` uses strict UUID regex patterns for route matching. These must be relaxed to also accept short ID formats (`t-42`, `g-7`, etc.).
 
 **Subtasks**:
-1. Open `packages/web/src/lib/router.ts` and locate all route pattern constants:
+1. Open `packages/web/src/lib/router.ts` and locate all route pattern constants that include task ID segments:
    - `ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/`
+   - `SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/` (line ~40)
    - `ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/`
    - `SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/`
    - `ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/`
-   - Other patterns with `[a-f0-9-]+`
-2. Update the task/goal ID capture groups to also accept short ID format: change `([a-f0-9-]+)` to `([a-f0-9-]+|[a-z]-\d+)` for segments that can be task or goal IDs. Keep room/session/space ID segments as UUID-only (they are not user-facing short IDs in this milestone).
-3. Run `make test-web` to confirm no routing tests break
-4. Write unit tests for the updated patterns verifying both UUID and short ID URLs are matched
+2. Update the **task ID** capture groups in `ROOM_TASK_ROUTE_PATTERN` and `SPACE_TASK_ROUTE_PATTERN` to also accept short ID format: change the task-ID segment `([a-f0-9-]+)` to `([a-f0-9-]+|[a-z]-\d+)`. The room, space, and session ID segments remain UUID-only (not user-facing short IDs in this milestone).
+   - **`SPACE_TASK_ROUTE_PATTERN` decision**: Space tasks currently use the same UUID format. Even though space-level short IDs are not in scope for this goal, the task-ID segment in this route is structurally identical to `ROOM_TASK_ROUTE_PATTERN` and should be updated consistently. This avoids a confusing inconsistency where room task short ID URLs work but space task short ID URLs silently fail.
+3. Keep room/session/space ID segments as UUID-only (these do not receive short IDs in this goal's scope)
+4. Run `make test-web` to confirm no routing tests break
+5. Write unit tests for the updated patterns verifying both UUID and short ID URLs are matched for both room-task and space-task routes
 
 **Acceptance Criteria**:
 - `/room/04062505-.../task/t-42` is matched by `ROOM_TASK_ROUTE_PATTERN`
 - `/room/04062505-.../task/d8a578c6-...` still matches (backward compat)
+- `/space/04062505-.../task/t-42` is matched by `SPACE_TASK_ROUTE_PATTERN` (consistent treatment)
 - `make test-web` passes
 - Unit tests for updated patterns pass
 

@@ -23,20 +23,23 @@ No existing data is migrated — short IDs are computed lazily on first access f
 **Description**: Add the `formatShortId` utility and `ShortIdPrefix` constants to `packages/shared/src/utils.ts`. Export from `packages/shared/src/mod.ts`. No DB changes in this task.
 
 **Subtasks**:
-1. Add `ShortIdPrefix` constants: `export const SHORT_ID_PREFIX = { TASK: 't', GOAL: 'g', ROOM: 'r' } as const`
+1. Add `ShortIdPrefix` constants: `export const SHORT_ID_PREFIX = { TASK: 't', GOAL: 'g' } as const` — **do NOT include `ROOM: 'r'`**; room short IDs are out of scope for this goal and an unused export will trigger a Knip warning in `bun run check`
 2. Add `formatShortId(prefix: string, counter: number): string` — returns `${prefix}-${counter}` (e.g., `t-42`)
-3. Add `parseShortId(shortId: string): { prefix: string; counter: number } | null` — parses `t-42` back into prefix + counter, returns null on invalid input
+3. Add `parseShortId(shortId: string): { prefix: string; counter: number } | null` — parses `t-42` back into prefix + counter; valid short IDs must match `/^[a-z]-(\d+)$/` where the counter is a positive integer; returns null for anything else
 4. Add `isUUID(value: string): boolean` — returns true if value matches UUID v4 format (`/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i`)
 5. Export all new exports from `mod.ts`
-6. Write unit tests in `packages/daemon/tests/unit/` for `formatShortId`, `parseShortId`, `isUUID`
+6. Write unit tests in `packages/daemon/tests/unit/short-id/utils.test.ts` for `formatShortId`, `parseShortId`, `isUUID`. **Note on test location**: `packages/shared` has no test runner configured; following the project's existing pattern for shared utility tests (which are tested from the daemon package), tests live in `packages/daemon/tests/unit/`. Check how existing `generateUUID` or other shared utils are tested and follow the same convention.
 
 **Acceptance Criteria**:
 - `formatShortId('t', 42)` returns `'t-42'`
 - `parseShortId('t-42')` returns `{ prefix: 't', counter: 42 }`
-- `parseShortId('not-valid')` returns `null`
+- `parseShortId('t-abc')` returns `null` (non-numeric counter)
+- `parseShortId('t-')` returns `null` (empty counter)
+- `parseShortId('t-0')` returns `null` (counter must be positive integer ≥ 1)
 - `isUUID('04062505-780f-4881-a3be-9cb9062790fb')` returns `true`
 - `isUUID('t-42')` returns `false`
 - All utilities are exported from `@neokai/shared`
+- `bun run check` passes (no Knip unused-export warnings)
 - Unit tests pass
 
 **Depends on**: Nothing
@@ -80,7 +83,7 @@ No existing data is migrated — short IDs are computed lazily on first access f
 - Migration is idempotent — running twice does not throw
 - Unit test passes
 
-**Depends on**: Task 1.1 (imports `formatShortId` for use in validation)
+**Depends on**: Task 1.1 (for sequencing — types should exist before schema changes; the migration itself does NOT import `formatShortId` at runtime)
 
 **Agent type**: coder
 
@@ -98,7 +101,9 @@ No existing data is migrated — short IDs are computed lazily on first access f
 3. Implement `allocate(entityType: 'task' | 'goal', scopeId: string): string`:
    - Uses a SQLite transaction to atomically insert-or-increment the counter in `short_id_counters`
    - Returns `formatShortId(prefix, counter)` using the appropriate prefix from `SHORT_ID_PREFIX`
-   - SQL pattern: `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES (?, ?, 1) ON CONFLICT(entity_type, scope_id) DO UPDATE SET counter = counter + 1 RETURNING counter`
+   - **`RETURNING` clause caveat**: `RETURNING` support in `bun:sqlite` has not been validated in this codebase (no existing uses found). The coder must first check whether `db.prepare('... RETURNING counter').get(...)` works with Bun's SQLite driver. If `RETURNING` is not supported or behaves unexpectedly, use the established project pattern instead: run `db.run(insertOrUpdate)` inside a transaction, then issue a separate `SELECT counter FROM short_id_counters WHERE entity_type = ? AND scope_id = ?` to read back the value. The transaction ensures atomicity regardless of which pattern is used.
+   - Preferred SQL attempt: `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES (?, ?, 1) ON CONFLICT(entity_type, scope_id) DO UPDATE SET counter = counter + 1 RETURNING counter`
+   - Fallback if `RETURNING` doesn't work: wrap `INSERT ... ON CONFLICT ... DO UPDATE` + `SELECT counter` in a `db.transaction()`
 4. Implement `getCounter(entityType: string, scopeId: string): number` — reads current counter without incrementing (useful for admin/debugging)
 5. Export `ShortIdAllocator` from `packages/daemon/src/lib/short-id-allocator.ts`
 6. Write unit tests covering: first allocation returns counter=1, second returns counter=2, concurrent allocations produce unique IDs, different scopes are independent

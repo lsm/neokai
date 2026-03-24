@@ -47,17 +47,16 @@ By this milestone, all coding work from Milestones 1–5 is complete. This miles
 
 **Description**: Write tests covering the legacy path — tasks and goals that exist in the DB without a `short_id` value (simulating records created before this feature was deployed).
 
+**Note on scope**: This task is **tests-only**. The lazy backfill implementation in `listTasks` was already added to `TaskRepository` in Task 2.2 and the analogous method in `GoalRepository` in Task 2.3. This task verifies correctness of that implementation with targeted backward-compat tests.
+
 **Subtasks**:
 1. Create `packages/daemon/tests/unit/short-id/backward-compat.test.ts`
 2. Test cases:
-   - Insert a raw task row into the DB without `short_id` (simulating a legacy record)
+   - Insert a raw task row into the DB without `short_id` (simulating a legacy record — use direct SQL `INSERT` to bypass `TaskRepository.createTask`)
    - Call `getTask(id)` on the legacy record — assert it returns a valid `NeoTask` (with `shortId` assigned via lazy backfill)
    - Call `task.get` RPC handler with the UUID of the legacy record — assert it succeeds and returns `shortId`
    - Call `task.get` RPC handler with a short ID for the legacy record — assert it resolves (since backfill assigned one on the previous UUID-based call)
-   - Assert that `task.list` for a room with a mix of new tasks (with `short_id`) and old tasks (without) returns all tasks, with `shortId` populated for all (lazy backfill on list)
-3. For the list test: implement lazy backfill in `listTasks` — after fetching rows, for any row with null `short_id`, allocate one and update the DB. This is a controlled, bounded operation since rooms have at most hundreds of tasks.
-
-**Note**: If lazy backfill in `listTasks` is deemed too expensive (unlikely given task counts), the fallback is to return `undefined` `shortId` for legacy tasks in list results, and only backfill on `getTask(id)`. Document the chosen approach.
+   - Assert that `task.list` for a room with a mix of new tasks (with `short_id`) and old tasks (without) returns all tasks with `shortId` populated for all rows (backfill already implemented in Task 2.2)
 
 **Acceptance Criteria**:
 - Legacy tasks (no `short_id` in DB) work with UUID-based API calls
@@ -87,7 +86,10 @@ By this milestone, all coding work from Milestones 1–5 is complete. This miles
    e. Fetch `room.overview` — assert task summaries include `shortId`
    f. Create another room and create a task — assert its `shortId` is also `t-1` (independent counter)
    g. Clean up rooms via `room.delete`
-3. Add the test module to the CI matrix (in `.github/workflows/` or equivalent CI config)
+3. Add the test module to CI in **two places**:
+   - In `.github/workflows/` YAML (the online test matrix), add an entry for the new test file under the `room` module group
+   - In `validate-online-test-matrix.sh` (if it exists), add `short-id-flow.test.ts` to the `ROOM_FILES` array so the validation script doesn't fail
+   - **Note**: Check whether existing room online tests in the YAML matrix are commented out (they may be disabled due to resource usage). If so, add the new test as commented-out too — consistent with the team's decision to gate those tests. Document this in the test file header comment.
 4. Run with `NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/room/short-id-flow.test.ts`
 
 **Acceptance Criteria**:
@@ -115,7 +117,7 @@ By this milestone, all coding work from Milestones 1–5 is complete. This miles
 3. Run `bun run check` (lint + typecheck + knip) — fix any dead exports or type errors
 4. Run `make run-e2e TEST=tests/features/short-id-display.e2e.ts` — confirm e2e passes
 5. Review the goal's acceptance criteria checklist and confirm each item is satisfied:
-   - Task/goal/session IDs display as short IDs in UI ✓
+   - Task and goal IDs display as short IDs in UI ✓ (**session IDs are out of scope** — see overview)
    - Both UUID and short ID accepted as input in all APIs ✓
    - Worktree paths significantly shorter ✓
    - Existing UUID-based links work ✓

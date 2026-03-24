@@ -21,7 +21,7 @@ These make logs unreadable, URLs unmemorable, and directory paths excessively lo
 Format:
 - Tasks: `t-42` (sequential integer per room, formatted with prefix)
 - Goals: `g-7` (sequential integer per room)
-- Sessions: use the short task ID for worker sessions where possible
+- Sessions: **out of scope for this goal** — session IDs involve complex worker/leader lifecycle coupling; session short IDs are a separate future effort
 
 Worktree path shortening: use the first 8 characters of the room UUID as a project directory name instead of the full encoded repo path.
 

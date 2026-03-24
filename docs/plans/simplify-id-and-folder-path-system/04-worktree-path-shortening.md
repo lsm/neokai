@@ -21,7 +21,7 @@ Proposed short key: last path component of the repo root + first 8 characters of
 
 The `WorktreeManager` does not store anything in the DB — it operates purely on the filesystem. The path shortening is purely a filesystem naming change.
 
-**Backward compatibility**: The old long path must still be recognized when checking if an existing session's worktree path is valid (`verifyWorktree`). The DB `worktree_path` column stores the actual path of the worktree directory, so old sessions already have the long path stored. New sessions get the short path. Both coexist.
+**Backward compatibility**: The old long path must still be recognized when checking if an existing session's worktree path is valid (`verifyWorktree`). Critically, `verifyWorktree` does **not** recompute the path from the repo root — it uses the `worktree_path` value already stored in the DB for that session record. Old session records store the old long path; `verifyWorktree` reads that stored value and checks it against the filesystem. As long as the directory still exists at the old path, old sessions continue to work with zero changes. New session records will store the new short path. Both formats coexist in the DB indefinitely with no conflict.
 
 ## Tasks
 
