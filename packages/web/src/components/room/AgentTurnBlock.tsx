@@ -700,7 +700,12 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 
 				{/* Turn timing footer */}
 				{turn.startTime > 0 && (
-					<div class="border-t border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/40 px-4 py-2.5 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+					<div
+						class={cn(
+							'border-t bg-gray-50/80 dark:bg-gray-800/40 px-4 py-2.5 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400',
+							colors.border
+						)}
+					>
 						<span class="font-medium">{getMsgTime(turn.startTime)}</span>
 						{turn.endTime && (
 							<>
