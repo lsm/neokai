@@ -447,7 +447,14 @@ describe('setupAppMcpHandlers', () => {
 
 	beforeEach(() => {
 		bunDb = new BunDatabase(':memory:');
+		bunDb.exec('PRAGMA foreign_keys = ON');
 		createTables(bunDb);
+
+		// Insert the test room required by the FK on room_mcp_enablement.room_id
+		const now = Date.now();
+		bunDb
+			.prepare(`INSERT INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`)
+			.run(ROOM_ID, 'test-room', now, now);
 
 		reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
 		reactiveDb.notifyChange = mock(() => {});

@@ -27,6 +27,13 @@ describe('RoomMcpEnablementRepository', () => {
 	const ROOM_A = 'room-aaa';
 	const ROOM_B = 'room-bbb';
 
+	function insertRoom(id: string): void {
+		const now = Date.now();
+		bunDb
+			.prepare(`INSERT INTO rooms (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`)
+			.run(id, id, now, now);
+	}
+
 	beforeEach(() => {
 		bunDb = new BunDatabase(':memory:');
 		// Enable foreign keys for CASCADE tests
@@ -39,6 +46,10 @@ describe('RoomMcpEnablementRepository', () => {
 
 		appMcpRepo = new AppMcpServerRepository(bunDb, reactiveDb);
 		repo = new RoomMcpEnablementRepository(bunDb, reactiveDb);
+
+		// Insert rooms required by the FK constraint
+		insertRoom(ROOM_A);
+		insertRoom(ROOM_B);
 	});
 
 	afterEach(() => {

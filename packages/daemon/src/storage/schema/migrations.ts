@@ -3202,8 +3202,8 @@ export function runMigration50(db: BunDatabase): void {
  * Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
  *
  * Stores which registry servers are explicitly enabled/disabled per room.
- * ON DELETE CASCADE ensures orphaned rows are removed when an app_mcp_servers entry is deleted,
- * or when a room is deleted.
+ * ON DELETE CASCADE on both FKs ensures orphaned rows are removed when a room or
+ * app_mcp_servers entry is deleted.
  */
 export function runMigration52(db: BunDatabase): void {
 	db.exec(`
