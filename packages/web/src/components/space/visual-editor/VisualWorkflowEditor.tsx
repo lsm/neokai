@@ -91,7 +91,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const [name, setName] = useState(workflow?.name ?? '');
 	const [description, setDescription] = useState(workflow?.description ?? '');
-	const [nodes, setNodes] = useState<VisualNode[]>(() => initState?.nodes ?? []);
+	const [nodes, setNodes] = useState<VisualNode[]>(() => {
+		if (initState) return initState.nodes;
+		// Create mode: inject the Task Agent virtual node immediately so it is
+		// always present, even before any real step is added.
+		// Position matches autoLayout's empty-workflow constant: START_X=50, TASK_AGENT_Y=20.
+		return [
+			{
+				step: {
+					localId: TASK_AGENT_NODE_ID,
+					id: TASK_AGENT_NODE_ID,
+					name: 'Task Agent',
+					agentId: '',
+					instructions: '',
+				},
+				position: { x: 50, y: 20 },
+			},
+		];
+	});
 	const [edges, setEdges] = useState<VisualEdge[]>(() => initState?.edges ?? []);
 	const [rules, setRules] = useState<RuleDraft[]>(() => initState?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
@@ -281,10 +298,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// effects and violate the purity requirement (React StrictMode double-invokes
 		// updaters to catch exactly this pattern).
 		// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
-		const isFirstNode = nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID).length === 0;
+		const isFirstNode =
+			nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID)
+				.length === 0;
 		setNodes((prev) => {
-			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px)
-			const position: Point = { x: 120, y: 80 + prev.length * 100 };
+			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px).
+			// Count only regular nodes so the Task Agent's fixed slot doesn't offset the stagger.
+			const regularCount = prev.filter(
+				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+			).length;
+			const position: Point = { x: 120, y: 80 + regularCount * 100 };
 			return [...prev, { step: newStep, position }];
 		});
 		if (isFirstNode) setStartStepId(newLocalId);
@@ -319,7 +342,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			// Pick the next start node from regular (non-virtual) nodes only.
 			// Task Agent is always at remaining[0] so using it as the next start would
 			// show the START badge on the virtual node, which is visually wrong.
-			const regularRemaining = remaining.filter((n) => n.step.id !== TASK_AGENT_NODE_ID);
+			const regularRemaining = remaining.filter(
+				(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+			);
 			if (wasStart && regularRemaining.length > 0) {
 				const next = regularRemaining[0];
 				setStartStepId(next.step.id ?? next.step.localId);
@@ -511,7 +536,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			position: positions.get(n.step.localId) ?? n.position,
 		}));
 
-		setNodes(positionedNodes);
+		// Re-inject the Task Agent virtual node at the position autoLayout computed for it.
+		// applyTemplate replaces the entire nodes array, so without this the Task Agent
+		// would be evicted even in edit mode (where it was previously present).
+		const taskAgentVisualNode: VisualNode = {
+			step: {
+				localId: TASK_AGENT_NODE_ID,
+				id: TASK_AGENT_NODE_ID,
+				name: 'Task Agent',
+				agentId: '',
+				instructions: '',
+			},
+			position: positions.get(TASK_AGENT_NODE_ID) ?? { x: 50, y: 20 },
+		};
+		setNodes([taskAgentVisualNode, ...positionedNodes]);
 		setEdges(newEdges);
 		setStartStepId(firstLocalId);
 		setSelectedNodeId(null);
@@ -706,59 +744,64 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</button>
 
 					{/* Template picker — only shown when creating a new workflow with no steps yet */}
-					{!isEditing && nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID).length === 0 && (
-						<div class="relative">
-							<button
-								onClick={() => setShowTemplates((v) => !v)}
-								data-testid="template-picker-button"
-								class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
-							>
-								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 6h16M4 10h16M4 14h8"
-									/>
-								</svg>
-								From Template
-								<svg
-									class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
+					{!isEditing &&
+						nodes.filter(
+							(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+						).length === 0 && (
+							<div class="relative">
+								<button
+									onClick={() => setShowTemplates((v) => !v)}
+									data-testid="template-picker-button"
+									class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-dark-800 border border-dark-600 rounded text-gray-300 hover:text-white hover:bg-dark-700 hover:border-dark-500 transition-colors shadow"
 								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M19 9l-7 7-7-7"
-									/>
-								</svg>
-							</button>
+									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M4 6h16M4 10h16M4 14h8"
+										/>
+									</svg>
+									From Template
+									<svg
+										class={`w-3 h-3 transition-transform ${showTemplates ? 'rotate-180' : ''}`}
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M19 9l-7 7-7-7"
+										/>
+									</svg>
+								</button>
 
-							{showTemplates && (
-								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
-									{TEMPLATES.map((t) => (
-										<button
-											key={t.label}
-											onClick={() => applyTemplate(t)}
-											data-testid="template-option"
-											data-template-label={t.label}
-											class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
-										>
-											<div class="text-xs font-medium text-gray-200">{t.label}</div>
-											<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
-										</button>
-									))}
-								</div>
-							)}
-						</div>
-					)}
+								{showTemplates && (
+									<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
+										{TEMPLATES.map((t) => (
+											<button
+												key={t.label}
+												onClick={() => applyTemplate(t)}
+												data-testid="template-option"
+												data-template-label={t.label}
+												class="w-full text-left px-3 py-2.5 hover:bg-dark-700 transition-colors border-b border-dark-700 last:border-b-0"
+											>
+												<div class="text-xs font-medium text-gray-200">{t.label}</div>
+												<div class="text-xs text-gray-500 mt-0.5">{t.description}</div>
+											</button>
+										))}
+									</div>
+								)}
+							</div>
+						)}
 				</div>
 
 				{/* Empty state overlay — shown when no regular steps exist (Task Agent doesn't count) */}
-				{nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID).length === 0 && (
+				{nodes.filter(
+					(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+				).length === 0 && (
 					<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
 						<div class="text-center">
 							<p class="text-sm text-gray-600">No steps yet.</p>
