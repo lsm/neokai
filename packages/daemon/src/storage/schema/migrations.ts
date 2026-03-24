@@ -178,6 +178,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Stores the WorkflowNodeAgent.role of the slot that spawned a task, enabling
 	// unambiguous slot lookup when the same agentId appears multiple times in a node.
 	runMigration46(db);
+
+	// Migration 47: Add short_id columns to tasks and goals, create short_id_counters table.
+	// Enables human-readable scoped short IDs for tasks and goals (e.g. t:04062505:42).
+	// New columns are nullable — existing rows get NULL until short IDs are assigned.
+	runMigration47(db);
 }
 
 /**
@@ -2914,4 +2919,49 @@ function runMigration46(db: BunDatabase): void {
 	if (!tableHasColumn(db, 'space_tasks', 'slot_role')) {
 		db.exec(`ALTER TABLE space_tasks ADD COLUMN slot_role TEXT`);
 	}
+}
+
+/**
+ * Migration 47: Add short_id columns to tasks and goals; create short_id_counters table.
+ *
+ * - `tasks.short_id TEXT` — nullable, unique where not null (partial index).
+ * - `goals.short_id TEXT` — nullable, unique where not null (partial index).
+ * - `short_id_counters` — per-(entity_type, scope_id) monotonic counter used by the
+ *   ShortIdAllocator service when assigning short IDs to new or existing records.
+ *
+ * Idempotent: ALTER TABLE is guarded by tableHasColumn(); CREATE TABLE/INDEX use IF NOT EXISTS.
+ */
+export function runMigration47(db: BunDatabase): void {
+	// On existing DBs, ALTER TABLE adds the column; on fresh DBs the column is already
+	// present in the CREATE TABLE statement in createTables(), so tableHasColumn() guards
+	// prevent a duplicate-column error.
+	if (tableExists(db, 'tasks') && !tableHasColumn(db, 'tasks', 'short_id')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN short_id TEXT`);
+	}
+	if (tableExists(db, 'goals') && !tableHasColumn(db, 'goals', 'short_id')) {
+		db.exec(`ALTER TABLE goals ADD COLUMN short_id TEXT`);
+	}
+
+	// Partial unique indexes — safe on both fresh and existing DBs; also created by createTables()
+	// via IF NOT EXISTS.
+	if (tableExists(db, 'tasks')) {
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_short_id ON tasks(short_id) WHERE short_id IS NOT NULL`
+		);
+	}
+	if (tableExists(db, 'goals')) {
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_short_id ON goals(short_id) WHERE short_id IS NOT NULL`
+		);
+	}
+
+	// Counter table — also created by createTables() for fresh DBs; IF NOT EXISTS is idempotent.
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS short_id_counters (
+			entity_type TEXT NOT NULL,
+			scope_id    TEXT NOT NULL,
+			counter     INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (entity_type, scope_id)
+		)
+	`);
 }

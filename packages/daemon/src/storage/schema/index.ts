@@ -15,6 +15,8 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/sh
 export { runMigrations } from './migrations';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations';
+// knip-ignore-next-line
+export { runMigration47 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -162,6 +164,7 @@ export function createTables(db: BunDatabase): void {
         pr_created_at INTEGER,
         input_draft TEXT,
         updated_at INTEGER,
+        short_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -197,9 +200,28 @@ export function createTables(db: BunDatabase): void {
         max_planning_attempts INTEGER NOT NULL DEFAULT 0,
         consecutive_failures INTEGER NOT NULL DEFAULT 0,
         replan_count INTEGER NOT NULL DEFAULT 0,
+        short_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
+
+	// Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS short_id_counters (
+        entity_type TEXT NOT NULL,
+        scope_id    TEXT NOT NULL,
+        counter     INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (entity_type, scope_id)
+      )
+    `);
+
+	// Partial unique indexes for short_id on tasks and goals
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_short_id ON tasks(short_id) WHERE short_id IS NOT NULL`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_short_id ON goals(short_id) WHERE short_id IS NOT NULL`
+	);
 
 	// Mission metric history table
 	db.exec(`
