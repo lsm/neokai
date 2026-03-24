@@ -8,7 +8,7 @@
  * - Archived: hidden by default, expandable
  */
 
-import { signal, effect } from '@preact/signals';
+import { signal, effect, useSignal } from '@preact/signals';
 import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
 import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 
@@ -544,6 +544,35 @@ function isBlocked(task: TaskSummary, allTasks: TaskSummary[]): boolean {
 	});
 }
 
+/** Short ID badge with click-to-copy behaviour */
+function ShortIdBadge({ shortId }: { shortId: string }) {
+	const copied = useSignal(false);
+
+	const handleCopy = (e: MouseEvent) => {
+		e.stopPropagation();
+		navigator.clipboard
+			.writeText(shortId)
+			.then(() => {
+				copied.value = true;
+				setTimeout(() => {
+					copied.value = false;
+				}, 1500);
+			})
+			.catch(() => {});
+	};
+
+	return (
+		<button
+			data-testid={`short-id-badge-${shortId}`}
+			onClick={handleCopy}
+			title="Click to copy short ID"
+			class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
+		>
+			{copied.value ? '\u2713 copied' : `#${shortId}`}
+		</button>
+	);
+}
+
 function TaskItem({
 	task,
 	allTasks,
@@ -571,16 +600,19 @@ function TaskItem({
 		(task.status === 'completed' || task.status === 'cancelled') && !!onReactivate;
 
 	const borderColor = getStatusBorderColor(task.status);
+	/** Prefer short ID for navigation so URLs are human-readable */
+	const navId = task.shortId ?? task.id;
 
 	return (
 		<div
 			class={`px-4 py-3 border-l-2 ${borderColor} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
-			onClick={isClickable ? () => onClick(task.id) : undefined}
+			onClick={isClickable ? () => onClick(navId) : undefined}
 		>
 			<div class="flex items-start justify-between">
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2 flex-wrap">
 						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
+						{task.shortId && <ShortIdBadge shortId={task.shortId} />}
 						{isWorking && (
 							<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/20 border border-blue-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0">
 								<span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
@@ -651,7 +683,7 @@ function TaskItem({
 						<button
 							onClick={(e) => {
 								e.stopPropagation();
-								onView(task.id);
+								onView(navId);
 							}}
 							class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
 						>
@@ -666,7 +698,7 @@ function TaskItem({
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
-							onReactivate(task.id);
+							onReactivate(navId);
 						}}
 						class="px-3 py-1.5 text-xs font-medium text-blue-400 border border-blue-700/50 hover:bg-blue-900/20 rounded-lg transition-colors"
 						data-testid={`task-reactivate-${task.id}`}

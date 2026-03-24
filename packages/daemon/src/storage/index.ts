@@ -33,6 +33,7 @@ import {
 	type UpdateGoalParams,
 } from './repositories/goal-repository';
 import { JobQueueRepository } from './repositories/job-queue-repository';
+import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -53,6 +54,7 @@ export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor
 // Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
+export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -69,6 +71,7 @@ export class Database {
 	private inboxItemRepo!: InboxItemRepository;
 	private goalRepo!: GoalRepository;
 	private jobQueueRepo!: JobQueueRepository;
+	private appMcpServerRepo!: AppMcpServerRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -89,6 +92,7 @@ export class Database {
 		this.inboxItemRepo = new InboxItemRepository(db);
 		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
 		this.jobQueueRepo = new JobQueueRepository(db);
+		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
 	}
 
 	// ============================================================================
@@ -423,6 +427,13 @@ export class Database {
 	 */
 	getJobQueueRepo(): JobQueueRepository {
 		return this.jobQueueRepo;
+	}
+
+	/**
+	 * Get the application-level MCP server repository
+	 */
+	get appMcpServers(): AppMcpServerRepository {
+		return this.appMcpServerRepo;
 	}
 
 	close(): void {

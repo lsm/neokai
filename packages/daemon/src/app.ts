@@ -24,6 +24,7 @@ import { JobQueueRepository } from './storage/repositories/job-queue-repository'
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
+import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -71,6 +72,8 @@ export interface DaemonAppContext {
 	jobQueue: JobQueueRepository;
 	/** Persistent job queue processor */
 	jobProcessor: JobQueueProcessor;
+	/** Application-level MCP lifecycle manager — converts registry entries to SDK configs */
+	appMcpManager: AppMcpLifecycleManager;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -260,6 +263,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] GitHub integration disabled - authentication required');
 	}
 
+	// Instantiate application-level MCP lifecycle manager
+	const appMcpManager = new AppMcpLifecycleManager(db);
+
+	// Seed default MCP entries (idempotent — skips entries that already exist)
+	seedDefaultMcpEntries(db);
+
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
 		cleanup: rpcHandlerCleanup,
@@ -280,6 +289,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobProcessor,
 		reactiveDb,
 		liveQueries,
+		appMcpManager,
 	});
 
 	// Create WebSocket handlers
@@ -531,6 +541,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		taskAgentManager,
 		jobQueue,
 		jobProcessor,
+		appMcpManager,
 		cleanup,
 	};
 }

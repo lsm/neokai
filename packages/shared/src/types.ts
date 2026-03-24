@@ -2,6 +2,13 @@ import type { SettingSource } from './types/settings.ts';
 import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
 
+export type {
+	AppMcpServerSourceType,
+	AppMcpServer,
+	CreateAppMcpServerRequest,
+	UpdateAppMcpServerRequest,
+} from './types/app-mcp-server.ts';
+
 // Re-export SDK config types for convenience
 export type {
 	SDKConfig,

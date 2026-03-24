@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import type {
 	RoomGoal,
 	GoalPriority,
@@ -109,7 +110,7 @@ const COMMON_TIMEZONES = [
 // ─── Helper Utilities ─────────────────────────────────────────────────────────
 
 function relativeTime(ts: number): string {
-	const diff = Date.now() - ts * 1000;
+	const diff = Date.now() - ts;
 	const mins = Math.floor(diff / 60000);
 	if (mins < 1) return 'just now';
 	if (mins < 60) return `${mins}m ago`;
@@ -255,6 +256,36 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		>
 			{label}
 		</span>
+	);
+}
+
+// ─── Short ID Badge ───────────────────────────────────────────────────────────
+
+function GoalShortIdBadge({ shortId }: { shortId: string }) {
+	const copied = useSignal(false);
+
+	const handleCopy = (e: MouseEvent) => {
+		e.stopPropagation();
+		navigator.clipboard
+			.writeText(shortId)
+			.then(() => {
+				copied.value = true;
+				setTimeout(() => {
+					copied.value = false;
+				}, 1500);
+			})
+			.catch(() => {});
+	};
+
+	return (
+		<button
+			data-testid={`goal-short-id-badge-${shortId}`}
+			onClick={handleCopy}
+			title="Click to copy short ID"
+			class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
+		>
+			{copied.value ? '\u2713 copied' : `#${shortId}`}
+		</button>
 	);
 }
 
@@ -1256,15 +1287,11 @@ function GoalItem({
 					class="px-4 py-3 cursor-pointer hover:bg-dark-800/50 transition-colors active:bg-dark-800"
 					onClick={onToggleExpand}
 				>
-					{/* Row 1: Status indicator + priority badge + mission type badge + actions */}
-					<div class="flex items-center justify-between mb-2">
-						<div class="flex items-center gap-2 flex-wrap">
-							<StatusIndicator status={goal.status} />
-							<PriorityBadge priority={goal.priority} />
-							{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
-							{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
-								<AutonomyBadge level={goal.autonomyLevel} />
-							)}
+					{/* Row 1: Title + actions */}
+					<div class="flex items-start justify-between gap-2 mb-1.5">
+						<div class="flex items-center gap-2 min-w-0">
+							<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							{goal.shortId && <GoalShortIdBadge shortId={goal.shortId} />}
 						</div>
 						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
@@ -1276,8 +1303,15 @@ function GoalItem({
 						</div>
 					</div>
 
-					{/* Row 2: Title */}
-					<h4 class="text-base font-semibold text-gray-100 leading-snug mb-1">{goal.title}</h4>
+					{/* Row 2: Status + badges */}
+					<div class="flex items-center gap-2 flex-wrap mb-2">
+						<StatusIndicator status={goal.status} />
+						<PriorityBadge priority={goal.priority} />
+						{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
+						{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
+							<AutonomyBadge level={goal.autonomyLevel} />
+						)}
+					</div>
 
 					{/* Row 3: Description (truncated, optional) */}
 					{goal.description && (

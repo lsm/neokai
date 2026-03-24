@@ -466,6 +466,8 @@ export interface SessionSummary {
  */
 export interface TaskSummary {
 	id: string;
+	/** Human-readable short ID (e.g. 't-42'), scoped to parent room */
+	shortId?: string;
 	title: string;
 	status: TaskStatus;
 	priority: TaskPriority;

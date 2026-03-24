@@ -11,7 +11,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { createTables, runMigration49 } from '../../../src/storage/schema';
+import { createTables, runMigration50 } from '../../../src/storage/schema';
 import {
 	TaskManager,
 	VALID_STATUS_TRANSITIONS,
@@ -283,7 +283,7 @@ describe('Task restrictions (rate_limited / usage_limited)', () => {
 			expect(colsBefore.some((c) => c.name === 'restrictions')).toBe(false);
 
 			// Run migration
-			runMigration49(migDb);
+			runMigration50(migDb);
 
 			// Column should exist after migration
 			const colsAfter = migDb.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>;
@@ -296,8 +296,8 @@ describe('Task restrictions (rate_limited / usage_limited)', () => {
 			const migDb = new Database(':memory:');
 			createTables(migDb);
 			expect(() => {
-				runMigration49(migDb);
-				runMigration49(migDb);
+				runMigration50(migDb);
+				runMigration50(migDb);
 			}).not.toThrow();
 			migDb.close();
 		});
@@ -312,7 +312,7 @@ describe('Task restrictions (rate_limited / usage_limited)', () => {
 				)
 				.run('t1', 'r1', 'My task', 'desc', 1000);
 
-			runMigration49(migDb);
+			runMigration50(migDb);
 
 			const row = migDb.prepare(`SELECT * FROM tasks WHERE id = 't1'`).get() as Record<
 				string,
@@ -330,7 +330,7 @@ describe('Task restrictions (rate_limited / usage_limited)', () => {
 			migDb.exec(OLD_TASKS_SCHEMA);
 			migDb.exec(`INSERT INTO rooms VALUES ('r1', 'Room', 1000, 1000)`);
 
-			runMigration49(migDb);
+			runMigration50(migDb);
 
 			// Should not throw with the new status value
 			expect(() => {
