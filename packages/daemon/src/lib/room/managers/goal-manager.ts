@@ -54,6 +54,14 @@ export class GoalManager {
 	}
 
 	/**
+	 * Lookup a goal by short ID within this room. Used for short-ID resolution
+	 * in RPC handlers without requiring a separate GoalRepository instance.
+	 */
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
+		return this.goalRepo.getGoalByShortId(roomId, shortId);
+	}
+
+	/**
 	 * Create a new goal
 	 */
 	async createGoal(params: Omit<CreateGoalParams, 'roomId'>): Promise<RoomGoal> {

@@ -42,7 +42,6 @@ import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
 import { TaskManager } from '../room/managers/task-manager';
-import { GoalRepository } from '../../storage/repositories/goal-repository';
 import { setupDialogHandlers } from './dialog-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
@@ -245,8 +244,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub,
 		goalManagerFactory,
 		goalTaskManagerFactory,
-		roomRuntimeService,
-		new GoalRepository(deps.db.getDatabase(), deps.reactiveDb, deps.db.getShortIdAllocator())
+		roomRuntimeService
 	);
 
 	// GitHub handlers

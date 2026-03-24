@@ -55,6 +55,7 @@ export type GoalManagerLike = Pick<
 	| 'listExecutions'
 	| 'recordMetric'
 	| 'checkMetricTargets'
+	| 'getGoalByShortId'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
@@ -62,22 +63,13 @@ export type TaskManagerFactory = (
 	roomId: string
 ) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
 
-/** Minimal interface for goal short-ID lookup, satisfied by GoalRepository. */
-export type GoalRepoLike = {
-	getGoalByShortId(roomId: string, shortId: string): { id: string } | null;
-};
-
 export function setupGoalHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
 	goalManagerFactory: GoalManagerFactory,
 	taskManagerFactory?: TaskManagerFactory,
-	runtimeService?: RoomRuntimeService,
-	goalRepo?: GoalRepoLike
+	runtimeService?: RoomRuntimeService
 ): void {
-	/** Resolves goalId (UUID or short ID) to UUID when goalRepo is available. */
-	const resolveId = (input: string, roomId: string): string =>
-		goalRepo ? resolveGoalId(input, roomId, goalRepo) : input;
 	/**
 	 * Emit goal.created event to notify UI clients
 	 */
@@ -144,8 +136,8 @@ export function setupGoalHandlers(
 			throw new Error('Goal ID is required');
 		}
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 
 		if (!goal) {
@@ -192,8 +184,8 @@ export function setupGoalHandlers(
 			throw new Error('No update fields provided');
 		}
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const { status, progress, priority, metrics, ...rest } = params.updates;
 
 		// Detect V2 patch fields (title, description, missionType, autonomyLevel,
@@ -252,8 +244,8 @@ export function setupGoalHandlers(
 			throw new Error('Goal ID is required');
 		}
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.needsHumanGoal(goalId);
 
 		return { goal };
@@ -270,8 +262,8 @@ export function setupGoalHandlers(
 			throw new Error('Goal ID is required');
 		}
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.reactivateGoal(goalId);
 
 		return { goal };
@@ -291,8 +283,8 @@ export function setupGoalHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 
 		// For recurring missions with an active execution, use the atomic dual-write path.
 		let goal;
@@ -322,8 +314,8 @@ export function setupGoalHandlers(
 			throw new Error('Goal ID is required');
 		}
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const success = await goalManager.deleteGoal(goalId);
 
 		return { success };
@@ -342,8 +334,8 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 		if (!params.cronExpression) throw new Error('Cron expression is required');
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
@@ -379,8 +371,8 @@ export function setupGoalHandlers(
 		if (!params.roomId) throw new Error('Room ID is required');
 		if (!params.goalId) throw new Error('Goal ID is required');
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
@@ -400,8 +392,8 @@ export function setupGoalHandlers(
 		if (!params.roomId) throw new Error('Room ID is required');
 		if (!params.goalId) throw new Error('Goal ID is required');
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
@@ -428,8 +420,8 @@ export function setupGoalHandlers(
 		if (!params.roomId) throw new Error('Room ID is required');
 		if (!params.goalId) throw new Error('Goal ID is required');
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 
@@ -446,8 +438,8 @@ export function setupGoalHandlers(
 		if (!params.metricName) throw new Error('Metric name is required');
 		if (typeof params.value !== 'number') throw new Error('Value must be a number');
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'measurable') {
@@ -474,8 +466,8 @@ export function setupGoalHandlers(
 		if (!params.roomId) throw new Error('Room ID is required');
 		if (!params.goalId) throw new Error('Goal ID is required');
 
-		const goalId = resolveId(params.goalId, params.roomId);
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 
