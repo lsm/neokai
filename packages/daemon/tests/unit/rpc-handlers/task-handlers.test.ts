@@ -500,6 +500,104 @@ describe('task.sendHumanMessage RPC Handler', () => {
 		});
 	});
 
+	describe('review task → in_progress transition on human message', () => {
+		function setupWithReviewTask(injectResult = true) {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const setTaskStatus = mock(async () => reviewTask);
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => reviewTask),
+				getTask: mock(async () => reviewTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => reviewTask),
+				cancelTask: mock(async () => ({ ...reviewTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const { service, runtime } = makeRuntimeService(true, injectResult, true);
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				factory,
+				service
+			);
+
+			return { setTaskStatus, runtime };
+		}
+
+		it('transitions to in_progress and routes message to worker', async () => {
+			const { setTaskStatus, runtime } = setupWithReviewTask();
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'add error handling' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
+			expect(runtime.injectMessageToWorker).toHaveBeenCalledWith('task-1', 'add error handling');
+		});
+
+		it('transitions to in_progress and routes message to leader', async () => {
+			const { setTaskStatus, runtime } = setupWithReviewTask();
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'approve and merge', target: 'leader' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
+			expect(runtime.injectMessageToLeader).toHaveBeenCalledWith('task-1', 'approve and merge');
+		});
+
+		it('throws when status transition from review to in_progress fails', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const setTaskStatus = mock(async () => {
+				throw new Error('DB write failed');
+			});
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => reviewTask),
+				getTask: mock(async () => reviewTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => reviewTask),
+				cancelTask: mock(async () => ({ ...reviewTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const { service } = makeRuntimeService(true, true, true);
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				factory,
+				service
+			);
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'go ahead' }, {})
+			).rejects.toThrow('Failed to transition task task-1 from review to in_progress');
+		});
+
+		it('does not call reviveTaskForMessage for review tasks (sessions are still active)', async () => {
+			const { runtime } = setupWithReviewTask();
+
+			await getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'keep going' }, {});
+
+			expect(runtime.reviveTaskForMessage).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('target parameter routing for needs_attention tasks', () => {
 		it('passes target=worker to reviveTaskForMessage when human selects worker', async () => {
 			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };

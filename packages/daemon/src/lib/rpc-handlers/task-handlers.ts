@@ -1046,6 +1046,19 @@ export function setupTaskHandlers(
 			return { success: true };
 		}
 
+		// review tasks: transition to in_progress before routing the human message.
+		// The group is still active (sessions running), so no revival is needed — just
+		// update the status so the task reflects that work is ongoing again.
+		if (task.status === 'review') {
+			try {
+				await taskManager.setTaskStatus(params.taskId, 'in_progress');
+			} catch (err) {
+				throw new Error(
+					`Failed to transition task ${params.taskId} from review to in_progress: ${String(err)}`
+				);
+			}
+		}
+
 		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,
