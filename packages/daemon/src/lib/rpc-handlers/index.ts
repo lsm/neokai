@@ -74,6 +74,7 @@ import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
 import { LiveQueryEngine } from '../../storage/live-query';
 import type { AppMcpLifecycleManager } from '../mcp';
+import { registerAppMcpHandlers } from './app-mcp-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -268,6 +269,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.liveQueries,
 		deps.db.getDatabase()
 	);
+
+	// App-level MCP registry handlers
+	registerAppMcpHandlers(deps.messageHub, {
+		db: deps.db,
+		daemonHub: deps.daemonHub,
+	});
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());

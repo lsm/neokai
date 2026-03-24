@@ -25,6 +25,11 @@ import type {
 	ConfigUpdateResult,
 } from './types.ts';
 import type { PermissionMode } from './types/settings.ts';
+import type {
+	AppMcpServer,
+	CreateAppMcpServerRequest,
+	UpdateAppMcpServerRequest,
+} from './types/app-mcp-server.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -618,4 +623,71 @@ export interface SDKCleanupResponse {
 	processedCount: number;
 	totalSize: number;
 	errors: string[];
+}
+
+// ---------------------------------------------------------------------------
+// MCP Registry RPC types (mcp.registry.*)
+//
+// The *Response types below are intended for frontend (web) consumption — they
+// are not imported by the daemon handlers (which use inline `satisfies`
+// expressions).  They serve as a single source of truth for the shape callers
+// can expect from each RPC endpoint.
+// ---------------------------------------------------------------------------
+
+export type { AppMcpServer, CreateAppMcpServerRequest, UpdateAppMcpServerRequest };
+
+/** Response from mcp.registry.list */
+export interface McpRegistryListResponse {
+	servers: AppMcpServer[];
+}
+
+/** Response from mcp.registry.get */
+export interface McpRegistryGetResponse {
+	server: AppMcpServer;
+}
+
+/** Response from mcp.registry.create */
+export interface McpRegistryCreateResponse {
+	server: AppMcpServer;
+}
+
+/** Response from mcp.registry.update */
+export interface McpRegistryUpdateResponse {
+	server: AppMcpServer;
+}
+
+/** Request for mcp.registry.delete */
+export interface McpRegistryDeleteRequest {
+	id: string;
+}
+
+/** Response from mcp.registry.delete */
+export interface McpRegistryDeleteResponse {
+	success: boolean;
+}
+
+/** Request for mcp.registry.setEnabled */
+export interface McpRegistrySetEnabledRequest {
+	id: string;
+	enabled: boolean;
+}
+
+/** Response from mcp.registry.setEnabled */
+export interface McpRegistrySetEnabledResponse {
+	server: AppMcpServer;
+}
+
+/**
+ * A single startup/validation error for an MCP registry entry.
+ * `serverId` matches the `id` field of AppMcpServer (mirrors McpStartupError in the daemon).
+ */
+export interface McpRegistryError {
+	serverId: string;
+	name: string;
+	error: string;
+}
+
+/** Response from mcp.registry.listErrors */
+export interface McpRegistryListErrorsResponse {
+	errors: McpRegistryError[];
 }
