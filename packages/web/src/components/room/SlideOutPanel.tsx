@@ -91,7 +91,7 @@ export function SlideOutPanel({
 			<div
 				data-testid="slide-out-backdrop"
 				class={[
-					'absolute inset-0 bg-black/40 z-10 transition-opacity duration-300',
+					'fixed inset-0 bg-black/40 z-40 transition-opacity duration-300',
 					isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
 				].join(' ')}
 				onClick={onClose}
@@ -106,7 +106,7 @@ export function SlideOutPanel({
 				aria-modal="true"
 				aria-label={`Session chat for ${displayLabel}`}
 				class={[
-					'absolute top-0 right-0 h-full z-20',
+					'fixed top-0 right-0 h-screen z-50',
 					widthClass,
 					'flex flex-col',
 					'bg-gray-900 border-l border-gray-700 shadow-2xl',

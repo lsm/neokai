@@ -180,10 +180,7 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
 
 	return (
-		<div
-			data-testid="task-view-v2"
-			class="flex-1 flex flex-col overflow-hidden bg-dark-900 relative"
-		>
+		<div data-testid="task-view-v2" class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
 			<div class="border-b border-dark-700 bg-dark-850 px-4 py-3 flex items-center gap-3 flex-shrink-0">
 				<button
