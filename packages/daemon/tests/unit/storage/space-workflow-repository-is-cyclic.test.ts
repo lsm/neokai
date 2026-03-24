@@ -35,7 +35,7 @@ describe('SpaceWorkflowRepository — isCyclic', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId,
 			name: 'Cyclic Workflow',
-			steps: [
+			nodes: [
 				{ id: 'step-plan', agentId: 'agent-1', name: 'Plan' },
 				{ id: 'step-verify', agentId: 'agent-2', name: 'Verify' },
 			],
@@ -68,7 +68,7 @@ describe('SpaceWorkflowRepository — isCyclic', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId,
 			name: 'Linear Workflow',
-			steps: [
+			nodes: [
 				{ id: 'step-code', agentId: 'agent-1', name: 'Code' },
 				{ id: 'step-review', agentId: 'agent-2', name: 'Review' },
 			],
@@ -86,7 +86,7 @@ describe('SpaceWorkflowRepository — isCyclic', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId,
 			name: 'Task Result Workflow',
-			steps: [
+			nodes: [
 				{ id: 'step-verify', agentId: 'agent-1', name: 'Verify' },
 				{ id: 'step-done', agentId: 'agent-2', name: 'Done' },
 			],

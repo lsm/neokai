@@ -460,9 +460,9 @@ describe('provisionGlobalSpacesAgent', () => {
 			spaceId: SPACE_ID,
 			name: 'E2E Provision Test Workflow',
 			description: '',
-			steps: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
+			nodes: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
 			transitions: [],
-			startStepId: STEP_ID,
+			startNodeId: STEP_ID,
 			rules: [],
 			tags: [],
 		});
@@ -510,9 +510,9 @@ describe('provisionGlobalSpacesAgent', () => {
 			spaceId: SPACE_ID,
 			name: 'Race Fix Workflow',
 			description: '',
-			steps: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
+			nodes: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
 			transitions: [],
-			startStepId: STEP_ID,
+			startNodeId: STEP_ID,
 			rules: [],
 			tags: [],
 		});

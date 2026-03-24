@@ -25,7 +25,7 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	WorkflowRule,
-	WorkflowStep,
+	WorkflowNode,
 } from '@neokai/shared';
 import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
@@ -304,7 +304,7 @@ export class SpaceRuntime {
 			workflowId,
 			title,
 			description,
-			currentStepId: workflow.startStepId,
+			currentNodeId: workflow.startNodeId,
 			goalId,
 			maxIterations: workflow.maxIterations,
 		});
@@ -318,12 +318,12 @@ export class SpaceRuntime {
 		this.executors.set(run.id, executor);
 
 		// Find the start step and create the initial task. Roll back map entries if this fails.
-		const startStep = workflow.steps.find((s) => s.id === workflow.startStepId);
+		const startStep = workflow.nodes.find((s) => s.id === workflow.startNodeId);
 		if (!startStep) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
 			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
-			throw new Error(`Start step "${workflow.startStepId}" not found in workflow "${workflowId}"`);
+			throw new Error(`Start step "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
 		}
 
 		const taskManager = this.getOrCreateTaskManager(spaceId);
@@ -340,7 +340,7 @@ export class SpaceRuntime {
 					title: startStep.name,
 					description: agentEntry.instructions ?? startStep.instructions ?? '',
 					workflowRunId: run.id,
-					workflowStepId: startStep.id,
+					workflowNodeId: startStep.id,
 					taskType: resolved.taskType,
 					customAgentId: resolved.customAgentId,
 					status: 'pending',
@@ -410,7 +410,7 @@ export class SpaceRuntime {
 	 *   any other role (custom)           → taskType: 'coding',    customAgentId: agentId
 	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
-	resolveTaskTypesForStep(step: WorkflowStep): ResolvedTaskType[] {
+	resolveTaskTypesForStep(step: WorkflowNode): ResolvedTaskType[] {
 		const stepAgents = resolveNodeAgents(step);
 		return stepAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
 	}
@@ -425,7 +425,7 @@ export class SpaceRuntime {
 	 * For multi-agent steps (agents[] format), use `resolveTaskTypesForStep()`
 	 * to get per-agent results.
 	 */
-	resolveTaskTypeForStep(step: WorkflowStep): ResolvedTaskType {
+	resolveTaskTypeForStep(step: WorkflowNode): ResolvedTaskType {
 		return this.resolveTaskTypesForStep(step)[0];
 	}
 
@@ -603,14 +603,14 @@ export class SpaceRuntime {
 			this.executorMeta.delete(runId);
 			this.config.workflowRunRepo.updateStatus(runId, 'cancelled');
 			throw new Error(
-				`Run "${runId}" has currentStepId "${run.currentStepId}" not found in workflow "${run.workflowId}"`
+				`Run "${runId}" has currentNodeId "${run.currentNodeId}" not found in workflow "${run.workflowId}"`
 			);
 		}
 
 		// Find tasks that belong to the current step
 		const stepTasks = this.config.taskRepo
 			.listByWorkflowRun(runId)
-			.filter((t) => t.workflowStepId === currentStep.id);
+			.filter((t) => t.workflowNodeId === currentStep.id);
 
 		// Only advance when there is at least one task and ALL are completed.
 		// stepTasks.length === 0 is the normal "waiting" state — the task for this
@@ -734,7 +734,7 @@ export class SpaceRuntime {
 				.listByWorkflowRun(runId)
 				.filter(
 					(t) =>
-						t.workflowStepId === currentStep.id && t.status === 'pending' && !t.taskAgentSessionId
+						t.workflowNodeId === currentStep.id && t.status === 'pending' && !t.taskAgentSessionId
 				);
 
 			if (pendingTasksNeedingAgent.length > 0) {
@@ -1004,7 +1004,7 @@ export class SpaceRuntime {
 	 * entries in the workflow data. This function only resolves and stores
 	 * user-declared channels — no runtime auto-generation.
 	 */
-	resolveAndStoreChannels(runId: string, spaceId: string, step: WorkflowStep): void {
+	resolveAndStoreChannels(runId: string, spaceId: string, step: WorkflowNode): void {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 
@@ -1012,7 +1012,7 @@ export class SpaceRuntime {
 
 		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
 
-// Resolve user-declared channels (empty array if none declared)
+		// Resolve user-declared channels (empty array if none declared)
 		const userResolved = resolveNodeChannels(step, allAgents);
 
 		// Auto-generate default bidirectional channels between task-agent and each node agent role.

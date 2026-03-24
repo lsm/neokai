@@ -396,7 +396,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipeline',
-				steps: [{ name: 'Code', agentId: agent.id }],
+				nodes: [{ name: 'Code', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -417,7 +417,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipeline',
-				steps: [{ name: 'Code', agentId: coder.id }],
+				nodes: [{ name: 'Code', agentId: coder.id }],
 				transitions: [],
 			});
 
@@ -435,13 +435,13 @@ describe('Space Export/Import RPC Handlers', () => {
 			const wf1 = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'WF1',
-				steps: [{ name: 'S1', agentId: agent.id }],
+				nodes: [{ name: 'S1', agentId: agent.id }],
 				transitions: [],
 			});
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'WF2',
-				steps: [{ name: 'S2', agentId: agent.id }],
+				nodes: [{ name: 'S2', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -459,7 +459,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'TwoStep',
-				steps: [
+				nodes: [
 					{ id: 'step-1', name: 'First', agentId: agent.id },
 					{ id: 'step-2', name: 'Second', agentId: agent.id },
 				],
@@ -484,7 +484,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W',
-				steps: [{ name: 'S', agentId: agent.id }],
+				nodes: [{ name: 'S', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -503,13 +503,13 @@ describe('Space Export/Import RPC Handlers', () => {
 			const wf1 = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W1',
-				steps: [{ name: 'S', agentId: a1.id }],
+				nodes: [{ name: 'S', agentId: a1.id }],
 				transitions: [],
 			});
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W2',
-				steps: [{ name: 'S', agentId: a1.id }],
+				nodes: [{ name: 'S', agentId: a1.id }],
 				transitions: [],
 			});
 
@@ -574,7 +574,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			const existing = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipeline',
-				steps: [{ name: 'S', agentId: agent.id }],
+				nodes: [{ name: 'S', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -719,7 +719,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				const existingWf = workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'Pipeline',
-					steps: [{ name: 'S', agentId: agent.id }],
+					nodes: [{ name: 'S', agentId: agent.id }],
 					transitions: [],
 				});
 
@@ -772,7 +772,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'Pipeline',
-					steps: [{ name: 'S', agentId: agent.id }],
+					nodes: [{ name: 'S', agentId: agent.id }],
 					transitions: [],
 				});
 
@@ -823,7 +823,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'Pipeline',
-					steps: [{ name: 'OldStep', agentId: agent.id }],
+					nodes: [{ name: 'OldStep', agentId: agent.id }],
 					transitions: [],
 				});
 
@@ -1120,7 +1120,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				const existingWf = workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'ToReplace',
-					steps: [{ name: 'S', agentId: existingAgent.id }],
+					nodes: [{ name: 'S', agentId: existingAgent.id }],
 					transitions: [],
 				});
 
@@ -1333,7 +1333,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			const existingWf = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipe',
-				steps: [{ name: 's1', agentId: existingAgentId }],
+				nodes: [{ name: 's1', agentId: existingAgentId }],
 				transitions: [],
 			});
 			const oldWorkflowId = existingWf.id;

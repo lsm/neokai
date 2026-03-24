@@ -24,8 +24,8 @@ import type {
 	SpaceTask,
 	WorkflowCondition,
 	WorkflowTransition,
-	WorkflowStep,
-	WorkflowStepAgent,
+	WorkflowNode,
+	WorkflowNodeAgent,
 } from '@neokai/shared';
 import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
@@ -116,8 +116,8 @@ export interface TaskTypeResolution {
  * resolver can derive per-agent taskType / customAgentId for multi-agent steps.
  */
 export type TaskTypeResolver = (
-	step: WorkflowStep,
-	agentEntry: WorkflowStepAgent
+	step: WorkflowNode,
+	agentEntry: WorkflowNodeAgent
 ) => {
 	taskType?: string;
 	customAgentId?: string;
@@ -191,11 +191,11 @@ export class WorkflowExecutor {
 	 * Returns the step currently being executed, or null if the run has completed
 	 * or been cancelled.
 	 */
-	getCurrentStep(): WorkflowStep | null {
+	getCurrentStep(): WorkflowNode | null {
 		if (this.run.status === 'completed' || this.run.status === 'cancelled') {
 			return null;
 		}
-		return this.workflow.steps.find((s) => s.id === this.run.currentStepId) ?? null;
+		return this.workflow.nodes.find((s) => s.id === this.run.currentNodeId) ?? null;
 	}
 
 	/**
@@ -203,7 +203,7 @@ export class WorkflowExecutor {
 	 */
 	getOutgoingTransitions(): WorkflowTransition[] {
 		return this.workflow.transitions
-			.filter((t) => t.from === this.run.currentStepId)
+			.filter((t) => t.from === this.run.currentNodeId)
 			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 	}
 
@@ -305,7 +305,7 @@ export class WorkflowExecutor {
 	 */
 	async advance(options?: {
 		stepResult?: string;
-	}): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }> {
+	}): Promise<{ step: WorkflowNode; tasks: SpaceTask[] }> {
 		if (this.isComplete()) {
 			throw new Error('Cannot advance: workflow run is already complete');
 		}
@@ -409,8 +409,8 @@ export class WorkflowExecutor {
 	 */
 	private async followTransition(
 		transition: WorkflowTransition
-	): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }> {
-		const nextStep = this.workflow.steps.find((s) => s.id === transition.to);
+	): Promise<{ step: WorkflowNode; tasks: SpaceTask[] }> {
+		const nextStep = this.workflow.nodes.find((s) => s.id === transition.to);
 		if (!nextStep) {
 			throw new Error(`Target step "${transition.to}" not found in workflow "${this.workflow.id}"`);
 		}
@@ -461,7 +461,7 @@ export class WorkflowExecutor {
 				title: nextStep.name,
 				description: agentEntry.instructions ?? nextStep.instructions ?? '',
 				workflowRunId: this.run.id,
-				workflowStepId: nextStep.id,
+				workflowNodeId: nextStep.id,
 				taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
 				customAgentId: resolved !== undefined ? resolved.customAgentId : agentEntry.agentId,
 				status: 'pending',
@@ -535,7 +535,7 @@ export class WorkflowExecutor {
 	private async resolveTaskResult(stepId: string, fallback?: string): Promise<string | undefined> {
 		const allTasks = await this.taskManager.listTasksByWorkflowRun(this.run.id);
 		const completedOnStep = allTasks.filter(
-			(t) => t.workflowStepId === stepId && t.status === 'completed'
+			(t) => t.workflowNodeId === stepId && t.status === 'completed'
 		);
 
 		// Sort by completedAt descending to get the most recently completed task

@@ -103,12 +103,12 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		spaceId: space.id,
 		name: 'Code Review Workflow',
 		description: 'A simple code-then-review workflow for lifecycle testing',
-		steps: [
+		nodes: [
 			{ id: STEP_CODE_ID, name: 'Code Implementation', agentId: coderAgent.id },
 			{ id: STEP_REVIEW_ID, name: 'Code Review', agentId: reviewerAgent.id },
 		],
 		transitions: [{ from: STEP_CODE_ID, to: STEP_REVIEW_ID }],
-		startStepId: STEP_CODE_ID,
+		startNodeId: STEP_CODE_ID,
 	})) as { workflow: SpaceWorkflow };
 
 	return {

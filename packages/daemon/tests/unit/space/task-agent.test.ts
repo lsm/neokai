@@ -70,7 +70,7 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Feature Workflow',
 		description: 'Plan, code, and review.',
-		steps: [
+		nodes: [
 			{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
 			{ id: 'step-code', name: 'Code', agentId: 'agent-1', instructions: 'Write tests too.' },
 			{ id: 'step-review', name: 'Review', agentId: 'agent-reviewer' },
@@ -85,7 +85,7 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 				condition: { type: 'human', description: 'Approve code before review' },
 			},
 		],
-		startStepId: 'step-plan',
+		startNodeId: 'step-plan',
 		rules: [
 			{
 				id: 'rule-1',
@@ -113,7 +113,7 @@ function makeWorkflowRun(overrides?: Partial<SpaceWorkflowRun>): SpaceWorkflowRu
 		spaceId: 'space-1',
 		workflowId: 'wf-1',
 		title: 'Feature X Run #1',
-		currentStepId: 'step-plan',
+		currentNodeId: 'step-plan',
 		status: 'in_progress',
 		createdAt: 1000,
 		updatedAt: 2000,
@@ -499,7 +499,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 
 	test('handles workflow with no steps — body shows no steps message', () => {
 		const ctx = makeContext({
-			workflow: makeWorkflow({ steps: [], transitions: [], startStepId: 'none' }),
+			workflow: makeWorkflow({ nodes: [], transitions: [], startNodeId: 'none' }),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('no steps defined');
@@ -509,9 +509,9 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
 				name: 'Empty Workflow',
-				steps: [],
+				nodes: [],
 				transitions: [],
-				startStepId: 'none',
+				startNodeId: 'none',
 			}),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
@@ -523,9 +523,9 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 	test('step with unresolvable agentId falls back to raw agent id', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
-				steps: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
+				nodes: [{ id: 'step-orphan', name: 'Orphan Step', agentId: 'agent-missing' }],
 				transitions: [],
-				startStepId: 'step-orphan',
+				startNodeId: 'step-orphan',
 			}),
 			availableAgents: [],
 		});
@@ -656,7 +656,7 @@ describe('buildTaskAgentInitialMessage — formatTransition task_result', () => 
 			spaceId: 'space-1',
 			name: 'Task Result WF',
 			description: 'Test workflow',
-			steps: [
+			nodes: [
 				{ id: 'step-plan', name: 'Plan', agentId: 'agent-planner' },
 				{ id: 'step-code', name: 'Code', agentId: 'agent-1' },
 			],
@@ -668,7 +668,7 @@ describe('buildTaskAgentInitialMessage — formatTransition task_result', () => 
 					condition: { type: 'task_result', expression: 'passed' },
 				},
 			],
-			startStepId: 'step-plan',
+			startNodeId: 'step-plan',
 			rules: [],
 			isDefault: false,
 			tags: [],

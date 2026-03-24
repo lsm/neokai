@@ -895,7 +895,7 @@ export class TaskAgentManager {
 		const stepTasks = workflowRunId
 			? this.config.taskRepo
 					.listByWorkflowRun(workflowRunId)
-					.filter((t) => t.workflowStepId === stepId && t.taskAgentSessionId === subSessionId)
+					.filter((t) => t.workflowNodeId === stepId && t.taskAgentSessionId === subSessionId)
 			: [];
 
 		if (stepTasks.length > 0) {

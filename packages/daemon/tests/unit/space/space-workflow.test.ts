@@ -2,15 +2,15 @@
  * SpaceWorkflow Unit Tests
  *
  * Covers:
- * - Repository: full CRUD with step and transition management
+ * - Repository: full CRUD with node and transition management
  * - Repository: getWorkflowsReferencingAgent
  * - Repository: JSON round-trips (rules, tags, transitions, conditions)
  * - Manager: name uniqueness within space
- * - Manager: at-least-one-step validation
+ * - Manager: at-least-one-node validation
  * - Manager: agentId validation (non-empty, optional SpaceAgentLookup)
- * - Manager: transition validation (from/to step ID refs)
+ * - Manager: transition validation (from/to node ID refs)
  * - Manager: condition validation (expression non-empty for 'condition' type)
- * - Manager: startStepId validation
+ * - Manager: startNodeId validation
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -24,7 +24,7 @@ import {
 	WorkflowValidationError,
 } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { WorkflowStepInput, WorkflowTransitionInput } from '@neokai/shared';
+import type { WorkflowNodeInput, WorkflowTransitionInput } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,15 +55,15 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// Step fixtures — no entryGate/exitGate/order in new model
-const coderStep: WorkflowStepInput = { id: 'step-coder', name: 'Code', agentId: 'agent-coder' };
-const plannerStep: WorkflowStepInput = {
-	id: 'step-planner',
+// Node fixtures — no entryGate/exitGate/order in new model
+const coderNode: WorkflowNodeInput = { id: 'node-coder', name: 'Code', agentId: 'agent-coder' };
+const plannerNode: WorkflowNodeInput = {
+	id: 'node-planner',
 	name: 'Plan',
 	agentId: 'agent-planner',
 };
-const generalStep: WorkflowStepInput = {
-	id: 'step-general',
+const generalNode: WorkflowNodeInput = {
+	id: 'node-general',
 	name: 'Review',
 	agentId: 'agent-general',
 };
@@ -104,16 +104,16 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'My Workflow',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 		});
 
 		expect(wf.id).toBeTruthy();
 		expect(wf.spaceId).toBe('space-1');
 		expect(wf.name).toBe('My Workflow');
-		expect(wf.steps).toHaveLength(2);
-		expect(wf.steps[0].name).toBe('Code');
-		expect(wf.steps[0].agentId).toBe('agent-coder');
-		expect(wf.steps[1].name).toBe('Plan');
+		expect(wf.nodes).toHaveLength(2);
+		expect(wf.nodes[0].name).toBe('Code');
+		expect(wf.nodes[0].agentId).toBe('agent-coder');
+		expect(wf.nodes[1].name).toBe('Plan');
 		expect(wf.tags).toEqual([]);
 		expect(wf.rules).toEqual([]);
 		expect(wf.transitions).toEqual([]);
@@ -123,7 +123,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Tagged',
-			steps: [coderStep],
+			nodes: [coderNode],
 			tags: ['ci', 'deploy'],
 			config: { priority: 'high' },
 		});
@@ -131,41 +131,41 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.config).toEqual({ priority: 'high' });
 	});
 
-	test('createWorkflow uses first step as startStepId by default', () => {
+	test('createWorkflow uses first node as startNodeId by default', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Auto Start',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 		});
-		expect(wf.startStepId).toBe(coderStep.id);
+		expect(wf.startNodeId).toBe(coderNode.id);
 	});
 
-	test('createWorkflow respects explicit startStepId', () => {
+	test('createWorkflow respects explicit startNodeId', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Explicit Start',
-			steps: [coderStep, plannerStep],
-			startStepId: plannerStep.id,
+			nodes: [coderNode, plannerNode],
+			startNodeId: plannerNode.id,
 		});
-		expect(wf.startStepId).toBe(plannerStep.id);
+		expect(wf.startNodeId).toBe(plannerNode.id);
 	});
 
 	test('createWorkflow stores transitions', () => {
 		const transition: WorkflowTransitionInput = {
-			from: coderStep.id!,
-			to: plannerStep.id!,
+			from: coderNode.id!,
+			to: plannerNode.id!,
 			condition: { type: 'always' },
 			order: 0,
 		};
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'With Transitions',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			transitions: [transition],
 		});
 		expect(wf.transitions).toHaveLength(1);
-		expect(wf.transitions[0].from).toBe(coderStep.id);
-		expect(wf.transitions[0].to).toBe(plannerStep.id);
+		expect(wf.transitions[0].from).toBe(coderNode.id);
+		expect(wf.transitions[0].to).toBe(plannerNode.id);
 		expect(wf.transitions[0].condition?.type).toBe('always');
 	});
 
@@ -178,9 +178,9 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'Full',
 			description: 'A full workflow',
-			steps: [coderStep, plannerStep],
-			transitions: [{ from: coderStep.id!, to: plannerStep.id!, condition: { type: 'human' } }],
-			startStepId: coderStep.id,
+			nodes: [coderNode, plannerNode],
+			transitions: [{ from: coderNode.id!, to: plannerNode.id!, condition: { type: 'human' } }],
+			startNodeId: coderNode.id,
 			rules: [{ name: 'Rule1', content: 'Follow TDD', appliesTo: [] }],
 			tags: ['a', 'b'],
 			config: { key: 'value' },
@@ -194,20 +194,20 @@ describe('SpaceWorkflowRepository', () => {
 		expect(fetched.rules[0].name).toBe('Rule1');
 		expect(fetched.rules[0].id).toBeTruthy();
 		expect(fetched.config).toEqual({ key: 'value' });
-		expect(fetched.startStepId).toBe(coderStep.id);
+		expect(fetched.startNodeId).toBe(coderNode.id);
 		expect(fetched.transitions).toHaveLength(1);
 		expect(fetched.transitions[0].condition?.type).toBe('human');
 	});
 
 	test('listWorkflows returns all workflows for a space', () => {
-		repo.createWorkflow({ spaceId: 'space-1', name: 'WF1', steps: [coderStep] });
-		repo.createWorkflow({ spaceId: 'space-1', name: 'WF2', steps: [plannerStep] });
+		repo.createWorkflow({ spaceId: 'space-1', name: 'WF1', nodes: [coderNode] });
+		repo.createWorkflow({ spaceId: 'space-1', name: 'WF2', nodes: [plannerNode] });
 		// Another space — should not appear; use anonymous step (no fixed id) to avoid PK collision
 		seedSpace(db, 'space-2');
 		repo.createWorkflow({
 			spaceId: 'space-2',
 			name: 'WF3',
-			steps: [{ name: 'Code', agentId: 'agent-coder' }],
+			nodes: [{ name: 'Code', agentId: 'agent-coder' }],
 		});
 
 		const wfs = repo.listWorkflows('space-1');
@@ -216,19 +216,19 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('updateWorkflow updates name and description', () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'Old Name', steps: [coderStep] });
+		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'Old Name', nodes: [coderNode] });
 		const updated = repo.updateWorkflow(wf.id, { name: 'New Name', description: 'Updated desc' });
 		expect(updated?.name).toBe('New Name');
 		expect(updated?.description).toBe('Updated desc');
 	});
 
 	test('updateWorkflow bumps updatedAt on step-only update', async () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		const before = wf.updatedAt;
 		// Small delay to ensure timestamp difference
 		await new Promise((r) => setTimeout(r, 2));
 		const updated = repo.updateWorkflow(wf.id, {
-			steps: [{ id: 'new-step', name: 'Plan', agentId: 'agent-planner' }],
+			nodes: [{ id: 'new-step', name: 'Plan', agentId: 'agent-planner' }],
 		});
 		expect(updated?.updatedAt).toBeGreaterThan(before);
 	});
@@ -237,23 +237,23 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 		});
-		expect(wf.steps).toHaveLength(2);
+		expect(wf.nodes).toHaveLength(2);
 
 		const updated = repo.updateWorkflow(wf.id, {
-			steps: [{ id: 'step-review', name: 'Review', agentId: 'agent-general' }],
+			nodes: [{ id: 'step-review', name: 'Review', agentId: 'agent-general' }],
 		});
-		expect(updated?.steps).toHaveLength(1);
-		expect(updated?.steps[0].agentId).toBe('agent-general');
+		expect(updated?.nodes).toHaveLength(1);
+		expect(updated?.nodes[0].agentId).toBe('agent-general');
 	});
 
 	test('updateWorkflow replaces transitions when provided', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep, plannerStep],
-			transitions: [{ from: coderStep.id!, to: plannerStep.id!, condition: { type: 'always' } }],
+			nodes: [coderNode, plannerNode],
+			transitions: [{ from: coderNode.id!, to: plannerNode.id!, condition: { type: 'always' } }],
 		});
 		expect(wf.transitions).toHaveLength(1);
 
@@ -268,11 +268,11 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('deleteWorkflow removes the workflow and its steps', () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		expect(repo.deleteWorkflow(wf.id)).toBe(true);
 		expect(repo.getWorkflow(wf.id)).toBeNull();
 
-		// Steps should be gone (CASCADE)
+		// Nodes should be gone (CASCADE)
 		const rows = db.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`).all(wf.id);
 		expect(rows).toHaveLength(0);
 	});
@@ -281,8 +281,8 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep, plannerStep],
-			transitions: [{ from: coderStep.id!, to: plannerStep.id! }],
+			nodes: [coderNode, plannerNode],
+			transitions: [{ from: coderNode.id!, to: plannerNode.id! }],
 		});
 		expect(repo.deleteWorkflow(wf.id)).toBe(true);
 
@@ -305,7 +305,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF With Agent',
-			steps: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+			nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
 		});
 		const results = repo.getWorkflowsReferencingAgent('agent-1');
 		expect(results).toHaveLength(1);
@@ -316,7 +316,7 @@ describe('SpaceWorkflowRepository', () => {
 		repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		expect(repo.getWorkflowsReferencingAgent('no-such-agent')).toHaveLength(0);
 	});
@@ -329,7 +329,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Multi-Agent WF',
-			steps: [
+			nodes: [
 				{
 					id: 'step-multi',
 					name: 'Parallel Step',
@@ -360,7 +360,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Multi-Agent Round-Trip',
-			steps: [
+			nodes: [
 				{
 					id: 'step-1',
 					name: 'Parallel Step',
@@ -375,20 +375,20 @@ describe('SpaceWorkflowRepository', () => {
 
 		const read = repo.getWorkflow(wf.id);
 		expect(read).not.toBeNull();
-		const step = read!.steps[0];
+		const node = read!.nodes[0];
 
 		// agentId should be absent (multi-agent step stored with NULL agent_id)
-		expect(step.agentId).toBeUndefined();
+		expect(node.agentId).toBeUndefined();
 
 		// agents[] must be restored with all fields
-		expect(step.agents).toHaveLength(2);
-		expect(step.agents![0].agentId).toBe('agent-multi-1');
-		expect(step.agents![0].instructions).toBe('do A');
-		expect(step.agents![1].agentId).toBe('agent-multi-2');
-		expect(step.agents![1].instructions).toBeUndefined();
+		expect(node.agents).toHaveLength(2);
+		expect(node.agents![0].agentId).toBe('agent-multi-1');
+		expect(node.agents![0].instructions).toBe('do A');
+		expect(node.agents![1].agentId).toBe('agent-multi-2');
+		expect(node.agents![1].instructions).toBeUndefined();
 
 		// shared instructions stored in the config as well
-		expect(step.instructions).toBe('shared instructions');
+		expect(node.instructions).toBe('shared instructions');
 	});
 
 	test('round-trip: step with channels[] is persisted and restored correctly', () => {
@@ -397,7 +397,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Channel Round-Trip',
-			steps: [
+			nodes: [
 				{
 					id: 'step-1',
 					name: 'Channels Step',
@@ -412,16 +412,16 @@ describe('SpaceWorkflowRepository', () => {
 
 		const read = repo.getWorkflow(wf.id);
 		expect(read).not.toBeNull();
-		const step = read!.steps[0];
+		const node = read!.nodes[0];
 
-		expect(step.channels).toHaveLength(2);
-		expect(step.channels![0]).toMatchObject({
+		expect(node.channels).toHaveLength(2);
+		expect(node.channels![0]).toMatchObject({
 			from: 'coder',
 			to: 'reviewer',
 			direction: 'one-way',
 			label: 'feedback',
 		});
-		expect(step.channels![1]).toMatchObject({
+		expect(node.channels![1]).toMatchObject({
 			from: 'reviewer',
 			to: ['coder', 'security'],
 			direction: 'bidirectional',
@@ -434,16 +434,16 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Legacy Round-Trip',
-			steps: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+			nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
 		});
 
 		const read = repo.getWorkflow(wf.id);
 		expect(read).not.toBeNull();
-		const step = read!.steps[0];
+		const node = read!.nodes[0];
 
-		expect(step.agentId).toBe('agent-1');
-		expect(step.agents).toBeUndefined();
-		expect(step.channels).toBeUndefined();
+		expect(node.agentId).toBe('agent-1');
+		expect(node.agents).toBeUndefined();
+		expect(node.channels).toBeUndefined();
 	});
 
 	// -------------------------------------------------------------------------
@@ -454,11 +454,11 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Condition WF',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			transitions: [
 				{
-					from: coderStep.id!,
-					to: plannerStep.id!,
+					from: coderNode.id!,
+					to: plannerNode.id!,
 					condition: {
 						type: 'condition',
 						expression: 'bun test',
@@ -480,11 +480,11 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Human WF',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			transitions: [
 				{
-					from: coderStep.id!,
-					to: plannerStep.id!,
+					from: coderNode.id!,
+					to: plannerNode.id!,
 					condition: { type: 'human', description: 'Please review' },
 				},
 			],
@@ -498,8 +498,8 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No Cond WF',
-			steps: [coderStep, plannerStep],
-			transitions: [{ from: coderStep.id!, to: plannerStep.id! }],
+			nodes: [coderNode, plannerNode],
+			transitions: [{ from: coderNode.id!, to: plannerNode.id! }],
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
 		expect(fetched.transitions[0].condition).toBeUndefined();
@@ -509,7 +509,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 			rules: [
 				{ name: 'R1', content: 'Always test', appliesTo: ['step-id-1'] },
 				{ name: 'R2', content: 'No shortcuts' },
@@ -526,10 +526,10 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			steps: [{ id: 'step-99', name: 'Step', agentId: 'agent-99' }],
+			nodes: [{ id: 'step-99', name: 'Step', agentId: 'agent-99' }],
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
-		expect(fetched.steps[0].agentId).toBe('agent-99');
+		expect(fetched.nodes[0].agentId).toBe('agent-99');
 
 		// Verify agent_id column is set
 		const row = db
@@ -544,13 +544,13 @@ describe('SpaceWorkflowRepository', () => {
 
 	test('createWorkflow stores layout and round-trips it', () => {
 		const layout = {
-			[coderStep.id!]: { x: 100, y: 200 },
-			[plannerStep.id!]: { x: 300, y: 400 },
+			[coderNode.id!]: { x: 100, y: 200 },
+			[plannerNode.id!]: { x: 300, y: 400 },
 		};
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Layout WF',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			layout,
 		});
 		expect(wf.layout).toEqual(layout);
@@ -563,7 +563,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No Layout WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		expect(wf.layout).toBeUndefined();
 
@@ -575,11 +575,11 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		expect(wf.layout).toBeUndefined();
 
-		const layout = { [coderStep.id!]: { x: 50, y: 75 } };
+		const layout = { [coderNode.id!]: { x: 50, y: 75 } };
 		const updated = repo.updateWorkflow(wf.id, { layout });
 		expect(updated?.layout).toEqual(layout);
 
@@ -588,11 +588,11 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('updateWorkflow clears layout when null is passed', () => {
-		const layout = { [coderStep.id!]: { x: 10, y: 20 } };
+		const layout = { [coderNode.id!]: { x: 10, y: 20 } };
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 			layout,
 		});
 		expect(wf.layout).toEqual(layout);
@@ -605,7 +605,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Cyclic WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 			maxIterations: 3,
 		});
 		expect(wf.maxIterations).toBe(3);
@@ -618,7 +618,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No Iterations WF',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		expect(wf.maxIterations).toBeUndefined();
 	});
@@ -627,7 +627,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF Iter',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		expect(wf.maxIterations).toBeUndefined();
 
@@ -642,7 +642,7 @@ describe('SpaceWorkflowRepository', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF Clear Iter',
-			steps: [coderStep],
+			nodes: [coderNode],
 			maxIterations: 5,
 		});
 		expect(wf.maxIterations).toBe(5);
@@ -652,11 +652,11 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('layout column contains raw JSON in the DB', () => {
-		const layout = { [coderStep.id!]: { x: 1, y: 2 } };
+		const layout = { [coderNode.id!]: { x: 1, y: 2 } };
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF Raw',
-			steps: [coderStep],
+			nodes: [coderNode],
 			layout,
 		});
 		const row = db.prepare('SELECT layout FROM space_workflows WHERE id = ?').get(wf.id) as {
@@ -701,42 +701,42 @@ describe('SpaceWorkflowManager', () => {
 	// -------------------------------------------------------------------------
 
 	test('createWorkflow throws if name already exists in space', () => {
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Dup', steps: [coderStep] });
+		manager.createWorkflow({ spaceId: 'space-1', name: 'Dup', nodes: [coderNode] });
 		expect(() =>
-			manager.createWorkflow({ spaceId: 'space-1', name: 'Dup', steps: [plannerStep] })
+			manager.createWorkflow({ spaceId: 'space-1', name: 'Dup', nodes: [plannerNode] })
 		).toThrow(WorkflowValidationError);
 	});
 
 	test('createWorkflow allows same name in different spaces', () => {
 		seedSpace(db, 'space-2');
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Same', steps: [coderStep] });
+		manager.createWorkflow({ spaceId: 'space-1', name: 'Same', nodes: [coderNode] });
 		// Use anonymous step (no fixed id) to avoid PK collision across spaces in the same DB
 		const wf2 = manager.createWorkflow({
 			spaceId: 'space-2',
 			name: 'Same',
-			steps: [{ name: 'Code', agentId: 'agent-coder' }],
+			nodes: [{ name: 'Code', agentId: 'agent-coder' }],
 		});
 		expect(wf2.name).toBe('Same');
 	});
 
 	test('updateWorkflow throws if new name conflicts with another workflow', () => {
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Existing', steps: [coderStep] });
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF2', steps: [plannerStep] });
+		manager.createWorkflow({ spaceId: 'space-1', name: 'Existing', nodes: [coderNode] });
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF2', nodes: [plannerNode] });
 		expect(() => manager.updateWorkflow(wf.id, { name: 'Existing' })).toThrow(
 			WorkflowValidationError
 		);
 	});
 
 	test('updateWorkflow allows keeping the same name', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		const updated = manager.updateWorkflow(wf.id, { name: 'WF' });
 		expect(updated?.name).toBe('WF');
 	});
 
 	test('name is trimmed before storage — whitespace variants collide', () => {
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Foo', steps: [coderStep] });
+		manager.createWorkflow({ spaceId: 'space-1', name: 'Foo', nodes: [coderNode] });
 		expect(() =>
-			manager.createWorkflow({ spaceId: 'space-1', name: '  Foo  ', steps: [plannerStep] })
+			manager.createWorkflow({ spaceId: 'space-1', name: '  Foo  ', nodes: [plannerNode] })
 		).toThrow(WorkflowValidationError);
 	});
 
@@ -744,7 +744,7 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: '  Trimmed  ',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		expect(wf.name).toBe('Trimmed');
 	});
@@ -754,25 +754,25 @@ describe('SpaceWorkflowManager', () => {
 	// -------------------------------------------------------------------------
 
 	test('createWorkflow throws when steps is empty', () => {
-		expect(() => manager.createWorkflow({ spaceId: 'space-1', name: 'Empty', steps: [] })).toThrow(
+		expect(() => manager.createWorkflow({ spaceId: 'space-1', name: 'Empty', nodes: [] })).toThrow(
 			WorkflowValidationError
 		);
 	});
 
 	test('createWorkflow throws when steps is not provided (defaults to empty)', () => {
-		expect(() => manager.createWorkflow({ spaceId: 'space-1', name: 'NoSteps' })).toThrow(
+		expect(() => manager.createWorkflow({ spaceId: 'space-1', name: 'NoNodes' })).toThrow(
 			WorkflowValidationError
 		);
 	});
 
 	test('updateWorkflow throws when replacing with empty steps', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
-		expect(() => manager.updateWorkflow(wf.id, { steps: [] })).toThrow(WorkflowValidationError);
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		expect(() => manager.updateWorkflow(wf.id, { nodes: [] })).toThrow(WorkflowValidationError);
 	});
 
 	test('updateWorkflow throws when steps is null (treated as empty replacement)', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
-		expect(() => manager.updateWorkflow(wf.id, { steps: null as unknown as [] })).toThrow(
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		expect(() => manager.updateWorkflow(wf.id, { nodes: null as unknown as [] })).toThrow(
 			WorkflowValidationError
 		);
 	});
@@ -785,9 +785,9 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'WF',
-			steps: [{ name: 'Step', agentId: 'some-uuid' }],
+			nodes: [{ name: 'Step', agentId: 'some-uuid' }],
 		});
-		expect(wf.steps[0].agentId).toBe('some-uuid');
+		expect(wf.nodes[0].agentId).toBe('some-uuid');
 	});
 
 	test('createWorkflow rejects empty agentId', () => {
@@ -795,7 +795,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad AgentId',
-				steps: [{ name: 'Step', agentId: '' }],
+				nodes: [{ name: 'Step', agentId: '' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -805,7 +805,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Whitespace AgentId',
-				steps: [{ name: 'Step', agentId: '   ' }],
+				nodes: [{ name: 'Step', agentId: '   ' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -820,9 +820,9 @@ describe('SpaceWorkflowManager', () => {
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			steps: [{ name: 'Step', agentId: 'agent-1' }],
+			nodes: [{ name: 'Step', agentId: 'agent-1' }],
 		});
-		expect(wf.steps[0].agentId).toBe('agent-1');
+		expect(wf.nodes[0].agentId).toBe('agent-1');
 	});
 
 	test('createWorkflow rejects agentId when agent does not exist in lookup', () => {
@@ -834,7 +834,7 @@ describe('SpaceWorkflowManager', () => {
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Agent',
-				steps: [{ name: 'Step', agentId: 'non-existent-uuid' }],
+				nodes: [{ name: 'Step', agentId: 'non-existent-uuid' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -843,18 +843,18 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No-Lookup WF',
-			steps: [{ name: 'Step', agentId: 'anything' }],
+			nodes: [{ name: 'Step', agentId: 'anything' }],
 		});
-		expect(wf.steps[0].agentId).toBe('anything');
+		expect(wf.nodes[0].agentId).toBe('anything');
 	});
 
 	test('updateWorkflow rejects invalid agentId via lookup', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		const lookup: SpaceAgentLookup = { getAgentById: () => null };
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
 			mgr.updateWorkflow(wf.id, {
-				steps: [{ id: 'step-x', name: 'Step', agentId: 'non-existent' }],
+				nodes: [{ id: 'step-x', name: 'Step', agentId: 'non-existent' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -867,8 +867,8 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Trans WF',
-			steps: [coderStep, plannerStep],
-			transitions: [{ from: coderStep.id!, to: plannerStep.id!, condition: { type: 'always' } }],
+			nodes: [coderNode, plannerNode],
+			transitions: [{ from: coderNode.id!, to: plannerNode.id!, condition: { type: 'always' } }],
 		});
 		expect(wf.transitions).toHaveLength(1);
 	});
@@ -878,8 +878,8 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Trans',
-				steps: [coderStep, plannerStep],
-				transitions: [{ from: '', to: plannerStep.id! }],
+				nodes: [coderNode, plannerNode],
+				transitions: [{ from: '', to: plannerNode.id! }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -889,8 +889,8 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Trans2',
-				steps: [coderStep, plannerStep],
-				transitions: [{ from: coderStep.id!, to: '' }],
+				nodes: [coderNode, plannerNode],
+				transitions: [{ from: coderNode.id!, to: '' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -900,8 +900,8 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Trans From',
-				steps: [coderStep, plannerStep],
-				transitions: [{ from: 'no-such-step', to: plannerStep.id! }],
+				nodes: [coderNode, plannerNode],
+				transitions: [{ from: 'no-such-step', to: plannerNode.id! }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -911,20 +911,20 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Trans To',
-				steps: [coderStep, plannerStep],
-				transitions: [{ from: coderStep.id!, to: 'no-such-step' }],
+				nodes: [coderNode, plannerNode],
+				transitions: [{ from: coderNode.id!, to: 'no-such-step' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
 
 	test('createWorkflow rejects transitions when any step lacks an explicit id', () => {
-		// Steps without explicit IDs cannot be referenced in transitions at validation time.
+		// Nodes without explicit IDs cannot be referenced in transitions at validation time.
 		expect(() =>
 			manager.createWorkflow({
 				spaceId: 'space-1',
-				name: 'Anon Steps Trans',
+				name: 'Anon Nodes Trans',
 				// Neither step has an explicit id — backend would assign UUIDs at persist time
-				steps: [
+				nodes: [
 					{ name: 'Plan', agentId: 'agent-planner' },
 					{ name: 'Code', agentId: 'agent-coder' },
 				],
@@ -938,8 +938,8 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Explicit IDs',
-				steps: [coderStep, plannerStep],
-				transitions: [{ from: coderStep.id!, to: plannerStep.id! }],
+				nodes: [coderNode, plannerNode],
+				transitions: [{ from: coderNode.id!, to: plannerNode.id! }],
 			})
 		).not.toThrow();
 	});
@@ -953,11 +953,11 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Empty Expr',
-				steps: [coderStep, plannerStep],
+				nodes: [coderNode, plannerNode],
 				transitions: [
 					{
-						from: coderStep.id!,
-						to: plannerStep.id!,
+						from: coderNode.id!,
+						to: plannerNode.id!,
 						condition: { type: 'condition', expression: '' },
 					},
 				],
@@ -969,11 +969,11 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Good Expr',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			transitions: [
 				{
-					from: coderStep.id!,
-					to: plannerStep.id!,
+					from: coderNode.id!,
+					to: plannerNode.id!,
 					condition: { type: 'condition', expression: 'bun test' },
 				},
 			],
@@ -986,11 +986,11 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Any Expr',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			transitions: [
 				{
-					from: coderStep.id!,
-					to: plannerStep.id!,
+					from: coderNode.id!,
+					to: plannerNode.id!,
 					condition: { type: 'condition', expression: 'rm -rf /tmp' },
 				},
 			],
@@ -1002,11 +1002,11 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Human WF',
-			steps: [coderStep, plannerStep],
+			nodes: [coderNode, plannerNode],
 			transitions: [
 				{
-					from: coderStep.id!,
-					to: plannerStep.id!,
+					from: coderNode.id!,
+					to: plannerNode.id!,
 					condition: { type: 'human', description: 'Please review' },
 				},
 			],
@@ -1019,7 +1019,7 @@ describe('SpaceWorkflowManager', () => {
 	// -------------------------------------------------------------------------
 
 	test('deleteWorkflow removes an existing workflow', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		expect(manager.deleteWorkflow(wf.id)).toBe(true);
 		expect(manager.getWorkflow(wf.id)).toBeNull();
 	});
@@ -1029,18 +1029,18 @@ describe('SpaceWorkflowManager', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Steps stored in insertion order
+	// Nodes stored in insertion order
 	// -------------------------------------------------------------------------
 
 	test('steps are stored and retrieved in insertion order', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Ordered',
-			steps: [plannerStep, coderStep, generalStep],
+			nodes: [plannerNode, coderNode, generalNode],
 		});
-		expect(wf.steps[0].name).toBe('Plan');
-		expect(wf.steps[1].name).toBe('Code');
-		expect(wf.steps[2].name).toBe('Review');
+		expect(wf.nodes[0].name).toBe('Plan');
+		expect(wf.nodes[1].name).toBe('Code');
+		expect(wf.nodes[2].name).toBe('Review');
 	});
 
 	// -------------------------------------------------------------------------
@@ -1052,12 +1052,12 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Uses Alpha',
-			steps: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+			nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
 		});
 		manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Uses Other',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		const refs = manager.getWorkflowsReferencingAgent('agent-1');
 		expect(refs).toHaveLength(1);
@@ -1073,7 +1073,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Agents Empty',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: '' }],
@@ -1088,7 +1088,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Agents Whitespace',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: '   ' }],
@@ -1102,21 +1102,21 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Valid Agents',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
 				},
 			],
 		});
-		expect(wf.steps[0].agents).toHaveLength(2);
+		expect(wf.nodes[0].agents).toHaveLength(2);
 	});
 
 	test('updateWorkflow rejects agents[] entry with empty agentId (no lookup)', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		expect(() =>
 			manager.updateWorkflow(wf.id, {
-				steps: [{ id: 'step-x', name: 'Step', agents: [{ agentId: '' }] }],
+				nodes: [{ id: 'step-x', name: 'Step', agents: [{ agentId: '' }] }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -1130,7 +1130,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Direction',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1146,7 +1146,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Empty From',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1162,7 +1162,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Empty To',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1178,7 +1178,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Empty Array To',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1194,7 +1194,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Channels No Agents',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agentId: 'agent-a',
@@ -1210,7 +1210,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Channels Empty Agents Array',
-				steps: [
+				nodes: [
 					{
 						id: 'step-x',
 						name: 'Step',
@@ -1228,7 +1228,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Whitespace From',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1244,7 +1244,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Whitespace To',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1260,7 +1260,7 @@ describe('SpaceWorkflowManager', () => {
 			manager.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Whitespace Array To Element',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1275,7 +1275,7 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Wildcard Channels',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1287,14 +1287,14 @@ describe('SpaceWorkflowManager', () => {
 				},
 			],
 		});
-		expect(wf.steps[0].channels).toHaveLength(3);
+		expect(wf.nodes[0].channels).toHaveLength(3);
 	});
 
 	test('createWorkflow accepts valid one-way channel with array to (no lookup)', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Array To Channels',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
@@ -1302,7 +1302,7 @@ describe('SpaceWorkflowManager', () => {
 				},
 			],
 		});
-		expect(wf.steps[0].channels).toHaveLength(1);
+		expect(wf.nodes[0].channels).toHaveLength(1);
 	});
 
 	// -------------------------------------------------------------------------
@@ -1323,7 +1323,7 @@ describe('SpaceWorkflowManager', () => {
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Valid Role Channels',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
@@ -1331,7 +1331,7 @@ describe('SpaceWorkflowManager', () => {
 				},
 			],
 		});
-		expect(wf.steps[0].channels).toHaveLength(1);
+		expect(wf.nodes[0].channels).toHaveLength(1);
 	});
 
 	test('createWorkflow rejects channel from referencing unknown role (with lookup)', () => {
@@ -1346,7 +1346,7 @@ describe('SpaceWorkflowManager', () => {
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Role From',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-coder-id' }],
@@ -1369,7 +1369,7 @@ describe('SpaceWorkflowManager', () => {
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Role To',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-coder-id' }],
@@ -1391,7 +1391,7 @@ describe('SpaceWorkflowManager', () => {
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Wildcard With Lookup',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-coder-id' }],
@@ -1399,11 +1399,11 @@ describe('SpaceWorkflowManager', () => {
 				},
 			],
 		});
-		expect(wf.steps[0].channels).toHaveLength(1);
+		expect(wf.nodes[0].channels).toHaveLength(1);
 	});
 
 	test('updateWorkflow validates channel roles in step replacement (with lookup)', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
 		const lookup: SpaceAgentLookup = {
 			getAgentById: (_spaceId, id) => {
 				if (id === 'agent-coder-id') return { id, name: 'CoderAgent', role: 'coder' };
@@ -1413,7 +1413,7 @@ describe('SpaceWorkflowManager', () => {
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
 			mgr.updateWorkflow(wf.id, {
-				steps: [
+				nodes: [
 					{
 						id: 'step-x',
 						name: 'Step',
@@ -1433,7 +1433,7 @@ describe('SpaceWorkflowManager', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Multi-Agent CRUD',
-			steps: [
+			nodes: [
 				{
 					id: 'step-1',
 					name: 'Parallel Review',
@@ -1448,31 +1448,31 @@ describe('SpaceWorkflowManager', () => {
 		});
 
 		const read = manager.getWorkflow(wf.id)!;
-		const step = read.steps[0];
-		expect(step.agentId).toBeUndefined();
-		expect(step.agents).toHaveLength(2);
-		expect(step.agents![0].agentId).toBe('agent-coder');
-		expect(step.agents![0].instructions).toBe('write code');
-		expect(step.agents![1].agentId).toBe('agent-reviewer');
-		expect(step.channels).toHaveLength(1);
-		expect(step.channels![0]).toMatchObject({
+		const node = read.nodes[0];
+		expect(node.agentId).toBeUndefined();
+		expect(node.agents).toHaveLength(2);
+		expect(node.agents![0].agentId).toBe('agent-coder');
+		expect(node.agents![0].instructions).toBe('write code');
+		expect(node.agents![1].agentId).toBe('agent-reviewer');
+		expect(node.channels).toHaveLength(1);
+		expect(node.channels![0]).toMatchObject({
 			from: 'coder',
 			to: 'reviewer',
 			direction: 'one-way',
 			label: 'submit',
 		});
-		expect(step.instructions).toBe('shared context');
+		expect(node.instructions).toBe('shared context');
 	});
 
 	test('updateWorkflow replaces multi-agent step with channels correctly', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Update Multi-Agent',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 
 		const updated = manager.updateWorkflow(wf.id, {
-			steps: [
+			nodes: [
 				{
 					id: 'step-new',
 					name: 'New Parallel Step',
@@ -1482,19 +1482,19 @@ describe('SpaceWorkflowManager', () => {
 			],
 		})!;
 
-		const step = updated.steps[0];
-		expect(step.agentId).toBeUndefined();
-		expect(step.agents).toHaveLength(2);
-		expect(step.channels).toHaveLength(1);
-		expect(step.channels![0].direction).toBe('bidirectional');
-		expect(step.channels![0].to).toEqual(['coder', 'reviewer']);
+		const node = updated.nodes[0];
+		expect(node.agentId).toBeUndefined();
+		expect(node.agents).toHaveLength(2);
+		expect(node.channels).toHaveLength(1);
+		expect(node.channels![0].direction).toBe('bidirectional');
+		expect(node.channels![0].to).toEqual(['coder', 'reviewer']);
 	});
 
 	test('deleteWorkflow with multi-agent step cleans up correctly', () => {
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Delete Multi-Agent',
-			steps: [
+			nodes: [
 				{
 					id: 'step-1',
 					name: 'Parallel Step',
@@ -1513,12 +1513,12 @@ describe('SpaceWorkflowManager', () => {
 		const single = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Single Agent',
-			steps: [coderStep],
+			nodes: [coderNode],
 		});
 		const multi = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Multi Agent',
-			steps: [
+			nodes: [
 				{
 					id: 'step-m',
 					name: 'Parallel',
@@ -1532,12 +1532,12 @@ describe('SpaceWorkflowManager', () => {
 		expect(workflows).toHaveLength(2);
 
 		const readSingle = manager.getWorkflow(single.id)!;
-		expect(readSingle.steps[0].agentId).toBe('agent-coder');
-		expect(readSingle.steps[0].agents).toBeUndefined();
-		expect(readSingle.steps[0].channels).toBeUndefined();
+		expect(readSingle.nodes[0].agentId).toBe('agent-coder');
+		expect(readSingle.nodes[0].agents).toBeUndefined();
+		expect(readSingle.nodes[0].channels).toBeUndefined();
 
 		const readMulti = manager.getWorkflow(multi.id)!;
-		expect(readMulti.steps[0].agents).toHaveLength(2);
-		expect(readMulti.steps[0].channels).toHaveLength(1);
+		expect(readMulti.nodes[0].agents).toHaveLength(2);
+		expect(readMulti.nodes[0].channels).toHaveLength(1);
 	});
 });

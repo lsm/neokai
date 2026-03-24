@@ -47,7 +47,7 @@ const mockWorkflow: SpaceWorkflow = {
 	spaceId: 'space-1',
 	name: 'Test Workflow',
 	description: 'A test workflow',
-	steps: [
+	nodes: [
 		{
 			id: 'step-1',
 			name: 'Code',
@@ -152,7 +152,7 @@ describe('space-workflow-handlers', () => {
 			const result = (await call('spaceWorkflow.create', {
 				spaceId: 'space-1',
 				name: 'Test Workflow',
-				steps: [{ name: 'Code', agentId: 'agent-uuid-1' }],
+				nodes: [{ name: 'Code', agentId: 'agent-uuid-1' }],
 			})) as { workflow: SpaceWorkflow };
 
 			expect(result.workflow).toEqual(mockWorkflow);
@@ -201,7 +201,7 @@ describe('space-workflow-handlers', () => {
 				call('spaceWorkflow.create', {
 					spaceId: 'space-1',
 					name: 'Test Workflow',
-					steps: [{ name: 'Code', agentId: 'agent-uuid-1' }],
+					nodes: [{ name: 'Code', agentId: 'agent-uuid-1' }],
 				})
 			).rejects.toThrow('already exists in this space');
 		});
@@ -215,7 +215,7 @@ describe('space-workflow-handlers', () => {
 				call('spaceWorkflow.create', {
 					spaceId: 'space-1',
 					name: 'Empty',
-					steps: [],
+					nodes: [],
 				})
 			).rejects.toThrow('at least one step');
 		});
@@ -373,7 +373,7 @@ describe('space-workflow-handlers', () => {
 			await expect(
 				call('spaceWorkflow.update', {
 					id: 'wf-1',
-					steps: [{ id: 's1', name: 'Lead', agentId: 'unknown-uuid', order: 0 }],
+					nodes: [{ id: 's1', name: 'Lead', agentId: 'unknown-uuid', order: 0 }],
 				})
 			).rejects.toThrow('does not match any SpaceAgent in this space');
 		});

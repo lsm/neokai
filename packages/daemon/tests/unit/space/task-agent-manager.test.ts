@@ -959,7 +959,7 @@ describe('TaskAgentManager', () => {
 				workflowRunId: wfRunId,
 			});
 
-			// Create the step task with matching workflowRunId, workflowStepId, taskAgentSessionId
+			// Create the step task with matching workflowRunId, workflowNodeId, taskAgentSessionId
 			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`;
 			const stepTask = await ctx.taskManager.createTask({
 				title: 'Step task',
@@ -967,7 +967,7 @@ describe('TaskAgentManager', () => {
 				taskType: 'coding',
 				status: 'in_progress',
 				workflowRunId: wfRunId,
-				workflowStepId: stepId,
+				workflowNodeId: stepId,
 				taskAgentSessionId: subSessionId,
 			});
 
@@ -1899,7 +1899,7 @@ describe('TaskAgentManager', () => {
 				taskType: 'coding',
 				status: 'in_progress',
 				workflowRunId: wfRunId,
-				workflowStepId: stepId,
+				workflowNodeId: stepId,
 				taskAgentSessionId: subSessionId,
 			});
 			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });

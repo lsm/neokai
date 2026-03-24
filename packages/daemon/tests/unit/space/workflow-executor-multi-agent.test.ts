@@ -146,7 +146,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-2agent-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{
 					id: STEP_MULTI,
@@ -155,13 +155,13 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -178,11 +178,11 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		expect(result.tasks).toHaveLength(2);
 	});
 
-	test('all tasks from a multi-agent step share workflowRunId and workflowStepId', async () => {
+	test('all tasks from a multi-agent step share workflowRunId and workflowNodeId', async () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-shared-ids-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{
 					id: STEP_MULTI,
@@ -191,13 +191,13 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -212,7 +212,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 
 		for (const task of tasks) {
 			expect(task.workflowRunId).toBe(run.id);
-			expect(task.workflowStepId).toBe(STEP_MULTI);
+			expect(task.workflowNodeId).toBe(STEP_MULTI);
 			expect(task.status).toBe('pending');
 		}
 	});
@@ -221,7 +221,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-instructions-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{
 					id: STEP_MULTI,
@@ -234,13 +234,13 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -254,7 +254,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		await executor.advance();
 
 		const all = await taskManager.listTasksByWorkflowRun(run.id);
-		const stepTasks = all.filter((t) => t.workflowStepId === STEP_MULTI);
+		const stepTasks = all.filter((t) => t.workflowNodeId === STEP_MULTI);
 		stepTasks.sort((a, b) => a.description.localeCompare(b.description));
 
 		expect(stepTasks[0].description).toBe('Agent A specific');
@@ -265,7 +265,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-3agent-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{
 					id: STEP_MULTI,
@@ -274,13 +274,13 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -295,7 +295,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 
 		expect(tasks).toHaveLength(3);
 		for (const task of tasks) {
-			expect(task.workflowStepId).toBe(STEP_MULTI);
+			expect(task.workflowNodeId).toBe(STEP_MULTI);
 			expect(task.workflowRunId).toBe(run.id);
 		}
 	});
@@ -309,18 +309,18 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-compat-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{ id: STEP_SINGLE, name: 'Single Agent', agentId: AGENT_B },
 			],
 			transitions: [{ from: STEP_START, to: STEP_SINGLE, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -341,7 +341,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-agents-wins-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{
 					id: STEP_MULTI,
@@ -351,13 +351,13 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -380,7 +380,7 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `WF-resolver-${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_START, name: 'Start', agentId: AGENT_A },
 				{
 					id: STEP_MULTI,
@@ -389,13 +389,13 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 				},
 			],
 			transitions: [{ from: STEP_START, to: STEP_MULTI, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_START,
+			startNodeId: STEP_START,
 		});
 		const run = runRepo.createRun({
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Run',
-			currentStepId: STEP_START,
+			currentNodeId: STEP_START,
 		});
 		const executor = new WorkflowExecutor(
 			workflow,
@@ -486,7 +486,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel Start',
@@ -497,7 +497,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -507,7 +507,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(tasks).toHaveLength(2);
 		for (const task of tasks) {
 			expect(task.workflowRunId).toBe(run.id);
-			expect(task.workflowStepId).toBe(STEP_A);
+			expect(task.workflowNodeId).toBe(STEP_A);
 			expect(task.status).toBe('pending');
 		}
 	});
@@ -516,7 +516,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start Instructions ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel Start',
@@ -527,7 +527,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -542,7 +542,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start TaskType ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Mixed Start',
@@ -550,7 +550,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -571,7 +571,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Custom Role Start ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Custom Start',
@@ -579,7 +579,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -605,7 +605,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Partial Complete ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel A',
@@ -614,7 +614,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{ id: STEP_B, name: 'Next Step', agentId: AGENT_CODER },
 			],
 			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -630,7 +630,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		// Step B task must NOT have been created yet
 		const allTasks = taskRepo.listByWorkflowRun(run.id);
-		const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
+		const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
 		expect(stepBTasks).toHaveLength(0);
 	});
 
@@ -642,7 +642,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `All Complete ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel A',
@@ -651,7 +651,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				{ id: STEP_B, name: 'Next Step', agentId: AGENT_CODER },
 			],
 			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -667,7 +667,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		// Step B task should now exist
 		const allTasks = taskRepo.listByWorkflowRun(run.id);
-		const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
+		const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
 		expect(stepBTasks).toHaveLength(1);
 	});
 
@@ -679,7 +679,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Partial Terminal ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel Waiting',
@@ -687,7 +687,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -713,7 +713,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `All Terminal Fail ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel Fail',
@@ -721,7 +721,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -746,7 +746,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Three Agent Partial Fail ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Triple Parallel',
@@ -754,7 +754,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -780,16 +780,16 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Single Agent ${Date.now()}`,
-			steps: [{ id: STEP_A, name: 'Start', agentId: AGENT_CODER }],
+			nodes: [{ id: STEP_A, name: 'Start', agentId: AGENT_CODER }],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
 
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		expect(tasks).toHaveLength(1);
-		expect(tasks[0].workflowStepId).toBe(STEP_A);
+		expect(tasks[0].workflowNodeId).toBe(STEP_A);
 	});
 });
 
@@ -1056,7 +1056,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad Role Ref',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-coder-id' }],
@@ -1080,7 +1080,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Valid Channel Refs',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
@@ -1089,8 +1089,8 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 			],
 		});
 
-		expect(wf.steps[0].channels).toHaveLength(1);
-		expect(wf.steps[0].channels![0]).toMatchObject({ from: 'coder', to: 'reviewer' });
+		expect(wf.nodes[0].channels).toHaveLength(1);
+		expect(wf.nodes[0].channels![0]).toMatchObject({ from: 'coder', to: 'reviewer' });
 	});
 
 	test('rejects channels on single-agent steps (channels require agents[])', () => {
@@ -1100,7 +1100,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Single Agent With Channels',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agentId: 'agent-coder-id',
@@ -1124,7 +1124,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 			mgr.createWorkflow({
 				spaceId: 'space-1',
 				name: 'Bad From Role',
-				steps: [
+				nodes: [
 					{
 						name: 'Step',
 						agents: [{ agentId: 'agent-coder-id' }],
@@ -1147,7 +1147,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Wildcard OK',
-			steps: [
+			nodes: [
 				{
 					name: 'Step',
 					agents: [{ agentId: 'agent-coder-id' }],
@@ -1155,7 +1155,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 				},
 			],
 		});
-		expect(wf.steps[0].channels).toHaveLength(1);
+		expect(wf.nodes[0].channels).toHaveLength(1);
 	});
 });
 
@@ -1224,7 +1224,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Single-Multi-Single ${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_A, name: 'Plan (single)', agentId: AGENT_PLANNER },
 				{
 					id: STEP_B,
@@ -1237,7 +1237,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 				{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 },
 				{ from: STEP_B, to: STEP_C, condition: { type: 'always' }, order: 0 },
 			],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -1245,7 +1245,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		// Step A: single-agent
 		const { run, tasks: tasksA } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		expect(tasksA).toHaveLength(1);
-		expect(tasksA[0].workflowStepId).toBe(STEP_A);
+		expect(tasksA[0].workflowNodeId).toBe(STEP_A);
 
 		// Complete step A
 		taskRepo.updateTask(tasksA[0].id, { status: 'completed' });
@@ -1253,7 +1253,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		// Step B: multi-agent
 		const allAfterA = taskRepo.listByWorkflowRun(run.id);
-		const tasksB = allAfterA.filter((t) => t.workflowStepId === STEP_B);
+		const tasksB = allAfterA.filter((t) => t.workflowNodeId === STEP_B);
 		expect(tasksB).toHaveLength(2);
 
 		// Complete both step B tasks
@@ -1263,7 +1263,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		// Step C: single-agent
 		const allAfterB = taskRepo.listByWorkflowRun(run.id);
-		const tasksC = allAfterB.filter((t) => t.workflowStepId === STEP_C);
+		const tasksC = allAfterB.filter((t) => t.workflowNodeId === STEP_C);
 		expect(tasksC).toHaveLength(1);
 
 		// Complete final step
@@ -1279,7 +1279,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Channel Start Step ${Date.now()}`,
-			steps: [
+			nodes: [
 				{
 					id: STEP_A,
 					name: 'Parallel With Channels',
@@ -1290,7 +1290,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 				},
 			],
 			transitions: [],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});
@@ -1328,7 +1328,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Channel Non-Start Step ${Date.now()}`,
-			steps: [
+			nodes: [
 				{ id: STEP_A, name: 'Start (single)', agentId: AGENT_PLANNER },
 				{
 					id: STEP_B,
@@ -1338,7 +1338,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 				},
 			],
 			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-			startStepId: STEP_A,
+			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
 		});

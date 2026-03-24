@@ -96,7 +96,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 				order: 0,
 			},
 		],
-		startStepId: 'step-uuid-1',
+		startNodeId: 'step-uuid-1',
 		rules: [
 			{
 				id: 'rule-uuid-1',
@@ -287,7 +287,7 @@ describe('exportWorkflow', () => {
 	});
 
 	test('falls back to UUID for startStep when not found', () => {
-		const workflow = makeWorkflow({ startStepId: 'step-uuid-MISSING' });
+		const workflow = makeWorkflow({ startNodeId: 'step-uuid-MISSING' });
 		const exported = exportWorkflow(workflow, []);
 		expect(exported.startNode).toBe('step-uuid-MISSING');
 	});
@@ -317,7 +317,7 @@ describe('exportWorkflow', () => {
 				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
 			],
 			transitions: [],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			rules: [
 				{
 					id: 'rule-uuid-1',
@@ -337,7 +337,7 @@ describe('exportWorkflow', () => {
 		const workflow = makeWorkflow({
 			nodes: [{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' }],
 			transitions: [],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			rules: [
 				{
 					id: 'rule-uuid-1',
@@ -390,7 +390,7 @@ describe('exportWorkflow', () => {
 					isCyclic: true,
 				},
 			],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			rules: [],
 		});
 		const exported = exportWorkflow(workflow, []);
@@ -1113,7 +1113,7 @@ describe('round-trip: export → JSON → validate', () => {
 					condition: { type: 'condition', expression: 'bun test --exit-zero' },
 				},
 			],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			rules: [],
 		});
 		const exported = exportWorkflow(workflow, []);
@@ -1237,7 +1237,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 				},
 			],
 			transitions: [{ id: 'trans-1', from: 'step-uuid-1', to: 'step-uuid-2' }],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -1316,7 +1316,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 					channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 				},
 			],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			transitions: [],
 		});
 		const agents = [makeAgent()];
@@ -1336,7 +1336,7 @@ describe('exportWorkflow — multi-agent steps', () => {
 	test('export produces no agentRef when step has neither agentId nor agents', () => {
 		const workflow = makeMultiAgentWorkflow({
 			nodes: [{ id: 'step-uuid-1', name: 'Broken step' } as any],
-			startStepId: 'step-uuid-1',
+			startNodeId: 'step-uuid-1',
 			transitions: [],
 		});
 		const exported = exportWorkflow(workflow, []);
@@ -1522,7 +1522,7 @@ describe('round-trip: multi-agent + channels', () => {
 				},
 			],
 			transitions: [{ id: 't-1', from: 'step-1', to: 'step-2' }],
-			startStepId: 'step-1',
+			startNodeId: 'step-1',
 			rules: [],
 			tags: ['collab'],
 			createdAt: 1000,
