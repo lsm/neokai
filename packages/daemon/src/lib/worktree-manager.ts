@@ -257,7 +257,7 @@ export class WorktreeManager {
 		const git = this.getGit(gitRoot);
 
 		// Create worktree base directory if it doesn't exist
-		// Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
+		// Format: ~/.neokai/projects/{shortKey}/worktrees/
 		const worktreesDir = this.getWorktreeBaseDir(gitRoot);
 		if (!existsSync(worktreesDir)) {
 			mkdirSync(worktreesDir, { recursive: true });

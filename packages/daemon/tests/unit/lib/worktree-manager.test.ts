@@ -62,10 +62,11 @@ describe('WorktreeManager', () => {
 		// Mock writeFileSync — suppress sentinel writes in unit tests
 		writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
 
-		// Mock readFileSync — default: return the normalized gitRoot so no collision
-		readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
-			() => '/test/repo' as unknown as Buffer
-		);
+		// Mock readFileSync — default: return the normalized gitRoot so no collision.
+		// Production code calls readFileSync(path, 'utf-8') which returns string; cast
+		// to any to satisfy the overloaded type signature in tests.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation((): any => '/test/repo');
 
 		// Mock homedir
 		homedirSpy = spyOn(os, 'homedir').mockReturnValue('/home/testuser');
@@ -224,7 +225,7 @@ describe('WorktreeManager', () => {
 				true
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue(normalizedGitRoot as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue(normalizedGitRoot as any);
 
 			await expect(
 				manager.createWorktree({
@@ -245,7 +246,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 			// checkBranchExists returns empty → no stale branch, then worktree add succeeds
 			mockGitRaw
 				.mockResolvedValueOnce('') // checkBranchExists — branch does not exist
@@ -272,7 +273,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 			// checkBranchExists returns the stale branch; branch -D goes through mockGitBranch
 			mockGitRaw
 				.mockResolvedValueOnce('  custom-branch\n') // checkBranchExists — stale branch found
@@ -301,7 +302,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 			mockGitRaw
 				.mockResolvedValueOnce('  session/session-123\n') // checkBranchExists — stale auto branch
 				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
@@ -329,7 +330,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 			mockGitRaw
 				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — stale task branch
 				.mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
@@ -356,7 +357,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 			mockGitRaw
 				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — branch found
 				.mockResolvedValue(''); // worktree add succeeds with fallback branch name
@@ -386,7 +387,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 			mockGitRaw.mockResolvedValue('');
 
 			const result = await manager.createWorktree({
@@ -414,7 +415,7 @@ describe('WorktreeManager', () => {
 				false
 			);
 			mockGitRevparse.mockResolvedValue('.git');
-			readFileSyncSpy.mockReturnValue('/test/repo' as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue('/test/repo' as any);
 
 			// First call for worktree add fails
 			mockGitRaw
@@ -817,7 +818,7 @@ describe('WorktreeManager', () => {
 			// project dir EXISTS, sentinel EXISTS, sentinel contains the SAME repo path
 			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
 			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-			readFileSyncSpy.mockReturnValue(repoPath as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue(repoPath as any);
 
 			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
 			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-2`, false);
@@ -849,7 +850,7 @@ describe('WorktreeManager', () => {
 			// project dir EXISTS with sentinel pointing to A (not B)
 			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, true);
 			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/.neokai-repo-root`, true);
-			readFileSyncSpy.mockReturnValue(repoPathA as unknown as Buffer);
+			readFileSyncSpy.mockReturnValue(repoPathA as any);
 
 			// Fallback encoded path for B: '-Users-carol-projects-app'
 			const encodedB = '-Users-carol-projects-app';
