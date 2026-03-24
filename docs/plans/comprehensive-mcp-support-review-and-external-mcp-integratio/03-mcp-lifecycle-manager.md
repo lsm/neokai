@@ -81,22 +81,29 @@ Update `RoomRuntimeService` to merge registry-sourced MCP configs alongside the 
 **Description:**
 Inject registry-sourced MCP servers into worker (coder/general) sessions using `setRuntimeMcpServers()` — the same mechanism used for room chat sessions — rather than modifying `getMcpServers()` in `QueryOptionsBuilder`.
 
-**Approach rationale:** Worker sessions currently set `config.mcpServers = undefined`, which instructs the SDK to auto-load MCP servers from settings files (`.mcp.json`, `settings.json`). Overriding `getMcpServers()` in `QueryOptionsBuilder` to return a merged map would disable that SDK auto-load, breaking the existing file-based MCP behavior. Instead, use `AgentSession.setRuntimeMcpServers()` to inject registry servers as a second layer on top of the SDK auto-load — exactly as `RoomRuntimeService` does for room chat sessions. The two layers are independent: the SDK auto-loads file-based servers, and `setRuntimeMcpServers()` adds registry servers on top.
+**Approach rationale (verified against source code):**
+`AgentSession.setRuntimeMcpServers(map)` writes directly to `session.config.mcpServers`. `QueryOptionsBuilder.getMcpServers()` checks `if (config.mcpServers !== undefined) return config.mcpServers` — so calling `setRuntimeMcpServers()` with only the registry map would suppress SDK auto-load of file-based servers entirely. This is the same constraint room chat sessions work around by explicitly merging all sources before calling `setRuntimeMcpServers()` (see `RoomRuntimeService`). Worker sessions must follow the same pattern: build a merged map of file-based + registry servers, then pass the complete map to `setRuntimeMcpServers()`.
 
 **Subtasks (ordered):**
 
-1. In `packages/daemon/src/lib/room/agents/coder-agent.ts` and `general-agent.ts`, after the `AgentSession` is created (or as part of session setup), call `session.setRuntimeMcpServers(appMcpManager.getEnabledMcpConfigs())` to inject registry servers.
-2. Pass `appMcpManager` into each agent factory. Preferred pattern: add it to the existing agent context/config object (e.g., `CoderAgentConfig`, `GeneralAgentConfig`) rather than `AgentSessionInit`, to keep the SDK-facing init clean. Evaluate the existing pattern in coder/general agent factories and follow it.
-3. Subscribe to `mcp.registry.changed` in the worker session lifecycle — when the registry changes, call `session.setRuntimeMcpServers(updatedMap)` on any live worker sessions (analogous to the room chat hot-reload in Task 3.2). Worker sessions are short-lived, so a simpler approach (re-inject only on next session creation) is acceptable if hot-reload is complex; document the decision.
-4. **Name collision handling:** `setRuntimeMcpServers()` sets a separate runtime map that is merged by `AgentSession` at query time. Confirm the merge order in `AgentSession` (runtime map vs SDK auto-loaded map). If runtime servers override file-based servers, emit a WARN log on collision so the user is aware. Document the effective merge order in comments.
-5. Write unit tests covering that worker sessions receive registry MCP servers via `setRuntimeMcpServers()`, and that existing SDK auto-load behavior is not affected (i.e., `config.mcpServers` remains `undefined` when passed to the SDK).
+1. In `packages/daemon/src/lib/room/agents/coder-agent.ts` and `general-agent.ts`, after the `AgentSession` is created, build the merged MCP map before calling `setRuntimeMcpServers()`:
+   - `const fileBased = settingsManager.getEnabledMcpServersConfig()` — same call `RoomRuntimeService` uses for file-based servers.
+   - `const registry = appMcpManager.getEnabledMcpConfigs()` — registry servers.
+   - Merge: `{ ...registry, ...fileBased }` — file-based wins on name collision (registry is the lower-priority default; local config overrides it).
+   - Call `session.setRuntimeMcpServers(merged)`.
+2. Pass `appMcpManager` and `settingsManager` into each agent factory. Preferred pattern: add them to the existing agent context/config object (e.g., `CoderAgentConfig`, `GeneralAgentConfig`) rather than `AgentSessionInit`. Evaluate the existing pattern and follow it consistently.
+3. Subscribe to `mcp.registry.changed` in the worker session lifecycle — when the registry changes, rebuild the merged map and call `session.setRuntimeMcpServers(newMerged)` on live worker sessions. Worker sessions are short-lived, so if hot-reload is complex, re-injection on next session creation is acceptable; document the decision.
+4. Emit a WARN log when a name collision between file-based and registry servers is detected.
+5. Write unit tests covering:
+   - Worker sessions receive the merged (file-based + registry) MCP map via `setRuntimeMcpServers()`.
+   - File-based servers take precedence over registry servers on name collision.
+   - The merged map is complete (neither source is dropped).
 
 **Acceptance criteria:**
-- Coder and general agents in rooms receive registry-sourced MCP tools.
-- No regression in existing tool lists for worker sessions — SDK auto-load from `.mcp.json` / `settings.json` still works (verified by unit test checking `config.mcpServers` is NOT overridden).
-- Registry servers are injected via `setRuntimeMcpServers()`, not via `getMcpServers()` override.
-- Name collision behavior is documented and logged.
-- Unit tests pass.
+- Coder and general agents in rooms receive both file-based and registry-sourced MCP tools.
+- File-based servers take precedence on name collision (registry is the lower-priority default).
+- The merged map is passed to `setRuntimeMcpServers()` — no source is silently dropped.
+- Unit tests confirm the merge is correct and neither source is lost.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
 **Depends on:** Task 3.1 (AppMcpLifecycleManager Class), Task 3.2 (RoomRuntimeService integration)
