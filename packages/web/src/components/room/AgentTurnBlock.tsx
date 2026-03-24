@@ -505,12 +505,49 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 						// Track seen texts for deduplication across nested messages
 						const seenTexts = new Set<string>();
 
-						// Only show last 3 messages
+						// Determine which messages will actually render something visible.
+						// NestedMessageRenderer returns null for:
+						//   - result messages that are not errors
+						//   - user messages whose content is entirely tool_result blocks
+						//   - system messages with subtype 'init' or 'task_started'
+						// Slicing raw messages would cause the "last 3" to appear as fewer
+						// visible items. Instead, identify the last 3 renderable messages
+						// and show everything from the earliest of those onward.
+						const isRenderable = (msg: SDKMessage): boolean => {
+							if (msg.type === 'result') {
+								return (msg as SDKMessage & { is_error?: boolean }).is_error === true;
+							}
+							if (msg.type === 'system') {
+								const sub = (msg as SDKMessage & { subtype?: string }).subtype;
+								return sub !== 'init' && sub !== 'task_started';
+							}
+							if (msg.type === 'user') {
+								const content = (msg as SDKMessage & { message?: { content?: unknown } }).message
+									?.content;
+								if (Array.isArray(content)) {
+									return content.some((b) => (b as { type: string }).type !== 'tool_result');
+								}
+								return typeof content === 'string';
+							}
+							if (msg.type === 'assistant') {
+								const content = (msg as SDKMessage & { message?: { content?: unknown[] } }).message
+									?.content;
+								return Array.isArray(content) && content.length > 0;
+							}
+							return true;
+						};
+
+						// Only show last 3 renderable messages
 						const MESSAGES_TO_SHOW = 3;
-						const hasMore = nestedMessages.length > MESSAGES_TO_SHOW;
-						const messagesToRender = hasMore
-							? nestedMessages.slice(-MESSAGES_TO_SHOW)
-							: nestedMessages;
+						const renderableIndices = nestedMessages.reduce<number[]>((acc, msg, idx) => {
+							if (isRenderable(msg)) acc.push(idx);
+							return acc;
+						}, []);
+						const lastRenderableSlice = renderableIndices.slice(-MESSAGES_TO_SHOW);
+						const firstShownIdx =
+							lastRenderableSlice.length > 0 ? lastRenderableSlice[0] : nestedMessages.length;
+						const hasMore = firstShownIdx > 0;
+						const messagesToRender = nestedMessages.slice(firstShownIdx);
 
 						return (
 							<div class="border-b border-gray-200 dark:border-gray-700 p-3">
@@ -521,17 +558,12 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 									{hasMore && (
 										<div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 py-1">
 											<span class="flex-1 border-t border-gray-300 dark:border-gray-600"></span>
-											<span class="shrink-0">
-												({nestedMessages.length - MESSAGES_TO_SHOW}) more messages
-											</span>
+											<span class="shrink-0">({firstShownIdx}) more messages</span>
 											<span class="flex-1 border-t border-gray-300 dark:border-gray-600"></span>
 										</div>
 									)}
 									{messagesToRender.map((msg, idx) => {
-										// Adjust idx for the sliced array
-										const actualIdx = hasMore
-											? nestedMessages.length - MESSAGES_TO_SHOW + idx
-											: idx;
+										const actualIdx = firstShownIdx + idx;
 										const isLastAssistant = actualIdx === lastAssistantIdx;
 										return (
 											<NestedMessageRenderer
