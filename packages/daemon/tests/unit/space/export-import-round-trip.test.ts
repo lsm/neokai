@@ -4,7 +4,7 @@
  * Tests the full pipeline: exportWorkflow → validateExportBundle →
  * buildWorkflowCreateParams → SpaceWorkflowManager.createWorkflow → DB read-back.
  *
- * Verifies that per-slot override fields (role, model, systemPrompt) survive the
+ * Verifies that per-slot override fields (role, model, systemPrompt, instructions) survive the
  * complete export → import cycle and are persisted correctly in the database.
  *
  * Also verifies backward compatibility: exports without per-slot override fields
