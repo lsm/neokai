@@ -65,10 +65,10 @@ Expose the MCP registry via RPC so the frontend and daemon internals can manage 
    - Row mapper: JSON-parse the `args`, `env`, and `headers` columns; map `source_type` snake_case → `sourceType` camelCase; return typed `AppMcpServer` objects.
    - No params required (global registry, not scoped to a room).
    - This is the primary mechanism for the frontend to receive real-time registry updates (snapshot on subscribe, delta on each `notifyChange`). It follows the same pattern as `tasks.byRoom` and `goals.byRoom`.
-2. Register the handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (call `registerAppMcpHandlers()`).
-3. Add `mcp.registry.changed` event type to `packages/shared/src/message-hub/` event definitions.
-4. Add `mcp.registry.*` request/response types to `packages/shared/src/api.ts`.
-5. Write unit tests in `packages/daemon/tests/unit/rpc/app-mcp-handlers.test.ts` covering each handler with mock DB, verifying events are emitted.
+3. Register the handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (call `registerAppMcpHandlers()`).
+4. Add `mcp.registry.changed` event type to `packages/shared/src/message-hub/` event definitions.
+5. Add `mcp.registry.*` request/response types to `packages/shared/src/api.ts`.
+6. Write unit tests in `packages/daemon/tests/unit/rpc/app-mcp-handlers.test.ts` covering each handler with mock DB, verifying events are emitted.
 
 **Acceptance criteria:**
 - All six RPC endpoints are reachable via MessageHub (`list`, `create`, `update`, `delete`, `setEnabled`, `listErrors`).
