@@ -1,0 +1,31 @@
+import type { Database as BunDatabase } from 'bun:sqlite';
+import { SHORT_ID_PREFIX, formatShortId } from '@neokai/shared';
+
+export class ShortIdAllocator {
+	constructor(private db: BunDatabase) {}
+
+	allocate(entityType: 'task' | 'goal', scopeId: string): string {
+		const prefix = entityType === 'task' ? SHORT_ID_PREFIX.TASK : SHORT_ID_PREFIX.GOAL;
+		const counter = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO short_id_counters (entity_type, scope_id, counter)
+					 VALUES (?, ?, 1)
+					 ON CONFLICT(entity_type, scope_id) DO UPDATE SET counter = counter + 1`
+				)
+				.run(entityType, scopeId);
+			const row = this.db
+				.prepare(`SELECT counter FROM short_id_counters WHERE entity_type = ? AND scope_id = ?`)
+				.get(entityType, scopeId) as { counter: number } | undefined;
+			return row!.counter;
+		})();
+		return formatShortId(prefix, counter);
+	}
+
+	getCounter(entityType: string, scopeId: string): number {
+		const row = this.db
+			.prepare(`SELECT counter FROM short_id_counters WHERE entity_type = ? AND scope_id = ?`)
+			.get(entityType, scopeId) as { counter: number } | undefined;
+		return row?.counter ?? 0;
+	}
+}
