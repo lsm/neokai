@@ -32,28 +32,29 @@ The `WorktreeManager` does not store anything in the DB — it operates purely o
 **Description**: Add a `getProjectShortKey(repoPath: string): string` method to `WorktreeManager` that produces a short, deterministic, human-readable directory name for a given repo path, and update `getWorktreeBaseDir` to use it — with collision detection via a sentinel file to handle the (rare) case where two different repo paths hash to the same short key.
 
 **Subtasks**:
-1. In `packages/daemon/src/lib/worktree-manager.ts`, add a private method `getProjectShortKey(repoPath: string): string`:
+1. In `packages/daemon/src/lib/worktree-manager.ts`, add a **public** method `getProjectShortKey(repoPath: string): string` (not private — must be accessible from unit tests; see subtask 6):
    - Extract the last component of the path: `basename(repoPath)` — e.g., `dev-neokai`
-   - Compute an 8-character hex hash of the full normalized path using `Bun.hash()` or a simple djb2/FNV-1a hash (avoid importing crypto for this small utility)
+   - Compute an 8-character hex hash of the full normalized path using `Bun.hash()`. **Important**: `Bun.hash()` returns `number | bigint`; use `(BigInt(Bun.hash(normalizedPath)) & 0xFFFFFFFFn).toString(16).padStart(8, '0')` to produce a safe 8-character hex string without BigInt truncation issues (plain `Number(bigint).toString(16)` silently truncates above 2^53).
    - Return `${lastComponent}-${hash8chars}` — e.g., `dev-neokai-a3b2c1d4`
-   - Sanitize: replace characters invalid in directory names with `-` (keep alphanumeric, hyphens, underscores)
-2. Update `getWorktreeBaseDir(gitRoot: string)` to resolve the short key with collision detection (see subtask 3), so new worktrees go into the short path
+   - Sanitize `lastComponent`: replace characters invalid in directory names with `-` (keep alphanumeric, hyphens, underscores)
+2. Update `getWorktreeBaseDir(gitRoot: string)` to resolve the short key with collision detection (see subtask 3). **The method signature stays synchronous** (`private getWorktreeBaseDir(gitRoot: string): string`) — all file I/O in this method must use synchronous Node `fs` APIs (`existsSync`, `mkdirSync`, `readFileSync`, `writeFileSync`) consistent with the existing method body, to avoid cascading `async` changes to `createWorktree` and its callers.
 3. Implement collision detection in `getWorktreeBaseDir` using a sentinel file approach:
    - After computing `shortKey`, determine the candidate base dir: `~/.neokai/projects/{shortKey}`
-   - **On first use** (directory doesn't exist yet): create the directory and write a `.neokai-repo-root` sentinel file inside it containing the full normalized `gitRoot` path (UTF-8 text, one line). Then return this directory as the base dir.
-   - **On subsequent use** (directory already exists): read the `.neokai-repo-root` sentinel file (if present) and compare its contents to the normalized `gitRoot`.
+   - **On first use** (directory doesn't exist yet): call `mkdirSync(candidateDir, { recursive: true })` and write a `.neokai-repo-root` sentinel file inside it containing the full normalized `gitRoot` path (use `writeFileSync`). Then return `candidateDir` as the base dir.
+   - **On subsequent use** (directory already exists): read the `.neokai-repo-root` sentinel file with `readFileSync` (if present) and compare its contents (trimmed) to the normalized `gitRoot`.
      - If they match (same repo): proceed normally, return the short-key base dir.
-     - If they differ (collision — different repo mapped to same short key): log a warning (e.g., `console.warn('[WorktreeManager] Short key collision detected for "${shortKey}": expected "${storedPath}", got "${gitRoot}". Falling back to full encoding.')`) and fall back to `encodeRepoPath(gitRoot)` to produce the full-length base dir. This preserves the existing safe behavior for the colliding repo.
-   - If the directory exists but has no sentinel file (e.g., created by an older version): write the sentinel for the current repo path and proceed normally.
+     - If they differ (collision — different repo mapped to same short key): use `this.logger.warn(...)` to log the collision (e.g., `this.logger.warn('Short key collision detected for "${shortKey}": expected "${storedPath}", got "${gitRoot}". Falling back to full encoding.')`) and fall back to `encodeRepoPath(gitRoot)` to produce the full-length base dir. **Do NOT use `console.warn`** — `no-console` is an error in `.oxlintrc.json` and `worktree-manager.ts` is not exempt; the file already uses `this.logger` (initialized at line ~24 as `private logger = new Logger('WorktreeManager')`).
+   - If the directory exists but has no sentinel file (e.g., created by an older version of NeoKai): write the sentinel for the current repo path using `writeFileSync` and proceed normally.
 4. Keep `encodeRepoPath` — it remains used by `cleanupOrphanedWorktrees` and as the collision fallback
 5. Write unit tests for `getProjectShortKey`:
    - Same path always returns the same key (deterministic)
    - Output contains only safe filesystem characters
    - Output is shorter than the full encoded path
-6. Write unit tests for the collision detection logic in `getWorktreeBaseDir`:
-   - **No collision**: first call for a fresh directory creates the sentinel file and returns the short-key path
+   - The 8-char hex hash is derived correctly (no BigInt truncation)
+6. Write unit tests for the collision detection logic in `getWorktreeBaseDir`. **Note on testing the collision scenario**: since `getProjectShortKey` is `public`, the test can call it directly or pass two crafted repo paths that produce the same short key. The simplest approach is to pre-create the sentinel file in a temp directory (using `mkdirSync`/`writeFileSync` in the test setup) so that `getWorktreeBaseDir` sees a directory that already belongs to a different repo — no need to find a real hash collision. Test cases:
+   - **No collision**: first call for a fresh temp directory creates the sentinel file and returns the short-key path
    - **Same repo, second call**: reads sentinel, confirms match, returns same short-key path
-   - **Collision scenario**: simulate two different repo paths producing the same `shortKey` — first repo claims the directory and writes its sentinel; second repo detects a mismatch, logs a warning, and falls back to the full `encodeRepoPath` encoding (the two repos resolve to different base directories)
+   - **Collision scenario**: pre-create the sentinel dir with path A's content, then call `getWorktreeBaseDir` with path B that hashes to the same `shortKey` — assert it logs a warning via `this.logger.warn` and returns the full `encodeRepoPath` result instead of the short-key path
 
 **Acceptance Criteria**:
 - `getProjectShortKey('/Users/alice/code/my-project')` returns a string like `my-project-a3b2c1d4`

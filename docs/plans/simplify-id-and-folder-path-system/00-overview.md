@@ -38,7 +38,7 @@ Worktree path shortening: use the first 8 characters of the room UUID as a proje
 2. **Repository Layer** — Add short ID assignment on create and lookup-by-short-id to Task, Goal, and Room repositories
 3. **API Compatibility Layer** — Update all RPC handlers to return `shortId` and accept both UUID and short ID as input; update URL route regexes in the web router
 4. **Worktree Path Shortening** — Shorten worktree base directory using a project short key derived from the repo path
-5. **UI Display** — Display short IDs in task/goal/session cards and copy-to-clipboard helpers in the web frontend
+5. **UI Display** — Display short IDs in task/goal cards and copy-to-clipboard helpers in the web frontend
 6. **Tests and Validation** — Unit tests for short ID utilities, repository layer, API compatibility, and multi-tenant isolation
 
 ## Cross-Milestone Dependencies
