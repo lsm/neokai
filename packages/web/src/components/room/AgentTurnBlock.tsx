@@ -649,17 +649,29 @@ function AgentTurnBlockInner({ turn, className, onHeaderClick }: AgentTurnBlockP
 						// Track seen texts for deduplication across nested messages
 						const seenTexts = new Set<string>();
 
-						// Only show last 3 renderable messages
+						// For completed turns, messages are pre-trimmed in useTurnBlocks to
+						// first + last 3. Render all; use turn.hiddenCount for the banner.
+						// For the active (streaming) turn, apply local MESSAGES_TO_SHOW slicing.
 						const MESSAGES_TO_SHOW = 3;
-						const renderableIndices = nestedMessages.reduce<number[]>((acc, msg, idx) => {
-							if (isRenderable(msg)) acc.push(idx);
-							return acc;
-						}, []);
-						const lastRenderableSlice = renderableIndices.slice(-MESSAGES_TO_SHOW);
-						const firstShownIdx =
-							lastRenderableSlice.length > 0 ? lastRenderableSlice[0] : nestedMessages.length;
-						const hasMore = firstShownIdx > 0;
-						const messagesToRender = nestedMessages.slice(firstShownIdx);
+						let messagesToRender: SDKMessage[];
+						let hasMore: boolean;
+						let shownMoreCount: number;
+						if (!turn.isActive) {
+							messagesToRender = nestedMessages;
+							hasMore = turn.hiddenCount > 0;
+							shownMoreCount = turn.hiddenCount;
+						} else {
+							const renderableIndices = nestedMessages.reduce<number[]>((acc, msg, idx) => {
+								if (isRenderable(msg)) acc.push(idx);
+								return acc;
+							}, []);
+							const lastRenderableSlice = renderableIndices.slice(-MESSAGES_TO_SHOW);
+							const firstShownIdx =
+								lastRenderableSlice.length > 0 ? lastRenderableSlice[0] : nestedMessages.length;
+							hasMore = firstShownIdx > 0;
+							shownMoreCount = firstShownIdx;
+							messagesToRender = nestedMessages.slice(firstShownIdx);
+						}
 
 						return (
 							<div class="p-3">
@@ -670,12 +682,12 @@ function AgentTurnBlockInner({ turn, className, onHeaderClick }: AgentTurnBlockP
 									{hasMore && (
 										<div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 py-1">
 											<span class="flex-1 border-t border-gray-300 dark:border-gray-600"></span>
-											<span class="shrink-0">({firstShownIdx}) more messages</span>
+											<span class="shrink-0">({shownMoreCount}) more messages</span>
 											<span class="flex-1 border-t border-gray-300 dark:border-gray-600"></span>
 										</div>
 									)}
 									{messagesToRender.map((msg, idx) => {
-										const actualIdx = firstShownIdx + idx;
+										const actualIdx = idx;
 										const isLastAssistant = actualIdx === lastAssistantIdx;
 										return (
 											<NestedMessageRenderer

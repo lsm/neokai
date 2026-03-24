@@ -71,8 +71,17 @@ export interface TurnBlock {
 	isError: boolean;
 	/** Error text extracted from the first error found in the turn, or null. */
 	errorMessage: string | null;
-	/** All parsed SDKMessages belonging to this turn, in order. */
+	/**
+	 * All parsed SDKMessages belonging to this turn, in order.
+	 * For completed turns, this is trimmed to first message + last TURN_PREVIEW_TAIL messages
+	 * to save memory. Use messageCount for the total.
+	 */
 	messages: SDKMessage[];
+	/**
+	 * Number of messages hidden between the first and the last TURN_PREVIEW_TAIL messages.
+	 * Zero for active turns or turns short enough to need no trimming.
+	 */
+	hiddenCount: number;
 }
 
 /** A runtime/system message that renders inline between turn blocks. */
@@ -348,6 +357,7 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 					isError,
 					errorMessage,
 					messages: msgs,
+					hiddenCount: 0,
 				},
 			});
 
@@ -470,6 +480,7 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 					isError: false,
 					errorMessage: null,
 					messages: [held],
+					hiddenCount: 0,
 				},
 			});
 		}
@@ -491,6 +502,27 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 					}
 					break;
 				}
+			}
+		}
+
+		// Trim messages for completed turns: keep first message (input) + last TURN_PREVIEW_TAIL
+		// messages. Stats (toolCallCount etc.) were already computed from all messages above.
+		// This reduces memory for long sessions while preserving the preview content.
+		const TURN_PREVIEW_TAIL = 3;
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
+			if (item.type !== 'turn' || item.turn.isActive) continue;
+			const msgs = item.turn.messages;
+			if (msgs.length > TURN_PREVIEW_TAIL + 1) {
+				const hiddenCount = msgs.length - TURN_PREVIEW_TAIL - 1;
+				items[i] = {
+					type: 'turn',
+					turn: {
+						...item.turn,
+						messages: [msgs[0], ...msgs.slice(-TURN_PREVIEW_TAIL)],
+						hiddenCount,
+					},
+				};
 			}
 		}
 
