@@ -24,6 +24,8 @@ import {
 } from '@neokai/shared/sdk/type-guards';
 import { ToolResultCard } from '../sdk/tools/index.ts';
 import { ThinkingBlock } from '../sdk/ThinkingBlock.tsx';
+import { IconButton } from '../ui/IconButton.tsx';
+import { Tooltip } from '../ui/Tooltip.tsx';
 import type { TurnBlock } from '../../hooks/useTurnBlocks';
 
 interface AgentTurnBlockProps {
@@ -72,12 +74,26 @@ function getRoleColors(role: string) {
 	}
 }
 
-function formatMsgTime(timestamp: number): string {
+function getMsgTime(timestamp: number): string {
 	if (!timestamp) return '';
 	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function CopyButton({ text }: { text: string }) {
+function getMsgFullTime(timestamp: number): string {
+	if (!timestamp) return '';
+	return new Date(timestamp).toLocaleString();
+}
+
+/** Identical to the copy+time actions row used in SDKAssistantMessage / SDKUserMessage. */
+function MessageActions({
+	text,
+	timestamp,
+	align = 'left',
+}: {
+	text: string;
+	timestamp: number;
+	align?: 'left' | 'right';
+}) {
 	const [copied, setCopied] = useState(false);
 	const handleCopy = () => {
 		navigator.clipboard.writeText(text).then(() => {
@@ -86,34 +102,45 @@ function CopyButton({ text }: { text: string }) {
 		});
 	};
 	return (
-		<button
-			onClick={(e) => {
-				e.stopPropagation();
-				handleCopy();
-			}}
-			class="p-0.5 rounded text-gray-400 hover:text-gray-200 transition-colors"
-			title={copied ? 'Copied!' : 'Copy'}
-		>
-			{copied ? (
-				<svg
-					class="w-3.5 h-3.5 text-green-400"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-				>
-					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-				</svg>
-			) : (
-				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						strokeWidth={2}
-						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-					/>
-				</svg>
+		<div
+			class={cn(
+				'flex items-center',
+				messageSpacing.actions.gap,
+				messageSpacing.actions.marginTop,
+				messageSpacing.actions.padding,
+				align === 'right' && 'justify-end'
 			)}
-		</button>
+		>
+			{timestamp > 0 && (
+				<Tooltip
+					content={getMsgFullTime(timestamp)}
+					position={align === 'right' ? 'left' : 'right'}
+				>
+					<span class="text-xs text-gray-500">{getMsgTime(timestamp)}</span>
+				</Tooltip>
+			)}
+			<IconButton
+				size="md"
+				onClick={handleCopy}
+				title={copied ? 'Copied!' : 'Copy message'}
+				class={copied ? 'text-green-400' : ''}
+			>
+				{copied ? (
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+					</svg>
+				) : (
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+						/>
+					</svg>
+				)}
+			</IconButton>
+		</div>
 	);
 }
 
@@ -135,7 +162,6 @@ function NestedMessageRenderer({
 	seenTexts?: Set<string>;
 }) {
 	const timestamp = (message as { timestamp?: number }).timestamp ?? 0;
-	const timeLabel = formatMsgTime(timestamp);
 
 	// Handle assistant messages
 	if (message.type === 'assistant') {
@@ -218,10 +244,7 @@ function NestedMessageRenderer({
 									</div>
 								)}
 							</div>
-							<div class="flex items-center gap-1 mt-0.5 px-1">
-								{timeLabel && <span class="text-xs text-gray-500">{timeLabel}</span>}
-								<CopyButton text={text} />
-							</div>
+							<MessageActions text={text} timestamp={timestamp} align="left" />
 						</div>
 					);
 				})}
@@ -298,10 +321,7 @@ function NestedMessageRenderer({
 							);
 						})}
 					</div>
-					<div class="flex items-center gap-1 mt-0.5 px-1">
-						<CopyButton text={copyText} />
-						{timeLabel && <span class="text-xs text-gray-500">{timeLabel}</span>}
-					</div>
+					<MessageActions text={copyText} timestamp={timestamp} align="right" />
 				</div>
 			);
 		}
@@ -322,10 +342,7 @@ function NestedMessageRenderer({
 					>
 						{content}
 					</div>
-					<div class="flex items-center gap-1 mt-0.5 px-1">
-						<CopyButton text={content} />
-						{timeLabel && <span class="text-xs text-gray-500">{timeLabel}</span>}
-					</div>
+					<MessageActions text={content} timestamp={timestamp} align="right" />
 				</div>
 			);
 		}
@@ -668,11 +685,11 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 				{/* Turn timing footer */}
 				{turn.startTime > 0 && (
 					<div class="border-t border-gray-200 dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-						<span>{formatMsgTime(turn.startTime)}</span>
+						<span>{getMsgTime(turn.startTime)}</span>
 						{turn.endTime && (
 							<>
 								<span>→</span>
-								<span>{formatMsgTime(turn.endTime)}</span>
+								<span>{getMsgTime(turn.endTime)}</span>
 								<span class="ml-auto">{Math.round((turn.endTime - turn.startTime) / 1000)}s</span>
 							</>
 						)}
