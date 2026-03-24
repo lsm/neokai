@@ -146,6 +146,8 @@ export interface MissionExecution {
 export interface RoomGoal {
 	/** Unique identifier */
 	id: string;
+	/** Human-readable short ID (e.g. 'g-42'), scoped to parent room */
+	shortId?: string;
 	/** Room this goal belongs to */
 	roomId: string;
 	/** Goal title */
@@ -273,6 +275,8 @@ export type AgentType = 'coder' | 'general';
 export interface NeoTask {
 	/** Unique identifier */
 	id: string;
+	/** Human-readable short ID (e.g. 't-42'), scoped to parent room */
+	shortId?: string;
 	/** Room this task belongs to */
 	roomId: string;
 	/** Task title */
