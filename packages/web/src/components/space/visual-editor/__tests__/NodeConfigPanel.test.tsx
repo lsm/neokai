@@ -515,9 +515,8 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('channels-section')).toBeTruthy();
 		});
 
-		it('shows channels section for single-agent node with agent (channels created on agent assignment)', () => {
-			// Channels section is shown for nodes with agents so users can manage Task Agent channels.
-			// Channels are created in the agent dropdown onChange handler, not on mount.
+		it('shows channels section for single-agent node with agent', () => {
+			// Channels section is always shown so users can manage Task Agent channels.
 			const { queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			expect(queryByTestId('channels-section')).toBeTruthy();
 		});

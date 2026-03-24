@@ -258,6 +258,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 										);
 									}}
 									placeholder="slot role"
+									data-testid="agent-role-input"
 									class="flex-1 text-xs font-mono bg-dark-900 border border-dark-700 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600 min-w-0"
 								/>
 								{hasOverrides && (
@@ -271,6 +272,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
 									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
 									aria-expanded={isExpanded}
+									data-testid="toggle-overrides-button"
 								>
 									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										{isExpanded ? (
@@ -320,7 +322,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 							/>
 							{/* Expandable overrides section */}
 							{isExpanded && (
-								<div class="space-y-1 pt-1 border-t border-dark-700">
+								<div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
 									<p class="text-xs text-gray-500 font-medium">Slot overrides</p>
 									<div class="space-y-0.5">
 										<label class="text-xs text-gray-600">Model</label>
@@ -331,6 +333,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 												updateAgentModel(sa.role, (e.currentTarget as HTMLInputElement).value)
 											}
 											placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
+											data-testid="agent-model-input"
 											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
 										/>
 									</div>
@@ -345,6 +348,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 												)
 											}
 											placeholder="Override system prompt (leave blank to use agent default)…"
+											data-testid="agent-system-prompt-input"
 											rows={3}
 											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
 										/>
