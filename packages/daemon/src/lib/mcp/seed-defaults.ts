@@ -23,6 +23,7 @@ export function seedDefaultMcpEntries(db: Database): void {
 			sourceType: 'stdio',
 			command: 'npx',
 			args: ['-y', '@tokenizin/mcp-npx-fetch'],
+			env: {},
 			enabled: true,
 		});
 	}
