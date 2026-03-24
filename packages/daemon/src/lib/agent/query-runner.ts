@@ -25,6 +25,10 @@ import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+/** Base delay before the first auto-recovery attempt. Each subsequent attempt doubles this. */
+const DEFAULT_STARTUP_RECOVERY_DELAY_MS = 3000;
+/** Maximum number of auto-recovery attempts before surfacing the error to the user. */
+const DEFAULT_STARTUP_MAX_RETRIES = 2;
 
 function getStartupTimeoutMs(): number {
 	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
@@ -33,7 +37,23 @@ function getStartupTimeoutMs(): number {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
 }
 
+function getStartupRecoveryDelayMs(): number {
+	const raw = process.env.NEOKAI_SDK_STARTUP_RECOVERY_DELAY_MS;
+	if (!raw) return DEFAULT_STARTUP_RECOVERY_DELAY_MS;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_RECOVERY_DELAY_MS;
+}
+
+function getStartupMaxRetries(): number {
+	const raw = process.env.NEOKAI_SDK_STARTUP_MAX_RETRIES;
+	if (!raw) return DEFAULT_STARTUP_MAX_RETRIES;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STARTUP_MAX_RETRIES;
+}
+
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
+const STARTUP_RECOVERY_DELAY_MS = getStartupRecoveryDelayMs();
+const STARTUP_MAX_RETRIES = getStartupMaxRetries();
 
 /**
  * Original environment variables for restoration after SDK query
@@ -237,10 +257,18 @@ export class QueryRunner {
 				if (!this.ctx.firstMessageReceived) {
 					startupTimeoutReached = true;
 					const elapsed = Date.now() - queryStartTime;
+					const isRootWorkspace = !session.worktree;
+					const workspaceDesc = isRootWorkspace
+						? `root workspace: ${session.workspacePath}`
+						: `worktree: ${session.worktree!.worktreePath}`;
 					logger.error(
 						`SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
-							`Model: ${queryOptions.model}, Workspace: ${session.workspacePath}` +
-							(session.worktree ? ` (worktree: ${session.worktree.worktreePath})` : '')
+							`Model: ${queryOptions.model}, ${workspaceDesc}` +
+							(isRootWorkspace
+								? ' — running on root workspace (not a worktree); check for other Claude Code sessions using this path'
+								: '') +
+							`. Attempt ${this.ctx.startupTimeoutAutoRecoverAttempts + 1} of ${STARTUP_MAX_RETRIES + 1}.` +
+							` (Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
 					);
 
 					// Actively abort a stuck startup so finally{} cleanup runs and the
@@ -348,29 +376,39 @@ export class QueryRunner {
 
 			if (!isAbortError) {
 				// On startup timeout or conversation not found, attempt transparent auto-recovery
-				// (up to 1 retry): restart the query without the old resume handle
+				// (up to STARTUP_MAX_RETRIES): restart the query without the old resume handle
 				// (sdkSessionId already cleared above). Queued messages are preserved so
 				// the user's pending send is retried automatically without any visible error.
-				// The retry limit (attempts <= 1) prevents infinite loops when the SDK is
-				// permanently broken: after 1 failed recovery, the error surfaces normally.
+				// Uses exponential backoff: delay doubles with each attempt to give the SDK
+				// process time to fully exit before the next spawn.
+				// The retry limit prevents infinite loops when the SDK is permanently broken:
+				// after all retries are exhausted, the error surfaces normally.
 				const startupRecoverAttempts = this.ctx.startupTimeoutAutoRecoverAttempts + 1;
 				const canAutoRecover =
 					(isStartupTimeout || isConversationNotFound) &&
 					!this.ctx.isCleaningUp() &&
 					!!this.ctx.onStartupTimeoutAutoRecover &&
-					startupRecoverAttempts <= 1;
+					startupRecoverAttempts <= STARTUP_MAX_RETRIES;
 
 				if (canAutoRecover) {
 					this.ctx.startupTimeoutAutoRecoverAttempts = startupRecoverAttempts;
+					// Exponential backoff: base * 2^(attempt-1), capped at 30s.
+					// e.g. with default 3s base: attempt 1 → 3s, attempt 2 → 6s
+					const delayMs = Math.min(
+						STARTUP_RECOVERY_DELAY_MS * Math.pow(2, startupRecoverAttempts - 1),
+						30000
+					);
 					logger.warn(
-						`SDK ${isConversationNotFound ? 'conversation not found' : 'startup timeout'} — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
+						`SDK ${isConversationNotFound ? 'conversation not found' : 'startup timeout'} — ` +
+							`scheduling auto-recovery attempt ${startupRecoverAttempts}/${STARTUP_MAX_RETRIES} ` +
+							`(fresh query without resume) in ${delayMs}ms`
 					);
 					// Defer until after finally{} completes so shared state is reset first.
 					setTimeout(() => {
 						this.ctx.onStartupTimeoutAutoRecover!().catch((err: unknown) => {
 							logger.error('Auto-recovery after SDK startup timeout failed:', err);
 						});
-					}, 300);
+					}, delayMs);
 					// setIdle is handled by the finally block; skipping here avoids a double call.
 				} else {
 					// Reset counter so a future successfully-started session can recover again.
@@ -444,16 +482,31 @@ export class QueryRunner {
 
 						const processingState = stateManager.getState();
 
+						// For startup timeouts that exhausted all retries, provide actionable recovery hints.
+						const startupTimeoutUserMessage = isStartupTimeout
+							? `The AI session failed to start after ${STARTUP_MAX_RETRIES + 1} attempt(s) ` +
+								`(workspace: ${session.workspacePath}). ` +
+								`Common causes: another Claude Code session is using the same workspace, ` +
+								`a stale lock file in .claude/, or the workspace is under heavy load. ` +
+								`Try: closing other Claude sessions on this workspace, ` +
+								`then resend your message. ` +
+								`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+							: undefined;
+
 						await errorManager.handleError(
 							session.id,
 							error as Error,
 							category,
-							undefined,
+							startupTimeoutUserMessage,
 							processingState,
 							{
 								errorMessage,
 								queueSize: messageQueue.size(),
 								providerId: providerId ?? 'anthropic',
+								workspacePath: session.workspacePath,
+								isRootWorkspace: !session.worktree,
+								startupTimeoutMs: STARTUP_TIMEOUT_MS,
+								startupMaxRetries: STARTUP_MAX_RETRIES,
 							}
 						);
 					}
