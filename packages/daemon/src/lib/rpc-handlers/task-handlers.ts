@@ -166,7 +166,7 @@ export function setupTaskHandlers(
 		const task = await taskManager.getTask(taskId);
 
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		return { task };
@@ -193,7 +193,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Normalize: treat empty/whitespace strings as null to keep storage consistent
@@ -242,7 +242,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Only allow cancelling pending, in_progress, or review tasks
@@ -294,7 +294,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Only allow interrupting tasks with active agent sessions
@@ -336,7 +336,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Validate task is in a terminal state before archiving
@@ -393,7 +393,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Validate status transition for runtime mode. This must happen here (not just in the
@@ -447,7 +447,7 @@ export function setupTaskHandlers(
 						}
 						const cancelledTask = await taskManager.getTask(taskId);
 						if (!cancelledTask) {
-							throw new Error(`Task not found: ${params.taskId}`);
+							throw new Error(`Task not found: ${taskId}`);
 						}
 						emitTaskUpdate(params.roomId, cancelledTask);
 						emitRoomOverview(params.roomId);
@@ -522,7 +522,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 		if (task.status !== 'review') {
 			throw new Error(`Task is not in review status (current: ${task.status})`);
@@ -993,7 +993,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
+			throw new Error(`Task ${taskId} not found in room ${params.roomId}`);
 		}
 
 		// Archived tasks are truly terminal — no messaging allowed. Check this before the runtime
