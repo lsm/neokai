@@ -29,6 +29,7 @@ import type { TurnBlock } from '../../hooks/useTurnBlocks';
 interface AgentTurnBlockProps {
 	turn: TurnBlock;
 	className?: string;
+	onClick?: () => void;
 }
 
 /**
@@ -326,7 +327,7 @@ function NestedMessageRenderer({
 	);
 }
 
-export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
+export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps) {
 	const colors = getRoleColors(turn.agentRole);
 
 	// Extract the first user message as input prompt, rest are nested messages
@@ -356,7 +357,17 @@ export function AgentTurnBlock({ turn, className }: AgentTurnBlockProps) {
 	}, [inputMessage]);
 
 	return (
-		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+		<div
+			class={cn(
+				'border rounded-lg overflow-hidden',
+				colors.bg,
+				colors.border,
+				onClick &&
+					'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-current transition-shadow',
+				className
+			)}
+			onClick={onClick}
+		>
 			{/* Header - always visible, matches SubagentBlock header style */}
 			<div class="flex items-center justify-between p-3">
 				<div class="flex items-center gap-2 min-w-0 flex-1">

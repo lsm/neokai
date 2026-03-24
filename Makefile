@@ -45,7 +45,7 @@ self-test:
 run:
 	@mkdir -p tmp
 	@if [ -n "$(PORT)" ]; then \
-		echo "$(PORT)" > tmp/.dev-server-running; \
+		echo "$(PORT)" > tmp/.prod-server-running; \
 	fi
 	@echo "Starting production server..."
 	@echo "   Workspace: $(WORKSPACE)"

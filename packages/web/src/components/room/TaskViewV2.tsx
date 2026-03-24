@@ -426,7 +426,10 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 									if (item.type === 'turn') {
 										return (
 											<div key={item.turn.id} class="mb-4">
-												<AgentTurnBlock turn={item.turn} />
+												<AgentTurnBlock
+													turn={item.turn}
+													onClick={() => setSelectedTurn(item.turn)}
+												/>
 											</div>
 										);
 									}
