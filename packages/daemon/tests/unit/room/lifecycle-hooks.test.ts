@@ -368,6 +368,24 @@ describe('checkPrIsMergeable', () => {
 		expect(result.reason).toContain('merge conflicts');
 	});
 
+	test('fails when PR has BEHIND mergeStateStatus', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
+				stdout: JSON.stringify({
+					mergeable: null,
+					mergeStateStatus: 'BEHIND',
+					statusCheckRollup: [],
+				}),
+				exitCode: 0,
+			},
+		});
+		const result = await checkPrIsMergeable(makeLeaderCtx(), opts);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('behind the base branch');
+		expect(result.bounceMessage).toContain('rebase');
+	});
+
 	test('fails when CI checks are failing', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
@@ -1315,6 +1333,30 @@ describe('runLeaderSubmitGate', () => {
 		);
 		expect(result.pass).toBe(false);
 		expect(result.reason).toContain('CI checks failing');
+	});
+
+	test('fails when PR branch is BEHIND base', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
+				stdout: JSON.stringify({
+					mergeable: null,
+					mergeStateStatus: 'BEHIND',
+					statusCheckRollup: [],
+				}),
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderSubmitGate(
+			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('behind the base branch');
 	});
 
 	test('checks mergeability before reviews when hasReviewers is true', async () => {
