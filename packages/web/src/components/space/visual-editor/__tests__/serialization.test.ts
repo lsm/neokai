@@ -1228,4 +1228,38 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(agents[1].role).toBe('reviewer-2');
 		expect(agents[1].model).toBe('claude-opus-4-6');
 	});
+
+	it('role rename in visual state is reflected in serialized output', () => {
+		// Simulates the user renaming a slot role via the role input field and then saving.
+		// Channels are NOT automatically updated when a role is renamed — that is intentional.
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Code',
+					agents: [{ agentId: 'a1', role: 'coder', model: 'claude-haiku-4-5-20251001' }],
+					channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' as const }],
+				},
+			],
+			transitions: [],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+
+		// Simulate the user renaming 'coder' → 'lead-coder' via the role input
+		const nodeIdx = state.nodes.findIndex((n) => n.step.id === 's1');
+		state.nodes[nodeIdx].step.agents = [
+			{ agentId: 'a1', role: 'lead-coder', model: 'claude-haiku-4-5-20251001' },
+		];
+
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		const node = params.nodes![0];
+
+		// New role is serialized
+		expect(node.agents![0].role).toBe('lead-coder');
+		// Override fields are preserved through the rename
+		expect(node.agents![0].model).toBe('claude-haiku-4-5-20251001');
+		// Channels are NOT auto-updated — still reference the old role (caller responsibility)
+		expect(node.channels![0].to).toBe('coder');
+	});
 });

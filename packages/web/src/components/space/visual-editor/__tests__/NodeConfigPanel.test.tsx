@@ -19,6 +19,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
+import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
@@ -821,6 +822,30 @@ describe('NodeConfigPanel', () => {
 			expect(entries[1].getAttribute('data-has-overrides')).toBeNull();
 			// No stray badges in the second slot
 			expect(queryAllByTestId('override-badge')).toHaveLength(1);
+		});
+
+		it('override section stays expanded after the slot role is renamed', async () => {
+			// Use a controlled wrapper so onUpdate actually updates the step prop,
+			// matching how the real parent (VisualWorkflowEditor) behaves.
+			function Wrapper() {
+				const [step, setStep] = useState(
+					makeStep({ agentId: '', agents: [{ agentId: 'agent-1', role: 'planner' }] })
+				);
+				return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+			}
+			const { getByTestId, queryByTestId } = render(<Wrapper />);
+
+			// Expand the overrides section
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(getByTestId('slot-overrides')).toBeTruthy();
+
+			// Rename the role — expandedSlots must migrate the key from 'planner' to 'lead-planner'
+			await act(async () => {
+				fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
+			});
+
+			// Override section should still be visible after the rename (key migrated in expandedSlots)
+			expect(queryByTestId('slot-overrides')).toBeTruthy();
 		});
 	});
 });

@@ -96,7 +96,8 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		const baseRole = agentInfo?.role ?? agentId;
+		// Guard against agents with empty role strings to avoid indistinguishable slot names
+		const baseRole = agentInfo?.role?.trim() || agentId;
 		// Ensure the slot role is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
 		const usedRoles = new Set(stepAgents.map((a) => a.role));
@@ -252,10 +253,18 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 									data-testid="agent-role-input"
 									value={sa.role}
 									onInput={(e) => {
-										/* role editing is reflected in display only; updating kept simple */
+										const oldRole = sa.role;
 										const newRole = (e.currentTarget as HTMLInputElement).value;
+										// Keep the override section expanded after a rename by migrating the key
+										setExpandedSlots((prev) => {
+											if (!prev.has(oldRole)) return prev;
+											const next = new Set(prev);
+											next.delete(oldRole);
+											next.add(newRole);
+											return next;
+										});
 										updateAgents(
-											stepAgents.map((a) => (a.role === sa.role ? { ...a, role: newRole } : a))
+											stepAgents.map((a) => (a.role === oldRole ? { ...a, role: newRole } : a))
 										);
 									}}
 									placeholder="slot role"

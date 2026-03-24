@@ -348,3 +348,76 @@ describe('WorkflowNodeCard', () => {
 		});
 	});
 });
+
+// ============================================================================
+// Per-slot override indicators in collapsed header
+// ============================================================================
+
+describe('WorkflowNodeCard — collapsed header override indicators', () => {
+	afterEach(() => cleanup());
+
+	it('shows slot role name in collapsed badge (not agent name)', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'strict-reviewer' },
+				{ agentId: 'agent-2', role: 'quick-reviewer' },
+			],
+		});
+		const { container } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
+		expect(container.textContent).toContain('strict-reviewer');
+		expect(container.textContent).toContain('quick-reviewer');
+	});
+
+	it('does not show override-dot when no slot has overrides', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'coder' },
+				{ agentId: 'agent-2', role: 'reviewer' },
+			],
+		});
+		const { queryAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: false })} />
+		);
+		expect(queryAllByTestId('override-dot')).toHaveLength(0);
+	});
+
+	it('shows override-dot on slot with model override', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' },
+				{ agentId: 'agent-2', role: 'reviewer' },
+			],
+		});
+		const { getAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: false })} />
+		);
+		// Only the first slot has overrides
+		expect(getAllByTestId('override-dot')).toHaveLength(1);
+	});
+
+	it('shows override-dot on slot with systemPrompt override', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'coder', systemPrompt: 'Be strict.' }],
+		});
+		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
+		expect(getByTestId('override-dot')).toBeTruthy();
+	});
+
+	it('shows override-dot on each slot that has overrides (multiple)', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [
+				{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' },
+				{ agentId: 'agent-2', role: 'reviewer', systemPrompt: 'Review carefully.' },
+			],
+		});
+		const { getAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: false })} />
+		);
+		expect(getAllByTestId('override-dot')).toHaveLength(2);
+	});
+});

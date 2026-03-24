@@ -148,7 +148,8 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		const baseRole = agentInfo?.role ?? agentId;
+		// Guard against agents with empty role strings to avoid indistinguishable slot names
+		const baseRole = agentInfo?.role?.trim() || agentId;
 		// Ensure the slot role is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
 		const usedRoles = new Set(nodeAgents.map((a) => a.role));
@@ -242,9 +243,18 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 									type="text"
 									value={sa.role}
 									onInput={(e) => {
+										const oldRole = sa.role;
 										const newRole = (e.currentTarget as HTMLInputElement).value;
+										// Keep the override section expanded after a rename by migrating the key
+										setExpandedSlots((prev) => {
+											if (!prev.has(oldRole)) return prev;
+											const next = new Set(prev);
+											next.delete(oldRole);
+											next.add(newRole);
+											return next;
+										});
 										updateAgents(
-											nodeAgents.map((a) => (a.role === sa.role ? { ...a, role: newRole } : a))
+											nodeAgents.map((a) => (a.role === oldRole ? { ...a, role: newRole } : a))
 										);
 									}}
 									placeholder="slot role"
@@ -260,6 +270,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 									onClick={() => toggleSlotExpanded(sa.role)}
 									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
 									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
+									aria-expanded={isExpanded}
 								>
 									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										{isExpanded ? (
