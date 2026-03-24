@@ -73,6 +73,7 @@ import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
 import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
 import { LiveQueryEngine } from '../../storage/live-query';
+import type { AppMcpLifecycleManager } from '../mcp';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -101,6 +102,8 @@ export interface RPCHandlerDependencies {
 	reactiveDb: ReactiveDatabase;
 	/** Live query engine for reactive SQL subscriptions */
 	liveQueries: LiveQueryEngine;
+	/** Application-level MCP lifecycle manager */
+	appMcpManager: AppMcpLifecycleManager;
 }
 
 const log = new Logger('rpc-handlers');
@@ -158,7 +161,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// so that it can receive a runtime session lookup function. Room worker/leader
 	// sessions live in RoomRuntimeService.agentSessions (separate from SessionManager),
 	// so the handler needs to check the runtime pool first.
-	registerMcpHandlers(deps.messageHub, deps.sessionManager);
+	registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
 	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
