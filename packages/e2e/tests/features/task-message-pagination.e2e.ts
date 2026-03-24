@@ -124,7 +124,9 @@ test.describe('TaskView — Message Pagination', () => {
 			});
 
 			// All 3 messages visible
-			await expect(page.locator('text=Message number 1')).toBeVisible({ timeout: 10000 });
+			await expect(page.getByText('Message number 1', { exact: true })).toBeVisible({
+				timeout: 10000,
+			});
 			await expect(page.locator('text=Message number 3')).toBeVisible({ timeout: 10000 });
 
 			// No "Load earlier" button shown
@@ -163,7 +165,7 @@ test.describe('TaskView — Message Pagination', () => {
 			await expect(page.locator('text=Message number 55')).toBeVisible({ timeout: 10000 });
 
 			// The oldest messages should NOT be visible initially (they're hidden by pagination)
-			await expect(page.locator('text=Message number 1')).not.toBeVisible();
+			await expect(page.getByText('Message number 1', { exact: true })).not.toBeVisible();
 
 			// "Load earlier messages" button should appear at the top
 			await expect(page.getByTestId('load-earlier-messages')).toBeVisible({ timeout: 5000 });
@@ -208,7 +210,9 @@ test.describe('TaskView — Message Pagination', () => {
 
 			// After clicking, older messages should appear
 			// With 55 messages and pageSize=50, clicking once shows all 55
-			await expect(page.locator('text=Message number 1')).toBeVisible({ timeout: 5000 });
+			await expect(page.getByText('Message number 1', { exact: true })).toBeVisible({
+				timeout: 5000,
+			});
 
 			// The Load Earlier button should now be gone (all messages loaded)
 			await expect(page.getByTestId('load-earlier-messages')).not.toBeVisible();
