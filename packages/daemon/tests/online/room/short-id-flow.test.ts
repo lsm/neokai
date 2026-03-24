@@ -20,6 +20,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import type { NeoTask, RoomGoal, RoomOverview } from '@neokai/shared';
+import { createRoom, createGoal } from './room-test-helpers';
 
 describe('Short ID Full Flow Integration', () => {
 	let daemon: DaemonServerContext;
@@ -33,13 +34,6 @@ describe('Short ID Full Flow Integration', () => {
 	}, 15_000);
 
 	// ─── Helpers ──────────────────────────────────────────────────────────────
-
-	async function createRoom(name: string): Promise<string> {
-		const result = (await daemon.messageHub.request('room.create', {
-			name: `${name}-${Date.now()}`,
-		})) as { room: { id: string } };
-		return result.room.id;
-	}
 
 	async function deleteRoom(roomId: string): Promise<void> {
 		await daemon.messageHub.request('room.delete', { roomId });
@@ -62,15 +56,6 @@ describe('Short ID Full Flow Integration', () => {
 		return result.task;
 	}
 
-	async function createGoal(roomId: string, title: string): Promise<RoomGoal> {
-		const result = (await daemon.messageHub.request('goal.create', {
-			roomId,
-			title,
-			description: 'Short ID integration test goal',
-		})) as { goal: RoomGoal };
-		return result.goal;
-	}
-
 	async function getRoomOverview(roomId: string): Promise<RoomOverview> {
 		const result = (await daemon.messageHub.request('room.overview', { roomId })) as {
 			overview: RoomOverview;
@@ -82,7 +67,7 @@ describe('Short ID Full Flow Integration', () => {
 
 	describe('short ID assignment and lookup', () => {
 		test('task.create assigns sequential short IDs t-1 and t-2 in the same room', async () => {
-			const roomId = await createRoom('short-id-seq');
+			const roomId = await createRoom(daemon, 'short-id-seq');
 
 			try {
 				const task1 = await createTask(roomId, 'First task');
@@ -96,7 +81,7 @@ describe('Short ID Full Flow Integration', () => {
 		});
 
 		test('task.get by short ID returns the correct task', async () => {
-			const roomId = await createRoom('short-id-get');
+			const roomId = await createRoom(daemon, 'short-id-get');
 
 			try {
 				const created1 = await createTask(roomId, 'Task for short ID get t-1');
@@ -121,10 +106,15 @@ describe('Short ID Full Flow Integration', () => {
 		});
 
 		test('goal.create assigns short ID g-1', async () => {
-			const roomId = await createRoom('short-id-goal');
+			const roomId = await createRoom(daemon, 'short-id-goal');
 
 			try {
-				const goal = await createGoal(roomId, 'First goal');
+				const goal = await createGoal(
+					daemon,
+					roomId,
+					'First goal',
+					'Short ID integration test goal'
+				);
 
 				expect(goal.shortId).toBe('g-1');
 			} finally {
@@ -133,7 +123,7 @@ describe('Short ID Full Flow Integration', () => {
 		});
 
 		test('room.overview includes shortId in task summaries', async () => {
-			const roomId = await createRoom('short-id-overview');
+			const roomId = await createRoom(daemon, 'short-id-overview');
 
 			try {
 				const task1 = await createTask(roomId, 'Overview task 1');
@@ -144,8 +134,8 @@ describe('Short ID Full Flow Integration', () => {
 
 				const overview = await getRoomOverview(roomId);
 
-				// allTasks includes all tasks with shortId populated
-				const allTasks = overview.allTasks ?? overview.activeTasks;
+				// allTasks includes all tasks (activeTasks excludes terminal tasks)
+				const allTasks = overview.allTasks!;
 				expect(allTasks.length).toBeGreaterThanOrEqual(2);
 
 				const summary1 = allTasks.find((t) => t.id === task1.id);
@@ -164,8 +154,8 @@ describe('Short ID Full Flow Integration', () => {
 
 	describe('cross-room isolation', () => {
 		test('two independent rooms each start short ID counters from t-1', async () => {
-			const roomA = await createRoom('isolation-room-a');
-			const roomB = await createRoom('isolation-room-b');
+			const roomA = await createRoom(daemon, 'isolation-room-a');
+			const roomB = await createRoom(daemon, 'isolation-room-b');
 
 			try {
 				const taskA = await createTask(roomA, 'Room A first task');
