@@ -45,7 +45,7 @@ import {
 import type { WorkflowNodeData } from './WorkflowCanvas';
 import { WorkflowCanvas, DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT } from './WorkflowCanvas';
 import { computeFitToView } from './CanvasToolbar';
-import { autoLayout } from './layout';
+import { autoLayout, TASK_AGENT_INITIAL_POSITION } from './layout';
 import type { NodePosition } from './types';
 import { NodeConfigPanel } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
@@ -95,7 +95,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (initState) return initState.nodes;
 		// Create mode: inject the Task Agent virtual node immediately so it is
 		// always present, even before any real step is added.
-		// Position matches autoLayout's empty-workflow constant: START_X=50, TASK_AGENT_Y=20.
+		// Use the exported layout constant so this position stays in sync with autoLayout.
 		return [
 			{
 				step: {
@@ -105,7 +105,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					agentId: '',
 					instructions: '',
 				},
-				position: { x: 50, y: 20 },
+				position: TASK_AGENT_INITIAL_POSITION,
 			},
 		];
 	});
@@ -320,12 +320,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}, []);
 
 	const handleNodeSelect = useCallback((localId: string | null) => {
+		// Task Agent is a virtual node — it must not be selectable so neither the
+		// NodeConfigPanel (which would show a delete button) nor the keyboard Delete
+		// handler (which fires on the WorkflowCanvas selected node) can remove it.
+		if (localId === TASK_AGENT_NODE_ID) return;
 		setSelectedNodeId(localId);
 		if (localId) setSelectedEdgeId(null);
 	}, []);
 
 	const handleDeleteNode = useCallback(
 		(localId: string) => {
+			// Task Agent is a virtual node that must always be present — defend against
+			// both the NodeConfigPanel delete path and the keyboard Delete path.
+			if (localId === TASK_AGENT_NODE_ID) return;
+
 			// Read current state from closure (nodes + startNodeId are deps).
 			const nodeToDelete = nodes.find((n) => n.step.localId === localId);
 			if (!nodeToDelete) return;
@@ -547,7 +555,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				agentId: '',
 				instructions: '',
 			},
-			position: positions.get(TASK_AGENT_NODE_ID) ?? { x: 50, y: 20 },
+			position: positions.get(TASK_AGENT_NODE_ID) ?? TASK_AGENT_INITIAL_POSITION,
 		};
 		setNodes([taskAgentVisualNode, ...positionedNodes]);
 		setEdges(newEdges);

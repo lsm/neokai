@@ -29,6 +29,13 @@ const START_X = 50;
 const TASK_AGENT_Y = 20;
 
 /**
+ * Canonical canvas position for the Task Agent virtual node.
+ * Exported so callers that initialise node positions outside of autoLayout
+ * (e.g. create-mode component state) stay in sync with the layout constants.
+ */
+export const TASK_AGENT_INITIAL_POSITION: Point = { x: START_X, y: TASK_AGENT_Y };
+
+/**
  * Compute auto-layout positions for all steps in a workflow.
  *
  * The Task Agent virtual node (`TASK_AGENT_NODE_ID`) is always placed at the

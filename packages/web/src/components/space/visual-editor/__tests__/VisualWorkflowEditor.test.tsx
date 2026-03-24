@@ -294,8 +294,9 @@ describe('VisualWorkflowEditor', () => {
 			);
 			expect(queryByTestId('node-config-panel')).toBeNull();
 
-			const [firstNode] = getAllByTestId(/^workflow-node-/);
-			fireEvent.click(firstNode);
+			// [0] is Task Agent (not selectable); use [1] for the first regular node.
+			const firstRegularNode = getAllByTestId(/^workflow-node-/)[1];
+			fireEvent.click(firstRegularNode);
 
 			expect(queryByTestId('node-config-panel')).toBeTruthy();
 		});
@@ -304,7 +305,8 @@ describe('VisualWorkflowEditor', () => {
 			const { getAllByTestId, queryByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+			// [0] is Task Agent (not selectable); [1] is the first regular node.
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
 			expect(queryByTestId('node-config-panel')).toBeTruthy();
 
 			fireEvent.click(getByTestId('close-button'));
@@ -318,11 +320,15 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 
-			// Find the second node (the non-start node)
+			// Find a regular non-start node (exclude Task Agent which is not selectable).
 			const nodes = getAllByTestId(/^workflow-node-/);
-			// Click the node that does NOT have the canvas start badge.
+			// Click the regular node that does NOT have the canvas start badge.
 			// WorkflowNode renders the canvas badge as data-testid="start-badge".
-			const nonStartNode = nodes.find((n) => !n.querySelector('[data-testid="start-badge"]'));
+			const nonStartNode = nodes.find(
+				(n) =>
+					!n.querySelector('[data-testid="start-badge"]') &&
+					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			);
 			expect(nonStartNode).toBeTruthy();
 			fireEvent.click(nonStartNode!);
 
@@ -372,15 +378,12 @@ describe('VisualWorkflowEditor', () => {
 
 		it('Task Agent never receives the start badge after any node deletion', () => {
 			// Workflow: Task Agent (virtual) + step-1 (start) + step-2 (non-start).
-			// We transfer start to step-2 first, then delete step-1.
-			// After deletion remaining = [Task Agent, step-2]. The Task Agent must NOT
+			// We transfer start to step-2 first, then delete step-1 (wasStart=false).
+			// After deletion remaining = [Task Agent, step-2]. Task Agent must NOT
 			// receive the start badge.
 			//
-			// NOTE: The `wasStart = true` branch in handleDeleteNode (which also uses the
-			// `regularRemaining` filter) is intentionally unreachable via UI: the delete
-			// button is disabled for the current start node, and the handler has an
-			// early-return guard. This test verifies the structurally identical filter
-			// in the `wasStart = false` path where Task Agent occupies remaining[0].
+			// The `wasStart = true` branch (where the regularRemaining filter is also
+			// exercised) is covered by the keyboard-Delete test below.
 			const { getAllByTestId, queryByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
@@ -459,11 +462,50 @@ describe('VisualWorkflowEditor', () => {
 			expect(document.querySelectorAll('[data-testid="start-badge"]')).toHaveLength(1);
 		});
 
+		it('keyboard Delete on start node — next regular node becomes start (wasStart=true path)', () => {
+			// WorkflowCanvas keyboard handler fires onDeleteNode without checking isStartNode,
+			// so handleDeleteNode is called with wasStart=true for the start node.
+			// This exercises the regularRemaining filter: Task Agent must be excluded and
+			// the next regular node (step-2) must be promoted as the new start.
+			const { container, getAllByTestId, queryByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
+			);
+
+			const allNodes = getAllByTestId(/^workflow-node-/);
+			// step-1 is start (has badge); step-2 is non-start
+			const startNode = allNodes.find((n) => n.querySelector('[data-testid="start-badge"]'))!;
+			const nonStartRegular = allNodes.find(
+				(n) =>
+					!n.querySelector('[data-testid="start-badge"]') &&
+					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			)!;
+
+			// Click start node to set it as WorkflowCanvas's selected node
+			fireEvent.click(startNode);
+
+			// Keyboard Delete triggers handleDeleteNode(startNode.localId) with wasStart=true
+			fireEvent.keyDown(document.body, { key: 'Delete' });
+
+			// Start node removed; Task Agent + non-start remain
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(2);
+
+			// Former non-start node must now carry the START badge
+			expect(nonStartRegular.querySelector('[data-testid="start-badge"]')).toBeTruthy();
+
+			// Task Agent must NOT receive the start badge
+			const taskAgent = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			expect(taskAgent?.querySelector('[data-testid="start-badge"]')).toBeNull();
+
+			// Exactly one START badge must exist
+			expect(container.querySelectorAll('[data-testid="start-badge"]')).toHaveLength(1);
+		});
+
 		it('editing step name in NodeConfigPanel updates the node step', () => {
 			const { getAllByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+			// [0] is Task Agent (not selectable); [1] is the first regular node.
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
 
 			const nameInput = getByTestId('step-name-input') as HTMLInputElement;
 			fireEvent.input(nameInput, { target: { value: 'Updated Step Name' } });
@@ -538,8 +580,8 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 
-			// First select a node
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+			// First select a regular node ([0] is Task Agent, not selectable; use [1])
+			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
 			expect(queryByTestId('node-config-panel')).toBeTruthy();
 
 			// Then click an edge
@@ -881,7 +923,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(codingOption!);
 
 			// Nodes use absolute positioning via `left` and `top` style properties.
-			// autoLayout places the first node at START_X=50, START_Y=50, so at
+			// autoLayout places the first node at START_X=50, START_Y=170, so at
 			// least one node must have a non-zero left position.
 			const nodes = getAllByTestId(/^workflow-node-/);
 			const hasNonZeroLeft = nodes.some((n) => {
