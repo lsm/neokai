@@ -233,7 +233,11 @@ describe('SpaceRuntime', () => {
 			const step = {
 				id: STEP_A,
 				name: 'Multi',
-				agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }, { agentId: AGENT_CUSTOM }],
+				agents: [
+					{ agentId: AGENT_PLANNER, role: 'planner' },
+					{ agentId: AGENT_CODER, role: 'coder' },
+					{ agentId: AGENT_CUSTOM, role: 'my-custom-role' },
+				],
 			};
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(3);
@@ -246,7 +250,10 @@ describe('SpaceRuntime', () => {
 			const step = {
 				id: STEP_A,
 				name: 'Multi',
-				agents: [{ agentId: AGENT_GENERAL }, { agentId: AGENT_CODER }],
+				agents: [
+					{ agentId: AGENT_GENERAL, role: 'general' },
+					{ agentId: AGENT_CODER, role: 'coder' },
+				],
 			};
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(2);
@@ -258,7 +265,10 @@ describe('SpaceRuntime', () => {
 			const step = {
 				id: STEP_A,
 				name: 'Multi',
-				agents: [{ agentId: AGENT_CODER }, { agentId: 'unknown-agent-id' }],
+				agents: [
+					{ agentId: AGENT_CODER, role: 'coder' },
+					{ agentId: 'unknown-agent-id', role: 'unknown' },
+				],
 			};
 			const results = runtime.resolveTaskTypesForStep(step);
 			expect(results).toHaveLength(2);
@@ -270,7 +280,10 @@ describe('SpaceRuntime', () => {
 			const step = {
 				id: STEP_A,
 				name: 'Multi',
-				agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+				agents: [
+					{ agentId: AGENT_PLANNER, role: 'planner' },
+					{ agentId: AGENT_CODER, role: 'coder' },
+				],
 			};
 			const single = runtime.resolveTaskTypeForStep(step);
 			const multi = runtime.resolveTaskTypesForStep(step);
@@ -544,7 +557,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Multi Step',
-						agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+						agents: [
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+							{ agentId: AGENT_CODER, role: 'coder' },
+						],
 					},
 				],
 				transitions: [],
@@ -574,7 +590,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Custom Multi Step',
-						agents: [{ agentId: AGENT_CUSTOM }, { agentId: AGENT_CODER }],
+						agents: [
+							{ agentId: AGENT_CUSTOM, role: 'my-custom-role' },
+							{ agentId: AGENT_CODER, role: 'coder' },
+						],
 					},
 				],
 				transitions: [],
@@ -1832,8 +1851,8 @@ describe('SpaceRuntime', () => {
 						id: STEP_A,
 						name: 'Parallel Start',
 						agents: [
-							{ agentId: AGENT_CODER, instructions: 'Coder task' },
-							{ agentId: AGENT_PLANNER, instructions: 'Planner task' },
+							{ agentId: AGENT_CODER, role: 'coder', instructions: 'Coder task' },
+							{ agentId: AGENT_PLANNER, role: 'planner', instructions: 'Planner task' },
 						],
 					},
 				],
@@ -1876,7 +1895,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Mixed Start',
-						agents: [{ agentId: AGENT_PLANNER }, { agentId: AGENT_CODER }],
+						agents: [
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+							{ agentId: AGENT_CODER, role: 'coder' },
+						],
 					},
 				],
 				transitions: [],
@@ -1907,7 +1929,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel A',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 					{ id: STEP_B, name: 'Step B', agentId: AGENT_CODER },
 				],
@@ -1940,7 +1965,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel A',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 					{ id: STEP_B, name: 'Step B', agentId: AGENT_CODER },
 				],
@@ -1973,7 +2001,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel Fail',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 				],
 				transitions: [],
@@ -2003,7 +2034,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Parallel Waiting',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_PLANNER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_PLANNER, role: 'planner' },
+						],
 					},
 				],
 				transitions: [],
@@ -2069,7 +2103,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: STEP_A,
 						name: 'Code and Review',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+						],
 						channels: [
 							{
 								from: 'coder',
@@ -2128,7 +2165,10 @@ describe('SpaceRuntime', () => {
 					{
 						id: stepId,
 						name: 'Two Coders Same Role',
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_CODER_2 }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_CODER_2, role: 'coder-2' },
+						],
 					},
 				],
 				transitions: [],
@@ -2164,7 +2204,10 @@ describe('SpaceRuntime', () => {
 						name: 'With Channels',
 						agentId: AGENT_CODER,
 						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
-						agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+						agents: [
+							{ agentId: AGENT_CODER, role: 'coder' },
+							{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+						],
 					},
 					{ id: stepB, name: 'Without Channels', agentId: AGENT_CODER },
 				],

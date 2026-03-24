@@ -568,11 +568,21 @@ export type WorkflowTransitionInput = Omit<WorkflowTransition, 'id'>;
 
 /**
  * A single agent entry within a multi-agent workflow node.
- * References a SpaceAgent by ID and optionally overrides instructions for that agent.
+ * References a SpaceAgent by ID with an optional per-slot configuration override.
  */
 export interface WorkflowNodeAgent {
 	/** ID of the SpaceAgent assigned to execute this node slot */
 	agentId: string;
+	/**
+	 * Unique identifier for this agent slot within the node.
+	 * Used for channel routing and must be unique across all agents in the same node.
+	 * Example values: "strict-reviewer", "quick-reviewer", "security-scanner".
+	 */
+	role: string;
+	/** Override the agent's default model for this slot */
+	model?: string;
+	/** Override the agent's default system prompt for this slot */
+	systemPrompt?: string;
 	/** Per-agent instructions override — appended to the agent's system prompt */
 	instructions?: string;
 }
@@ -844,6 +854,15 @@ export interface UpdateSpaceWorkflowParams {
 export interface ExportedWorkflowNodeAgent {
 	/** Name of the SpaceAgent (portable, not a UUID) */
 	agentRef: string;
+	/**
+	 * Unique identifier for this agent slot within the node.
+	 * Must be unique across all agents in the same exported node.
+	 */
+	role: string;
+	/** Override the agent's default model for this slot */
+	model?: string;
+	/** Override the agent's default system prompt for this slot */
+	systemPrompt?: string;
 	/** Per-agent instructions override */
 	instructions?: string;
 }

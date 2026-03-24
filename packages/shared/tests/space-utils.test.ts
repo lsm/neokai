@@ -42,26 +42,32 @@ describe('resolveNodeAgents', () => {
 	test('returns single-element array when only agentId is set', () => {
 		const node = makeNode({ agentId: 'agent-coder-id', instructions: 'do the thing' });
 		const result = resolveNodeAgents(node);
-		expect(result).toEqual([{ agentId: 'agent-coder-id', instructions: 'do the thing' }]);
+		expect(result).toHaveLength(1);
+		expect(result[0].agentId).toBe('agent-coder-id');
+		expect(result[0].instructions).toBe('do the thing');
+		// Synthetic role uses agentId as placeholder
+		expect(result[0].role).toBe('agent-coder-id');
 	});
 
 	test('returns agents array when agents is set (non-empty)', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id', instructions: 'write code' },
-				{ agentId: 'agent-reviewer-id' },
+				{ agentId: 'agent-coder-id', role: 'coder', instructions: 'write code' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
 			],
 		});
 		const result = resolveNodeAgents(node);
 		expect(result).toHaveLength(2);
 		expect(result[0].agentId).toBe('agent-coder-id');
+		expect(result[0].role).toBe('coder');
 		expect(result[1].agentId).toBe('agent-reviewer-id');
+		expect(result[1].role).toBe('reviewer');
 	});
 
 	test('agents takes precedence over agentId when both are set', () => {
 		const node = makeNode({
 			agentId: 'agent-coder-id',
-			agents: [{ agentId: 'agent-reviewer-id' }],
+			agents: [{ agentId: 'agent-reviewer-id', role: 'reviewer' }],
 		});
 		const result = resolveNodeAgents(node);
 		expect(result).toHaveLength(1);
@@ -82,10 +88,10 @@ describe('resolveNodeAgents', () => {
 
 	test('single-element agents array works correctly', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', instructions: 'custom' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder', instructions: 'custom' }],
 		});
 		expect(resolveNodeAgents(node)).toEqual([
-			{ agentId: 'agent-coder-id', instructions: 'custom' },
+			{ agentId: 'agent-coder-id', role: 'coder', instructions: 'custom' },
 		]);
 	});
 
@@ -93,6 +99,37 @@ describe('resolveNodeAgents', () => {
 		const node = makeNode({ agentId: 'agent-coder-id' });
 		const result = resolveNodeAgents(node);
 		expect(result[0].instructions).toBeUndefined();
+	});
+
+	test('same agentId can appear multiple times with different roles', () => {
+		const node = makeNode({
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'strict-reviewer' },
+				{ agentId: 'agent-coder-id', role: 'quick-reviewer' },
+			],
+		});
+		const result = resolveNodeAgents(node);
+		expect(result).toHaveLength(2);
+		expect(result[0].role).toBe('strict-reviewer');
+		expect(result[1].role).toBe('quick-reviewer');
+		expect(result[0].agentId).toBe('agent-coder-id');
+		expect(result[1].agentId).toBe('agent-coder-id');
+	});
+
+	test('preserves model and systemPrompt override fields', () => {
+		const node = makeNode({
+			agents: [
+				{
+					agentId: 'agent-coder-id',
+					role: 'fast-coder',
+					model: 'claude-haiku-4-5',
+					systemPrompt: 'You are a fast coder.',
+				},
+			],
+		});
+		const result = resolveNodeAgents(node);
+		expect(result[0].model).toBe('claude-haiku-4-5');
+		expect(result[0].systemPrompt).toBe('You are a fast coder.');
 	});
 });
 
@@ -113,7 +150,10 @@ describe('resolveNodeChannels', () => {
 
 	test('A→B one-way: produces one resolved channel', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(node, allAgents);
@@ -130,7 +170,10 @@ describe('resolveNodeChannels', () => {
 
 	test('A↔B bidirectional point-to-point: produces two one-way channels', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
 		const result = resolveNodeChannels(node, allAgents);
@@ -151,9 +194,9 @@ describe('resolveNodeChannels', () => {
 	test('A→[B,C] fan-out: produces one channel per target', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
@@ -175,9 +218,9 @@ describe('resolveNodeChannels', () => {
 	test('A↔[B,C] hub-spoke: produces hub→spoke + spoke→hub, no spoke-to-spoke', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
@@ -205,9 +248,9 @@ describe('resolveNodeChannels', () => {
 	test('wildcard *→B: all agents send to B', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
@@ -222,9 +265,9 @@ describe('resolveNodeChannels', () => {
 	test('wildcard A→*: A sends to all other agents', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
@@ -239,9 +282,9 @@ describe('resolveNodeChannels', () => {
 	test('channel label is propagated to all resolved channels', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [
 				{
@@ -258,7 +301,7 @@ describe('resolveNodeChannels', () => {
 
 	test('skips channels referencing unknown roles (does not throw)', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(node, allAgents);
@@ -267,7 +310,7 @@ describe('resolveNodeChannels', () => {
 
 	test('self-loop (from === to) is skipped', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'coder', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(node, allAgents);
@@ -277,9 +320,9 @@ describe('resolveNodeChannels', () => {
 	test('multiple channels expand independently', () => {
 		const node = makeNode({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [
 				{ from: 'coder', to: 'reviewer', direction: 'one-way' },
@@ -295,6 +338,24 @@ describe('resolveNodeChannels', () => {
 	test('backward-compat: node with only agentId and no channels resolves channels to []', () => {
 		const node = makeNode({ agentId: 'agent-coder-id' });
 		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
+	});
+
+	test('same agentId with different roles routes channels correctly', () => {
+		// Two slots using the same agent but different roles
+		const node = makeNode({
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'strict-reviewer' },
+				{ agentId: 'agent-coder-id', role: 'quick-reviewer' },
+			],
+			channels: [{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' }],
+		});
+		const result = resolveNodeChannels(node, allAgents);
+		expect(result).toHaveLength(1);
+		expect(result[0].fromRole).toBe('strict-reviewer');
+		expect(result[0].toRole).toBe('quick-reviewer');
+		// Both resolve to the same agentId
+		expect(result[0].fromAgentId).toBe('agent-coder-id');
+		expect(result[0].toAgentId).toBe('agent-coder-id');
 	});
 });
 
@@ -315,7 +376,10 @@ describe('validateNodeChannels', () => {
 
 	test('returns no errors for valid channel references', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
 		expect(validateNodeChannels(node, allAgents)).toEqual([]);
@@ -323,7 +387,10 @@ describe('validateNodeChannels', () => {
 
 	test('accepts wildcard * in from without error', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
 		expect(validateNodeChannels(node, allAgents)).toEqual([]);
@@ -331,7 +398,10 @@ describe('validateNodeChannels', () => {
 
 	test('accepts wildcard * in to without error', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
 		expect(validateNodeChannels(node, allAgents)).toEqual([]);
@@ -339,7 +409,7 @@ describe('validateNodeChannels', () => {
 
 	test('reports error for unknown from role', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'nonexistent', to: 'coder', direction: 'one-way' }],
 		});
 		const errors = validateNodeChannels(node, allAgents);
@@ -349,7 +419,7 @@ describe('validateNodeChannels', () => {
 
 	test('reports error for unknown to role', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'nonexistent', direction: 'one-way' }],
 		});
 		const errors = validateNodeChannels(node, allAgents);
@@ -359,7 +429,10 @@ describe('validateNodeChannels', () => {
 
 	test('reports error for unknown role in array to', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: ['reviewer', 'ghost-role'], direction: 'one-way' }],
 		});
 		const errors = validateNodeChannels(node, allAgents);
@@ -369,7 +442,7 @@ describe('validateNodeChannels', () => {
 
 	test('reports error for agent not found in space agents list', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'unknown-agent-id' }],
+			agents: [{ agentId: 'unknown-agent-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
 		const errors = validateNodeChannels(node, allAgents);
@@ -387,7 +460,7 @@ describe('validateNodeChannels', () => {
 
 	test('accumulates multiple errors', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [
 				{ from: 'bad-from', to: 'bad-to', direction: 'one-way' },
 				{ from: 'coder', to: 'another-bad', direction: 'one-way' },
@@ -397,21 +470,38 @@ describe('validateNodeChannels', () => {
 		expect(errors.length).toBeGreaterThanOrEqual(3); // bad-from, bad-to, another-bad
 	});
 
-	test('reports error when two node agents share the same role', () => {
-		// Two coder agents in the same node — duplicate role makes channels ambiguous
-		const dupCoderAgent = makeAgent('agent-coder-2-id', 'coder');
-		const agents = [...allAgents, dupCoderAgent];
+	test('reports error when two agent slots share the same role', () => {
+		// Two slots with the same role — duplicate roles make channels ambiguous
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-coder-2-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'reviewer' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' }, // duplicate role
+			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const errors = validateNodeChannels(node, agents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors.some((e) => e.includes('Duplicate roles'))).toBe(true);
+	});
+
+	test('allows same agentId with different roles (no error)', () => {
+		// Same agent used twice with different roles — this is now permitted
+		const node = makeNode({
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'strict-reviewer' },
+				{ agentId: 'agent-coder-id', role: 'quick-reviewer' },
+			],
+			channels: [{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' }],
+		});
+		const errors = validateNodeChannels(node, allAgents);
+		expect(errors).toEqual([]);
 	});
 
 	test('reports error when * is mixed with other roles in array to', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: ['reviewer', '*'], direction: 'one-way' }],
 		});
 		const errors = validateNodeChannels(node, allAgents);
@@ -420,7 +510,10 @@ describe('validateNodeChannels', () => {
 
 	test('plain * in to (not in array) is accepted', () => {
 		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
 		expect(validateNodeChannels(node, allAgents)).toEqual([]);
@@ -440,7 +533,11 @@ describe('backward compatibility (nodes with only agentId)', () => {
 			instructions: 'do stuff',
 		};
 		const result = resolveNodeAgents(node);
-		expect(result).toEqual([{ agentId: 'agent-coder-id', instructions: 'do stuff' }]);
+		expect(result).toHaveLength(1);
+		expect(result[0].agentId).toBe('agent-coder-id');
+		expect(result[0].instructions).toBe('do stuff');
+		// Synthetic role = agentId for legacy shorthand
+		expect(result[0].role).toBe('agent-coder-id');
 	});
 
 	test('resolveNodeChannels returns [] for legacy nodes with no channels', () => {

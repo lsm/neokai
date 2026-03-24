@@ -187,7 +187,18 @@ function buildWorkflowCreateParams(
 				}
 				// agentId ?? '' is a placeholder for unresolved refs — warnings.length > 0 will
 				// cause a throw before createWorkflow is called, so '' never reaches the DB.
-				const entry: { agentId: string; instructions?: string } = { agentId: agentId ?? '' };
+				const entry: {
+					agentId: string;
+					role: string;
+					model?: string;
+					systemPrompt?: string;
+					instructions?: string;
+				} = {
+					agentId: agentId ?? '',
+					role: a.role,
+				};
+				if (a.model !== undefined) entry.model = a.model;
+				if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
 				if (a.instructions !== undefined) entry.instructions = a.instructions;
 				return entry;
 			});

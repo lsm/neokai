@@ -135,7 +135,9 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		if (nodeAgents.some((a) => a.agentId === agentId)) return;
-		updateAgents([...nodeAgents, { agentId }]);
+		const agentInfo = agents.find((a) => a.id === agentId);
+		const role = agentInfo?.role ?? agentId;
+		updateAgents([...nodeAgents, { agentId, role }]);
 	}
 
 	function removeAgent(agentId: string) {
@@ -609,7 +611,12 @@ export function WorkflowNodeCard({
 									type="button"
 									onClick={() => {
 										const firstId = node.agentId;
-										const existing: WorkflowNodeAgent[] = firstId ? [{ agentId: firstId }] : [];
+										const firstAgentRole = firstId
+											? (agents.find((a) => a.id === firstId)?.role ?? firstId)
+											: '';
+										const existing: WorkflowNodeAgent[] = firstId
+											? [{ agentId: firstId, role: firstAgentRole }]
+											: [];
 										onUpdate({ ...node, agents: existing, agentId: '' });
 									}}
 									class="text-xs text-blue-400 hover:text-blue-300 transition-colors"

@@ -384,7 +384,10 @@ describe('NodeConfigPanel', () => {
 		it('shows agents list in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 			});
 			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			expect(getByTestId('agents-list')).toBeTruthy();
@@ -395,7 +398,10 @@ describe('NodeConfigPanel', () => {
 		it('renders one entry per agent in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 			});
 			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			expect(getAllByTestId('agent-entry')).toHaveLength(2);
@@ -404,7 +410,7 @@ describe('NodeConfigPanel', () => {
 		it('shows agent name and role in each agent entry', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			const entry = getByTestId('agents-list');
@@ -416,7 +422,10 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 			});
 			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.click(getAllByTestId('remove-agent-button')[0]);
@@ -429,7 +438,7 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
 				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -446,7 +455,7 @@ describe('NodeConfigPanel', () => {
 		it('shows add-agent-select dropdown for agents not yet in step', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			// agent-2 is not in step yet, should appear in dropdown
@@ -458,7 +467,7 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
@@ -478,7 +487,7 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }],
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
 				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -493,7 +502,10 @@ describe('NodeConfigPanel', () => {
 		it('shows channels section in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			expect(getByTestId('channels-section')).toBeTruthy();
@@ -509,7 +521,10 @@ describe('NodeConfigPanel', () => {
 		it('renders existing channels in channels list', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 				channels: [
 					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
 					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
@@ -523,7 +538,10 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 				channels: [
 					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
 					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
@@ -539,7 +557,10 @@ describe('NodeConfigPanel', () => {
 		it('add channel button is disabled when from or to is empty', () => {
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			const addBtn = getByTestId('add-channel-button');
@@ -550,7 +571,10 @@ describe('NodeConfigPanel', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
-				agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			// Set from

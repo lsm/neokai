@@ -61,6 +61,9 @@ const workflowConditionSchema = z
 
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
+	role: z.string().min(1),
+	model: z.string().optional(),
+	systemPrompt: z.string().optional(),
 	instructions: z.string().optional(),
 });
 
@@ -229,7 +232,10 @@ export function exportWorkflow(
 			const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
 				const entry: ExportedWorkflowNodeAgent = {
 					agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
+					role: a.role,
 				};
+				if (a.model !== undefined) entry.model = a.model;
+				if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
 				if (a.instructions !== undefined) entry.instructions = a.instructions;
 				return entry;
 			});

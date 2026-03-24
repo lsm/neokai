@@ -1219,8 +1219,8 @@ describe('exportWorkflow — multi-agent nodes', () => {
 					id: 'node-uuid-1',
 					name: 'Parallel code+review',
 					agents: [
-						{ agentId: 'agent-uuid-1', instructions: 'Write the feature' },
-						{ agentId: 'agent-uuid-3' },
+						{ agentId: 'agent-uuid-1', role: 'coder', instructions: 'Write the feature' },
+						{ agentId: 'agent-uuid-3', role: 'reviewer' },
 					],
 					channels: [
 						{
@@ -1383,7 +1383,10 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'My Coder', instructions: 'Code it' }, { agentRef: 'Reviewer' }],
+					agents: [
+						{ agentRef: 'My Coder', role: 'coder', instructions: 'Code it' },
+						{ agentRef: 'Reviewer', role: 'reviewer' },
+					],
 					name: 'Parallel Step',
 				},
 			],
@@ -1409,7 +1412,10 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
+					agents: [
+						{ agentRef: 'Coder', role: 'coder' },
+						{ agentRef: 'Reviewer', role: 'reviewer' },
+					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 					name: 'Step',
 				},
@@ -1435,7 +1441,11 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'Hub' }, { agentRef: 'Spoke1' }, { agentRef: 'Spoke2' }],
+					agents: [
+						{ agentRef: 'Hub', role: 'hub' },
+						{ agentRef: 'Spoke1', role: 'spoke1' },
+						{ agentRef: 'Spoke2', role: 'spoke2' },
+					],
 					channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 					name: 'Fan-out',
 				},
@@ -1507,8 +1517,8 @@ describe('round-trip: multi-agent + channels', () => {
 					id: 'node-1',
 					name: 'Code and Review',
 					agents: [
-						{ agentId: 'agent-uuid-1', instructions: 'Implement the feature' },
-						{ agentId: 'agent-uuid-3', instructions: 'Review the code' },
+						{ agentId: 'agent-uuid-1', role: 'coder', instructions: 'Implement the feature' },
+						{ agentId: 'agent-uuid-3', role: 'reviewer', instructions: 'Review the code' },
 					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },

@@ -805,7 +805,7 @@ describe('resolveNodeAgents()', () => {
 	test('returns single-element array when only agentId is set', () => {
 		const step = makeStep({ agentId: 'agent-a', instructions: 'do the thing' });
 		const result = resolveNodeAgents(step);
-		expect(result).toEqual([{ agentId: 'agent-a', instructions: 'do the thing' }]);
+		expect(result).toEqual([{ agentId: 'agent-a', role: 'agent-a', instructions: 'do the thing' }]);
 	});
 
 	test('returns agents array when agents is set and non-empty', () => {
@@ -841,8 +841,12 @@ describe('resolveNodeAgents()', () => {
 	});
 
 	test('single-element agents array works correctly', () => {
-		const step = makeStep({ agents: [{ agentId: 'agent-a', instructions: 'custom' }] });
-		expect(resolveNodeAgents(step)).toEqual([{ agentId: 'agent-a', instructions: 'custom' }]);
+		const step = makeStep({
+			agents: [{ agentId: 'agent-a', role: 'agent-a', instructions: 'custom' }],
+		});
+		expect(resolveNodeAgents(step)).toEqual([
+			{ agentId: 'agent-a', role: 'agent-a', instructions: 'custom' },
+		]);
 	});
 
 	test('agentId with no instructions produces entry with undefined instructions', () => {
@@ -879,7 +883,10 @@ describe('resolveNodeChannels()', () => {
 	// A → B one-way
 	test('A→B one-way: resolves to single directed channel', () => {
 		const step = makeStep({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, allAgents);
@@ -897,7 +904,10 @@ describe('resolveNodeChannels()', () => {
 	// A ↔ B bidirectional point-to-point
 	test('A↔B bidirectional point-to-point: resolves to two directed channels (A→B and B→A)', () => {
 		const step = makeStep({
-			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+			agents: [
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
 		const result = resolveNodeChannels(step, allAgents);
@@ -919,9 +929,9 @@ describe('resolveNodeChannels()', () => {
 	test('A→[B,C,D] fan-out one-way: resolves to three directed channels, no reverse', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
@@ -940,9 +950,9 @@ describe('resolveNodeChannels()', () => {
 	test('A↔[B,C,D] hub-spoke: resolves to A→B, A→C, A→D, B→A, C→A, D→A; B cannot send to C', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
@@ -971,9 +981,9 @@ describe('resolveNodeChannels()', () => {
 	test('*→B wildcard from: resolves to channels from all agents to B', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
@@ -989,9 +999,9 @@ describe('resolveNodeChannels()', () => {
 	test('A→* wildcard to: resolves to channels from A to all other agents', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id' },
-				{ agentId: 'agent-reviewer-id' },
-				{ agentId: 'agent-security-id' },
+				{ agentId: 'agent-coder-id', role: 'coder' },
+				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-security-id', role: 'security' },
 			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
@@ -1006,7 +1016,7 @@ describe('resolveNodeChannels()', () => {
 	// Invalid role reference → skipped silently
 	test('invalid role reference is skipped silently (does not throw)', () => {
 		const step = makeStep({
-			agents: [{ agentId: 'agent-coder-id' }],
+			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, allAgents);
@@ -1059,7 +1069,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id' }],
+						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 						channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 					},
 				],
@@ -1083,7 +1093,10 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+					agents: [
+						{ agentId: 'agent-coder-id', role: 'coder' },
+						{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 				},
 			],
@@ -1127,7 +1140,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id' }],
+						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 						channels: [{ from: 'nonexistent', to: 'coder', direction: 'one-way' }],
 					},
 				],
@@ -1150,7 +1163,7 @@ describe('Channel validation in SpaceWorkflowManager persistence', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-coder-id' }],
+					agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 					channels: [{ from: '*', to: 'coder', direction: 'one-way' }],
 				},
 			],
@@ -1283,7 +1296,10 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 				{
 					id: STEP_A,
 					name: 'Parallel With Channels',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'review-request' },
 					],
@@ -1333,7 +1349,10 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 				{
 					id: STEP_B,
 					name: 'Parallel With Channels',
-					agents: [{ agentId: AGENT_CODER }, { agentId: AGENT_REVIEWER }],
+					agents: [
+						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'feedback' }],
 				},
 			],

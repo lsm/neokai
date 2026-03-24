@@ -77,16 +77,16 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	 */
 	function buildTaskAgentChannels(agentsToChannel: WorkflowNodeAgent[]): WorkflowChannel[] {
 		return agentsToChannel.map((sa) => {
-			const agentInfo = agents.find((a) => a.id === sa.agentId);
-			const role = agentInfo?.role ?? sa.agentId;
-			return { from: 'task-agent', to: role, direction: 'bidirectional' };
+			return { from: 'task-agent', to: sa.role, direction: 'bidirectional' };
 		});
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		if (stepAgents.some((a) => a.agentId === agentId)) return;
-		const next = [...stepAgents, { agentId }];
+		const agentInfo = agents.find((a) => a.id === agentId);
+		const role = agentInfo?.role ?? agentId;
+		const next = [...stepAgents, { agentId, role }];
 		// Merge agents + channels into a single onUpdate call to avoid stale-reference overwrites
 		const newChannels = step.channels === undefined ? buildTaskAgentChannels(next) : step.channels;
 		onUpdate({ ...step, agents: next, agentId: '', channels: newChannels });
@@ -125,7 +125,12 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						data-testid="add-agent-button"
 						onClick={() => {
 							const firstId = step.agentId;
-							const existing: WorkflowNodeAgent[] = firstId ? [{ agentId: firstId }] : [];
+							const firstAgentRole = firstId
+								? (agents.find((a) => a.id === firstId)?.role ?? firstId)
+								: '';
+							const existing: WorkflowNodeAgent[] = firstId
+								? [{ agentId: firstId, role: firstAgentRole }]
+								: [];
 							onUpdate({ ...step, agents: existing, agentId: '' });
 						}}
 						class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
