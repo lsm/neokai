@@ -32,7 +32,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow, WorkflowStep, WorkflowTransition } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowNode, WorkflowTransition } from '@neokai/shared';
 
 // ---- Mocks ----
 
@@ -70,8 +70,8 @@ import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 // Helpers
 // ============================================================================
 
-/** Create a WorkflowStep with a given index. */
-function makeStep(index: number): WorkflowStep {
+/** Create a WorkflowNode with a given index. */
+function makeStep(index: number): WorkflowNode {
 	return { id: `node-${index}`, name: `Step ${index}`, agentId: 'agent-1' };
 }
 
@@ -89,7 +89,7 @@ function makeTransition(from: number, to: number): WorkflowTransition {
  */
 function buildLargeWorkflow(): SpaceWorkflow {
 	// 25 nodes: n0 through n24
-	const steps: WorkflowStep[] = Array.from({ length: 25 }, (_, i) => makeStep(i));
+	const nodes: WorkflowNode[] = Array.from({ length: 25 }, (_, i) => makeStep(i));
 
 	// Main fan-out chains (25 edges):
 	//   n0 → n1…n5 (layer 0 → layer 1)
@@ -152,9 +152,9 @@ function buildLargeWorkflow(): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Large Workflow',
 		description: 'Performance test workflow with 25 nodes and 35 edges',
-		steps,
+		nodes,
 		transitions,
-		startStepId: 'node-0',
+		startNodeId: 'node-0',
 		rules: [],
 		tags: [],
 		createdAt: 0,
@@ -180,7 +180,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 		const workflow = buildLargeWorkflow();
 
 		const start = performance.now();
-		const positions = autoLayout(workflow.steps, workflow.transitions, workflow.startStepId!);
+		const positions = autoLayout(workflow.nodes, workflow.transitions, workflow.startNodeId!);
 		const elapsed = performance.now() - start;
 
 		// Verify correctness: all 25 nodes must receive a position.
@@ -196,7 +196,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 	// be assigned different x-coordinates.
 	it('autoLayout assigns unique positions to all 25 nodes', () => {
 		const workflow = buildLargeWorkflow();
-		const positions = autoLayout(workflow.steps, workflow.transitions, workflow.startStepId!);
+		const positions = autoLayout(workflow.nodes, workflow.transitions, workflow.startNodeId!);
 
 		// All nodes should have a position entry.
 		expect(positions.size).toBe(25);
@@ -240,7 +240,7 @@ describe('VisualWorkflowEditor performance — large workflow (25 nodes, 35 edge
 	// Sanity: the large workflow fixture has the exact expected counts.
 	it('large workflow fixture has exactly 25 nodes and 35 edges', () => {
 		const workflow = buildLargeWorkflow();
-		expect(workflow.steps.length).toBe(25);
+		expect(workflow.nodes.length).toBe(25);
 		expect(workflow.transitions.length).toBe(35);
 	});
 });

@@ -16,7 +16,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { SpaceAgent, WorkflowStepAgent, WorkflowChannel } from '@neokai/shared';
+import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
 import type { StepDraft } from '../WorkflowStepCard';
 import { isMultiAgentStep } from '../WorkflowStepCard';
 import { GateConfig } from './GateConfig';
@@ -66,7 +66,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentStep(step);
 	const stepAgents = step.agents ?? [];
 
-	function updateAgents(next: WorkflowStepAgent[]) {
+	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
@@ -75,7 +75,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	 * Called from event handlers (agent dropdown onChange, addAgent) to avoid
 	 * mount-time side effects that corrupt existing workflow data.
 	 */
-	function buildTaskAgentChannels(agentsToChannel: WorkflowStepAgent[]): WorkflowChannel[] {
+	function buildTaskAgentChannels(agentsToChannel: WorkflowNodeAgent[]): WorkflowChannel[] {
 		return agentsToChannel.map((sa) => {
 			const agentInfo = agents.find((a) => a.id === sa.agentId);
 			const role = agentInfo?.role ?? sa.agentId;
@@ -125,7 +125,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						data-testid="add-agent-button"
 						onClick={() => {
 							const firstId = step.agentId;
-							const existing: WorkflowStepAgent[] = firstId ? [{ agentId: firstId }] : [];
+							const existing: WorkflowNodeAgent[] = firstId ? [{ agentId: firstId }] : [];
 							onUpdate({ ...step, agents: existing, agentId: '' });
 						}}
 						class="text-xs text-blue-400 hover:text-blue-300 transition-colors"

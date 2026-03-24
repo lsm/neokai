@@ -23,7 +23,7 @@
 import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type {
 	SpaceWorkflow,
-	WorkflowStep,
+	WorkflowNode,
 	WorkflowTransition,
 	WorkflowConditionType,
 } from '@neokai/shared';
@@ -95,7 +95,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [edges, setEdges] = useState<VisualEdge[]>(() => initState?.edges ?? []);
 	const [rules, setRules] = useState<RuleDraft[]>(() => initState?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
-	const [startStepId, setStartStepId] = useState<string>(() => initState?.startStepId ?? '');
+	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -206,9 +206,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	/** True when the given node is the current start node. */
 	const nodeIsStart = useCallback(
 		(node: VisualNode): boolean => {
-			return node.step.localId === startStepId || node.step.id === startStepId;
+			return node.step.localId === startNodeId || node.step.id === startNodeId;
 		},
-		[startStepId]
+		[startNodeId]
 	);
 
 	/** Find the first incoming edge condition for a node (entry gate). */
@@ -302,14 +302,14 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleDeleteNode = useCallback(
 		(localId: string) => {
-			// Read current state from closure (nodes + startStepId are deps).
+			// Read current state from closure (nodes + startNodeId are deps).
 			const nodeToDelete = nodes.find((n) => n.step.localId === localId);
 			if (!nodeToDelete) return;
 
 			const key = nodeToDelete.step.id ?? nodeToDelete.step.localId;
 			const remaining = nodes.filter((n) => n.step.localId !== localId);
 			const wasStart =
-				nodeToDelete.step.localId === startStepId || nodeToDelete.step.id === startStepId;
+				nodeToDelete.step.localId === startNodeId || nodeToDelete.step.id === startNodeId;
 
 			// Update all state in flat calls — no nested setter inside another updater.
 			setNodes(remaining);
@@ -324,7 +324,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 			setSelectedNodeId(null);
 		},
-		[nodes, startStepId]
+		[nodes, startNodeId]
 	);
 
 	const handleUpdateNode = useCallback((step: StepDraft) => {
@@ -486,7 +486,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		}));
 
 		// Compute positions via autoLayout
-		const layoutSteps: WorkflowStep[] = newNodes.map((n) => ({
+		const layoutSteps: WorkflowNode[] = newNodes.map((n) => ({
 			id: n.step.localId,
 			name: n.step.name,
 			agentId: n.step.agentId,
@@ -566,7 +566,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			}
 		}
 
-		const visualState: VisualEditorState = { nodes, edges, startStepId, rules, tags };
+		const visualState: VisualEditorState = { nodes, edges, startNodeId, rules, tags };
 
 		setSaving(true);
 		setError(null);

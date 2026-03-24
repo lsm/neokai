@@ -3,7 +3,7 @@
  *
  * Coverage:
  * - workflowToVisualState: position restoration from layout, auto-layout fallback,
- *   edge mapping, startStepId pass-through, WorkflowCondition field preservation
+ *   edge mapping, startNodeId pass-through, WorkflowCondition field preservation
  * - visualStateToCreateParams / visualStateToUpdateParams: round-trip, transition
  *   ordering, layout output, rules remapping, dangling edge handling
  */
@@ -15,7 +15,7 @@ import {
 	visualStateToUpdateParams,
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
-import type { SpaceWorkflow, WorkflowStep, WorkflowTransition, WorkflowRule } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowNode, WorkflowTransition, WorkflowRule } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
@@ -38,7 +38,7 @@ afterEach(() => {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function makeStep(id: string, name?: string, agentId?: string): WorkflowStep {
+function makeStep(id: string, name?: string, agentId?: string): WorkflowNode {
 	return { id, name: name ?? id, agentId: agentId ?? 'agent-1' };
 }
 
@@ -61,9 +61,9 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		id: 'wf-1',
 		spaceId: 'space-1',
 		name: 'Test Workflow',
-		steps: [],
+		nodes: [],
 		transitions: [],
-		startStepId: '',
+		startNodeId: '',
 		rules: [],
 		tags: [],
 		createdAt: 0,
@@ -79,9 +79,9 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 describe('workflowToVisualState', () => {
 	it('creates one node per step', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		expect(state.nodes).toHaveLength(2);
@@ -91,9 +91,9 @@ describe('workflowToVisualState', () => {
 
 	it('creates one edge per transition', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2'), makeStep('s3')],
+			nodes: [makeStep('s1'), makeStep('s2'), makeStep('s3')],
 			transitions: [makeTransition('s1', 's2'), makeTransition('s2', 's3')],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		expect(state.edges).toHaveLength(2);
@@ -101,31 +101,31 @@ describe('workflowToVisualState', () => {
 		expect(state.edges[1]).toMatchObject({ fromStepKey: 's2', toStepKey: 's3' });
 	});
 
-	it('passes startStepId through unchanged', () => {
+	it('passes startNodeId through unchanged', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's2',
+			startNodeId: 's2',
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.startStepId).toBe('s2');
+		expect(state.startNodeId).toBe('s2');
 	});
 
-	it('falls back to first step when startStepId does not match any step', () => {
+	it('falls back to first step when startNodeId does not match any step', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1')],
+			nodes: [makeStep('s1')],
 			transitions: [],
-			startStepId: 'nonexistent',
+			startNodeId: 'nonexistent',
 		});
 		const state = workflowToVisualState(wf);
-		expect(state.startStepId).toBe('s1');
+		expect(state.startNodeId).toBe('s1');
 	});
 
 	it('restores positions from workflow.layout', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 			layout: { s1: { x: 100, y: 200 }, s2: { x: 350, y: 200 } },
 		});
 		const state = workflowToVisualState(wf);
@@ -137,9 +137,9 @@ describe('workflowToVisualState', () => {
 		// This is validated by ensuring position values match the layout exactly.
 		// If autoLayout ran, it would produce different values (50, 50) not (999, 888).
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 			layout: { s1: { x: 999, y: 888 }, s2: { x: 777, y: 666 } },
 		});
 		const state = workflowToVisualState(wf);
@@ -149,9 +149,9 @@ describe('workflowToVisualState', () => {
 
 	it('uses autoLayout when no layout is provided', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		// In a linear chain, s2 should be in a lower layer (higher y)
@@ -162,9 +162,9 @@ describe('workflowToVisualState', () => {
 
 	it('uses autoLayout only for steps missing from partial layout', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 			layout: { s1: { x: 999, y: 888 } }, // s2 not in layout
 		});
 		const state = workflowToVisualState(wf);
@@ -177,7 +177,7 @@ describe('workflowToVisualState', () => {
 
 	it('preserves full WorkflowCondition fields (description, maxRetries, timeoutMs)', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [
 				makeTransition('s1', 's2', 't1', 0, {
 					type: 'condition',
@@ -187,7 +187,7 @@ describe('workflowToVisualState', () => {
 					timeoutMs: 5000,
 				}),
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		expect(state.edges[0].condition).toEqual({
@@ -201,12 +201,12 @@ describe('workflowToVisualState', () => {
 
 	it('maps condition types correctly', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2'), makeStep('s3')],
+			nodes: [makeStep('s1'), makeStep('s2'), makeStep('s3')],
 			transitions: [
 				makeTransition('s1', 's2', 't1', 0, { type: 'human' }),
 				makeTransition('s2', 's3', 't2', 1, { type: 'condition', expression: 'exit 0' }),
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		expect(state.edges[0].condition).toMatchObject({ type: 'human' });
@@ -215,9 +215,9 @@ describe('workflowToVisualState', () => {
 
 	it('maps transitions without condition to undefined (unconditional)', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		expect(state.edges[0].condition).toBeUndefined();
@@ -225,9 +225,9 @@ describe('workflowToVisualState', () => {
 
 	it('converts rules to drafts', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1')],
+			nodes: [makeStep('s1')],
 			transitions: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [makeRule('r1', 'Rule 1', 'Content 1', ['s1'])],
 		});
 		const state = workflowToVisualState(wf);
@@ -239,9 +239,9 @@ describe('workflowToVisualState', () => {
 
 	it('passes tags through', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1')],
+			nodes: [makeStep('s1')],
 			transitions: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			tags: ['coding', 'review'],
 		});
 		const state = workflowToVisualState(wf);
@@ -250,9 +250,9 @@ describe('workflowToVisualState', () => {
 
 	it('assigns fresh localIds to each node', () => {
 		const wf = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
 		const localIds = state.nodes.map((n) => n.step.localId);
@@ -290,7 +290,7 @@ describe('visualStateToCreateParams', () => {
 					condition: undefined,
 				},
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 			...overrides,
@@ -299,9 +299,9 @@ describe('visualStateToCreateParams', () => {
 
 	it('produces correct steps array', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.steps).toHaveLength(2);
-		expect(params.steps![0]).toMatchObject({ id: 's1', name: 'Step 1', agentId: 'a1' });
-		expect(params.steps![1]).toMatchObject({
+		expect(params.nodes).toHaveLength(2);
+		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Step 1', agentId: 'a1' });
+		expect(params.nodes![1]).toMatchObject({
 			id: 's2',
 			name: 'Step 2',
 			agentId: 'a2',
@@ -311,7 +311,7 @@ describe('visualStateToCreateParams', () => {
 
 	it('omits empty instructions', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.steps![0].instructions).toBeUndefined();
+		expect(params.nodes![0].instructions).toBeUndefined();
 	});
 
 	it('produces correct transitions array', () => {
@@ -359,17 +359,17 @@ describe('visualStateToCreateParams', () => {
 		});
 	});
 
-	it('passes startStepId through', () => {
+	it('passes startNodeId through', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.startStepId).toBe('s1');
+		expect(params.startNodeId).toBe('s1');
 	});
 
-	it('resolves startStepId via localId when it references step.localId', () => {
-		// startStepId is set to the localId of an existing step (step.id='s1', localId='local-1')
-		const state = makeState({ startStepId: 'local-1' });
+	it('resolves startNodeId via localId when it references step.localId', () => {
+		// startNodeId is set to the localId of an existing step (step.id='s1', localId='local-1')
+		const state = makeState({ startNodeId: 'local-1' });
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		// Should resolve to the persisted step id 's1'
-		expect(params.startStepId).toBe('s1');
+		expect(params.startNodeId).toBe('s1');
 	});
 
 	it('builds layout from node positions', () => {
@@ -431,27 +431,27 @@ describe('visualStateToCreateParams', () => {
 				},
 			],
 			edges: [],
-			startStepId: 'local-new',
+			startNodeId: 'local-new',
 			rules: [],
 			tags: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.steps![0].id).toBeTruthy();
-		expect(params.startStepId).toBe(params.steps![0].id);
+		expect(params.nodes![0].id).toBeTruthy();
+		expect(params.startNodeId).toBe(params.nodes![0].id);
 	});
 
 	it('handles zero nodes gracefully', () => {
 		const state: VisualEditorState = {
 			nodes: [],
 			edges: [],
-			startStepId: '',
+			startNodeId: '',
 			rules: [],
 			tags: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.steps).toHaveLength(0);
+		expect(params.nodes).toHaveLength(0);
 		expect(params.transitions).toHaveLength(0);
-		expect(params.startStepId).toBeUndefined();
+		expect(params.startNodeId).toBeUndefined();
 	});
 });
 
@@ -478,7 +478,7 @@ describe('dangling edge handling', () => {
 				// Dangling: 'deleted-node' not in nodes
 				{ fromStepKey: 'deleted-node', toStepKey: 's2', condition: undefined },
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
@@ -496,7 +496,7 @@ describe('dangling edge handling', () => {
 				},
 			],
 			edges: [{ fromStepKey: 's1', toStepKey: 'deleted-target', condition: undefined }],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
@@ -532,7 +532,7 @@ describe('transition ordering', () => {
 				{ fromStepKey: 's1', toStepKey: 's2', condition: undefined },
 				{ fromStepKey: 's1', toStepKey: 's3', condition: undefined },
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
@@ -563,7 +563,7 @@ describe('transition ordering', () => {
 				},
 			],
 			edges: [{ fromStepKey: 's1', toStepKey: 's2', condition: undefined }],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
@@ -579,9 +579,9 @@ describe('transition ordering', () => {
 describe('round-trip serialization', () => {
 	it('produces equivalent steps after round-trip', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1', 'Plan', 'agent-p'), makeStep('s2', 'Code', 'agent-c')],
+			nodes: [makeStep('s1', 'Plan', 'agent-p'), makeStep('s2', 'Code', 'agent-c')],
 			transitions: [makeTransition('s1', 's2', 't1', 0)],
-			startStepId: 's1',
+			startNodeId: 's1',
 			layout: { s1: { x: 50, y: 50 }, s2: { x: 50, y: 200 } },
 			tags: ['coding'],
 		});
@@ -589,26 +589,26 @@ describe('round-trip serialization', () => {
 		const visualState = workflowToVisualState(original);
 		const params = visualStateToUpdateParams(visualState);
 
-		expect(params.steps).toHaveLength(2);
-		expect(params.steps![0]).toMatchObject({ id: 's1', name: 'Plan', agentId: 'agent-p' });
-		expect(params.steps![1]).toMatchObject({ id: 's2', name: 'Code', agentId: 'agent-c' });
+		expect(params.nodes).toHaveLength(2);
+		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Plan', agentId: 'agent-p' });
+		expect(params.nodes![1]).toMatchObject({ id: 's2', name: 'Code', agentId: 'agent-c' });
 	});
 
-	it('preserves startStepId after round-trip', () => {
+	it('preserves startNodeId after round-trip', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's2',
+			startNodeId: 's2',
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
-		expect(params.startStepId).toBe('s2');
+		expect(params.startNodeId).toBe('s2');
 	});
 
 	it('preserves layout positions after round-trip', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 			layout: { s1: { x: 111, y: 222 }, s2: { x: 333, y: 444 } },
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
@@ -620,7 +620,7 @@ describe('round-trip serialization', () => {
 
 	it('preserves full WorkflowCondition fields after round-trip', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [
 				makeTransition('s1', 's2', 't1', 0, {
 					type: 'condition',
@@ -630,7 +630,7 @@ describe('round-trip serialization', () => {
 					timeoutMs: 10000,
 				}),
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
 		expect(params.transitions![0].condition).toEqual({
@@ -644,9 +644,9 @@ describe('round-trip serialization', () => {
 
 	it('preserves tags after round-trip', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1')],
+			nodes: [makeStep('s1')],
 			transitions: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			tags: ['research', 'review'],
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
@@ -655,9 +655,9 @@ describe('round-trip serialization', () => {
 
 	it('preserves rules after round-trip', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2')],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [makeRule('r1', 'Security Rule', 'No secrets in output', ['s1'])],
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
@@ -672,9 +672,9 @@ describe('round-trip serialization', () => {
 
 	it('unconditional transitions round-trip with undefined condition', () => {
 		const original = makeWorkflow({
-			steps: [makeStep('s1'), makeStep('s2')],
+			nodes: [makeStep('s1'), makeStep('s2')],
 			transitions: [makeTransition('s1', 's2', 't1', 0)], // no condition
-			startStepId: 's1',
+			startNodeId: 's1',
 		});
 		const params = visualStateToUpdateParams(workflowToVisualState(original));
 		expect(params.transitions![0].condition).toBeUndefined();
@@ -682,7 +682,7 @@ describe('round-trip serialization', () => {
 
 	it('is lossless for a 3-step workflow with all features', () => {
 		const original = makeWorkflow({
-			steps: [
+			nodes: [
 				makeStep('s1', 'Plan', 'agent-p'),
 				makeStep('s2', 'Code', 'agent-c'),
 				makeStep('s3', 'Review', 'agent-r'),
@@ -691,7 +691,7 @@ describe('round-trip serialization', () => {
 				makeTransition('s1', 's2', 't1', 0, { type: 'human' }),
 				makeTransition('s2', 's3', 't2', 0),
 			],
-			startStepId: 's1',
+			startNodeId: 's1',
 			layout: { s1: { x: 50, y: 50 }, s2: { x: 50, y: 200 }, s3: { x: 50, y: 350 } },
 			tags: ['coding'],
 			rules: [makeRule('r1', 'R1', 'Content', ['s1', 's2'])],
@@ -701,8 +701,8 @@ describe('round-trip serialization', () => {
 		const params = visualStateToUpdateParams(visualState);
 
 		// Steps
-		expect(params.steps).toHaveLength(3);
-		const stepIds = params.steps!.map((s) => s.id);
+		expect(params.nodes).toHaveLength(3);
+		const stepIds = params.nodes!.map((s) => s.id);
 		expect(stepIds).toContain('s1');
 		expect(stepIds).toContain('s2');
 		expect(stepIds).toContain('s3');
@@ -714,8 +714,8 @@ describe('round-trip serialization', () => {
 		const t2 = params.transitions!.find((t) => t.from === 's2' && t.to === 's3')!;
 		expect(t2.condition).toBeUndefined();
 
-		// startStepId
-		expect(params.startStepId).toBe('s1');
+		// startNodeId
+		expect(params.startNodeId).toBe('s1');
 
 		// Layout
 		expect(params.layout).toMatchObject({
@@ -748,7 +748,7 @@ describe('visualStateToUpdateParams', () => {
 				},
 			],
 			edges: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
@@ -769,7 +769,7 @@ describe('visualStateToUpdateParams', () => {
 				},
 			],
 			edges: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [
 				{ localId: 'lr1', id: undefined, name: 'New Rule', content: 'Content', appliesTo: [] },
 			],
@@ -785,9 +785,9 @@ describe('visualStateToUpdateParams', () => {
 // ---------------------------------------------------------------------------
 
 describe('multi-agent step serialization', () => {
-	it('workflowToVisualState preserves agents array from WorkflowStep', () => {
+	it('workflowToVisualState preserves agents array from WorkflowNode', () => {
 		const workflow = makeWorkflow({
-			steps: [
+			nodes: [
 				{
 					id: 's1',
 					name: 'Parallel Step',
@@ -805,9 +805,9 @@ describe('multi-agent step serialization', () => {
 		expect(step.agentId).toBe('');
 	});
 
-	it('workflowToVisualState preserves channels array from WorkflowStep', () => {
+	it('workflowToVisualState preserves channels array from WorkflowNode', () => {
 		const workflow = makeWorkflow({
-			steps: [
+			nodes: [
 				{
 					id: 's1',
 					name: 'Parallel Step',
@@ -852,12 +852,12 @@ describe('multi-agent step serialization', () => {
 				},
 			],
 			edges: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		const step = params.steps![0];
+		const step = params.nodes![0];
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
 		expect(step.agents![1].instructions).toBe('custom');
@@ -884,30 +884,30 @@ describe('multi-agent step serialization', () => {
 				},
 			],
 			edges: [],
-			startStepId: 's1',
+			startNodeId: 's1',
 			rules: [],
 			tags: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.steps![0].channels).toBeUndefined();
+		expect(params.nodes![0].channels).toBeUndefined();
 	});
 
 	it('single-agent step round-trip: agentId preserved, no agents array', () => {
 		const workflow = makeWorkflow({
-			steps: [makeStep('s1', 'Code', 'agent-coder')],
+			nodes: [makeStep('s1', 'Code', 'agent-coder')],
 		});
 		const state = workflowToVisualState(workflow);
 		expect(state.nodes[0].step.agentId).toBe('agent-coder');
 		expect(state.nodes[0].step.agents).toBeUndefined();
 
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		expect(params.steps![0].agentId).toBe('agent-coder');
-		expect(params.steps![0].agents).toBeUndefined();
+		expect(params.nodes![0].agentId).toBe('agent-coder');
+		expect(params.nodes![0].agents).toBeUndefined();
 	});
 
 	it('full round-trip workflowToVisualState → visualStateToUpdateParams preserves multi-agent data', () => {
 		const workflow = makeWorkflow({
-			steps: [
+			nodes: [
 				{
 					id: 's1',
 					name: 'Parallel',
@@ -923,7 +923,7 @@ describe('multi-agent step serialization', () => {
 		const state = workflowToVisualState(workflow);
 		const params = visualStateToUpdateParams(state);
 
-		const step = params.steps![0];
+		const step = params.nodes![0];
 		// agents array preserved through update round-trip
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');

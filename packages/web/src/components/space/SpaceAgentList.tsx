@@ -138,7 +138,7 @@ export function SpaceAgentList() {
 
 	function getWorkflowNamesReferencingAgent(agentId: string): string[] {
 		return workflows
-			.filter((wf) => wf.steps.some((step) => step.agentId === agentId))
+			.filter((wf) => wf.nodes.some((step) => step.agentId === agentId))
 			.map((wf) => wf.name);
 	}
 
