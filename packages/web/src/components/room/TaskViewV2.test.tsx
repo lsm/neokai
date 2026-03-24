@@ -298,6 +298,7 @@ function makeTurn(overrides: Partial<TurnBlock> = {}): TurnBlock {
 		isError: false,
 		errorMessage: null,
 		messages: [],
+		hiddenCount: 0,
 		...overrides,
 	};
 }
