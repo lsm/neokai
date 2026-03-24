@@ -414,8 +414,11 @@ describe('NodeConfigPanel', () => {
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			const entry = getByTestId('agents-list');
+			// Agent name appears as text in a <p> element
 			expect(entry.textContent).toContain('Planner');
-			expect(entry.textContent).toContain('planner');
+			// Role appears as the value of the role input field
+			const roleInput = getByTestId('agent-role-input') as HTMLInputElement;
+			expect(roleInput.value).toBe('planner');
 		});
 
 		it('remove agent button calls onUpdate without that agent', () => {
@@ -644,6 +647,180 @@ describe('NodeConfigPanel', () => {
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
 			expect(updatedStep.agents).toHaveLength(3);
 			expect(updatedStep.agents[2].role).toBe('coder-3');
+		});
+	});
+
+	// ============================================================================
+	// Per-slot override fields: role, model, systemPrompt
+	// ============================================================================
+
+	describe('per-slot override fields', () => {
+		it('renders a role input for each agent slot in multi-agent mode', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-1', role: 'planner' },
+					{ agentId: 'agent-2', role: 'coder' },
+				],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			const roleInputs = getAllByTestId('agent-role-input');
+			expect(roleInputs).toHaveLength(2);
+			expect((roleInputs[0] as HTMLInputElement).value).toBe('planner');
+			expect((roleInputs[1] as HTMLInputElement).value).toBe('coder');
+		});
+
+		it('editing role input calls onUpdate with updated role', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.input(getByTestId('agent-role-input'), { target: { value: 'lead-planner' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].role).toBe('lead-planner');
+		});
+
+		it('shows override-badge when slot has model override', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner', model: 'claude-opus-4-6' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('override-badge')).toBeTruthy();
+		});
+
+		it('shows override-badge when slot has systemPrompt override', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner', systemPrompt: 'You are strict.' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('override-badge')).toBeTruthy();
+		});
+
+		it('does not show override-badge when slot has no overrides', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(queryByTestId('override-badge')).toBeNull();
+		});
+
+		it('model and systemPrompt fields are hidden by default (before expanding)', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(queryByTestId('agent-model-input')).toBeNull();
+			expect(queryByTestId('agent-system-prompt-input')).toBeNull();
+		});
+
+		it('clicking toggle-overrides-button reveals model and systemPrompt fields', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(getByTestId('slot-overrides')).toBeTruthy();
+			expect(getByTestId('agent-model-input')).toBeTruthy();
+			expect(getByTestId('agent-system-prompt-input')).toBeTruthy();
+		});
+
+		it('clicking toggle-overrides-button twice collapses the override section', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(getByTestId('slot-overrides')).toBeTruthy();
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			expect(queryByTestId('slot-overrides')).toBeNull();
+		});
+
+		it('editing model input calls onUpdate with model field set', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			// Expand the overrides section first
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.input(getByTestId('agent-model-input'), {
+				target: { value: 'claude-opus-4-6' },
+			});
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].model).toBe('claude-opus-4-6');
+		});
+
+		it('clearing model input sets model to undefined', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner', model: 'claude-opus-4-6' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.input(getByTestId('agent-model-input'), { target: { value: '' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].model).toBeUndefined();
+		});
+
+		it('editing systemPrompt textarea calls onUpdate with systemPrompt set', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', role: 'planner' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.click(getByTestId('toggle-overrides-button'));
+			fireEvent.input(getByTestId('agent-system-prompt-input'), {
+				target: { value: 'Be very strict.' },
+			});
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents[0].systemPrompt).toBe('Be very strict.');
+		});
+
+		it('adding same agent twice with different roles: both slots shown', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', role: 'coder' },
+					{ agentId: 'agent-2', role: 'coder-2' },
+				],
+			});
+			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			const roleInputs = getAllByTestId('agent-role-input') as HTMLInputElement[];
+			expect(roleInputs).toHaveLength(2);
+			expect(roleInputs[0].value).toBe('coder');
+			expect(roleInputs[1].value).toBe('coder-2');
+		});
+
+		it('each slot can independently have overrides — override-badge appears only on overridden slot', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', role: 'coder', model: 'claude-opus-4-6' },
+					{ agentId: 'agent-2', role: 'coder-2' },
+				],
+			});
+			const { getAllByTestId, queryAllByTestId } = render(
+				<NodeConfigPanel {...makeProps({ step })} />
+			);
+			// One badge for the slot with model override
+			expect(getAllByTestId('override-badge')).toHaveLength(1);
+			// Confirm the overridden slot's entry has amber styling via data attribute
+			const entries = getAllByTestId('agent-entry');
+			expect(entries[0].getAttribute('data-has-overrides')).toBe('true');
+			expect(entries[1].getAttribute('data-has-overrides')).toBeNull();
+			// No stray badges in the second slot
+			expect(queryAllByTestId('override-badge')).toHaveLength(1);
 		});
 	});
 });

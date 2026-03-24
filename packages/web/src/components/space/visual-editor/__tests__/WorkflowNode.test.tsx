@@ -270,9 +270,9 @@ describe('WorkflowNode multi-agent rendering', () => {
 		expect(badges).toBeTruthy();
 		// agent-name element should not be present in multi-agent mode
 		expect(queryByTestId('agent-name')).toBeNull();
-		// Both agent names should appear
-		expect(badges.textContent).toContain('Alpha Agent');
-		expect(badges.textContent).toContain('Beta Agent');
+		// Canvas shows slot role names (not agent names) for compact display
+		expect(badges.textContent).toContain('coder');
+		expect(badges.textContent).toContain('reviewer');
 	});
 
 	it('renders single agent name when agents array is absent', () => {
@@ -289,14 +289,45 @@ describe('WorkflowNode multi-agent rendering', () => {
 		expect(queryByTestId('agent-badges')).toBeNull();
 	});
 
-	it('falls back to agentId as badge label when agent not found', () => {
+	it('shows slot role in badge even when agent lookup fails (agent not found in list)', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
 			agents: [{ agentId: 'unknown-agent-id', role: 'coder' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
-		expect(getByTestId('agent-badges').textContent).toContain('unknown-agent-id');
+		// Badge shows the slot role (always available), not the agent name (which requires lookup)
+		expect(getByTestId('agent-badges').textContent).toContain('coder');
+	});
+
+	it('shows override-indicator dot when slot has model override', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' }],
+		};
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		expect(getByTestId('override-indicator')).toBeTruthy();
+	});
+
+	it('shows override-indicator dot when slot has systemPrompt override', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'coder', systemPrompt: 'Be strict.' }],
+		};
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		expect(getByTestId('override-indicator')).toBeTruthy();
+	});
+
+	it('does not show override-indicator when slot has no overrides', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'agent-1', role: 'coder' }],
+		};
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		expect(queryByTestId('override-indicator')).toBeNull();
 	});
 
 	it('uses wider minWidth for multi-agent steps', () => {

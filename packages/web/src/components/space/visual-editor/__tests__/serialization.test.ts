@@ -1073,3 +1073,159 @@ describe('Task Agent virtual node', () => {
 		expect(params.transitions![0]).toMatchObject({ from: 's1', to: 's2' });
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Per-slot agent override serialization round-trips
+// ---------------------------------------------------------------------------
+
+describe('per-slot agent overrides round-trip', () => {
+	it('workflowToVisualState preserves model override on agents', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Review',
+					agents: [
+						{ agentId: 'a1', role: 'strict-reviewer', model: 'claude-opus-4-6' },
+						{ agentId: 'a1', role: 'quick-reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const node = state.nodes.find((n) => n.step.id === 's1')!;
+		expect(node.step.agents).toHaveLength(2);
+		expect(node.step.agents![0]).toMatchObject({
+			role: 'strict-reviewer',
+			model: 'claude-opus-4-6',
+		});
+		// slot without override has no model field
+		expect(node.step.agents![1].model).toBeUndefined();
+	});
+
+	it('workflowToVisualState preserves systemPrompt override on agents', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Code',
+					agents: [
+						{
+							agentId: 'a1',
+							role: 'coder',
+							systemPrompt: 'You are a strict TypeScript expert.',
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const node = state.nodes.find((n) => n.step.id === 's1')!;
+		expect(node.step.agents![0].systemPrompt).toBe('You are a strict TypeScript expert.');
+	});
+
+	it('visualStateToCreateParams passes model and systemPrompt through to output', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Review',
+					agents: [
+						{
+							agentId: 'a1',
+							role: 'strict-reviewer',
+							model: 'claude-opus-4-6',
+							systemPrompt: 'Be strict.',
+						},
+						{ agentId: 'a2', role: 'quick-reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+
+		const node = params.nodes![0];
+		expect(node.agents).toHaveLength(2);
+		expect(node.agents![0]).toMatchObject({
+			role: 'strict-reviewer',
+			model: 'claude-opus-4-6',
+			systemPrompt: 'Be strict.',
+		});
+		expect(node.agents![1].model).toBeUndefined();
+		expect(node.agents![1].systemPrompt).toBeUndefined();
+	});
+
+	it('full round-trip: workflow→visualState→createParams preserves all override fields', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Multi Review',
+					agents: [
+						{
+							agentId: 'a1',
+							role: 'coder',
+							model: 'claude-haiku-4-5-20251001',
+							systemPrompt: 'Fast coder.',
+							instructions: 'Focus on speed.',
+						},
+						{
+							agentId: 'a1',
+							role: 'coder-2',
+							model: 'claude-opus-4-6',
+							instructions: 'Focus on quality.',
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+
+		const [slot1, slot2] = params.nodes![0].agents!;
+		expect(slot1.role).toBe('coder');
+		expect(slot1.model).toBe('claude-haiku-4-5-20251001');
+		expect(slot1.systemPrompt).toBe('Fast coder.');
+		expect(slot1.instructions).toBe('Focus on speed.');
+		expect(slot2.role).toBe('coder-2');
+		expect(slot2.model).toBe('claude-opus-4-6');
+		expect(slot2.systemPrompt).toBeUndefined();
+		expect(slot2.instructions).toBe('Focus on quality.');
+	});
+
+	it('same agent added twice with different roles: both preserved in create params', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 's1',
+					name: 'Dual Review',
+					agents: [
+						{ agentId: 'reviewer-agent', role: 'reviewer' },
+						{ agentId: 'reviewer-agent', role: 'reviewer-2', model: 'claude-opus-4-6' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 's1',
+		});
+		const state = workflowToVisualState(wf);
+		const params = visualStateToCreateParams(state, 'space-1', 'WF');
+		const agents = params.nodes![0].agents!;
+		expect(agents).toHaveLength(2);
+		// Both slots reference the same agentId but with different roles
+		expect(agents[0].agentId).toBe('reviewer-agent');
+		expect(agents[0].role).toBe('reviewer');
+		expect(agents[1].agentId).toBe('reviewer-agent');
+		expect(agents[1].role).toBe('reviewer-2');
+		expect(agents[1].model).toBe('claude-opus-4-6');
+	});
+});
