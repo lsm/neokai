@@ -31,6 +31,8 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	needs_attention: 'Needs Attention',
 	cancelled: 'Cancelled',
 	archived: 'Archived',
+	rate_limited: 'Rate Limited',
+	usage_limited: 'Usage Limited',
 };
 
 const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
@@ -42,6 +44,8 @@ const STATUS_CLASSES: Record<SpaceTaskStatus, string> = {
 	needs_attention: 'bg-yellow-900/30 text-yellow-300 border-yellow-700/50',
 	cancelled: 'bg-gray-800 text-gray-500 border-gray-700',
 	archived: 'bg-gray-900 text-gray-600 border-gray-800',
+	rate_limited: 'bg-orange-900/30 text-orange-300 border-orange-700/50',
+	usage_limited: 'bg-orange-900/30 text-orange-400 border-orange-700/50',
 };
 
 const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {

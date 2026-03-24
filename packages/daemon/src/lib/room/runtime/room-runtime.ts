@@ -24,6 +24,7 @@ import {
 	type RuntimeState,
 	type GlobalSettings,
 	type FallbackModelEntry,
+	type TaskRestriction,
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
@@ -718,6 +719,12 @@ export class RoomRuntime {
 						resetsAt: backoff.resetsAt,
 						sessionRole: 'worker',
 					});
+					await this.persistTaskRestriction(
+						group.taskId,
+						backoff,
+						'rate_limit',
+						`API rate limit (HTTP 429)`
+					);
 					this.scheduleTickAfterRateLimitReset(groupId);
 					// Try to switch to a fallback model if configured
 					await this.trySwitchToFallbackModel(groupId, group.workerSessionId, 'worker');
@@ -754,6 +761,12 @@ export class RoomRuntime {
 						resetsAt: backoff.resetsAt,
 						sessionRole: 'worker',
 					});
+					await this.persistTaskRestriction(
+						group.taskId,
+						backoff,
+						'usage_limit',
+						`Daily/weekly usage cap`
+					);
 					this.scheduleTickAfterRateLimitReset(groupId);
 					return;
 				}
@@ -1074,6 +1087,12 @@ export class RoomRuntime {
 						resetsAt: backoff.resetsAt,
 						sessionRole: 'leader',
 					});
+					await this.persistTaskRestriction(
+						group.taskId,
+						backoff,
+						'rate_limit',
+						`API rate limit (HTTP 429) in leader`
+					);
 					this.scheduleTickAfterRateLimitReset(groupId);
 					// Try to switch to a fallback model if configured
 					await this.trySwitchToFallbackModel(groupId, group.leaderSessionId, 'leader');
@@ -1106,6 +1125,12 @@ export class RoomRuntime {
 							resetsAt: backoff.resetsAt,
 							sessionRole: 'leader',
 						});
+						await this.persistTaskRestriction(
+							group.taskId,
+							backoff,
+							'usage_limit',
+							`Daily/weekly usage cap in leader`
+						);
 						this.scheduleTickAfterRateLimitReset(groupId);
 						return;
 					}
@@ -1186,6 +1211,7 @@ export class RoomRuntime {
 
 				// Clear any rate limit backoff since we're starting a new iteration
 				this.groupRepo.clearRateLimit(groupId);
+				await this.clearTaskRestriction(group.taskId);
 
 				// Insert status event into group timeline
 				this.appendGroupEvent(groupId, 'status', {
@@ -2234,6 +2260,16 @@ export class RoomRuntime {
 								resetsAt: rateLimitBackoff.resetsAt,
 								sessionRole,
 							});
+							this.persistTaskRestriction(
+								group.taskId,
+								rateLimitBackoff,
+								'rate_limit',
+								`API rate limit (HTTP 429) in ${role}`
+							).catch((err: unknown) => {
+								log.error(
+									`Failed to persist rate limit restriction for task ${group.taskId}: ${String(err)}`
+								);
+							});
 						}
 					}
 
@@ -3078,8 +3114,16 @@ export class RoomRuntime {
 					(typeof linkedTasks)[number]
 				>[];
 				const hasActiveTask = validTasks.some((t) =>
-					(['pending', 'in_progress', 'draft', 'review'] as const).includes(
-						t.status as 'pending' | 'in_progress' | 'draft' | 'review'
+					(
+						['pending', 'in_progress', 'draft', 'review', 'rate_limited', 'usage_limited'] as const
+					).includes(
+						t.status as
+							| 'pending'
+							| 'in_progress'
+							| 'draft'
+							| 'review'
+							| 'rate_limited'
+							| 'usage_limited'
 					)
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
@@ -3822,6 +3866,50 @@ export class RoomRuntime {
 		}
 
 		if (this.jobQueue) enqueueRoomTick(this.roomId, this.jobQueue, delayMs);
+	}
+
+	/**
+	 * Persist a rate or usage limit restriction to the task record and update its status.
+	 *
+	 * Called when a rate/usage limit is first detected for a group. Saves the restriction
+	 * data so the UI can display the reset time, and sets the task status to
+	 * 'rate_limited' or 'usage_limited' so it's clearly distinguishable from in_progress.
+	 */
+	private async persistTaskRestriction(
+		taskId: string,
+		backoff: RateLimitBackoff,
+		limitType: 'rate_limit' | 'usage_limit',
+		limitDescription: string
+	): Promise<void> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return;
+		// Only update from in_progress to avoid overwriting a terminal status.
+		if (task.status !== 'in_progress') return;
+
+		const newStatus = limitType === 'rate_limit' ? 'rate_limited' : ('usage_limited' as const);
+		const restriction: TaskRestriction = {
+			type: limitType,
+			limit: limitDescription,
+			resetAt: backoff.resetsAt,
+			sessionRole: backoff.sessionRole,
+		};
+		await this.taskManager.updateTaskStatus(taskId, newStatus, { restrictions: restriction });
+		await this.emitTaskUpdateById(taskId);
+	}
+
+	/**
+	 * Clear a task's restriction data and restore its status to in_progress.
+	 *
+	 * Called when a new worker iteration starts (send_to_worker / clearRateLimit path),
+	 * meaning the restriction has either expired or been superseded by a fallback model.
+	 */
+	private async clearTaskRestriction(taskId: string): Promise<void> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return;
+		if (task.status !== 'rate_limited' && task.status !== 'usage_limited') return;
+
+		await this.taskManager.updateTaskStatus(taskId, 'in_progress', { restrictions: null });
+		await this.emitTaskUpdateById(taskId);
 	}
 
 	/**
