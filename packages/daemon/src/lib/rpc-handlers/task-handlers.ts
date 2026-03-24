@@ -54,7 +54,7 @@ export function setupTaskHandlers(
 	db: Database,
 	reactiveDb: ReactiveDatabase,
 	taskManagerFactory: TaskManagerFactory = (d, roomId) =>
-		new TaskManager(d.getDatabase(), roomId, reactiveDb),
+		new TaskManager(d.getDatabase(), roomId, reactiveDb, d.getShortIdAllocator()),
 	runtimeService?: RoomRuntimeService
 ): void {
 	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);

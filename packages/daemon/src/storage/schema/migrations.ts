@@ -183,6 +183,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Enables human-readable scoped short IDs for tasks and goals (e.g. t:04062505:42).
 	// New columns are nullable — existing rows get NULL until short IDs are assigned.
 	runMigration47(db);
+
+	// Migration 48: Replace global short_id unique indexes with room-scoped composite indexes.
+	// Migration 47 accidentally created single-column global indexes (unique across ALL rooms),
+	// causing UNIQUE constraint failures when two different rooms each create their first task.
+	// Short IDs are scoped to their parent room, so uniqueness must be (room_id, short_id).
+	runMigration48(db);
 }
 
 /**
@@ -2924,12 +2930,16 @@ function runMigration46(db: BunDatabase): void {
 /**
  * Migration 47: Add short_id columns to tasks and goals; create short_id_counters table.
  *
- * - `tasks.short_id TEXT` — nullable, unique where not null (partial index).
- * - `goals.short_id TEXT` — nullable, unique where not null (partial index).
+ * - `tasks.short_id TEXT` — nullable, unique within room (partial composite index).
+ * - `goals.short_id TEXT` — nullable, unique within room (partial composite index).
  * - `short_id_counters` — per-(entity_type, scope_id) monotonic counter used by the
  *   ShortIdAllocator service when assigning short IDs to new or existing records.
  *
  * Idempotent: ALTER TABLE is guarded by tableHasColumn(); CREATE TABLE/INDEX use IF NOT EXISTS.
+ *
+ * NOTE: The original migration 47 accidentally created single-column global indexes
+ * (idx_tasks_short_id, idx_goals_short_id) instead of room-scoped composite indexes.
+ * Migration 48 corrects this on already-deployed DBs.
  */
 export function runMigration47(db: BunDatabase): void {
 	// On existing DBs, ALTER TABLE adds the column; on fresh DBs the column is already
@@ -2942,16 +2952,17 @@ export function runMigration47(db: BunDatabase): void {
 		db.exec(`ALTER TABLE goals ADD COLUMN short_id TEXT`);
 	}
 
-	// Partial unique indexes — safe on both fresh and existing DBs; also created by createTables()
-	// via IF NOT EXISTS.
+	// Partial unique indexes — scoped to (room_id, short_id) so different rooms can each
+	// have their own t-1, t-2, ... sequence without global uniqueness collisions.
+	// Also created by createTables() via IF NOT EXISTS.
 	if (tableExists(db, 'tasks')) {
 		db.exec(
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_short_id ON tasks(short_id) WHERE short_id IS NOT NULL`
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
 		);
 	}
 	if (tableExists(db, 'goals')) {
 		db.exec(
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_short_id ON goals(short_id) WHERE short_id IS NOT NULL`
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
 		);
 	}
 
@@ -2964,4 +2975,37 @@ export function runMigration47(db: BunDatabase): void {
 			PRIMARY KEY (entity_type, scope_id)
 		)
 	`);
+}
+
+/**
+ * Migration 48: Replace global short_id unique indexes with room-scoped composite indexes.
+ *
+ * Migration 47 accidentally created single-column indexes:
+ *   CREATE UNIQUE INDEX idx_tasks_short_id ON tasks(short_id)
+ *   CREATE UNIQUE INDEX idx_goals_short_id ON goals(short_id)
+ *
+ * These are global: two tasks in different rooms both getting short_id='t-1' would violate
+ * the constraint. Short IDs are scoped to their parent room, so the correct constraint is:
+ *   (room_id, short_id) must be unique, not just (short_id).
+ *
+ * This migration drops the old global indexes (if they exist) and creates correct room-scoped
+ * composite indexes. Idempotent via DROP IF EXISTS + CREATE IF NOT EXISTS.
+ */
+export function runMigration48(db: BunDatabase): void {
+	if (tableExists(db, 'tasks')) {
+		// Drop old global index if present (created by old migration 47 code)
+		db.exec(`DROP INDEX IF EXISTS idx_tasks_short_id`);
+		// Create correct room-scoped composite index
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
+		);
+	}
+	if (tableExists(db, 'goals')) {
+		// Drop old global index if present
+		db.exec(`DROP INDEX IF EXISTS idx_goals_short_id`);
+		// Create correct room-scoped composite index
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
+		);
+	}
 }

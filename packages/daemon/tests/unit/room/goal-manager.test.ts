@@ -19,6 +19,7 @@ import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
+import { ShortIdAllocator } from '../../../src/lib/short-id-allocator';
 import type { NeoTask } from '@neokai/shared';
 
 describe('GoalManager', () => {
@@ -814,5 +815,53 @@ describe('GoalManager', () => {
 
 			expect(updated.metrics).toEqual(metrics);
 		});
+	});
+});
+
+describe('GoalManager ShortIdAllocator wiring', () => {
+	let db: Database;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createTables(db);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('assigns a shortId when GoalManager is given a ShortIdAllocator', async () => {
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'R', allowedPaths: [] });
+		const allocator = new ShortIdAllocator(db);
+		const manager = new GoalManager(db, room.id, noOpReactiveDb, allocator);
+
+		const goal = await manager.createGoal({ title: 'G1', description: '' });
+
+		expect(goal.shortId).toBeDefined();
+		expect(goal.shortId).toMatch(/^g-\d+$/);
+	});
+
+	it('shortId is undefined when no ShortIdAllocator is provided', async () => {
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'R', allowedPaths: [] });
+		const manager = new GoalManager(db, room.id, noOpReactiveDb);
+
+		const goal = await manager.createGoal({ title: 'G1', description: '' });
+
+		expect(goal.shortId).toBeUndefined();
+	});
+
+	it('assigns sequential shortIds across multiple goals', async () => {
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'R', allowedPaths: [] });
+		const allocator = new ShortIdAllocator(db);
+		const manager = new GoalManager(db, room.id, noOpReactiveDb, allocator);
+
+		const g1 = await manager.createGoal({ title: 'G1', description: '' });
+		const g2 = await manager.createGoal({ title: 'G2', description: '' });
+
+		expect(g1.shortId).toBe('g-1');
+		expect(g2.shortId).toBe('g-2');
 	});
 });

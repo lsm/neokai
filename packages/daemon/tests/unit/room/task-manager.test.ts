@@ -22,6 +22,7 @@ import {
 	VALID_STATUS_TRANSITIONS,
 } from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
+import { ShortIdAllocator } from '../../../src/lib/short-id-allocator';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 describe('TaskManager', () => {
@@ -1336,5 +1337,53 @@ describe('extractPrNumber', () => {
 
 	it('should return null for empty string', () => {
 		expect(extractPrNumber('')).toBeNull();
+	});
+});
+
+describe('TaskManager ShortIdAllocator wiring', () => {
+	let db: Database;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createTables(db);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('assigns a shortId when TaskManager is given a ShortIdAllocator', async () => {
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'R', allowedPaths: [] });
+		const allocator = new ShortIdAllocator(db);
+		const manager = new TaskManager(db, room.id, noOpReactiveDb, allocator);
+
+		const task = await manager.createTask({ title: 'T1', description: '' });
+
+		expect(task.shortId).toBeDefined();
+		expect(task.shortId).toMatch(/^t-\d+$/);
+	});
+
+	it('shortId is undefined when no ShortIdAllocator is provided', async () => {
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'R', allowedPaths: [] });
+		const manager = new TaskManager(db, room.id, noOpReactiveDb);
+
+		const task = await manager.createTask({ title: 'T1', description: '' });
+
+		expect(task.shortId).toBeUndefined();
+	});
+
+	it('assigns sequential shortIds across multiple tasks', async () => {
+		const roomManager = new RoomManager(db, noOpReactiveDb);
+		const room = roomManager.createRoom({ name: 'R', allowedPaths: [] });
+		const allocator = new ShortIdAllocator(db);
+		const manager = new TaskManager(db, room.id, noOpReactiveDb, allocator);
+
+		const t1 = await manager.createTask({ title: 'T1', description: '' });
+		const t2 = await manager.createTask({ title: 'T2', description: '' });
+
+		expect(t1.shortId).toBe('t-1');
+		expect(t2.shortId).toBe('t-2');
 	});
 });
