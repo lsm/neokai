@@ -221,7 +221,7 @@ SELECT
   created_at   AS createdAt,
   updated_at   AS updatedAt
 FROM app_mcp_servers
-ORDER BY name
+ORDER BY name, id ASC
 `.trim();
 
 /**

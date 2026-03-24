@@ -380,9 +380,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			}
 		});
 
-		test('all entries have paramCount >= 1', () => {
+		test('all entries have paramCount >= 0', () => {
 			for (const [name, entry] of NAMED_QUERY_REGISTRY) {
-				expect(entry.paramCount).toBeGreaterThanOrEqual(1, `${name} has paramCount < 1`);
+				// Global queries (e.g. mcpServers.global) need no params and use paramCount: 0.
+				// Room-scoped queries require at least 1 param (e.g. roomId).
+				expect(entry.paramCount).toBeGreaterThanOrEqual(0, `${name} has negative paramCount`);
 			}
 		});
 
