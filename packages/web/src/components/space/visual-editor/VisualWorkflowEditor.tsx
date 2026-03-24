@@ -280,7 +280,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		// outside the updater. State setter calls inside updater functions are side
 		// effects and violate the purity requirement (React StrictMode double-invokes
 		// updaters to catch exactly this pattern).
-		const isFirstNode = nodes.length === 0;
+		// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
+		const isFirstNode = nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID).length === 0;
 		setNodes((prev) => {
 			// Stagger new nodes vertically so they don't overlap (nodes are ~160×80px)
 			const position: Point = { x: 120, y: 80 + prev.length * 100 };
@@ -315,8 +316,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			setNodes(remaining);
 			setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
 
-			if (wasStart && remaining.length > 0) {
-				const next = remaining[0];
+			// Pick the next start node from regular (non-virtual) nodes only.
+			// Task Agent is always at remaining[0] so using it as the next start would
+			// show the START badge on the virtual node, which is visually wrong.
+			const regularRemaining = remaining.filter((n) => n.step.id !== TASK_AGENT_NODE_ID);
+			if (wasStart && regularRemaining.length > 0) {
+				const next = regularRemaining[0];
 				setStartStepId(next.step.id ?? next.step.localId);
 			} else if (wasStart) {
 				setStartStepId('');
@@ -544,7 +549,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			return;
 		}
 		// Exclude the Task Agent virtual node from validation — it's never persisted.
-		const regularNodes = nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID);
+		// Match the same dual-check used in serialization.ts to be consistent.
+		const regularNodes = nodes.filter(
+			(n) => n.step.id !== TASK_AGENT_NODE_ID && n.step.localId !== TASK_AGENT_NODE_ID
+		);
 
 		if (regularNodes.length === 0) {
 			setError('A workflow must have at least one step.');
@@ -698,7 +706,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					</button>
 
 					{/* Template picker — only shown when creating a new workflow with no steps yet */}
-					{!isEditing && nodes.length === 0 && (
+					{!isEditing && nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID).length === 0 && (
 						<div class="relative">
 							<button
 								onClick={() => setShowTemplates((v) => !v)}
@@ -749,8 +757,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					)}
 				</div>
 
-				{/* Empty state overlay */}
-				{nodes.length === 0 && (
+				{/* Empty state overlay — shown when no regular steps exist (Task Agent doesn't count) */}
+				{nodes.filter((n) => n.step.id !== TASK_AGENT_NODE_ID).length === 0 && (
 					<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
 						<div class="text-center">
 							<p class="text-sm text-gray-600">No steps yet.</p>

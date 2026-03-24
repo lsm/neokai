@@ -367,6 +367,48 @@ describe('VisualWorkflowEditor', () => {
 			expect(container.querySelector('[data-edge-id]')).toBeNull();
 		});
 
+		it('Task Agent never receives the start badge after any node deletion', () => {
+			// Workflow: step-1 (start), step-2 (non-start)
+			// Transfer start to step-2 first, then delete step-1.
+			// After deletion remaining = [taskAgent, step-2]. The Task Agent must not
+			// receive the start badge (the UI disables deletion of the current start node,
+			// so this test verifies the invariant via the reachable "delete non-start" path).
+			const { getAllByTestId, queryByTestId, getByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
+			);
+
+			// Step 1: Set step-2 as the new start node
+			const allNodes = getAllByTestId(/^workflow-node-/);
+			const step2Node = allNodes.find(
+				(n) =>
+					!n.querySelector('[data-testid="start-badge"]') &&
+					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			)!;
+			fireEvent.click(step2Node);
+			fireEvent.click(getByTestId('set-as-start-button'));
+
+			// step-2 should now be the start node
+			expect(step2Node.querySelector('[data-testid="start-badge"]')).toBeTruthy();
+
+			// Step 2: Delete step-1 (no longer the start, so delete button is enabled)
+			const step1Node = getAllByTestId(/^workflow-node-/).find(
+				(n) =>
+					!n.querySelector('[data-testid="start-badge"]') &&
+					n.getAttribute('data-testid') !== `workflow-node-${TASK_AGENT_NODE_ID}`
+			)!;
+			fireEvent.click(step1Node);
+			fireEvent.click(getByTestId('delete-step-button'));
+			fireEvent.click(getByTestId('delete-confirm-button'));
+
+			// Task Agent must never receive the start badge
+			const taskAgentNode = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			expect(taskAgentNode?.querySelector('[data-testid="start-badge"]')).toBeNull();
+
+			// step-2 should still be the start
+			const startBadges = document.querySelectorAll('[data-testid="start-badge"]');
+			expect(startBadges).toHaveLength(1);
+		});
+
 		it('editing step name in NodeConfigPanel updates the node step', () => {
 			const { getAllByTestId, getByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />

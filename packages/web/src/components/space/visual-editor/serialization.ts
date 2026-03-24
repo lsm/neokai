@@ -171,8 +171,11 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 /**
  * Compute the canvas position for the Task Agent virtual node.
  *
- * The Task Agent is placed above the highest (smallest y) node in the layout,
+ * The Task Agent is placed above the topmost regular node in the layout,
  * centered horizontally. When no nodes exist yet, it defaults to the canvas origin.
+ *
+ * Uses a fixed minimum y of 20 (same as TASK_AGENT_Y in layout.ts) so that
+ * stored layouts with nodes near y=0 don't cause the Task Agent to overlap.
  */
 function computeTaskAgentPosition(
 	layoutMap: SpaceWorkflow['layout'],
@@ -180,10 +183,12 @@ function computeTaskAgentPosition(
 	workflowNodes: SpaceWorkflow['nodes']
 ): Point {
 	const TASK_AGENT_Y_OFFSET = 120;
+	/** Minimum y position — matches TASK_AGENT_Y in layout.ts */
+	const TASK_AGENT_MIN_Y = 20;
 	const DEFAULT_CENTER_X = 400;
 
 	if (workflowNodes.length === 0) {
-		return { x: DEFAULT_CENTER_X, y: 0 };
+		return { x: DEFAULT_CENTER_X, y: TASK_AGENT_MIN_Y };
 	}
 
 	// Collect all known x positions and the minimum y to place the Task Agent above them
@@ -206,7 +211,9 @@ function computeTaskAgentPosition(
 	}
 
 	const centerX = count > 0 ? sumX / count : DEFAULT_CENTER_X;
-	const y = minY === Infinity ? 0 : Math.max(0, minY - TASK_AGENT_Y_OFFSET);
+	// Clamp to TASK_AGENT_MIN_Y so the Task Agent never overlaps nodes at y≈0
+	const y =
+		minY === Infinity ? TASK_AGENT_MIN_Y : Math.max(TASK_AGENT_MIN_Y, minY - TASK_AGENT_Y_OFFSET);
 
 	return { x: centerX, y };
 }
