@@ -1,7 +1,7 @@
 # Fast Local Memory for Agents — Research Report
 
 **Date:** 2026-03-24
-**Status:** v3 — Addresses P0/P1/P2/P3 review issues; refreshed with 2024–2026 internet research
+**Status:** v4 — All P0/P1/P2/P3 review issues resolved; refreshed with 2024–2026 internet research
 
 ---
 
@@ -76,9 +76,17 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(
   tokenize='trigram'    -- see tokenizer note below
 );
 
--- BM25-ranked search
-SELECT rowid, rank FROM memory_fts WHERE memory_fts MATCH 'tabs indentation' ORDER BY rank;
+-- BM25-ranked search. JOIN resolves FTS5's integer rowid back to the UUID id column.
+SELECT me.id, me.content, me.tags, mf.rank
+FROM memory_fts mf
+JOIN memory_entries me ON me.rowid = mf.rowid
+WHERE memory_fts MATCH 'tabs indentation'
+  AND me.scope = 'room' AND me.scope_key = ?
+ORDER BY mf.rank
+LIMIT 10;
 ```
+
+> **Important:** `memory_fts` search returns integer rowids (its internal FTS index key). The `JOIN memory_entries me ON me.rowid = mf.rowid` step is required to resolve those integers back to UUID `id` values. Omitting the JOIN means callers receive only integer rowids that cannot be passed to other API methods.
 
 **Benchmark (2025, 100k entries):** < 5 ms end-to-end on an M1 MacBook Pro.
 
@@ -120,7 +128,7 @@ Trade-off: trigram indexes are larger (~3–5× vs. porter for typical English t
 | 8-bit quantized scan | 17.44 ms |
 | Quantized + preloaded in memory | **3.97 ms** |
 
-With quantization + preload, it runs **17× faster than sqlite-vec** while maintaining perfect recall. Uses only ~30 MB RAM by default.
+With quantization + preload, it runs **17× faster than sqlite-vec** with minimal recall degradation (quantization is an approximation by definition — it trades a small amount of recall for a large speed gain). Uses only ~30 MB RAM by default.
 
 ```sql
 CREATE VIRTUAL TABLE memory_vectors USING vec0(embedding float[384]);
