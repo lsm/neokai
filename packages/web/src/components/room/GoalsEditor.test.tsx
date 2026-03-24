@@ -2,7 +2,7 @@
  * Tests for GoalsEditor Component
  */
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GoalsEditor } from './GoalsEditor';
 import type { RoomGoal, TaskSummary } from '@neokai/shared';
@@ -1060,6 +1060,27 @@ describe('GoalsEditor', () => {
 
 			fireEvent.click(badge);
 			expect(writeText).toHaveBeenCalledWith('g-9');
+		});
+
+		it('should show visual feedback ("✓ copied") after clicking badge', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				writable: true,
+				configurable: true,
+			});
+
+			const goals = [createMockGoal('goal-1', { shortId: 'g-11' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-11"]'
+			) as HTMLElement;
+
+			expect(badge.textContent).toBe('#g-11');
+			fireEvent.click(badge);
+			await waitFor(() => {
+				expect(badge.textContent).toBe('✓ copied');
+			});
 		});
 
 		it('should show fallback text for goals without shortId', () => {
