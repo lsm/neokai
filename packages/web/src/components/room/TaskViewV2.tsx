@@ -630,7 +630,11 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 				{/* Scroll controls */}
 				<div class="absolute right-4 flex flex-col items-center gap-2" style={{ bottom: '1rem' }}>
 					{showScrollButton && (
-						<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-0" />
+						<ScrollToBottomButton
+							onClick={handleScrollToBottom}
+							bottomClass="bottom-0"
+							autoScroll={autoScrollEnabled}
+						/>
 					)}
 					{/* Autoscroll toggle */}
 					<button
