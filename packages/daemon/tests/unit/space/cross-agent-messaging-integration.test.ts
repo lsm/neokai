@@ -89,9 +89,9 @@ function seedWorkflowRunWithChannels(
 		spaceId,
 		name: 'Integration Test Workflow',
 		description: '',
-		steps: [],
+		nodes: [],
 		transitions: [],
-		startStepId: '',
+		startNodeId: '',
 		rules: [],
 	});
 

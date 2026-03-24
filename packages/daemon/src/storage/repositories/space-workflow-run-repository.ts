@@ -13,7 +13,7 @@ export interface UpdateWorkflowRunParams {
 	title?: string;
 	description?: string;
 	status?: WorkflowRunStatus;
-	currentStepId?: string;
+	currentNodeId?: string;
 	config?: Record<string, unknown>;
 	iterationCount?: number;
 	maxIterations?: number;
@@ -41,7 +41,7 @@ export class SpaceWorkflowRunRepository {
 			params.title,
 			params.description ?? '',
 			0, // keep current_step_index for backward compat
-			params.currentStepId ?? null,
+			params.currentNodeId ?? null,
 			'pending',
 			null,
 			0,
@@ -135,9 +135,9 @@ export class SpaceWorkflowRunRepository {
 				values.push(Date.now());
 			}
 		}
-		if (params.currentStepId !== undefined) {
+		if (params.currentNodeId !== undefined) {
 			fields.push('current_node_id = ?');
-			values.push(params.currentStepId);
+			values.push(params.currentNodeId);
 		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
@@ -169,7 +169,7 @@ export class SpaceWorkflowRunRepository {
 	 * Advance the current step ID for a run
 	 */
 	updateCurrentStep(id: string, stepId: string): SpaceWorkflowRun | null {
-		return this.updateRun(id, { currentStepId: stepId });
+		return this.updateRun(id, { currentNodeId: stepId });
 	}
 
 	/**
@@ -201,7 +201,7 @@ export class SpaceWorkflowRunRepository {
 			workflowId: row.workflow_id as string,
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
-			currentStepId: (row.current_node_id as string | null) ?? undefined,
+			currentNodeId: (row.current_node_id as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
 			config,
 			iterationCount: (row.iteration_count as number | undefined) ?? 0,

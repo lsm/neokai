@@ -1,14 +1,14 @@
 /**
- * Utility functions for WorkflowStep agent and channel resolution.
+ * Utility functions for WorkflowNode agent and channel resolution.
  *
- * These functions handle the multi-agent extension of WorkflowStep:
- * - `resolveStepAgents` normalises the `agentId` / `agents` duality.
- * - `resolveStepChannels` expands declarative channel topology into concrete
+ * These functions handle the multi-agent extension of WorkflowNode:
+ * - `resolveNodeAgents` normalises the `agentId` / `agents` duality.
+ * - `resolveNodeChannels` expands declarative channel topology into concrete
  *   per-agent-pair routing rules.
- * - `validateStepChannels` checks that channel role references are valid.
+ * - `validateNodeChannels` checks that channel role references are valid.
  */
 
-import type { SpaceAgent, WorkflowChannel, WorkflowStep, WorkflowStepAgent } from './space.ts';
+import type { SpaceAgent, WorkflowChannel, WorkflowNode, WorkflowNodeAgent } from './space.ts';
 
 // ============================================================================
 // ResolvedChannel
@@ -42,62 +42,62 @@ export interface ResolvedChannel {
 }
 
 // ============================================================================
-// resolveStepAgents
+// resolveNodeAgents
 // ============================================================================
 
 /**
- * Resolves the concrete agent list for a workflow step.
+ * Resolves the concrete agent list for a workflow node.
  *
  * Precedence rules:
  * 1. If `agents` is provided and non-empty, it takes precedence.
  *    (`agentId`, if also set, is silently ignored — callers should validate
  *    and warn users that `agents` overrides `agentId` at edit time.)
  * 2. If only `agentId` is provided, returns a single-element array:
- *    `[{ agentId, instructions: step.instructions }]`.
+ *    `[{ agentId, instructions: node.instructions }]`.
  * 3. If neither is provided, throws an `Error`.
  *
- * @param step - The workflow step to resolve agents for.
- * @returns Non-empty array of `WorkflowStepAgent` records for this step.
+ * @param node - The workflow node to resolve agents for.
+ * @returns Non-empty array of `WorkflowNodeAgent` records for this node.
  * @throws {Error} When neither `agentId` nor `agents` is provided.
  */
-export function resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[] {
-	if (step.agents && step.agents.length > 0) {
-		return step.agents;
+export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
+	if (node.agents && node.agents.length > 0) {
+		return node.agents;
 	}
 
-	if (step.agentId) {
-		return [{ agentId: step.agentId, instructions: step.instructions }];
+	if (node.agentId) {
+		return [{ agentId: node.agentId, instructions: node.instructions }];
 	}
 
 	throw new Error(
-		`WorkflowStep "${step.name}" (id: ${step.id}) has neither agentId nor agents defined. ` +
+		`WorkflowNode "${node.name}" (id: ${node.id}) has neither agentId nor agents defined. ` +
 			'At least one must be provided.'
 	);
 }
 
 // ============================================================================
-// resolveStepChannels
+// resolveNodeChannels
 // ============================================================================
 
 /**
- * Expands the declarative `WorkflowChannel` list of a step into concrete, directional
+ * Expands the declarative `WorkflowChannel` list of a node into concrete, directional
  * `ResolvedChannel` routing rules.
  *
  * Resolution algorithm:
- * - Each channel's `from`/`to` role strings are resolved against the step's agents via
+ * - Each channel's `from`/`to` role strings are resolved against the node's agents via
  *   the provided `SpaceAgent[]` lookup table (role strings matched via SpaceAgent.role).
- * - `'*'` in `from` or `to` (as the sole element) expands to all agent roles in the step.
+ * - `'*'` in `from` or `to` (as the sole element) expands to all agent roles in the node.
  *   Note: `'*'` mixed with other roles in an array `to` is treated as a literal role name;
- *   use `validateStepChannels` to catch this pattern at edit time.
+ *   use `validateNodeChannels` to catch this pattern at edit time.
  * - Bidirectional channels are expanded into two one-way entries:
  *   - **Point-to-point** (`A ↔ B`): A→B + B→A, both with `isHubSpoke: false`.
  *   - **Hub-spoke** (`A ↔ [B, C, D]`): hub→each spoke + each spoke→hub, all with
  *     `isHubSpoke: true`. Spoke-to-spoke routing is intentionally omitted.
  * - Self-loops (fromRole === toRole) are skipped.
  * - Roles not resolvable via the provided `agents` list are skipped silently;
- *   use `validateStepChannels` to surface these as errors before calling this function.
- * - When two step agents share the same SpaceAgent.role, the last one wins in the
- *   role→agentId map. Duplicate roles are flagged by `validateStepChannels`.
+ *   use `validateNodeChannels` to surface these as errors before calling this function.
+ * - When two node agents share the same SpaceAgent.role, the last one wins in the
+ *   role→agentId map. Duplicate roles are flagged by `validateNodeChannels`.
  *
  * Supported topology patterns:
  * - `A → B`        one-way point-to-point
@@ -107,20 +107,20 @@ export function resolveStepAgents(step: WorkflowStep): WorkflowStepAgent[] {
  * - `* → B`        all agents send to B
  * - `A → *`        A sends to all agents
  *
- * @param step   - The workflow step whose channels are to be resolved.
+ * @param node   - The workflow node whose channels are to be resolved.
  * @param agents - All `SpaceAgent` records in the Space; used to map agentId → role.
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
- * @throws {Error} When neither `agentId` nor `agents` is provided on the step
- *   (propagated from `resolveStepAgents`). Callers should validate steps before calling this.
+ * @throws {Error} When neither `agentId` nor `agents` is provided on the node
+ *   (propagated from `resolveNodeAgents`). Callers should validate nodes before calling this.
  */
-export function resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): ResolvedChannel[] {
-	if (!step.channels || step.channels.length === 0) return [];
+export function resolveNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): ResolvedChannel[] {
+	if (!node.channels || node.channels.length === 0) return [];
 
-	const stepAgents = resolveStepAgents(step);
+	const nodeAgents = resolveNodeAgents(node);
 
-	// Build role → agentId map for agents present in this step.
+	// Build role → agentId map for agents present in this node.
 	const roleToAgentId = new Map<string, string>();
-	for (const sa of stepAgents) {
+	for (const sa of nodeAgents) {
 		const spaceAgent = agents.find((a) => a.id === sa.agentId);
 		if (spaceAgent) {
 			roleToAgentId.set(spaceAgent.role, sa.agentId);
@@ -130,7 +130,7 @@ export function resolveStepChannels(step: WorkflowStep, agents: SpaceAgent[]): R
 	const allRoles = [...roleToAgentId.keys()];
 	const results: ResolvedChannel[] = [];
 
-	for (const channel of step.channels) {
+	for (const channel of node.channels) {
 		expandChannel(channel, allRoles, roleToAgentId, results);
 	}
 
@@ -197,46 +197,46 @@ function expandChannel(
 }
 
 // ============================================================================
-// validateStepChannels
+// validateNodeChannels
 // ============================================================================
 
 /**
- * Validates that all role references in a step's `channels` are resolvable.
+ * Validates that all role references in a node's `channels` are resolvable.
  *
  * Checks:
- * - At least one of `agentId` or `agents` is provided (delegates to `resolveStepAgents`).
- * - All step agent IDs are found in the provided `agents` list.
- * - No two step agents share the same `SpaceAgent.role` (ambiguous channel targeting).
+ * - At least one of `agentId` or `agents` is provided (delegates to `resolveNodeAgents`).
+ * - All node agent IDs are found in the provided `agents` list.
+ * - No two node agents share the same `SpaceAgent.role` (ambiguous channel targeting).
  * - `from`/`to` role strings are either the wildcard `'*'` or match a known role.
  * - `'*'` is not mixed with other roles in an array `to` (use a plain `'*'` string instead).
  *
- * @param step   - The workflow step to validate.
+ * @param node   - The workflow node to validate.
  * @param agents - All `SpaceAgent` records in the Space.
  * @returns Array of human-readable error strings. Empty array means no errors.
  * @public
  */
-export function validateStepChannels(step: WorkflowStep, agents: SpaceAgent[]): string[] {
+export function validateNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): string[] {
 	const errors: string[] = [];
 
-	if (!step.channels || step.channels.length === 0) return errors;
+	if (!node.channels || node.channels.length === 0) return errors;
 
-	let stepAgents: WorkflowStepAgent[];
+	let nodeAgents: WorkflowNodeAgent[];
 	try {
-		stepAgents = resolveStepAgents(step);
+		nodeAgents = resolveNodeAgents(node);
 	} catch (err) {
 		errors.push((err as Error).message);
 		return errors;
 	}
 
-	// Build known roles set from step agents; detect duplicate roles.
+	// Build known roles set from node agents; detect duplicate roles.
 	const knownRoles = new Set<string>();
 	const seenRoles = new Set<string>();
-	for (const sa of stepAgents) {
+	for (const sa of nodeAgents) {
 		const spaceAgent = agents.find((a) => a.id === sa.agentId);
 		if (spaceAgent) {
 			if (seenRoles.has(spaceAgent.role)) {
 				errors.push(
-					`Step "${step.name}" has two agents with role "${spaceAgent.role}". ` +
+					`Node "${node.name}" has two agents with role "${spaceAgent.role}". ` +
 						'Duplicate roles make channel targeting ambiguous.'
 				);
 			} else {
@@ -245,17 +245,17 @@ export function validateStepChannels(step: WorkflowStep, agents: SpaceAgent[]): 
 			}
 		} else {
 			errors.push(
-				`Step agent with agentId "${sa.agentId}" was not found in the provided space agents list.`
+				`Node agent with agentId "${sa.agentId}" was not found in the provided space agents list.`
 			);
 		}
 	}
 
-	for (let i = 0; i < step.channels.length; i++) {
-		const ch = step.channels[i];
+	for (let i = 0; i < node.channels.length; i++) {
+		const ch = node.channels[i];
 
 		if (ch.from !== '*' && !knownRoles.has(ch.from)) {
 			errors.push(
-				`channels[${i}].from "${ch.from}" does not match any agent role in step "${step.name}". ` +
+				`channels[${i}].from "${ch.from}" does not match any agent role in node "${node.name}". ` +
 					`Known roles: [${[...knownRoles].join(', ')}].`
 			);
 		}
@@ -273,7 +273,7 @@ export function validateStepChannels(step: WorkflowStep, agents: SpaceAgent[]): 
 		for (const toRole of toList) {
 			if (toRole !== '*' && !knownRoles.has(toRole)) {
 				errors.push(
-					`channels[${i}].to "${toRole}" does not match any agent role in step "${step.name}". ` +
+					`channels[${i}].to "${toRole}" does not match any agent role in node "${node.name}". ` +
 						`Known roles: [${[...knownRoles].join(', ')}].`
 				);
 			}

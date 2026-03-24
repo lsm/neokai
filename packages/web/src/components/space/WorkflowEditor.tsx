@@ -84,8 +84,8 @@ export function filterAgents(agents: SpaceAgent[]): SpaceAgent[] {
 
 /**
  * Derive ordered steps and positional transition conditions from an existing
- * workflow. Graph traversal follows startStepId through outgoing transitions.
- * Orphaned steps (not reachable from startStepId) are appended at the end.
+ * workflow. Graph traversal follows startNodeId through outgoing transitions.
+ * Orphaned steps (not reachable from startNodeId) are appended at the end.
  *
  * Defined outside the component so it is not recreated on each render and
  * is clearly a pure initialization helper, not a reactive dependency.
@@ -102,10 +102,10 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	rules: RuleDraft[];
 	tags: string[];
 } {
-	const stepMap = new Map(wf.steps.map((s) => [s.id, s]));
+	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
 	const ordered: StepDraft[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = wf.startStepId;
+	let currentId: string | undefined = wf.startNodeId;
 
 	while (currentId && !visited.has(currentId)) {
 		visited.add(currentId);
@@ -125,7 +125,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		currentId = outgoing[0]?.to;
 	}
 
-	for (const s of wf.steps) {
+	for (const s of wf.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push({
 				localId: makeLocalId(),
@@ -337,7 +337,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				steps.map((s, i) => [s.id ?? s.localId, stepIds[i]])
 			);
 
-			const builtSteps = steps.map((s, i) => ({
+			const builtNodes = steps.map((s, i) => ({
 				id: stepIds[i],
 				name: s.name || `Step ${i + 1}`,
 				agentId: s.agentId ?? '',
@@ -372,9 +372,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				await spaceStore.updateWorkflow(workflow.id, {
 					name: name.trim(),
 					description: description.trim() || null,
-					steps: builtSteps,
+					nodes: builtNodes,
 					transitions: builtTransitions,
-					startStepId: stepIds[0],
+					startNodeId: stepIds[0],
 					rules: updateRules,
 					tags,
 				});
@@ -389,9 +389,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				await spaceStore.createWorkflow({
 					name: name.trim(),
 					description: description.trim() || undefined,
-					steps: builtSteps,
+					nodes: builtNodes,
 					transitions: builtTransitions,
-					startStepId: stepIds[0],
+					startNodeId: stepIds[0],
 					rules: createRules,
 					tags,
 				});

@@ -5,13 +5,13 @@
  * These serve as defaults and examples for Space users.
  *
  * Design notes:
- * - Leader is always implicit in SpaceRuntime — never a workflow step.
+ * - Leader is always implicit in SpaceRuntime — never a workflow node.
  * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
  *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
  *   replaced with real SpaceAgent UUIDs by `seedBuiltInWorkflows`.
- * - Workflows are directed graphs: steps are nodes, transitions are edges.
- *   A step with no outgoing transitions is a terminal step — the run
- *   completes when that step is reached and advance() is called.
+ * - Workflows are directed graphs: nodes are nodes, transitions are edges.
+ *   A node with no outgoing transitions is a terminal node — the run
+ *   completes when that node is reached and advance() is called.
  * - At Space creation time, preset SpaceAgent records are seeded for each
  *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
  *   exist so that the `agentId` values resolve correctly.
@@ -56,7 +56,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	description:
 		'Plan-first coding workflow with verification. A human reviews the plan, code is implemented, then verified. Loops back on failure.',
 	maxIterations: 3,
-	steps: [
+	nodes: [
 		{
 			id: CODING_PLANNER_STEP,
 			name: 'Plan',
@@ -126,7 +126,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			order: 1,
 		},
 	],
-	startStepId: CODING_PLANNER_STEP,
+	startNodeId: CODING_PLANNER_STEP,
 	rules: [],
 	tags: ['coding', 'default'],
 	createdAt: 0,
@@ -146,7 +146,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	name: 'Research Workflow',
 	description:
 		'Fully automated research workflow. Planner scopes the research; General agent executes and summarises findings.',
-	steps: [
+	nodes: [
 		{
 			id: RESEARCH_PLANNER_STEP,
 			name: 'Plan Research',
@@ -170,7 +170,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			order: 0,
 		},
 	],
-	startStepId: RESEARCH_PLANNER_STEP,
+	startNodeId: RESEARCH_PLANNER_STEP,
 	rules: [],
 	tags: ['research'],
 	createdAt: 0,
@@ -191,7 +191,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	name: 'Review-Only Workflow',
 	description:
 		'Single-step coding workflow with no planning phase. Coder implements directly; the run completes when done.',
-	steps: [
+	nodes: [
 		{
 			id: REVIEW_CODER_STEP,
 			name: 'Code',
@@ -199,7 +199,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 		},
 	],
 	transitions: [],
-	startStepId: REVIEW_CODER_STEP,
+	startNodeId: REVIEW_CODER_STEP,
 	rules: [],
 	tags: ['coding', 'review'],
 	createdAt: 0,
@@ -259,7 +259,7 @@ export function seedBuiltInWorkflows(
 	const templates = getBuiltInWorkflows();
 	const neededRoles = new Set<string>(
 		templates
-			.flatMap((t) => t.steps.map((s) => s.agentId))
+			.flatMap((t) => t.nodes.map((s) => s.agentId))
 			.filter((r): r is string => r !== undefined)
 	);
 	const resolvedIds = new Map<string, string>();
@@ -276,36 +276,36 @@ export function seedBuiltInWorkflows(
 
 	// All roles resolved — safe to persist.
 	for (const template of templates) {
-		// Assign real UUIDs to template step IDs
-		const stepIdMap = new Map<string, string>(); // templateId -> realUUID
-		for (const step of template.steps) {
-			stepIdMap.set(step.id, generateUUID());
+		// Assign real UUIDs to template node IDs
+		const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
+		for (const node of template.nodes) {
+			nodeIdMap.set(node.id, generateUUID());
 		}
 
-		const steps = template.steps.map((s) => ({
-			id: stepIdMap.get(s.id)!,
+		const nodes = template.nodes.map((s) => ({
+			id: nodeIdMap.get(s.id)!,
 			name: s.name,
 			agentId: resolvedIds.get(s.agentId ?? '')!,
 			instructions: s.instructions,
 		}));
 
 		const transitions = template.transitions.map((t) => ({
-			from: stepIdMap.get(t.from)!,
-			to: stepIdMap.get(t.to)!,
+			from: nodeIdMap.get(t.from)!,
+			to: nodeIdMap.get(t.to)!,
 			condition: t.condition,
 			order: t.order,
 			isCyclic: t.isCyclic,
 		}));
 
-		const startStepId = stepIdMap.get(template.startStepId)!;
+		const startNodeId = nodeIdMap.get(template.startNodeId)!;
 
 		workflowManager.createWorkflow({
 			spaceId,
 			name: template.name,
 			description: template.description,
-			steps,
+			nodes,
 			transitions,
-			startStepId,
+			startNodeId,
 			rules: [],
 			tags: [...template.tags],
 			maxIterations: template.maxIterations,

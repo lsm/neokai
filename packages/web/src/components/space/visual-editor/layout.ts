@@ -2,13 +2,13 @@
  * DAG auto-layout algorithm for the workflow visual editor.
  *
  * Performs a layered layout (Sugiyama-style, simplified):
- * 1. Topological sort starting from startStepId following transitions
+ * 1. Topological sort starting from startNodeId following transitions
  * 2. Layer assignment: each node's layer = max(predecessor layers) + 1
  * 3. Horizontal spacing within each layer with centering
  * 4. Orphaned nodes (unreachable from start) are appended below the main graph
  */
 
-import type { WorkflowStep, WorkflowTransition } from '@neokai/shared';
+import type { WorkflowNode, WorkflowTransition } from '@neokai/shared';
 
 /** A 2D point in canvas coordinates */
 export interface Point {
@@ -30,24 +30,24 @@ const START_X = 50;
  *
  * @param steps - All workflow steps (nodes)
  * @param transitions - All workflow transitions (directed edges)
- * @param startStepId - The entry-point step ID
+ * @param startNodeId - The entry-point step ID
  * @returns A map from step ID to canvas Point {x, y}
  */
 export function autoLayout(
-	steps: WorkflowStep[],
+	nodes: WorkflowNode[],
 	transitions: WorkflowTransition[],
-	startStepId: string
+	startNodeId: string
 ): Map<string, Point> {
-	if (steps.length === 0) {
+	if (nodes.length === 0) {
 		return new Map();
 	}
 
-	const stepIds = new Set(steps.map((s) => s.id));
+	const stepIds = new Set(nodes.map((s) => s.id));
 
 	// Build adjacency: successors and predecessors
 	const successors = new Map<string, string[]>();
 	const predecessors = new Map<string, string[]>();
-	for (const s of steps) {
+	for (const s of nodes) {
 		successors.set(s.id, []);
 		predecessors.set(s.id, []);
 	}
@@ -58,16 +58,16 @@ export function autoLayout(
 	}
 
 	// ------------------------------------------------------------------
-	// Phase 1: BFS/topological reachability from startStepId
+	// Phase 1: BFS/topological reachability from startNodeId
 	// We use Kahn's algorithm on the reachable subgraph to assign layers.
 	// Cycle edges are broken by tracking visited nodes.
 	// ------------------------------------------------------------------
 	const reachable = new Set<string>();
 	const bfsQueue: string[] = [];
 
-	if (stepIds.has(startStepId)) {
-		bfsQueue.push(startStepId);
-		reachable.add(startStepId);
+	if (stepIds.has(startNodeId)) {
+		bfsQueue.push(startNodeId);
+		reachable.add(startNodeId);
 	}
 
 	while (bfsQueue.length > 0) {
@@ -142,7 +142,7 @@ export function autoLayout(
 	}
 
 	// Sort within each layer by step order in the original array for stability
-	const stepOrder = new Map<string, number>(steps.map((s, i) => [s.id, i]));
+	const stepOrder = new Map<string, number>(nodes.map((s, i) => [s.id, i]));
 	for (const group of layerGroups.values()) {
 		group.sort((a, b) => (stepOrder.get(a) ?? 0) - (stepOrder.get(b) ?? 0));
 	}
@@ -150,7 +150,7 @@ export function autoLayout(
 	// ------------------------------------------------------------------
 	// Phase 4: Collect orphaned nodes (unreachable from start)
 	// ------------------------------------------------------------------
-	const orphans = steps.filter((s) => !reachable.has(s.id)).map((s) => s.id);
+	const orphans = nodes.filter((s) => !reachable.has(s.id)).map((s) => s.id);
 	orphans.sort((a, b) => (stepOrder.get(a) ?? 0) - (stepOrder.get(b) ?? 0));
 
 	// Determine the widest layer for centering

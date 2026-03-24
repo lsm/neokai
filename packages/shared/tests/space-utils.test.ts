@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'bun:test';
-import type { SpaceAgent, WorkflowStep } from '../src/types/space.ts';
+import type { SpaceAgent, WorkflowNode } from '../src/types/space.ts';
 import {
-	resolveStepAgents,
-	resolveStepChannels,
-	validateStepChannels,
+	resolveNodeAgents,
+	resolveNodeChannels,
+	validateNodeChannels,
 } from '../src/types/space-utils.ts';
 
 // ============================================================================
@@ -21,10 +21,10 @@ function makeAgent(id: string, role: string): SpaceAgent {
 	};
 }
 
-function makeStep(overrides: Partial<WorkflowStep> = {}): WorkflowStep {
+function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
 	return {
-		id: 'step-1',
-		name: 'Test Step',
+		id: 'node-1',
+		name: 'Test Node',
 		...overrides,
 	};
 }
@@ -35,88 +35,88 @@ const agentSecurity = makeAgent('agent-security-id', 'security');
 const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
 
 // ============================================================================
-// resolveStepAgents
+// resolveNodeAgents
 // ============================================================================
 
-describe('resolveStepAgents', () => {
+describe('resolveNodeAgents', () => {
 	test('returns single-element array when only agentId is set', () => {
-		const step = makeStep({ agentId: 'agent-coder-id', instructions: 'do the thing' });
-		const result = resolveStepAgents(step);
+		const node = makeNode({ agentId: 'agent-coder-id', instructions: 'do the thing' });
+		const result = resolveNodeAgents(node);
 		expect(result).toEqual([{ agentId: 'agent-coder-id', instructions: 'do the thing' }]);
 	});
 
 	test('returns agents array when agents is set (non-empty)', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id', instructions: 'write code' },
 				{ agentId: 'agent-reviewer-id' },
 			],
 		});
-		const result = resolveStepAgents(step);
+		const result = resolveNodeAgents(node);
 		expect(result).toHaveLength(2);
 		expect(result[0].agentId).toBe('agent-coder-id');
 		expect(result[1].agentId).toBe('agent-reviewer-id');
 	});
 
 	test('agents takes precedence over agentId when both are set', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agentId: 'agent-coder-id',
 			agents: [{ agentId: 'agent-reviewer-id' }],
 		});
-		const result = resolveStepAgents(step);
+		const result = resolveNodeAgents(node);
 		expect(result).toHaveLength(1);
 		expect(result[0].agentId).toBe('agent-reviewer-id');
 	});
 
 	test('throws when neither agentId nor agents is provided', () => {
-		const step = makeStep();
-		expect(() => resolveStepAgents(step)).toThrow(
-			'WorkflowStep "Test Step" (id: step-1) has neither agentId nor agents defined'
+		const node = makeNode();
+		expect(() => resolveNodeAgents(node)).toThrow(
+			'WorkflowNode "Test Node" (id: node-1) has neither agentId nor agents defined'
 		);
 	});
 
 	test('throws when agents is an empty array and agentId is absent', () => {
-		const step = makeStep({ agents: [] });
-		expect(() => resolveStepAgents(step)).toThrow();
+		const node = makeNode({ agents: [] });
+		expect(() => resolveNodeAgents(node)).toThrow();
 	});
 
 	test('single-element agents array works correctly', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id', instructions: 'custom' }],
 		});
-		expect(resolveStepAgents(step)).toEqual([
+		expect(resolveNodeAgents(node)).toEqual([
 			{ agentId: 'agent-coder-id', instructions: 'custom' },
 		]);
 	});
 
 	test('agentId with no instructions produces entry with undefined instructions', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' });
-		const result = resolveStepAgents(step);
+		const node = makeNode({ agentId: 'agent-coder-id' });
+		const result = resolveNodeAgents(node);
 		expect(result[0].instructions).toBeUndefined();
 	});
 });
 
 // ============================================================================
-// resolveStepChannels
+// resolveNodeChannels
 // ============================================================================
 
-describe('resolveStepChannels', () => {
+describe('resolveNodeChannels', () => {
 	test('returns empty array when no channels defined', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' });
-		expect(resolveStepChannels(step, allAgents)).toEqual([]);
+		const node = makeNode({ agentId: 'agent-coder-id' });
+		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
 	});
 
 	test('returns empty array when channels is an empty array', () => {
-		const step = makeStep({ agentId: 'agent-coder-id', channels: [] });
-		expect(resolveStepChannels(step, allAgents)).toEqual([]);
+		const node = makeNode({ agentId: 'agent-coder-id', channels: [] });
+		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
 	});
 
 	test('A→B one-way: produces one resolved channel', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result).toHaveLength(1);
 		expect(result[0]).toMatchObject({
 			fromRole: 'coder',
@@ -129,11 +129,11 @@ describe('resolveStepChannels', () => {
 	});
 
 	test('A↔B bidirectional point-to-point: produces two one-way channels', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result).toHaveLength(2);
 
 		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
@@ -149,7 +149,7 @@ describe('resolveStepChannels', () => {
 	});
 
 	test('A→[B,C] fan-out: produces one channel per target', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id' },
 				{ agentId: 'agent-reviewer-id' },
@@ -157,7 +157,7 @@ describe('resolveStepChannels', () => {
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result).toHaveLength(2);
 
 		const toReviewer = result.find((r) => r.toRole === 'reviewer');
@@ -173,7 +173,7 @@ describe('resolveStepChannels', () => {
 	});
 
 	test('A↔[B,C] hub-spoke: produces hub→spoke + spoke→hub, no spoke-to-spoke', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id' },
 				{ agentId: 'agent-reviewer-id' },
@@ -181,7 +181,7 @@ describe('resolveStepChannels', () => {
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 
 		// 2 spokes × 2 directions = 4 channels
 		expect(result).toHaveLength(4);
@@ -203,7 +203,7 @@ describe('resolveStepChannels', () => {
 	});
 
 	test('wildcard *→B: all agents send to B', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id' },
 				{ agentId: 'agent-reviewer-id' },
@@ -211,7 +211,7 @@ describe('resolveStepChannels', () => {
 			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 
 		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -220,7 +220,7 @@ describe('resolveStepChannels', () => {
 	});
 
 	test('wildcard A→*: A sends to all other agents', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id' },
 				{ agentId: 'agent-reviewer-id' },
@@ -228,7 +228,7 @@ describe('resolveStepChannels', () => {
 			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 
 		// coder→reviewer and coder→security (coder→coder self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -237,7 +237,7 @@ describe('resolveStepChannels', () => {
 	});
 
 	test('channel label is propagated to all resolved channels', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id' },
 				{ agentId: 'agent-reviewer-id' },
@@ -252,30 +252,30 @@ describe('resolveStepChannels', () => {
 				},
 			],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result.every((r) => r.label === 'feedback')).toBe(true);
 	});
 
 	test('skips channels referencing unknown roles (does not throw)', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }],
 			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result).toHaveLength(0);
 	});
 
 	test('self-loop (from === to) is skipped', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }],
 			channels: [{ from: 'coder', to: 'coder', direction: 'one-way' }],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result).toHaveLength(0);
 	});
 
 	test('multiple channels expand independently', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [
 				{ agentId: 'agent-coder-id' },
 				{ agentId: 'agent-reviewer-id' },
@@ -286,144 +286,144 @@ describe('resolveStepChannels', () => {
 				{ from: 'reviewer', to: 'security', direction: 'one-way' },
 			],
 		});
-		const result = resolveStepChannels(step, allAgents);
+		const result = resolveNodeChannels(node, allAgents);
 		expect(result).toHaveLength(2);
 		expect(result[0]).toMatchObject({ fromRole: 'coder', toRole: 'reviewer' });
 		expect(result[1]).toMatchObject({ fromRole: 'reviewer', toRole: 'security' });
 	});
 
-	test('backward-compat: step with only agentId and no channels resolves channels to []', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' });
-		expect(resolveStepChannels(step, allAgents)).toEqual([]);
+	test('backward-compat: node with only agentId and no channels resolves channels to []', () => {
+		const node = makeNode({ agentId: 'agent-coder-id' });
+		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
 	});
 });
 
 // ============================================================================
-// validateStepChannels
+// validateNodeChannels
 // ============================================================================
 
-describe('validateStepChannels', () => {
-	test('returns empty errors for step with no channels', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' });
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+describe('validateNodeChannels', () => {
+	test('returns empty errors for node with no channels', () => {
+		const node = makeNode({ agentId: 'agent-coder-id' });
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 
-	test('returns empty errors for step with empty channels array', () => {
-		const step = makeStep({ agentId: 'agent-coder-id', channels: [] });
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+	test('returns empty errors for node with empty channels array', () => {
+		const node = makeNode({ agentId: 'agent-coder-id', channels: [] });
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 
 	test('returns no errors for valid channel references', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 
 	test('accepts wildcard * in from without error', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 
 	test('accepts wildcard * in to without error', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 
 	test('reports error for unknown from role', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }],
 			channels: [{ from: 'nonexistent', to: 'coder', direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain('channels[0].from "nonexistent"');
 	});
 
 	test('reports error for unknown to role', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }],
 			channels: [{ from: 'coder', to: 'nonexistent', direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain('channels[0].to "nonexistent"');
 	});
 
 	test('reports error for unknown role in array to', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: ['reviewer', 'ghost-role'], direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain('"ghost-role"');
 	});
 
 	test('reports error for agent not found in space agents list', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'unknown-agent-id' }],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors.some((e) => e.includes('"unknown-agent-id"'))).toBe(true);
 	});
 
-	test('returns error from resolveStepAgents when neither agentId nor agents provided', () => {
-		const step = makeStep({
+	test('returns error from resolveNodeAgents when neither agentId nor agents provided', () => {
+		const node = makeNode({
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain('neither agentId nor agents defined');
 	});
 
 	test('accumulates multiple errors', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }],
 			channels: [
 				{ from: 'bad-from', to: 'bad-to', direction: 'one-way' },
 				{ from: 'coder', to: 'another-bad', direction: 'one-way' },
 			],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors.length).toBeGreaterThanOrEqual(3); // bad-from, bad-to, another-bad
 	});
 
-	test('reports error when two step agents share the same role', () => {
-		// Two coder agents in the same step — duplicate role makes channels ambiguous
+	test('reports error when two node agents share the same role', () => {
+		// Two coder agents in the same node — duplicate role makes channels ambiguous
 		const dupCoderAgent = makeAgent('agent-coder-2-id', 'coder');
 		const agents = [...allAgents, dupCoderAgent];
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-coder-2-id' }],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, agents);
+		const errors = validateNodeChannels(node, agents);
 		expect(errors.some((e) => e.includes('Duplicate roles'))).toBe(true);
 	});
 
 	test('reports error when * is mixed with other roles in array to', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: ['reviewer', '*'], direction: 'one-way' }],
 		});
-		const errors = validateStepChannels(step, allAgents);
+		const errors = validateNodeChannels(node, allAgents);
 		expect(errors.some((e) => e.includes("mixes wildcard '*'"))).toBe(true);
 	});
 
 	test('plain * in to (not in array) is accepted', () => {
-		const step = makeStep({
+		const node = makeNode({
 			agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 });
 
@@ -431,33 +431,33 @@ describe('validateStepChannels', () => {
 // Backward compatibility
 // ============================================================================
 
-describe('backward compatibility (steps with only agentId)', () => {
-	test('resolveStepAgents works for legacy single-agent steps', () => {
-		const step: WorkflowStep = {
-			id: 'legacy-step',
-			name: 'Legacy Step',
+describe('backward compatibility (nodes with only agentId)', () => {
+	test('resolveNodeAgents works for legacy single-agent nodes', () => {
+		const node: WorkflowNode = {
+			id: 'legacy-node',
+			name: 'Legacy Node',
 			agentId: 'agent-coder-id',
 			instructions: 'do stuff',
 		};
-		const result = resolveStepAgents(step);
+		const result = resolveNodeAgents(node);
 		expect(result).toEqual([{ agentId: 'agent-coder-id', instructions: 'do stuff' }]);
 	});
 
-	test('resolveStepChannels returns [] for legacy steps with no channels', () => {
-		const step: WorkflowStep = {
-			id: 'legacy-step',
-			name: 'Legacy Step',
+	test('resolveNodeChannels returns [] for legacy nodes with no channels', () => {
+		const node: WorkflowNode = {
+			id: 'legacy-node',
+			name: 'Legacy Node',
 			agentId: 'agent-coder-id',
 		};
-		expect(resolveStepChannels(step, allAgents)).toEqual([]);
+		expect(resolveNodeChannels(node, allAgents)).toEqual([]);
 	});
 
-	test('validateStepChannels returns no errors for legacy steps with no channels', () => {
-		const step: WorkflowStep = {
-			id: 'legacy-step',
-			name: 'Legacy Step',
+	test('validateNodeChannels returns no errors for legacy nodes with no channels', () => {
+		const node: WorkflowNode = {
+			id: 'legacy-node',
+			name: 'Legacy Node',
 			agentId: 'agent-coder-id',
 		};
-		expect(validateStepChannels(step, allAgents)).toEqual([]);
+		expect(validateNodeChannels(node, allAgents)).toEqual([]);
 	});
 });

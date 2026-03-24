@@ -46,17 +46,17 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(run.workflowId).toBe(WORKFLOW_ID);
 			expect(run.title).toBe('Run #1');
 			expect(run.status).toBe('pending');
-			expect(run.currentStepId).toBeUndefined();
+			expect(run.currentNodeId).toBeUndefined();
 			expect(run.config).toBeUndefined();
 			expect(run.completedAt).toBeUndefined();
 		});
 
-		it('maps NULL currentStepId to undefined (round-trip contract)', () => {
+		it('maps NULL currentNodeId to undefined (round-trip contract)', () => {
 			// Explicit omission: NULL stored in DB must come back as undefined, not ''
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'No step' });
-			expect(run.currentStepId).toBeUndefined();
+			expect(run.currentNodeId).toBeUndefined();
 			// Re-fetch from DB to confirm persistence
-			expect(repo.getRun(run.id)!.currentStepId).toBeUndefined();
+			expect(repo.getRun(run.id)!.currentNodeId).toBeUndefined();
 		});
 
 		it('creates a run with description', () => {
@@ -167,7 +167,7 @@ describe('SpaceWorkflowRunRepository', () => {
 		it('updates the current step ID', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
 			const updated = repo.updateCurrentStep(run.id, 'step-abc');
-			expect(updated!.currentStepId).toBe('step-abc');
+			expect(updated!.currentNodeId).toBe('step-abc');
 		});
 	});
 
@@ -279,7 +279,7 @@ describe('SpaceWorkflowRunRepository', () => {
 			const updated = repo.getRun(run.id)!;
 			expect(updated.goalId).toBe('goal-456');
 			expect(updated.status).toBe('in_progress');
-			expect(updated.currentStepId).toBe('step-xyz');
+			expect(updated.currentNodeId).toBe('step-xyz');
 		});
 
 		it('goalId is included when listing runs by space', () => {

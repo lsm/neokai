@@ -169,7 +169,7 @@ describe('SpaceTaskPane', () => {
 	});
 
 	it('shows workflow step indicator when workflowRunId is present', () => {
-		mockTasks.value = [makeTask({ workflowRunId: 'run-1', workflowStepId: 'step-abc123' })];
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1', workflowNodeId: 'step-abc123' })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText(/Workflow Step/)).toBeTruthy();
 		// Should show truncated step ID

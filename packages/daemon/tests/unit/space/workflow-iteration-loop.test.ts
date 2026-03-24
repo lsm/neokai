@@ -130,7 +130,7 @@ describe('Workflow Iteration Loop', () => {
 	 * - Verify -> Done: task_result condition, expression 'passed', order 1
 	 */
 	function buildCyclicWorkflow(maxIterations = 3): SpaceWorkflow {
-		const steps = [
+		const nodes = [
 			{ id: STEP_PLAN, name: 'Plan', agentId: AGENT_PLANNER },
 			{ id: STEP_CODE, name: 'Code', agentId: AGENT_CODER },
 			{ id: STEP_VERIFY, name: 'Verify', agentId: AGENT_CODER },
@@ -162,9 +162,9 @@ describe('Workflow Iteration Loop', () => {
 		return workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Cyclic WF ${Date.now()}`,
-			steps,
+			nodes,
 			transitions,
-			startStepId: STEP_PLAN,
+			startNodeId: STEP_PLAN,
 			maxIterations,
 		});
 	}
@@ -188,7 +188,7 @@ describe('Workflow Iteration Loop', () => {
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Cyclic Iteration Test',
-			currentStepId: workflow.startStepId,
+			currentNodeId: workflow.startNodeId,
 			maxIterations: 3,
 		});
 
@@ -202,7 +202,7 @@ describe('Workflow Iteration Loop', () => {
 			title: 'Plan',
 			description: 'Plan step task',
 			workflowRunId: run.id,
-			workflowStepId: STEP_PLAN,
+			workflowNodeId: STEP_PLAN,
 			status: 'pending',
 		});
 		await taskManager.setTaskStatus(planTask1.id, 'in_progress');
@@ -210,14 +210,14 @@ describe('Workflow Iteration Loop', () => {
 		setHumanApproval(run.id);
 
 		let result = await executor.advance();
-		expect(result.tasks[0].workflowStepId).toBe(STEP_CODE);
+		expect(result.tasks[0].workflowNodeId).toBe(STEP_CODE);
 
 		// Complete Code(1) and advance: Code -> Verify
 		const codeTask1 = result.tasks[0];
 		await taskManager.setTaskStatus(codeTask1.id, 'in_progress');
 		await taskManager.setTaskStatus(codeTask1.id, 'completed', { result: 'Code 1 done' });
 		result = await executor.advance();
-		expect(result.tasks[0].workflowStepId).toBe(STEP_VERIFY);
+		expect(result.tasks[0].workflowNodeId).toBe(STEP_VERIFY);
 
 		// Complete Verify(1) with 'failed' and advance: Verify -> Plan (cyclic)
 		const verifyTask1 = result.tasks[0];
@@ -226,12 +226,12 @@ describe('Workflow Iteration Loop', () => {
 			result: 'failed: tests broken',
 		});
 		result = await executor.advance();
-		expect(result.tasks[0].workflowStepId).toBe(STEP_PLAN);
+		expect(result.tasks[0].workflowNodeId).toBe(STEP_PLAN);
 		expect(result.tasks[0].title).toBe('Plan');
 
 		let runState = runRepo.getRun(run.id)!;
 		expect(runState.iterationCount).toBe(1);
-		expect(runState.currentStepId).toBe(STEP_PLAN);
+		expect(runState.currentNodeId).toBe(STEP_PLAN);
 		expect(runState.status).toBe('in_progress');
 
 		// ===== Second cycle: Verify(2) passes -> transitions to Done (terminal) =====
@@ -242,14 +242,14 @@ describe('Workflow Iteration Loop', () => {
 		await taskManager.setTaskStatus(planTask2.id, 'completed', { result: 'Plan 2 done' });
 		setHumanApproval(run.id);
 		result = await executor.advance();
-		expect(result.tasks[0].workflowStepId).toBe(STEP_CODE);
+		expect(result.tasks[0].workflowNodeId).toBe(STEP_CODE);
 
 		// Complete Code(2) and advance: Code -> Verify
 		const codeTask2 = result.tasks[0];
 		await taskManager.setTaskStatus(codeTask2.id, 'in_progress');
 		await taskManager.setTaskStatus(codeTask2.id, 'completed', { result: 'Code 2 done' });
 		result = await executor.advance();
-		expect(result.tasks[0].workflowStepId).toBe(STEP_VERIFY);
+		expect(result.tasks[0].workflowNodeId).toBe(STEP_VERIFY);
 
 		// Complete Verify(2) with 'passed' and advance: Verify -> Done
 		const verifyTask2 = result.tasks[0];
@@ -258,7 +258,7 @@ describe('Workflow Iteration Loop', () => {
 		result = await executor.advance();
 		// Done task is created (transition to terminal step still creates a task)
 		expect(result.tasks).toHaveLength(1);
-		expect(result.tasks[0].workflowStepId).toBe(STEP_DONE);
+		expect(result.tasks[0].workflowNodeId).toBe(STEP_DONE);
 
 		// Second advance: Done has no outgoing transitions, marks run as completed
 		result = await executor.advance();
@@ -266,7 +266,7 @@ describe('Workflow Iteration Loop', () => {
 
 		runState = runRepo.getRun(run.id)!;
 		expect(runState.status).toBe('completed');
-		expect(runState.currentStepId).toBe(STEP_DONE);
+		expect(runState.currentNodeId).toBe(STEP_DONE);
 		expect(runState.iterationCount).toBe(1);
 
 		// Verify all 7 tasks are under the same run (6 from 2 cycles + 1 terminal Done task)
@@ -278,7 +278,7 @@ describe('Workflow Iteration Loop', () => {
 
 		// Verify Verify task results in chronological order
 		const verifyTasks = allTasks
-			.filter((t) => t.workflowStepId === STEP_VERIFY)
+			.filter((t) => t.workflowNodeId === STEP_VERIFY)
 			.sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
 		expect(verifyTasks).toHaveLength(2);
 		expect(verifyTasks[0].result).toBe('failed: tests broken');
@@ -292,7 +292,7 @@ describe('Workflow Iteration Loop', () => {
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Human Approval Test',
-			currentStepId: workflow.startStepId,
+			currentNodeId: workflow.startNodeId,
 			maxIterations: 3,
 		});
 
@@ -304,7 +304,7 @@ describe('Workflow Iteration Loop', () => {
 			title: 'Plan',
 			description: 'Plan task 1',
 			workflowRunId: run.id,
-			workflowStepId: STEP_PLAN,
+			workflowNodeId: STEP_PLAN,
 			status: 'pending',
 		});
 		await taskManager.setTaskStatus(planTask1.id, 'in_progress');
@@ -344,7 +344,7 @@ describe('Workflow Iteration Loop', () => {
 		executor = makeExecutor(workflow, runState);
 
 		r = await executor.advance();
-		expect(r.tasks[0].workflowStepId).toBe(STEP_CODE);
+		expect(r.tasks[0].workflowNodeId).toBe(STEP_CODE);
 	});
 
 	test('maxIterations is respected', async () => {
@@ -354,7 +354,7 @@ describe('Workflow Iteration Loop', () => {
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Max Iter Test',
-			currentStepId: workflow.startStepId,
+			currentNodeId: workflow.startNodeId,
 			maxIterations: 2, // First loop-back succeeds (count=1), second throws (count=2 >= 2)
 		});
 
@@ -368,7 +368,7 @@ describe('Workflow Iteration Loop', () => {
 			title: 'Plan',
 			description: 'Plan task 1',
 			workflowRunId: run.id,
-			workflowStepId: STEP_PLAN,
+			workflowNodeId: STEP_PLAN,
 			status: 'pending',
 		});
 		await taskManager.setTaskStatus(planTask1.id, 'in_progress');
@@ -406,7 +406,7 @@ describe('Workflow Iteration Loop', () => {
 		await taskManager.setTaskStatus(verifyTask2.id, 'in_progress');
 		await taskManager.setTaskStatus(verifyTask2.id, 'completed', { result: 'failed: broken' });
 
-		// WorkflowTransitionError is thrown BEFORE currentStepId is updated.
+		// WorkflowTransitionError is thrown BEFORE currentNodeId is updated.
 		// The executor throws immediately; no new task is created.
 		runState = runRepo.getRun(run.id)!;
 		const executor2 = makeExecutor(workflow, runState);
@@ -420,7 +420,7 @@ describe('Workflow Iteration Loop', () => {
 		expect(thrownError).toBeInstanceOf(WorkflowTransitionError);
 		expect(thrownError!.message).toContain('Iteration cap reached');
 
-		// Status is set to needs_attention; currentStepId still points to Verify (not updated)
+		// Status is set to needs_attention; currentNodeId still points to Verify (not updated)
 		runState = runRepo.getRun(run.id)!;
 		expect(runState.status).toBe('needs_attention');
 		expect(runState.iterationCount).toBe(2);
@@ -434,7 +434,7 @@ describe('Workflow Iteration Loop', () => {
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Default Max Iter Test',
-			currentStepId: workflow.startStepId,
+			currentNodeId: workflow.startNodeId,
 			// maxIterations not specified - uses workflow-level default
 		});
 
@@ -448,7 +448,7 @@ describe('Workflow Iteration Loop', () => {
 			title: 'Plan',
 			description: 'Plan task 1',
 			workflowRunId: run.id,
-			workflowStepId: STEP_PLAN,
+			workflowNodeId: STEP_PLAN,
 			status: 'pending',
 		});
 		await taskManager.setTaskStatus(planTask1.id, 'in_progress');
@@ -512,7 +512,7 @@ describe('Workflow Iteration Loop', () => {
 			spaceId: SPACE_ID,
 			workflowId: workflow.id,
 			title: 'Zero Max Iter Test',
-			currentStepId: workflow.startStepId,
+			currentNodeId: workflow.startNodeId,
 			maxIterations: 0, // Any cyclic transition should throw immediately
 		});
 
@@ -524,7 +524,7 @@ describe('Workflow Iteration Loop', () => {
 			title: 'Plan',
 			description: 'Plan task 1',
 			workflowRunId: run.id,
-			workflowStepId: STEP_PLAN,
+			workflowNodeId: STEP_PLAN,
 			status: 'pending',
 		});
 		await taskManager.setTaskStatus(planTask1.id, 'in_progress');

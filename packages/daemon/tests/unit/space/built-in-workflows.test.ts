@@ -74,7 +74,7 @@ const VALID_BUILTIN_ROLES = new Set<string>(['planner', 'coder', 'general', 'rev
  * Returns true if any step in the workflow has 'leader' as its agentId placeholder.
  */
 function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
-	return wf.steps.some((s) => s.agentId === 'leader');
+	return wf.nodes.some((s) => s.agentId === 'leader');
 }
 
 // ---------------------------------------------------------------------------
@@ -82,9 +82,9 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-	test('has four steps: Plan, Code, Verify & Test, Done', () => {
-		expect(CODING_WORKFLOW.steps).toHaveLength(4);
-		expect(CODING_WORKFLOW.steps.map((s) => s.name)).toEqual([
+	test('has four nodes: Plan, Code, Verify & Test, Done', () => {
+		expect(CODING_WORKFLOW.nodes).toHaveLength(4);
+		expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual([
 			'Plan',
 			'Code',
 			'Verify & Test',
@@ -93,14 +93,14 @@ describe('CODING_WORKFLOW template', () => {
 	});
 
 	test('step agentId placeholders are correct', () => {
-		expect(CODING_WORKFLOW.steps[0].agentId).toBe('planner');
-		expect(CODING_WORKFLOW.steps[1].agentId).toBe('coder');
-		expect(CODING_WORKFLOW.steps[2].agentId).toBe('general');
-		expect(CODING_WORKFLOW.steps[3].agentId).toBe('general');
+		expect(CODING_WORKFLOW.nodes[0].agentId).toBe('planner');
+		expect(CODING_WORKFLOW.nodes[1].agentId).toBe('coder');
+		expect(CODING_WORKFLOW.nodes[2].agentId).toBe('general');
+		expect(CODING_WORKFLOW.nodes[3].agentId).toBe('general');
 	});
 
 	test('Verify & Test step has instructions', () => {
-		const verifyStep = CODING_WORKFLOW.steps.find((s) => s.name === 'Verify & Test');
+		const verifyStep = CODING_WORKFLOW.nodes.find((s) => s.name === 'Verify & Test');
 		expect(verifyStep?.instructions).toContain('Run tests');
 		expect(verifyStep?.instructions).toContain('passed');
 		expect(verifyStep?.instructions).toContain('failed');
@@ -146,9 +146,9 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.maxIterations).toBe(3);
 	});
 
-	test('startStepId points to the planner step', () => {
-		const plannerStep = CODING_WORKFLOW.steps.find((s) => s.agentId === 'planner');
-		expect(CODING_WORKFLOW.startStepId).toBe(plannerStep?.id);
+	test('startNodeId points to the planner step', () => {
+		const plannerStep = CODING_WORKFLOW.nodes.find((s) => s.agentId === 'planner');
+		expect(CODING_WORKFLOW.startNodeId).toBe(plannerStep?.id);
 	});
 
 	test('does not reference leader', () => {
@@ -163,15 +163,15 @@ describe('CODING_WORKFLOW template', () => {
 
 describe('RESEARCH_WORKFLOW template', () => {
 	test('has two steps', () => {
-		expect(RESEARCH_WORKFLOW.steps).toHaveLength(2);
+		expect(RESEARCH_WORKFLOW.nodes).toHaveLength(2);
 	});
 
 	test('first step agentId placeholder is planner', () => {
-		expect(RESEARCH_WORKFLOW.steps[0].agentId).toBe('planner');
+		expect(RESEARCH_WORKFLOW.nodes[0].agentId).toBe('planner');
 	});
 
 	test('second step agentId placeholder is general', () => {
-		expect(RESEARCH_WORKFLOW.steps[1].agentId).toBe('general');
+		expect(RESEARCH_WORKFLOW.nodes[1].agentId).toBe('general');
 	});
 
 	test('has one transition (planner → general) with always condition', () => {
@@ -179,9 +179,9 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.transitions[0].condition?.type).toBe('always');
 	});
 
-	test('startStepId points to the planner step', () => {
-		const plannerStep = RESEARCH_WORKFLOW.steps.find((s) => s.agentId === 'planner');
-		expect(RESEARCH_WORKFLOW.startStepId).toBe(plannerStep?.id);
+	test('startNodeId points to the planner step', () => {
+		const plannerStep = RESEARCH_WORKFLOW.nodes.find((s) => s.agentId === 'planner');
+		expect(RESEARCH_WORKFLOW.startNodeId).toBe(plannerStep?.id);
 	});
 
 	test('does not reference leader', () => {
@@ -196,19 +196,19 @@ describe('RESEARCH_WORKFLOW template', () => {
 
 describe('REVIEW_ONLY_WORKFLOW template', () => {
 	test('has one step', () => {
-		expect(REVIEW_ONLY_WORKFLOW.steps).toHaveLength(1);
+		expect(REVIEW_ONLY_WORKFLOW.nodes).toHaveLength(1);
 	});
 
 	test('step agentId placeholder is coder', () => {
-		expect(REVIEW_ONLY_WORKFLOW.steps[0].agentId).toBe('coder');
+		expect(REVIEW_ONLY_WORKFLOW.nodes[0].agentId).toBe('coder');
 	});
 
 	test('has no transitions (terminal step — run completes immediately on advance)', () => {
 		expect(REVIEW_ONLY_WORKFLOW.transitions).toHaveLength(0);
 	});
 
-	test('startStepId points to the coder step', () => {
-		expect(REVIEW_ONLY_WORKFLOW.startStepId).toBe(REVIEW_ONLY_WORKFLOW.steps[0].id);
+	test('startNodeId points to the coder step', () => {
+		expect(REVIEW_ONLY_WORKFLOW.startNodeId).toBe(REVIEW_ONLY_WORKFLOW.nodes[0].id);
 	});
 
 	test('does not reference leader', () => {
@@ -253,7 +253,7 @@ describe('getBuiltInWorkflows()', () => {
 
 	test('all agentId placeholders are valid builtin role names', () => {
 		for (const wf of getBuiltInWorkflows()) {
-			for (const step of wf.steps) {
+			for (const step of wf.nodes) {
 				// Built-in workflows use single-agent steps; agentId must be defined and a valid role name.
 				expect(step.agentId).toBeDefined();
 				expect(VALID_BUILTIN_ROLES.has(step.agentId!)).toBe(true);
@@ -330,11 +330,11 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.steps).toHaveLength(4);
-		expect(wf!.steps[0].agentId).toBe(PLANNER_ID);
-		expect(wf!.steps[1].agentId).toBe(CODER_ID);
-		expect(wf!.steps[2].agentId).toBe(GENERAL_ID);
-		expect(wf!.steps[3].agentId).toBe(GENERAL_ID);
+		expect(wf!.nodes).toHaveLength(4);
+		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID);
+		expect(wf!.nodes[1].agentId).toBe(CODER_ID);
+		expect(wf!.nodes[2].agentId).toBe(GENERAL_ID);
+		expect(wf!.nodes[3].agentId).toBe(GENERAL_ID);
 	});
 
 	test('CODING_WORKFLOW seeded with four transitions and correct conditions', async () => {
@@ -384,7 +384,7 @@ describe('seedBuiltInWorkflows()', () => {
 	test('CODING_WORKFLOW seeded Verify step has instructions', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		const verifyStep = wf!.steps.find((s) => s.name === 'Verify & Test');
+		const verifyStep = wf!.nodes.find((s) => s.name === 'Verify & Test');
 		expect(verifyStep).toBeDefined();
 		expect(verifyStep!.instructions).toContain('Run tests');
 	});
@@ -393,9 +393,9 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.steps).toHaveLength(2);
-		expect(wf!.steps[0].agentId).toBe(PLANNER_ID);
-		expect(wf!.steps[1].agentId).toBe(GENERAL_ID);
+		expect(wf!.nodes).toHaveLength(2);
+		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID);
+		expect(wf!.nodes[1].agentId).toBe(GENERAL_ID);
 		expect(wf!.transitions).toHaveLength(1);
 		expect(wf!.transitions[0].condition?.type).toBe('always');
 	});
@@ -404,8 +404,8 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.steps).toHaveLength(1);
-		expect(wf!.steps[0].agentId).toBe(CODER_ID);
+		expect(wf!.nodes).toHaveLength(1);
+		expect(wf!.nodes[0].agentId).toBe(CODER_ID);
 		expect(wf!.transitions).toHaveLength(0);
 	});
 
@@ -435,7 +435,7 @@ describe('seedBuiltInWorkflows()', () => {
 		manager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'My Custom Workflow',
-			steps: [{ name: 'Code', agentId: CODER_ID }],
+			nodes: [{ name: 'Code', agentId: CODER_ID }],
 		});
 
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
@@ -591,14 +591,14 @@ describe('Coding Workflow export/import round-trip', () => {
 		const exported = exportWorkflow(wf, mockAgents);
 
 		const verifyToPlan = exported.transitions.find(
-			(t) => t.fromStep === 'Verify & Test' && t.toStep === 'Plan'
+			(t) => t.fromNode === 'Verify & Test' && t.toNode === 'Plan'
 		);
 		expect(verifyToPlan).toBeDefined();
 		expect(verifyToPlan!.isCyclic).toBe(true);
 
 		// Non-cyclic transitions should not have isCyclic
 		const verifyToDone = exported.transitions.find(
-			(t) => t.fromStep === 'Verify & Test' && t.toStep === 'Done'
+			(t) => t.fromNode === 'Verify & Test' && t.toNode === 'Done'
 		);
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.isCyclic).toBeUndefined();
@@ -640,7 +640,7 @@ describe('Coding Workflow export/import round-trip', () => {
 
 		// Re-import using the same mechanism as seedBuiltInWorkflows but from the exported format
 		const stepNameToId = new Map<string, string>();
-		for (const step of exported.steps) {
+		for (const step of exported.nodes) {
 			stepNameToId.set(step.name, `reimport-${step.name}`);
 		}
 
@@ -651,20 +651,20 @@ describe('Coding Workflow export/import round-trip', () => {
 			spaceId: SPACE_ID,
 			name: exported.name,
 			description: exported.description,
-			steps: exported.steps.map((s) => ({
+			nodes: exported.nodes.map((s) => ({
 				id: stepNameToId.get(s.name)!,
 				name: s.name,
 				agentId: agentNameToId.get(s.agentRef) ?? s.agentRef,
 				instructions: s.instructions,
 			})),
 			transitions: exported.transitions.map((t) => ({
-				from: stepNameToId.get(t.fromStep)!,
-				to: stepNameToId.get(t.toStep)!,
+				from: stepNameToId.get(t.fromNode)!,
+				to: stepNameToId.get(t.toNode)!,
 				condition: t.condition,
 				order: t.order,
 				isCyclic: t.isCyclic,
 			})),
-			startStepId: stepNameToId.get(exported.startStep),
+			startNodeId: stepNameToId.get(exported.startNode),
 			rules: [],
 			tags: exported.tags,
 		});
@@ -674,7 +674,7 @@ describe('Coding Workflow export/import round-trip', () => {
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(reimported).toBeDefined();
-		expect(reimported.steps).toHaveLength(4);
+		expect(reimported.nodes).toHaveLength(4);
 		expect(reimported.transitions).toHaveLength(4);
 
 		// isCyclic preserved on Verify→Plan
@@ -704,20 +704,20 @@ describe('Coding Workflow export/import round-trip', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Test Workflow',
-			steps: [
+			nodes: [
 				{ agentRef: 'Planner', name: 'Plan' },
 				{ agentRef: 'General', name: 'Verify' },
 			],
 			transitions: [
 				{
-					fromStep: 'Verify',
-					toStep: 'Plan',
+					fromNode: 'Verify',
+					toNode: 'Plan',
 					condition: { type: 'task_result', expression: 'failed' },
 					order: 0,
 					isCyclic: true,
 				},
 			],
-			startStep: 'Plan',
+			startNode: 'Plan',
 			rules: [],
 			tags: ['test'],
 		};
@@ -730,19 +730,19 @@ describe('Coding Workflow export/import round-trip', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'Test Workflow',
-			steps: [
+			nodes: [
 				{ agentRef: 'Planner', name: 'Plan' },
 				{ agentRef: 'General', name: 'Verify' },
 			],
 			transitions: [
 				{
-					fromStep: 'Verify',
-					toStep: 'Plan',
+					fromNode: 'Verify',
+					toNode: 'Plan',
 					condition: { type: 'task_result' },
 					order: 0,
 				},
 			],
-			startStep: 'Plan',
+			startNode: 'Plan',
 			rules: [],
 			tags: ['test'],
 		};

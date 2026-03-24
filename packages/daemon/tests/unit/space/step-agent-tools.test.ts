@@ -64,9 +64,9 @@ function seedWorkflowRunWithChannels(
 		spaceId,
 		name: 'Test Workflow',
 		description: '',
-		steps: [],
+		nodes: [],
 		transitions: [],
-		startStepId: '',
+		startNodeId: '',
 		rules: [],
 	});
 

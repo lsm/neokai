@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
-import type { WorkflowRule, WorkflowStep } from '@neokai/shared';
+import type { WorkflowRule, WorkflowNode } from '@neokai/shared';
 import { WorkflowRulesEditor, makeEmptyRule, rulesToDrafts } from '../WorkflowRulesEditor';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 
@@ -26,7 +26,7 @@ vi.mock('../../../lib/utils', () => ({
 
 afterEach(() => cleanup());
 
-function makeStep(id: string, name: string): WorkflowStep {
+function makeStep(id: string, name: string): WorkflowNode {
 	return { id, name, agentId: 'agent-1' };
 }
 

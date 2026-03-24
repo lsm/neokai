@@ -405,7 +405,7 @@ describe('SpaceSessionGroupRepository — updated schema', () => {
 				taskId: 'task-map',
 				status: 'completed',
 				workflowRunId: 'run-1',
-				currentStepId: 'step-1',
+				currentNodeId: 'step-1',
 			});
 
 			const fetched = repo.getGroup(created.id);
@@ -417,7 +417,7 @@ describe('SpaceSessionGroupRepository — updated schema', () => {
 			expect(fetched!.taskId).toBe('task-map');
 			expect(fetched!.status).toBe('completed');
 			expect(fetched!.workflowRunId).toBe('run-1');
-			expect(fetched!.currentStepId).toBe('step-1');
+			expect(fetched!.currentNodeId).toBe('step-1');
 			expect(fetched!.createdAt).toBeGreaterThan(0);
 			expect(fetched!.updatedAt).toBeGreaterThan(0);
 			expect(Array.isArray(fetched!.members)).toBe(true);
