@@ -2989,8 +2989,33 @@ export class RoomRuntime {
 			);
 			const previousResultSummary = prevCompleted?.resultSummary;
 
-			// Spawn planning group with executionId
-			await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+			// Plan reuse: For subsequent executions (executions 2+), skip planning and clone
+			// tasks from the previous successful execution. This avoids redundant planning
+			// for recurring missions where the same plan is executed repeatedly.
+			//
+			// First execution (executionNumber === 1) always goes through the planner to
+			// establish the initial plan.
+			if (execution.executionNumber > 1 && prevCompleted) {
+				const clonedCount = await this.reuseExecutionPlan(
+					goal,
+					execution.id,
+					prevCompleted.taskIds
+				);
+				if (clonedCount > 0) {
+					log.info(
+						`Recurring mission ${goal.id}: execution ${execution.executionNumber} started with ${clonedCount} reused tasks`
+					);
+				} else {
+					// No tasks to clone (e.g., previous execution had no tasks) — fall back to planning
+					log.warn(
+						`Recurring mission ${goal.id}: no tasks to reuse from previous execution — falling back to planning`
+					);
+					await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+				}
+			} else {
+				// First execution or no previous successful execution — spawn planning group
+				await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+			}
 		}
 	}
 
@@ -3340,6 +3365,90 @@ export class RoomRuntime {
 			`Spawned planning group for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}` +
 				(isRecurringExecution ? ` [execution ${executionId}]` : '')
 		);
+	}
+
+	/**
+	 * Reuse the plan from a previous execution by cloning its tasks.
+	 *
+	 * For subsequent executions of a recurring mission, instead of going through
+	 * the planner again, we clone the tasks from the previous successful execution.
+	 * This avoids redundant planning for recurring work.
+	 *
+	 * Clone behavior:
+	 * - New tasks are created with status='pending' (not 'draft' since they're pre-approved)
+	 * - taskType, assignedAgent, priority are preserved from the original
+	 * - Planning tasks are excluded (only execution tasks are cloned)
+	 * - Dependencies are remapped from old task IDs to new task IDs
+	 *
+	 * Returns the number of tasks cloned.
+	 */
+	private async reuseExecutionPlan(
+		goal: RoomGoal,
+		newExecutionId: string,
+		prevExecutionTaskIds: string[]
+	): Promise<number> {
+		if (prevExecutionTaskIds.length === 0) {
+			log.debug(`[reuseExecutionPlan] No tasks to clone for goal ${goal.id}`);
+			return 0;
+		}
+
+		// Get full task details for all previous tasks
+		const prevTasks = await Promise.all(
+			prevExecutionTaskIds.map((id) => this.taskManager.getTask(id))
+		);
+		const validPrevTasks = prevTasks.filter(Boolean) as NeoTask[];
+
+		// Filter out planning tasks — we only reuse execution tasks
+		const executionTasks = validPrevTasks.filter((t) => t.taskType !== 'planning');
+
+		if (executionTasks.length === 0) {
+			log.debug(`[reuseExecutionPlan] No execution tasks to clone for goal ${goal.id}`);
+			return 0;
+		}
+
+		// Create a mapping from old task ID to new task ID for dependency remapping
+		const oldToNewIdMap = new Map<string, string>();
+
+		// First pass: create all new tasks without dependencies (avoids forward-reference issues)
+		for (const prevTask of executionTasks) {
+			const newTask = await this.taskManager.createTask({
+				title: prevTask.title,
+				description: prevTask.description,
+				priority: prevTask.priority,
+				taskType: prevTask.taskType,
+				assignedAgent: prevTask.assignedAgent,
+				status: 'pending',
+				// Note: dependsOn is set in second pass after all tasks exist
+			});
+			oldToNewIdMap.set(prevTask.id, newTask.id);
+
+			// Link the new task to the new execution
+			await this.goalManager.linkTaskToExecution(goal.id, newExecutionId, newTask.id);
+			log.debug(`[reuseExecutionPlan] Cloned task: "${prevTask.title}" → "${newTask.title}"`);
+		}
+
+		// Second pass: update dependsOn to use new task IDs
+		for (const prevTask of executionTasks) {
+			if (prevTask.dependsOn && prevTask.dependsOn.length > 0) {
+				const newDependsOn = prevTask.dependsOn
+					.map((depId) => oldToNewIdMap.get(depId))
+					.filter(Boolean) as string[];
+
+				if (newDependsOn.length > 0) {
+					const newTaskId = oldToNewIdMap.get(prevTask.id);
+					if (newTaskId) {
+						await this.taskManager.updateTaskStatus(newTaskId, 'pending', {
+							dependsOn: newDependsOn,
+						});
+					}
+				}
+			}
+		}
+
+		log.info(
+			`[reuseExecutionPlan] Cloned ${executionTasks.length} tasks for goal ${goal.id} (execution ${newExecutionId})`
+		);
+		return executionTasks.length;
 	}
 
 	/**

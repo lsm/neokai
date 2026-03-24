@@ -645,3 +645,233 @@ describe('replan_goal + recurring mission interaction', () => {
 		expect(updatedGoal!.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
 	});
 });
+
+describe('Recurring Missions: plan reuse for subsequent executions', () => {
+	let ctx: RuntimeTestContext;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	test('subsequent execution clones tasks from previous execution without spawning planning group', async () => {
+		// Test that execution #2+ reuses the plan from execution #1 instead of
+		// spawning a new planning group. This verifies plan reuse behavior.
+		const pastTime = Math.floor(Date.now() / 1000) - 60;
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Daily report generation',
+			description: 'Generate daily report',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: pastTime,
+		});
+
+		// ── Execution 1: trigger via tick ─────────────────────────────────────
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const exec1 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec1).not.toBeNull();
+		expect(exec1?.executionNumber).toBe(1);
+
+		// Manually create execution tasks (simulating what the planner would have created)
+		// and link them to execution 1. In a real run, the planner creates these.
+		const task1 = await ctx.taskManager.createTask({
+			title: 'Fetch data',
+			description: 'Fetch data from API',
+			taskType: 'coding',
+			assignedAgent: 'coder',
+			status: 'pending',
+		});
+		const task2 = await ctx.taskManager.createTask({
+			title: 'Format report',
+			description: 'Format data into report',
+			taskType: 'coding',
+			assignedAgent: 'coder',
+			status: 'pending',
+		});
+		// Link tasks to execution 1
+		await ctx.goalManager.linkTaskToExecution(goal.id, exec1!.id, task1.id);
+		await ctx.goalManager.linkTaskToExecution(goal.id, exec1!.id, task2.id);
+
+		// Complete execution 1's tasks so Phase 1 completes the execution.
+		// The execution's taskIds also includes the planning task created by spawnPlanningGroup,
+		// so we must mark that as completed too.
+		const allTasks = await Promise.all(exec1!.taskIds.map((id) => ctx.taskManager.getTask(id)));
+		const planningTask = allTasks.find((t) => t?.taskType === 'planning');
+		if (planningTask) {
+			await ctx.taskManager.updateTaskStatus(planningTask.id, 'completed');
+		}
+		await ctx.taskManager.updateTaskStatus(task1.id, 'completed');
+		await ctx.taskManager.updateTaskStatus(task2.id, 'completed');
+
+		// Tick to let Phase 1 complete the execution and advance next_run_at
+		await ctx.runtime.tick();
+
+		const exec1After = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec1After).toBeNull(); // execution should be completed
+
+		const completedExecs = ctx.goalManager.listExecutions(goal.id, 10);
+		const completedExec1 = completedExecs.find((e) => e.executionNumber === 1);
+		expect(completedExec1?.status).toBe('completed');
+		expect(completedExec1?.taskIds).toContain(task1.id);
+		expect(completedExec1?.taskIds).toContain(task2.id);
+
+		// ── Execution 2: should reuse plan from execution 1 ─────────────────────
+		// Set next_run_at to past to trigger execution 2
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+
+		await ctx.runtime.tick();
+
+		const exec2 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec2).not.toBeNull();
+		expect(exec2?.executionNumber).toBe(2);
+
+		// Verify execution 2 has NEW tasks cloned from execution 1's tasks
+		// (task IDs should be different from task1/task2)
+		expect(exec2!.taskIds).not.toContain(task1.id);
+		expect(exec2!.taskIds).not.toContain(task2.id);
+
+		// Verify the cloned tasks have correct properties and are different IDs from original
+		const clonedTask1Id = exec2!.taskIds.find((id) => id !== task1.id && id !== task2.id);
+		expect(clonedTask1Id).toBeDefined();
+
+		const clonedTask1 = await ctx.taskManager.getTask(clonedTask1Id!);
+		// The cloned task should have the same title as one of the original tasks
+		expect(['Fetch data', 'Format report']).toContain(clonedTask1?.title);
+		// Status may be pending or in_progress (tick's execution flow picks them up)
+		expect(['pending', 'in_progress']).toContain(clonedTask1?.status as string);
+
+		// Verify the log shows plan reuse (not fallback to planning)
+		// This is implicitly verified by checking that exec2 has new tasks
+	});
+
+	test('subsequent execution remaps task dependencies correctly', async () => {
+		// Test that when tasks have dependencies, they are correctly remapped to new task IDs
+		const pastTime = Math.floor(Date.now() / 1000) - 60;
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Build pipeline',
+			description: 'Multi-step build',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: pastTime,
+		});
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const exec1 = ctx.goalManager.getActiveExecution(goal.id);
+
+		// Create tasks with a dependency: taskB depends on taskA
+		const taskA = await ctx.taskManager.createTask({
+			title: 'Setup',
+			description: 'Initial setup',
+			taskType: 'coding',
+			status: 'pending',
+		});
+		const taskB = await ctx.taskManager.createTask({
+			title: 'Build',
+			description: 'Run build',
+			taskType: 'coding',
+			dependsOn: [taskA.id], // taskB depends on taskA
+			status: 'pending',
+		});
+		await ctx.goalManager.linkTaskToExecution(goal.id, exec1!.id, taskA.id);
+		await ctx.goalManager.linkTaskToExecution(goal.id, exec1!.id, taskB.id);
+
+		// Complete tasks and trigger execution 2.
+		// Also mark the planning task as completed since it's in the execution's taskIds.
+		const exec1AllTasks = await Promise.all(
+			exec1!.taskIds.map((id) => ctx.taskManager.getTask(id))
+		);
+		const exec1PlanningTask = exec1AllTasks.find((t) => t?.taskType === 'planning');
+		if (exec1PlanningTask) {
+			await ctx.taskManager.updateTaskStatus(exec1PlanningTask.id, 'completed');
+		}
+		await ctx.taskManager.updateTaskStatus(taskA.id, 'completed');
+		await ctx.taskManager.updateTaskStatus(taskB.id, 'completed');
+		await ctx.runtime.tick();
+
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+		await ctx.runtime.tick();
+
+		const exec2 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec2!.taskIds.length).toBe(2);
+
+		// Get the cloned tasks
+		const clonedTasks = await Promise.all(exec2!.taskIds.map((id) => ctx.taskManager.getTask(id)));
+		const clonedA = clonedTasks.find((t) => t?.title === 'Setup');
+		const clonedB = clonedTasks.find((t) => t?.title === 'Build');
+
+		// Verify clonedB's dependsOn points to clonedA (not original taskA)
+		expect(clonedB?.dependsOn).toContain(clonedA!.id);
+		expect(clonedB?.dependsOn).not.toContain(taskA.id);
+	});
+
+	test('first execution always spawns planning group even if previous execution exists', async () => {
+		// Execution #1 should always go through planning, regardless of any context
+		const pastTime = Math.floor(Date.now() / 1000) - 60;
+		const goal = await ctx.goalManager.createGoal({
+			title: 'New recurring mission',
+			description: 'Should always plan on first run',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: pastTime,
+		});
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const exec1 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec1?.executionNumber).toBe(1);
+
+		// Planning group should have been spawned (verify via session factory calls)
+		const planningCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession'
+		);
+		expect(planningCalls.length).toBeGreaterThan(0);
+	});
+
+	test('execution with no previous tasks falls back to planning', async () => {
+		// If a previous execution had no tasks (e.g., planning failed), fall back to planning
+		const pastTime = Math.floor(Date.now() / 1000) - 60;
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Sometimes empty',
+			description: 'May have no tasks some runs',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: pastTime,
+		});
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const exec1 = ctx.goalManager.getActiveExecution(goal.id);
+
+		// Create a task but don't link any tasks to execution (simulating planning failure)
+		// The orphan guard won't trigger since we haven't exceeded 5 minutes
+		// Instead, manually complete the empty execution
+		ctx.goalManager.completeExecution(exec1!.id, 'No tasks created');
+
+		await ctx.runtime.tick();
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+
+		// Clear session calls to track new planning
+		ctx.sessionFactory.calls.length = 0;
+
+		await ctx.runtime.tick();
+
+		const exec2 = ctx.goalManager.getActiveExecution(goal.id);
+		expect(exec2?.executionNumber).toBe(2);
+
+		// Execution 2 should have spawned a planning group (fallback)
+		const planningCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession'
+		);
+		expect(planningCalls.length).toBeGreaterThan(0);
+	});
+});
