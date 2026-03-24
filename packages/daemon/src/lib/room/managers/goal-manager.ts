@@ -25,7 +25,7 @@ import type {
 	MissionMetric,
 	MetricHistoryEntry,
 } from '@neokai/shared';
-import { getNextRunAt, getSystemTimezone } from '../runtime/cron-utils';
+import { getNextRunAt, getSystemTimezone, isValidCronExpression } from '../runtime/cron-utils';
 
 export interface MetricTargetResult {
 	name: string;
@@ -61,8 +61,19 @@ export class GoalManager {
 		// goal because nextRunAt is null, and the goal would never trigger.
 		let nextRunAt = params.nextRunAt;
 		if (params.missionType === 'recurring' && params.schedule && nextRunAt === undefined) {
+			if (!isValidCronExpression(params.schedule.expression)) {
+				throw new Error(
+					`Invalid cron expression "${params.schedule.expression}" for recurring mission. Use 5-field cron or presets (@daily, @weekly, @hourly, @monthly).`
+				);
+			}
 			const tz = params.schedule.timezone ?? getSystemTimezone();
-			nextRunAt = getNextRunAt(params.schedule.expression, tz) ?? undefined;
+			const computed = getNextRunAt(params.schedule.expression, tz);
+			if (computed === null) {
+				throw new Error(
+					`Cron expression "${params.schedule.expression}" produces no future run times.`
+				);
+			}
+			nextRunAt = computed;
 		}
 
 		const goal = this.goalRepo.createGoal({
