@@ -14,7 +14,7 @@ import {
 	createSessionViaUI,
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 test.describe('Mobile Layout', () => {
 	// Use iPhone 13 viewport for mobile tests
@@ -304,14 +304,7 @@ test.describe('Mobile Room Agent Navigation', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
-
-		// Create a room via RPC (infrastructure setup)
-		roomId = await page.evaluate(async () => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const res = await hub.request('room.create', { name: 'Mobile Agent Nav Test' });
-			return (res as { room: { id: string } }).room.id;
-		});
+		roomId = await createRoom(page, 'Mobile Agent Nav Test');
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -364,7 +357,7 @@ test.describe('Mobile Room Agent Navigation', () => {
 		await page.goto(`/room/${roomId}/agent`);
 		await waitForWebSocketConnected(page);
 
-		// Wait for chat container to appear (room agent view)
+		// Wait for agent view to load
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 10000 });
 
 		// Agent tab should be active
@@ -372,6 +365,12 @@ test.describe('Mobile Room Agent Navigation', () => {
 		const agentTab = bottomTabBar.getByRole('tab', { name: 'Agent' });
 		await expect(agentTab).toBeVisible();
 		await expect(agentTab).toHaveAttribute('aria-selected', 'true');
+
+		// Overview tab should not be active
+		await expect(bottomTabBar.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+			'aria-selected',
+			'false'
+		);
 
 		// Click Overview tab to go back to room dashboard
 		await bottomTabBar.getByRole('tab', { name: 'Overview' }).click();
@@ -401,5 +400,60 @@ test.describe('Mobile Room Agent Navigation', () => {
 		// Now global tabs should be shown (Rooms tab visible)
 		await expect(bottomTabBar.getByRole('tab', { name: 'Rooms' })).toBeVisible({ timeout: 5000 });
 		await expect(bottomTabBar.getByRole('tab', { name: 'Chats' })).toBeVisible();
+	});
+
+	test('Overview tab is active on room dashboard but not on task or session sub-views', async ({
+		page,
+	}) => {
+		// Create a task for navigation (infrastructure)
+		const taskId = await page.evaluate(async (rId) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			const res = await hub.request('task.create', {
+				roomId: rId,
+				title: 'Mobile Nav Test Task',
+				description: 'Task for mobile nav tab test',
+			});
+			return (res as { task: { id: string } }).task.id;
+		}, roomId);
+
+		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
+
+		// 1. Room dashboard — Overview should be active
+		await page.goto(`/room/${roomId}`);
+		await waitForWebSocketConnected(page);
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
+			timeout: 10000,
+		});
+		await expect(bottomTabBar.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+
+		// 2. Room task view — neither Overview nor Agent should be active
+		await page.goto(`/room/${roomId}/task/${taskId}`);
+		await waitForWebSocketConnected(page);
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/task/${taskId}$`), { timeout: 5000 });
+		await expect(bottomTabBar.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+			'aria-selected',
+			'false'
+		);
+		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toHaveAttribute(
+			'aria-selected',
+			'false'
+		);
+
+		// 3. Room agent — Agent should be active, Overview not
+		await page.goto(`/room/${roomId}/agent`);
+		await waitForWebSocketConnected(page);
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 5000 });
+		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await expect(bottomTabBar.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+			'aria-selected',
+			'false'
+		);
 	});
 });

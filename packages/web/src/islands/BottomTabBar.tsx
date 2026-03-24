@@ -3,6 +3,7 @@ import {
 	navSectionSignal,
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
+	currentRoomTaskIdSignal,
 	type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -114,8 +115,11 @@ export function BottomTabBar() {
 	const roomSessionId = currentRoomSessionIdSignal.value;
 	const inboxBadgeCount = inboxStore.reviewCount.value;
 
+	const roomTaskId = currentRoomTaskIdSignal.value;
 	const isInRoomContext = navSection === 'rooms' && roomId !== null;
 	const isViewingRoomAgent = roomSessionId === `room:chat:${roomId}`;
+	// Overview is only active when on the room dashboard (no task and no session open)
+	const isViewingRoomDashboard = roomSessionId === null && roomTaskId === null;
 
 	const tabs = isInRoomContext ? ROOM_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
 
@@ -145,7 +149,7 @@ export function BottomTabBar() {
 	const isTabActive = (id: TabItem['id']): boolean => {
 		if (isInRoomContext) {
 			if (id === 'room-agent') return isViewingRoomAgent;
-			if (id === 'room-overview') return !isViewingRoomAgent && navSection === 'rooms';
+			if (id === 'room-overview') return isViewingRoomDashboard && navSection === 'rooms';
 		}
 		return navSection === id;
 	};
