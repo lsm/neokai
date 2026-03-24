@@ -47,7 +47,7 @@ interface WorkflowRow {
 	updated_at: number;
 }
 
-interface StepRow {
+interface NodeRow {
 	id: string;
 	workflow_id: string;
 	name: string;
@@ -78,7 +78,7 @@ interface WorkflowConfigJson {
 }
 
 // JSON stored inside space_workflow_nodes.config
-interface StepConfigJson {
+interface NodeConfigJson {
 	instructions?: string;
 	/** Multi-agent array — present when the node uses the agents[] format */
 	agents?: WorkflowNodeAgent[];
@@ -99,8 +99,8 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 	}
 }
 
-function rowToNode(row: StepRow): WorkflowNode {
-	const cfg = parseJson<StepConfigJson>(row.config, {});
+function rowToNode(row: NodeRow): WorkflowNode {
+	const cfg = parseJson<NodeConfigJson>(row.config, {});
 	const node: WorkflowNode = {
 		id: row.id,
 		name: row.name,
@@ -399,7 +399,7 @@ export class SpaceWorkflowRepository {
 			.prepare(
 				`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
 			)
-			.all(workflowId) as StepRow[];
+			.all(workflowId) as NodeRow[];
 		return rows.map(rowToNode);
 	}
 
@@ -419,7 +419,7 @@ export class SpaceWorkflowRepository {
 		index: number,
 		now: number
 	): void {
-		const nodeCfg: StepConfigJson = {
+		const nodeCfg: NodeConfigJson = {
 			instructions: input.instructions,
 		};
 		// Persist agents and channels into the JSON config column so they survive round-trips.

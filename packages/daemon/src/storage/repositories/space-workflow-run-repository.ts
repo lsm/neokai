@@ -166,10 +166,10 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * Advance the current step ID for a run
+	 * Advance the current node ID for a run
 	 */
-	updateCurrentStep(id: string, stepId: string): SpaceWorkflowRun | null {
-		return this.updateRun(id, { currentNodeId: stepId });
+	updateCurrentNode(id: string, nodeId: string): SpaceWorkflowRun | null {
+		return this.updateRun(id, { currentNodeId: nodeId });
 	}
 
 	/**
