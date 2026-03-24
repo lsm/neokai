@@ -246,6 +246,34 @@ describe('Recurring Missions: tickRecurringMissions triggers execution', () => {
 		const linkedIds = updatedGoal?.linkedTaskIds ?? [];
 		expect(linkedIds).not.toContain(oldTask.id);
 	});
+
+	test('auto-computes nextRunAt when recurring goal created with schedule but no nextRunAt', async () => {
+		// Regression test: creating a recurring goal with a schedule (but no explicit
+		// nextRunAt) should auto-compute nextRunAt so the goal triggers on the next tick.
+		// Without this fix, nextRunAt would be null and Phase 2 would skip the goal.
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Auto-schedule test',
+			description: 'nextRunAt should be auto-computed',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			// NOTE: nextRunAt is NOT set here — that's the bug scenario
+		});
+
+		// nextRunAt should have been auto-computed to a future time
+		expect(goal.nextRunAt).not.toBeNull();
+		expect(goal.nextRunAt!).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+		// Now set nextRunAt to the past so the tick will trigger
+		await ctx.goalManager.updateNextRunAt(goal.id, Math.floor(Date.now() / 1000) - 60);
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Execution should have been triggered
+		const activeExecution = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeExecution).not.toBeNull();
+		expect(activeExecution?.status).toBe('running');
+	});
 });
 
 describe('GoalManager execution methods', () => {

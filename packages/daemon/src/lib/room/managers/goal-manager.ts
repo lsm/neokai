@@ -25,6 +25,7 @@ import type {
 	MissionMetric,
 	MetricHistoryEntry,
 } from '@neokai/shared';
+import { getNextRunAt, getSystemTimezone } from '../runtime/cron-utils';
 
 export interface MetricTargetResult {
 	name: string;
@@ -55,9 +56,19 @@ export class GoalManager {
 	 * Create a new goal
 	 */
 	async createGoal(params: Omit<CreateGoalParams, 'roomId'>): Promise<RoomGoal> {
+		// Auto-compute nextRunAt for recurring goals with a schedule.
+		// Without this, the scheduler (Phase 2 of tickRecurringMissions) would skip the
+		// goal because nextRunAt is null, and the goal would never trigger.
+		let nextRunAt = params.nextRunAt;
+		if (params.missionType === 'recurring' && params.schedule && nextRunAt === undefined) {
+			const tz = params.schedule.timezone ?? getSystemTimezone();
+			nextRunAt = getNextRunAt(params.schedule.expression, tz) ?? undefined;
+		}
+
 		const goal = this.goalRepo.createGoal({
 			...params,
 			roomId: this.roomId,
+			nextRunAt,
 		});
 
 		return goal;

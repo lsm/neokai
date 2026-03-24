@@ -105,6 +105,15 @@ export function setupGoalHandlers(
 			throw new Error('Goal title is required');
 		}
 
+		// Auto-compute nextRunAt for recurring goals with a schedule.
+		// Without this, the scheduler (Phase 2 of tickRecurringMissions) would skip the
+		// goal because nextRunAt is null, and the goal would never trigger.
+		let nextRunAt: number | undefined;
+		if (params.missionType === 'recurring' && params.schedule) {
+			const tz = params.schedule.timezone ?? getSystemTimezone();
+			nextRunAt = getNextRunAt(params.schedule.expression, tz) ?? undefined;
+		}
+
 		const goalManager = goalManagerFactory(params.roomId);
 		const goal = await goalManager.createGoal({
 			title: params.title,
@@ -115,6 +124,7 @@ export function setupGoalHandlers(
 			structuredMetrics: params.structuredMetrics,
 			schedule: params.schedule,
 			schedulePaused: params.schedulePaused,
+			nextRunAt,
 		});
 
 		// Emit goal.created event
