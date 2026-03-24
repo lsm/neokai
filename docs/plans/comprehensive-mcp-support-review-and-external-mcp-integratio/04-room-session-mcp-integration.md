@@ -23,11 +23,18 @@ Add a `room_mcp_enablement` table that stores which registry servers are enabled
 2. In `packages/daemon/src/storage/schema/index.ts`, add `CREATE TABLE IF NOT EXISTS room_mcp_enablement` with columns: `room_id TEXT NOT NULL`, `server_id TEXT NOT NULL`, `enabled INTEGER NOT NULL DEFAULT 1`, `PRIMARY KEY (room_id, server_id)`.
 3. In `packages/daemon/src/storage/schema/migrations.ts`, add the migration for `room_mcp_enablement`.
 4. Create `packages/daemon/src/storage/repositories/room-mcp-enablement-repository.ts` implementing:
-   - `setEnabled(roomId, serverId, enabled)` — upsert
+   - `setEnabled(roomId, serverId, enabled)` — upsert; call `reactiveDb.notifyChange('room_mcp_enablement')` after write
    - `getEnabledServerIds(roomId): string[]` — returns IDs of servers enabled for a room
    - `getEnabledServers(roomId): AppMcpServer[]` — joins with `app_mcp_servers` to return full entries
-   - `resetToGlobal(roomId)` — removes all per-room overrides (reverts to registry defaults)
+   - `resetToGlobal(roomId)` — removes all per-room overrides; call `reactiveDb.notifyChange('room_mcp_enablement')` after write
+   - Pass `ReactiveDatabase` into the constructor (not bare `Database`), following the same pattern as `AppMcpServerRepository` (Task 2.1).
 5. Add the repository to `packages/daemon/src/storage/database.ts` as `roomMcpEnablement`.
+5a. **Add a named query `'mcpEnablement.byRoom'` to `NAMED_QUERY_REGISTRY`** in `live-query-handlers.ts`:
+   - SQL: `SELECT rme.server_id, rme.enabled, ams.name, ams.source_type, ams.description FROM room_mcp_enablement rme JOIN app_mcp_servers ams ON ams.id = rme.server_id WHERE rme.room_id = ?`
+   - Params: `[roomId]`
+   - Row mapper: return `{ serverId, enabled, name, sourceType, description }` objects.
+   - Authorization: verify the `roomId` param corresponds to an existing room (same pattern as `tasks.byRoom`).
+   - This lets the Room Settings UI subscribe reactively and see per-room toggle changes without polling.
 6. Add RPC handlers in `packages/daemon/src/lib/rpc-handlers/app-mcp-handlers.ts`:
    - `mcp.room.getEnabled` — returns enabled server IDs for a room
    - `mcp.room.setEnabled` — upsert enablement for one server in a room

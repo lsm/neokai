@@ -29,9 +29,9 @@ Add the `app_mcp_servers` SQLite table and a repository class with CRUD operatio
    - `CreateAppMcpServerRequest` (omit `id`)
    - `UpdateAppMcpServerRequest` (all optional except `id`)
 5. Export the new types from `packages/shared/src/types.ts` and `packages/shared/src/mod.ts`.
-6. Create `packages/daemon/src/storage/repositories/app-mcp-server-repository.ts` implementing: `create(req)`, `get(id)`, `getByName(name)`, `list()`, `update(id, updates)`, `delete(id)`, and `listEnabled()`.
-7. Wire the repository into `packages/daemon/src/storage/database.ts` (instantiate and expose as `appMcpServers`).
-8. Write unit tests in `packages/daemon/tests/unit/storage/app-mcp-server-repository.test.ts` covering CRUD operations and `listEnabled()` filtering.
+6. Create `packages/daemon/src/storage/repositories/app-mcp-server-repository.ts` implementing: `create(req)`, `get(id)`, `getByName(name)`, `list()`, `update(id, updates)`, `delete(id)`, and `listEnabled()`. **Each write method (`create`, `update`, `delete`) must call `reactiveDb.notifyChange('app_mcp_servers')` after the SQL write succeeds**, following the pattern used by `GoalRepository` (pass `ReactiveDatabase` — not bare `Database` — into the constructor so `notifyChange` is available). This enables `LiveQueryEngine` to invalidate frontend subscriptions on every registry change.
+7. Wire the repository into `packages/daemon/src/storage/database.ts` (instantiate and expose as `appMcpServers`). Pass `ReactiveDatabase` to the constructor.
+8. Write unit tests in `packages/daemon/tests/unit/storage/app-mcp-server-repository.test.ts` covering CRUD operations, `listEnabled()` filtering, and that `notifyChange('app_mcp_servers')` is called after each write.
 
 **Acceptance criteria:**
 - `app_mcp_servers` table is created on daemon start via the migration.
@@ -59,6 +59,12 @@ Expose the MCP registry via RPC so the frontend and daemon internals can manage 
    - `mcp.registry.delete` — removes entry, emits event
    - `mcp.registry.setEnabled` — convenience toggle, updates `enabled` field, emits event
    - `mcp.registry.listErrors` — returns the current validation errors from `appMcpManager.getStartupErrors()` so the UI can surface a warning badge next to misconfigured entries (requires `appMcpManager` to be passed into the handler context alongside `db`)
+   - **Note:** `mcp.registry.changed` is a daemon-internal event used for hot-reload in `RoomRuntimeService` (Task 3.2). It is **separate** from LiveQuery — both should be emitted/wired. The repository's `notifyChange` call (Task 2.1) drives the LiveQuery frontend subscriptions; the explicit `mcp.registry.changed` event drives the daemon's session hot-reload. Do not remove either.
+2. **Add a named query `'mcpServers.global'` to `NAMED_QUERY_REGISTRY`** in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`:
+   - SQL: `SELECT * FROM app_mcp_servers ORDER BY name`
+   - Row mapper: JSON-parse the `args`, `env`, and `headers` columns; map `source_type` snake_case → `sourceType` camelCase; return typed `AppMcpServer` objects.
+   - No params required (global registry, not scoped to a room).
+   - This is the primary mechanism for the frontend to receive real-time registry updates (snapshot on subscribe, delta on each `notifyChange`). It follows the same pattern as `tasks.byRoom` and `goals.byRoom`.
 2. Register the handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (call `registerAppMcpHandlers()`).
 3. Add `mcp.registry.changed` event type to `packages/shared/src/message-hub/` event definitions.
 4. Add `mcp.registry.*` request/response types to `packages/shared/src/api.ts`.
@@ -66,7 +72,8 @@ Expose the MCP registry via RPC so the frontend and daemon internals can manage 
 
 **Acceptance criteria:**
 - All six RPC endpoints are reachable via MessageHub (`list`, `create`, `update`, `delete`, `setEnabled`, `listErrors`).
-- `mcp.registry.changed` event is emitted on create/update/delete/toggle.
+- `mcp.registry.changed` event is emitted on create/update/delete/toggle (daemon-internal hot-reload).
+- `'mcpServers.global'` named query is registered and returns a typed row per registry entry; frontend can subscribe via `liveQuery.subscribe`.
 - `mcp.registry.listErrors` returns validation errors from `AppMcpLifecycleManager` (note: this handler has a forward dependency on Task 3.1; stub it to return `[]` in this task and complete the wiring in Task 3.1).
 - Unit tests pass with mock DB.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.

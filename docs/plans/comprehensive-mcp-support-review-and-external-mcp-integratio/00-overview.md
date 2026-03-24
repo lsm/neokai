@@ -41,6 +41,23 @@ No existing MCP file-based flows are removed — the registry is additive.
 - Milestone 7 (E2E) depends on all prior milestones.
 - **Task 6.1** (planner web search documentation) and **Task 6.2** (default MCP seeds) have **no dependencies on each other** and can start as soon as Milestone 2 (Task 6.2) and day one (Task 6.1) allow.
 
+## Architectural Patterns
+
+### LiveQuery (reactive frontend reads)
+
+The `app_mcp_servers` and `room_mcp_enablement` tables integrate with NeoKai's **LiveQuery** system for reactive frontend reads — the same pattern used for `tasks.byRoom` and `goals.byRoom`. This means:
+
+- Repository write methods (`create`, `update`, `delete`, `setEnabled`, `resetToGlobal`) call `reactiveDb.notifyChange('<table>')` after each SQL write.
+- Two named queries are registered in `NAMED_QUERY_REGISTRY` (`live-query-handlers.ts`):
+  - `'mcpServers.global'` — full registry, no params (Task 2.2)
+  - `'mcpEnablement.byRoom'` — per-room overrides, param: `[roomId]` (Task 4.1)
+- The frontend `appMcpStore` (Task 5.1) subscribes via `hub.request('liveQuery.subscribe', ...)` and applies `liveQuery.snapshot` / `liveQuery.delta` events to Preact Signals — no polling, no `mcp.registry.changed` event on the frontend.
+- `mcp.registry.changed` remains a daemon-internal event used only by `RoomRuntimeService` for live session hot-reload (Task 3.2). It is NOT propagated to the frontend.
+
+### Job Queue (background processing)
+
+The `JobQueueProcessor` is **not used in this iteration** — health-check/auto-restart of MCP server processes is explicitly deferred. When that work is undertaken, it must use a self-scheduling Job Queue entry (queue name `mcp.health_check`, following the `github.poll` pattern), not `setInterval` or in-memory state. The `job-queue-constants.ts` file is the right place to register the queue name constant.
+
 ## Audit Feedback Loop
 
 Milestone 1 (Audit) should complete before implementation milestones begin. If the audit uncovers a critical architectural gap not covered by this plan, implementation tasks should be adjusted before proceeding with the affected milestone. The audit document (`docs/mcp-audit.md`) serves as the authoritative reference for implementation decisions.

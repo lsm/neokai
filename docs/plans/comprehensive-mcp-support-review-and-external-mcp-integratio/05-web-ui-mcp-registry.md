@@ -29,12 +29,20 @@ Add frontend API helper functions and a reactive store for the MCP registry so c
    - `getRoomMcpEnabled(roomId)` — calls `mcp.room.getEnabled`
    - `setRoomMcpEnabled(roomId, serverId, enabled)` — calls `mcp.room.setEnabled`
    - `resetRoomMcpToGlobal(roomId)` — calls `mcp.room.resetToGlobal`
-3. Create `packages/web/src/lib/app-mcp-store.ts` with a Preact Signal `appMcpServers` that is initialized from the list RPC on first use, and updated on `mcp.registry.changed` hub events.
+3. Create `packages/web/src/lib/app-mcp-store.ts` using **LiveQuery** for reactive registry reads — following the `RoomStore` pattern in `room-store.ts`, not the `mcp.registry.changed` hub event:
+   - On store initialization, register `hub.onEvent('liveQuery.snapshot', handler)` and `hub.onEvent('liveQuery.delta', handler)` for a unique `subscriptionId`.
+   - Call `hub.request('liveQuery.subscribe', { queryName: 'mcpServers.global', params: [], subscriptionId })` to start receiving updates.
+   - On `snapshot`: populate `appMcpServers` signal from `diff.rows`.
+   - On `delta`: apply `diff.added` / `diff.removed` / `diff.updated` in-place to the signal (same pattern as `RoomStore.tasks`).
+   - On WebSocket reconnect (`hub.onConnection`), re-subscribe with the same `subscriptionId`.
+   - On store teardown, call `hub.request('liveQuery.unsubscribe', { subscriptionId })`.
+   - **Do NOT** subscribe to `mcp.registry.changed` in the frontend — LiveQuery supersedes it for UI purposes. `mcp.registry.changed` remains daemon-internal only.
 4. Write unit tests for the API helper types (type-level tests) in `packages/web/src/lib/__tests__/app-mcp-store.test.ts`.
 
 **Acceptance criteria:**
 - API helpers compile with correct types matching `packages/shared/src/api.ts` definitions.
-- `appMcpServers` signal reflects server state and updates on events.
+- `appMcpServers` signal is populated from LiveQuery snapshot on subscribe and updated incrementally from deltas.
+- Signal updates automatically when another client or background job mutates the registry — no polling required.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
 **Depends on:** Task 2.2 (RPC Handlers), Task 4.1 (Per-Room RPC)
@@ -83,8 +91,8 @@ Add an "MCP Servers" section to `packages/web/src/components/room/RoomSettings.t
 **Subtasks (ordered):**
 
 1. In `packages/web/src/components/room/RoomSettings.tsx`, add a new "MCP Servers" section below existing settings.
-2. Load the room's current enablement via `getRoomMcpEnabled(roomId)` on mount.
-3. For each entry in the global registry, show a toggle: if the room has a per-room override use it, otherwise default to the global `enabled` value.
+2. Subscribe to **LiveQuery `'mcpEnablement.byRoom'`** (added in Task 4.1) with `params: [roomId]` to get per-room overrides reactively. Follow the same subscription lifecycle pattern used in Task 5.1 (`appMcpStore`): subscribe on mount, apply snapshot/delta, re-subscribe on reconnect, unsubscribe on unmount.
+3. For each entry in the global registry (`appMcpServers` signal from Task 5.1), show a toggle: if `mcpEnablement.byRoom` has a row for that `serverId`, use its `enabled` value; otherwise default to the global `AppMcpServer.enabled` value.
 4. On toggle, call `setRoomMcpEnabled(roomId, serverId, enabled)`.
 5. Add a "Reset to Global Defaults" button that calls `resetRoomMcpToGlobal(roomId)`.
 6. Show an empty state when no MCP servers are registered yet, with a link to the global settings panel.
