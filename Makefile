@@ -6,9 +6,15 @@ WORKSPACE ?= tmp/workspace
 # Development server - uses random available port by default
 # Usage: make dev [WORKSPACE=/path/to/workspace]
 dev:
-	@echo "Finding available port..."
-	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
-	echo "Starting development server on port $$PORT..."; \
+	@if [ -n "$(PORT)" ]; then \
+		PORT=$(PORT); \
+		echo "$(PORT)" > tmp/.dev-server-running; \
+	else \
+		@echo "Finding available port..." \
+		PORT=$$(node -e "const net = require('net'); const s = net.createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });"); \
+	fi
+	
+	@echo "Starting development server on port $$PORT..."; \
 	mkdir -p $(WORKSPACE); \
 	echo ""; \
 	echo "================================================"; \
@@ -45,7 +51,7 @@ self-test:
 run:
 	@mkdir -p tmp
 	@if [ -n "$(PORT)" ]; then \
-		echo "$(PORT)" > tmp/.dev-server-running; \
+		echo "$(PORT)" > tmp/.prod-server-running; \
 	fi
 	@echo "Starting production server..."
 	@echo "   Workspace: $(WORKSPACE)"

@@ -103,11 +103,11 @@ export function RuntimeMessageRenderer({ message: runtimeMsg }: Props) {
 		return (
 			<div
 				data-testid="runtime-message"
-				class="my-1.5 rounded border border-purple-800/40 bg-purple-950/20 px-3 py-2"
+				class="my-2 rounded-lg border border-purple-700/50 bg-purple-950/30 px-4 py-3 shadow-md"
 			>
-				<div class="flex items-center gap-1.5 mb-2">
+				<div class="flex items-center gap-2 mb-2">
 					<svg
-						class="w-3.5 h-3.5 text-purple-400 flex-shrink-0"
+						class="w-4 h-4 text-purple-400 flex-shrink-0"
 						fill="none"
 						stroke="currentColor"
 						viewBox="0 0 24 24"
@@ -115,13 +115,13 @@ export function RuntimeMessageRenderer({ message: runtimeMsg }: Props) {
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							stroke-width="2"
+							stroke-width={2}
 							d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
 						/>
 					</svg>
-					<span class="text-sm font-semibold text-purple-400">Turn Summary</span>
+					<span class="text-sm font-bold text-purple-300">Turn Summary</span>
 				</div>
-				<MarkdownRenderer content={summaryText} class="text-sm text-gray-300" />
+				<MarkdownRenderer content={summaryText} class="text-sm text-gray-200 leading-relaxed" />
 			</div>
 		);
 	}

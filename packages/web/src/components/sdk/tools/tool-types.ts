@@ -131,6 +131,8 @@ export interface ToolResultCardProps {
 	sessionId?: string;
 	/** Whether the output was removed from SDK session file */
 	isOutputRemoved?: boolean;
+	/** Disable expand/collapse and hide the chevron icon */
+	disableExpand?: boolean;
 }
 
 /**
