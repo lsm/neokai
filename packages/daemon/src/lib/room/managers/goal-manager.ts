@@ -17,6 +17,7 @@ import {
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import type { ShortIdAllocator } from '../../short-id-allocator';
 import type {
 	RoomGoal,
 	GoalStatus,
@@ -25,6 +26,7 @@ import type {
 	MissionMetric,
 	MetricHistoryEntry,
 } from '@neokai/shared';
+import { getNextRunAt, getSystemTimezone, isValidCronExpression } from '../runtime/cron-utils';
 
 export interface MetricTargetResult {
 	name: string;
@@ -45,19 +47,49 @@ export class GoalManager {
 	constructor(
 		private db: BunDatabase,
 		private roomId: string,
-		reactiveDb: ReactiveDatabase
+		reactiveDb: ReactiveDatabase,
+		shortIdAllocator?: ShortIdAllocator
 	) {
-		this.goalRepo = new GoalRepository(db, reactiveDb);
-		this.taskRepo = new TaskRepository(db, reactiveDb);
+		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
+		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
+	}
+
+	/**
+	 * Lookup a goal by short ID within this room. Used for short-ID resolution
+	 * in RPC handlers without requiring a separate GoalRepository instance.
+	 */
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
+		return this.goalRepo.getGoalByShortId(roomId, shortId);
 	}
 
 	/**
 	 * Create a new goal
 	 */
 	async createGoal(params: Omit<CreateGoalParams, 'roomId'>): Promise<RoomGoal> {
+		// Auto-compute nextRunAt for recurring goals with a schedule.
+		// Without this, the scheduler (Phase 2 of tickRecurringMissions) would skip the
+		// goal because nextRunAt is null, and the goal would never trigger.
+		let nextRunAt = params.nextRunAt;
+		if (params.missionType === 'recurring' && params.schedule && nextRunAt === undefined) {
+			if (!isValidCronExpression(params.schedule.expression)) {
+				throw new Error(
+					`Invalid cron expression "${params.schedule.expression}" for recurring mission. Use 5-field cron or presets (@daily, @weekly, @hourly, @monthly).`
+				);
+			}
+			const tz = params.schedule.timezone ?? getSystemTimezone();
+			const computed = getNextRunAt(params.schedule.expression, tz);
+			if (computed === null) {
+				throw new Error(
+					`Cron expression "${params.schedule.expression}" produces no future run times.`
+				);
+			}
+			nextRunAt = computed;
+		}
+
 		const goal = this.goalRepo.createGoal({
 			...params,
 			roomId: this.roomId,
+			nextRunAt,
 		});
 
 		return goal;

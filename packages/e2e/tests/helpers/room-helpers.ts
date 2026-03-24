@@ -10,6 +10,18 @@ import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected } from './wait-helpers';
 
 /**
+ * Create a room via RPC. For use in beforeEach setup only.
+ */
+export async function createRoom(page: Page, name: string): Promise<string> {
+	return page.evaluate(async (roomName) => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub?.request) throw new Error('MessageHub not available');
+		const res = await hub.request('room.create', { name: roomName });
+		return (res as { room: { id: string } }).room.id;
+	}, name);
+}
+
+/**
  * Delete a room via RPC. Best-effort — silently ignores errors so it can be
  * used safely in afterEach without masking test failures.
  */

@@ -26,6 +26,7 @@ import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
 import { TaskRepository } from '../../storage/repositories/task-repository';
+import { resolveTaskId } from '../id-resolution';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -54,10 +55,11 @@ export function setupTaskHandlers(
 	db: Database,
 	reactiveDb: ReactiveDatabase,
 	taskManagerFactory: TaskManagerFactory = (d, roomId) =>
-		new TaskManager(d.getDatabase(), roomId, reactiveDb),
+		new TaskManager(d.getDatabase(), roomId, reactiveDb, d.getShortIdAllocator()),
 	runtimeService?: RoomRuntimeService
 ): void {
 	const makeGroupRepo = () => new SessionGroupRepository(db.getDatabase(), reactiveDb);
+	const makeTaskRepo = () => new TaskRepository(db.getDatabase(), reactiveDb);
 
 	/**
 	 * Emit room.task.update event to notify UI clients
@@ -159,11 +161,12 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		return { task };
@@ -184,11 +187,13 @@ export function setupTaskHandlers(
 			throw new Error('Draft is too long (max 200,000 characters)');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
+
 		// Verify the task belongs to this room
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Normalize: treat empty/whitespace strings as null to keep storage consistent
@@ -196,8 +201,8 @@ export function setupTaskHandlers(
 		const draft = typeof params.draft === 'string' ? params.draft.trim() || null : null;
 
 		// Update input_draft directly via repository (lightweight, no status side effects)
-		const taskRepo = new TaskRepository(db.getDatabase(), reactiveDb);
-		taskRepo.updateTask(params.taskId, { inputDraft: draft });
+		const taskRepo = makeTaskRepo();
+		taskRepo.updateTask(taskId, { inputDraft: draft });
 
 		return { success: true };
 	});
@@ -213,8 +218,9 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.failTask(params.taskId, params.error ?? '');
+		const task = await taskManager.failTask(taskId, params.error ?? '');
 
 		emitRoomOverview(params.roomId);
 
@@ -232,10 +238,11 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Only allow cancelling pending, in_progress, or review tasks
@@ -247,13 +254,13 @@ export function setupTaskHandlers(
 		if (runtimeService) {
 			const runtime = runtimeService.getRuntime(params.roomId);
 			if (runtime) {
-				const result = await runtime.cancelTask(params.taskId);
+				const result = await runtime.cancelTask(taskId);
 				if (!result.success) {
 					throw new Error(
-						`Failed to cancel task ${params.taskId} — runtime cancellation was unsuccessful`
+						`Failed to cancel task ${taskId} — runtime cancellation was unsuccessful`
 					);
 				}
-				const updatedTask = await taskManager.getTask(params.taskId);
+				const updatedTask = await taskManager.getTask(taskId);
 				if (updatedTask) {
 					emitTaskUpdate(params.roomId, updatedTask);
 					emitRoomOverview(params.roomId);
@@ -263,7 +270,7 @@ export function setupTaskHandlers(
 		}
 
 		// No active group - just mark the task as cancelled
-		const cancelledTask = await taskManager.cancelTask(params.taskId);
+		const cancelledTask = await taskManager.cancelTask(taskId);
 		emitTaskUpdate(params.roomId, cancelledTask);
 		emitRoomOverview(params.roomId);
 
@@ -283,10 +290,11 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Only allow interrupting tasks with active agent sessions
@@ -305,9 +313,9 @@ export function setupTaskHandlers(
 			throw new Error(`No runtime found for room: ${params.roomId}`);
 		}
 
-		const result = await runtime.interruptTaskSession(params.taskId);
+		const result = await runtime.interruptTaskSession(taskId);
 		if (!result.success) {
-			throw new Error(`Failed to interrupt task session for ${params.taskId}`);
+			throw new Error(`Failed to interrupt task session for ${taskId}`);
 		}
 
 		return { success: true };
@@ -324,10 +332,11 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Validate task is in a terminal state before archiving
@@ -342,20 +351,20 @@ export function setupTaskHandlers(
 		// Without a runtime, we still must set archivedAt so the task is hidden from the UI.
 		const runtime = runtimeService?.getRuntime(params.roomId);
 		if (runtime) {
-			await runtime.archiveTaskGroup(params.taskId);
+			await runtime.archiveTaskGroup(taskId);
 		} else {
 			// No runtime — set archivedAt directly. Worktree cleanup (if any) is skipped;
 			// orphaned worktrees must be reclaimed manually via the worktree.cleanup RPC.
-			await taskManager.archiveTask(params.taskId);
+			await taskManager.archiveTask(taskId);
 		}
 
-		const archivedTask = await taskManager.getTask(params.taskId);
+		const archivedTask = await taskManager.getTask(taskId);
 		if (archivedTask) {
 			emitTaskUpdate(params.roomId, archivedTask);
 			emitRoomOverview(params.roomId);
 		}
 
-		log.info(`Task ${params.taskId} archived in room ${params.roomId}`);
+		log.info(`Task ${taskId} archived in room ${params.roomId}`);
 		return { task: archivedTask };
 	});
 
@@ -380,10 +389,11 @@ export function setupTaskHandlers(
 			throw new Error('Status is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 
 		// Validate status transition for runtime mode. This must happen here (not just in the
@@ -406,12 +416,12 @@ export function setupTaskHandlers(
 			const runtime = runtimeService?.getRuntime(params.roomId);
 			const modeOpts = params.mode ? { mode: params.mode } : undefined;
 			if (runtime) {
-				await runtime.archiveTaskGroup(params.taskId, modeOpts);
+				await runtime.archiveTaskGroup(taskId, modeOpts);
 			} else {
-				await taskManager.archiveTask(params.taskId, modeOpts);
+				await taskManager.archiveTask(taskId, modeOpts);
 			}
 
-			const archivedTask = await taskManager.getTask(params.taskId);
+			const archivedTask = await taskManager.getTask(taskId);
 			if (archivedTask) {
 				emitTaskUpdate(params.roomId, archivedTask);
 				emitRoomOverview(params.roomId);
@@ -429,25 +439,25 @@ export function setupTaskHandlers(
 					params.status === 'cancelled';
 				if (isTerminalStatus) {
 					if (params.status === 'cancelled') {
-						const cancelResult = await runtime.cancelTask(params.taskId);
+						const cancelResult = await runtime.cancelTask(taskId);
 						if (!cancelResult.success) {
 							throw new Error(
-								`Failed to cancel task ${params.taskId} — runtime cancellation was unsuccessful`
+								`Failed to cancel task ${taskId} — runtime cancellation was unsuccessful`
 							);
 						}
-						const cancelledTask = await taskManager.getTask(params.taskId);
+						const cancelledTask = await taskManager.getTask(taskId);
 						if (!cancelledTask) {
-							throw new Error(`Task not found: ${params.taskId}`);
+							throw new Error(`Task not found: ${taskId}`);
 						}
 						emitTaskUpdate(params.roomId, cancelledTask);
 						emitRoomOverview(params.roomId);
 						return { task: cancelledTask };
 					}
 
-					const terminated = await runtime.terminateTaskGroup(params.taskId);
+					const terminated = await runtime.terminateTaskGroup(taskId);
 					if (!terminated) {
 						throw new Error(
-							`Failed to terminate task group for task ${params.taskId} — group may have been modified concurrently`
+							`Failed to terminate task group for task ${taskId} — group may have been modified concurrently`
 						);
 					}
 				}
@@ -463,12 +473,12 @@ export function setupTaskHandlers(
 		) {
 			if (params.status === 'pending' || params.status === 'in_progress') {
 				const groupRepo = makeGroupRepo();
-				const group = groupRepo.getGroupByTaskId(params.taskId);
+				const group = groupRepo.getGroupByTaskId(taskId);
 				if (group) {
 					const reset = groupRepo.resetGroupForRestart(group.id);
 					if (!reset) {
 						throw new Error(
-							`Failed to reset group for task ${params.taskId} — group may have been modified concurrently`
+							`Failed to reset group for task ${taskId} — group may have been modified concurrently`
 						);
 					}
 				}
@@ -476,7 +486,7 @@ export function setupTaskHandlers(
 		}
 
 		// Apply status change
-		const updatedTask = await taskManager.setTaskStatus(params.taskId, params.status, {
+		const updatedTask = await taskManager.setTaskStatus(taskId, params.status, {
 			result: params.result,
 			error: params.error,
 			mode: params.mode,
@@ -508,10 +518,11 @@ export function setupTaskHandlers(
 			throw new Error('Runtime service is required for task.reject');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 		if (task.status !== 'review') {
 			throw new Error(`Task is not in review status (current: ${task.status})`);
@@ -523,21 +534,21 @@ export function setupTaskHandlers(
 		}
 
 		const groupRepo = makeGroupRepo();
-		const group = groupRepo.getGroupByTaskId(params.taskId);
+		const group = groupRepo.getGroupByTaskId(taskId);
 		if (!group) {
 			throw new Error('No active session group for this task');
 		}
 
 		// Resume via runtime so review parking flags and task status are updated consistently.
 		const message = `[Human Rejection]\n\n${params.feedback.trim()}`;
-		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message, {
+		const resumed = await runtime.resumeWorkerFromHuman(taskId, message, {
 			approved: false,
 		});
 		if (!resumed) {
 			throw new Error('Failed to reject task — task may not be awaiting review');
 		}
 
-		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);
+		log.info(`Task ${taskId} rejected by human in room ${params.roomId}`);
 		return { success: true };
 	});
 
@@ -552,8 +563,9 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const groupRepo = makeGroupRepo();
-		const group = groupRepo.getGroupByTaskId(params.taskId);
+		const group = groupRepo.getGroupByTaskId(taskId);
 
 		if (!group) {
 			return { group: null };
@@ -977,17 +989,18 @@ export function setupTaskHandlers(
 		}
 		// Cross-room ownership check: verify the task belongs to this room.
 		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
+		const taskId = resolveTaskId(params.taskId, params.roomId, makeTaskRepo());
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
+			throw new Error(`Task ${taskId} not found in room ${params.roomId}`);
 		}
 
 		// Archived tasks are truly terminal — no messaging allowed. Check this before the runtime
 		// lookup so the error is consistent regardless of whether a runtime is active.
 		if (task.status === 'archived') {
 			throw new Error(
-				`Task ${params.taskId} is archived and cannot receive messages. Archive is a terminal state.`
+				`Task ${taskId} is archived and cannot receive messages. Archive is a terminal state.`
 			);
 		}
 
@@ -1019,25 +1032,21 @@ export function setupTaskHandlers(
 			// intermediate status before reviveTaskForMessage restores sessions.
 			const intermediateStatus = task.status === 'needs_attention' ? 'review' : 'in_progress';
 			try {
-				await taskManager.setTaskStatus(params.taskId, intermediateStatus);
+				await taskManager.setTaskStatus(taskId, intermediateStatus);
 			} catch (err) {
-				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
+				throw new Error(`Failed to revive task ${taskId}: ${String(err)}`);
 			}
 
-			const revived = await runtime.reviveTaskForMessage(
-				params.taskId,
-				params.message.trim(),
-				target
-			);
+			const revived = await runtime.reviveTaskForMessage(taskId, params.message.trim(), target);
 			if (!revived) {
 				// Rollback: restore task to original status
 				try {
-					await taskManager.setTaskStatus(params.taskId, task.status);
+					await taskManager.setTaskStatus(taskId, task.status);
 				} catch {
 					// Best-effort rollback; swallow to avoid masking the revive error
 				}
 				throw new Error(
-					`Failed to revive task ${params.taskId}: agent sessions could not be restored. ` +
+					`Failed to revive task ${taskId}: agent sessions could not be restored. ` +
 						`Task status has been reset to ${task.status}.`
 				);
 			}
@@ -1046,12 +1055,25 @@ export function setupTaskHandlers(
 			return { success: true };
 		}
 
+		// review tasks: transition to in_progress before routing the human message.
+		// The group is still active (sessions running), so no revival is needed — just
+		// update the status so the task reflects that work is ongoing again.
+		if (task.status === 'review') {
+			try {
+				await taskManager.setTaskStatus(taskId, 'in_progress');
+			} catch (err) {
+				throw new Error(
+					`Failed to transition task ${taskId} from review to in_progress: ${String(err)}`
+				);
+			}
+		}
+
 		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
 			taskManager,
-			params.taskId,
+			taskId,
 			params.message.trim(),
 			target
 		);
@@ -1061,7 +1083,7 @@ export function setupTaskHandlers(
 		}
 
 		// Emit task update after successful message routing (may have changed status)
-		const updatedTask = await taskManager.getTask(params.taskId);
+		const updatedTask = await taskManager.getTask(taskId);
 		if (updatedTask) {
 			emitTaskUpdate(params.roomId, updatedTask);
 		}

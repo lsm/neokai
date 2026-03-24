@@ -17,6 +17,8 @@ export { runMigrations } from './migrations';
 export { runMigration12 } from './migrations';
 // knip-ignore-next-line
 export { runMigration47 } from './migrations';
+// knip-ignore-next-line
+export { runMigration48 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -215,12 +217,13 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Partial unique indexes for short_id on tasks and goals
+	// Partial unique indexes for short_id on tasks and goals — scoped to room so that
+	// different rooms can each have their own t-1, t-2, ... sequence without collision.
 	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_short_id ON tasks(short_id) WHERE short_id IS NOT NULL`
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
 	);
 	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_short_id ON goals(short_id) WHERE short_id IS NOT NULL`
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
 	);
 
 	// Mission metric history table

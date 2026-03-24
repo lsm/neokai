@@ -17,6 +17,7 @@ import type {
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
+export { ShortIdAllocator } from '../lib/short-id-allocator';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
@@ -68,6 +69,7 @@ export class Database {
 	private inboxItemRepo!: InboxItemRepository;
 	private goalRepo!: GoalRepository;
 	private jobQueueRepo!: JobQueueRepository;
+	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -78,7 +80,8 @@ export class Database {
 
 		// Initialize repositories with the raw BunDatabase instance
 		const db = this.core.getDb();
-		const shortIdAllocator = new ShortIdAllocator(db);
+		this.shortIdAllocator = new ShortIdAllocator(db);
+		const shortIdAllocator = this.shortIdAllocator;
 		this.sessionRepo = new SessionRepository(db);
 		this.sdkMessageRepo = new SDKMessageRepository(db);
 		this.settingsRepo = new SettingsRepository(db);
@@ -380,6 +383,14 @@ export class Database {
 	 */
 	getDatabase(): BunDatabase {
 		return this.core.getDb();
+	}
+
+	/**
+	 * Get the shared ShortIdAllocator instance
+	 * Used by TaskManager and GoalManager to assign short IDs on creation
+	 */
+	getShortIdAllocator(): ShortIdAllocator {
+		return this.shortIdAllocator;
 	}
 
 	/**

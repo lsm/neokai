@@ -205,20 +205,6 @@ export function RoomDashboard() {
 					onGoalClick={() => {
 						currentRoomTabSignal.value = 'goals';
 					}}
-					onReject={async (taskId, feedback) => {
-						try {
-							await roomStore.rejectTask(taskId, feedback);
-						} catch {
-							// Error handled by store
-						}
-					}}
-					onApprove={async (taskId) => {
-						try {
-							await roomStore.approveTask(taskId);
-						} catch {
-							// Error handled by store
-						}
-					}}
 					onReactivate={async (taskId) => {
 						try {
 							await roomStore.setTaskStatus(taskId, 'in_progress');

@@ -224,6 +224,7 @@ describe('RoomRuntimeService', () => {
 			const config: RoomRuntimeServiceConfig = {
 				db: {
 					getDatabase: () => db,
+					getShortIdAllocator: () => undefined,
 					getSession: () => null,
 				} as never,
 				messageHub: { onRequest: () => {} } as never,
@@ -506,6 +507,7 @@ describe('RoomRuntimeService restart recovery', () => {
 		const config: RoomRuntimeServiceConfig = {
 			db: {
 				getDatabase: () => rawDb,
+				getShortIdAllocator: () => undefined,
 				getSession: (sessionId: string) =>
 					sessionId === 'worker:task-1' || sessionId === 'leader:task-1'
 						? ({ id: sessionId } as never)

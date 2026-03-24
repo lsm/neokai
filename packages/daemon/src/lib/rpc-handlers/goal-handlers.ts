@@ -32,6 +32,7 @@ import type { TaskManager } from '../room/managers/task-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../room/runtime/cron-utils';
+import { resolveGoalId } from '../id-resolution';
 
 const log = new Logger('goal-handlers');
 
@@ -54,6 +55,7 @@ export type GoalManagerLike = Pick<
 	| 'listExecutions'
 	| 'recordMetric'
 	| 'checkMetricTargets'
+	| 'getGoalByShortId'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
@@ -105,6 +107,9 @@ export function setupGoalHandlers(
 			throw new Error('Goal title is required');
 		}
 
+		// nextRunAt is auto-computed in GoalManager.createGoal for recurring goals
+		// with a schedule. No need to compute it here.
+
 		const goalManager = goalManagerFactory(params.roomId);
 		const goal = await goalManager.createGoal({
 			title: params.title,
@@ -135,7 +140,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 
 		if (!goal) {
 			throw new Error(`Goal not found: ${params.goalId}`);
@@ -182,6 +188,7 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 		const { status, progress, priority, metrics, ...rest } = params.updates;
 
 		// Detect V2 patch fields (title, description, missionType, autonomyLevel,
@@ -198,14 +205,14 @@ export function setupGoalHandlers(
 
 		let goal: RoomGoal;
 		if (status) {
-			goal = await goalManager.updateGoalStatus(params.goalId, status, {
+			goal = await goalManager.updateGoalStatus(goalId, status, {
 				...(progress !== undefined ? { progress } : {}),
 				...(priority ? { priority } : {}),
 				...rest,
 			});
 		} else if (progress !== undefined) {
 			goal = await goalManager.updateGoalProgress(
-				params.goalId,
+				goalId,
 				progress,
 				metrics as Record<string, number> | undefined
 			);
@@ -217,9 +224,9 @@ export function setupGoalHandlers(
 			for (const f of v2Fields) {
 				if (f in params.updates) patch[f] = params.updates[f as keyof typeof params.updates];
 			}
-			goal = await goalManager.patchGoal(params.goalId, patch);
+			goal = await goalManager.patchGoal(goalId, patch);
 		} else if (priority) {
-			goal = await goalManager.updateGoalPriority(params.goalId, priority);
+			goal = await goalManager.updateGoalPriority(goalId, priority);
 		} else {
 			throw new Error(
 				'No update fields provided (status, progress, priority, or editable fields required)'
@@ -241,7 +248,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.needsHumanGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.needsHumanGoal(goalId);
 
 		return { goal };
 	});
@@ -258,7 +266,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.reactivateGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.reactivateGoal(goalId);
 
 		return { goal };
 	});
@@ -278,23 +287,20 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
 
 		// For recurring missions with an active execution, use the atomic dual-write path.
 		let goal;
-		const linkedGoal = await goalManager.getGoal(params.goalId);
+		const linkedGoal = await goalManager.getGoal(goalId);
 		if (linkedGoal?.missionType === 'recurring') {
-			const activeExecution = goalManager.getActiveExecution(params.goalId);
+			const activeExecution = goalManager.getActiveExecution(goalId);
 			if (activeExecution) {
-				goal = await goalManager.linkTaskToExecution(
-					params.goalId,
-					activeExecution.id,
-					params.taskId
-				);
+				goal = await goalManager.linkTaskToExecution(goalId, activeExecution.id, params.taskId);
 			} else {
-				goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+				goal = await goalManager.linkTaskToGoal(goalId, params.taskId);
 			}
 		} else {
-			goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+			goal = await goalManager.linkTaskToGoal(goalId, params.taskId);
 		}
 
 		return { goal };
@@ -312,7 +318,8 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const success = await goalManager.deleteGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const success = await goalManager.deleteGoal(goalId);
 
 		return { success };
 	});
@@ -331,7 +338,8 @@ export function setupGoalHandlers(
 		if (!params.cronExpression) throw new Error('Cron expression is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
 			throw new Error(
@@ -350,7 +358,7 @@ export function setupGoalHandlers(
 			throw new Error(`Cron expression "${params.cronExpression}" produces no future run times.`);
 		}
 
-		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+		const updated = await goalManager.updateGoalStatus(goalId, goal.status, {
 			schedule: { expression: params.cronExpression, timezone: tz },
 			nextRunAt,
 			missionType: 'recurring',
@@ -367,13 +375,14 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
 			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
 		}
 
-		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+		const updated = await goalManager.updateGoalStatus(goalId, goal.status, {
 			schedulePaused: true,
 		});
 		return { goal: updated };
@@ -387,7 +396,8 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'recurring') {
 			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
@@ -399,7 +409,7 @@ export function setupGoalHandlers(
 		// Recalculate next_run_at from current time
 		const tz = goal.schedule.timezone ?? getSystemTimezone();
 		const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
-		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+		const updated = await goalManager.updateGoalStatus(goalId, goal.status, {
 			schedulePaused: false,
 			nextRunAt: nextRunAt ?? undefined,
 		});
@@ -414,10 +424,11 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 
-		const executions = goalManager.listExecutions(params.goalId, params.limit ?? 20);
+		const executions = goalManager.listExecutions(goalId, params.limit ?? 20);
 		return { executions };
 	});
 
@@ -431,7 +442,8 @@ export function setupGoalHandlers(
 		if (typeof params.value !== 'number') throw new Error('Value must be a number');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 		if (goal.missionType !== 'measurable') {
 			throw new Error(
@@ -439,7 +451,7 @@ export function setupGoalHandlers(
 			);
 		}
 
-		const updated = await goalManager.recordMetric(params.goalId, params.metricName, params.value);
+		const updated = await goalManager.recordMetric(goalId, params.metricName, params.value);
 		return {
 			goal: updated,
 			metric: {
@@ -458,7 +470,8 @@ export function setupGoalHandlers(
 		if (!params.goalId) throw new Error('Goal ID is required');
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getGoal(params.goalId);
+		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const goal = await goalManager.getGoal(goalId);
 		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
 
 		if (!goal.structuredMetrics || goal.structuredMetrics.length === 0) {
@@ -470,7 +483,7 @@ export function setupGoalHandlers(
 			};
 		}
 
-		const checkResult = await goalManager.checkMetricTargets(params.goalId);
+		const checkResult = await goalManager.checkMetricTargets(goalId);
 		return {
 			missionType: goal.missionType ?? 'one_shot',
 			allTargetsMet: checkResult.allMet,

@@ -23,6 +23,10 @@ import type { Database } from '../../../src/storage/database';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
+// UUID used as task ID in tests — resolveTaskId passes UUIDs through without DB lookup
+// Must match UUID v4 format: third group starts with 4, fourth group starts with 8/9/a/b
+const TASK_UUID = '00000000-0000-4000-8000-000000000001';
+
 // ─── Mock helpers ───
 
 function createMockMessageHub(): {
@@ -63,7 +67,7 @@ function createMockDaemonHub(): DaemonHub {
 }
 
 const mockTask: NeoTask = {
-	id: 'task-1',
+	id: TASK_UUID,
 	roomId: 'room-1',
 	title: 'Test Task',
 	description: 'Test description',
@@ -101,7 +105,7 @@ function makeGroupRow(submittedForReview = false): Record<string, unknown> {
 	return {
 		id: 'group-1',
 		group_type: 'task',
-		ref_id: 'task-1',
+		ref_id: TASK_UUID,
 		state: submittedForReview ? 'awaiting_human' : 'awaiting_worker', // DB column kept for compat
 		version: 1,
 		metadata: JSON.stringify({
@@ -147,7 +151,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true, reviveResu
 	const reviveTaskForMessage = mock(async () => reviveResult);
 	const cancelTask = mock(async () => ({
 		success: injectResult,
-		cancelledTaskIds: injectResult ? ['task-1'] : [],
+		cancelledTaskIds: injectResult ? [TASK_UUID] : [],
 	}));
 	const terminateTaskGroup = mock(async () => injectResult);
 	const interruptTaskSession = mock(async () => ({ success: injectResult }));
@@ -223,7 +227,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 
 	describe('parameter validation', () => {
 		it('throws when roomId is missing', async () => {
-			await expect(getHandler()({ taskId: 'task-1', message: 'hi' }, {})).rejects.toThrow(
+			await expect(getHandler()({ taskId: TASK_UUID, message: 'hi' }, {})).rejects.toThrow(
 				'Room ID is required'
 			);
 		});
@@ -235,20 +239,20 @@ describe('task.sendHumanMessage RPC Handler', () => {
 		});
 
 		it('throws when message is missing', async () => {
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Message is required'
 			);
 		});
 
 		it('throws when message is an empty string', async () => {
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: '' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: '' }, {})
 			).rejects.toThrow('Message is required');
 		});
 
 		it('throws when message is whitespace only', async () => {
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: '   ' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: '   ' }, {})
 			).rejects.toThrow('Message cannot be empty');
 		});
 	});
@@ -259,14 +263,14 @@ describe('task.sendHumanMessage RPC Handler', () => {
 		it('throws when runtimeService is not provided', async () => {
 			setup({ runtimeService: undefined });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {})
 			).rejects.toThrow('Runtime service is required');
 		});
 
 		it('throws when runtime is not found for the room', async () => {
 			setup({ runtimeService: makeNullRuntimeService() });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {})
 			).rejects.toThrow('No runtime found for room');
 		});
 	});
@@ -278,7 +282,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			const { service } = makeRuntimeService();
 			setup({ task: null, runtimeService: service });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {})
 			).rejects.toThrow('not found in room');
 		});
 	});
@@ -291,7 +295,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ submittedForReview: true, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'please continue' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'please continue' },
 				{}
 			);
 			expect(result).toEqual({ success: true });
@@ -302,7 +306,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ submittedForReview: false, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'hello' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' },
 				{}
 			);
 			expect(result).toEqual({ success: true });
@@ -326,7 +330,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {})
 			).rejects.toThrow('No active session group');
 		});
 	});
@@ -338,13 +342,17 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: failedTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'please retry' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'please retry' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
 			// Sets status to review before reviving
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please retry', 'worker');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				TASK_UUID,
+				'please retry',
+				'worker'
+			);
 		});
 
 		it('throws and rolls back status when reviveTaskForMessage returns false', async () => {
@@ -376,13 +384,13 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'retry' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry', 'worker');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(TASK_UUID, 'retry', 'worker');
 			// Verify rollback: first transitioned to 'review', then rolled back to 'needs_attention'
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'review');
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'needs_attention');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'review');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'needs_attention');
 		});
 	});
 
@@ -393,13 +401,13 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: completedTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'please continue' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'please continue' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
 			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
-				'task-1',
+				TASK_UUID,
 				'please continue',
 				'worker'
 			);
@@ -433,13 +441,13 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'continue' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'continue' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'continue', 'worker');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(TASK_UUID, 'continue', 'worker');
 			// Verify intermediate transition to in_progress, then rollback to completed
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'completed');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'completed');
 		});
 	});
 
@@ -450,13 +458,13 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: cancelledTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'restart please' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'restart please' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
 			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
-				'task-1',
+				TASK_UUID,
 				'restart please',
 				'worker'
 			);
@@ -490,13 +498,111 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'retry' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry', 'worker');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(TASK_UUID, 'retry', 'worker');
 			// Verify intermediate transition to in_progress, then rollback to cancelled
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
-			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'cancelled');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'cancelled');
+		});
+	});
+
+	describe('review task → in_progress transition on human message', () => {
+		function setupWithReviewTask(injectResult = true) {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const setTaskStatus = mock(async () => reviewTask);
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => reviewTask),
+				getTask: mock(async () => reviewTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => reviewTask),
+				cancelTask: mock(async () => ({ ...reviewTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const { service, runtime } = makeRuntimeService(true, injectResult, true);
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				factory,
+				service
+			);
+
+			return { setTaskStatus, runtime };
+		}
+
+		it('transitions to in_progress and routes message to worker', async () => {
+			const { setTaskStatus, runtime } = setupWithReviewTask();
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'add error handling' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+			expect(runtime.injectMessageToWorker).toHaveBeenCalledWith(TASK_UUID, 'add error handling');
+		});
+
+		it('transitions to in_progress and routes message to leader', async () => {
+			const { setTaskStatus, runtime } = setupWithReviewTask();
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'approve and merge', target: 'leader' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(setTaskStatus).toHaveBeenCalledWith(TASK_UUID, 'in_progress');
+			expect(runtime.injectMessageToLeader).toHaveBeenCalledWith(TASK_UUID, 'approve and merge');
+		});
+
+		it('throws when status transition from review to in_progress fails', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const setTaskStatus = mock(async () => {
+				throw new Error('DB write failed');
+			});
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => reviewTask),
+				getTask: mock(async () => reviewTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => reviewTask),
+				cancelTask: mock(async () => ({ ...reviewTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const { service } = makeRuntimeService(true, true, true);
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				factory,
+				service
+			);
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'go ahead' }, {})
+			).rejects.toThrow(`Failed to transition task ${TASK_UUID} from review to in_progress`);
+		});
+
+		it('does not call reviveTaskForMessage for review tasks (sessions are still active)', async () => {
+			const { runtime } = setupWithReviewTask();
+
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'keep going' }, {});
+
+			expect(runtime.reviveTaskForMessage).not.toHaveBeenCalled();
 		});
 	});
 
@@ -507,12 +613,16 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: needsAttentionTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'hello worker', target: 'worker' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'hello worker', target: 'worker' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'hello worker', 'worker');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				TASK_UUID,
+				'hello worker',
+				'worker'
+			);
 		});
 
 		it('passes target=leader to reviveTaskForMessage when human selects leader', async () => {
@@ -521,12 +631,16 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: needsAttentionTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'hello leader', target: 'leader' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'hello leader', target: 'leader' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'hello leader', 'leader');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				TASK_UUID,
+				'hello leader',
+				'leader'
+			);
 		});
 
 		it('defaults to target=worker when no target specified', async () => {
@@ -535,13 +649,13 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: needsAttentionTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', message: 'hello default' },
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'hello default' },
 				{}
 			);
 
 			expect(result).toEqual({ success: true });
 			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
-				'task-1',
+				TASK_UUID,
 				'hello default',
 				'worker'
 			);
@@ -555,7 +669,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: archivedTask, runtimeService: service });
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'can you still work?' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'can you still work?' }, {})
 			).rejects.toThrow('is archived and cannot receive messages');
 		});
 
@@ -564,7 +678,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			setup({ task: archivedTask, runtimeService: makeNullRuntimeService() });
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'can you still work?' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'can you still work?' }, {})
 			).rejects.toThrow('is archived and cannot receive messages');
 		});
 	});
@@ -610,7 +724,7 @@ describe('task.cancel RPC Handler', () => {
 		});
 
 		it('throws when roomId is missing', async () => {
-			await expect(getHandler()({ taskId: 'task-1' }, {})).rejects.toThrow('Room ID is required');
+			await expect(getHandler()({ taskId: TASK_UUID }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws when taskId is missing', async () => {
@@ -621,7 +735,7 @@ describe('task.cancel RPC Handler', () => {
 	describe('task status validation', () => {
 		it('throws when task is not found', async () => {
 			setup({ task: null, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task not found'
 			);
 		});
@@ -629,7 +743,7 @@ describe('task.cancel RPC Handler', () => {
 		it('throws when task status is completed', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task cannot be cancelled'
 			);
 		});
@@ -637,7 +751,7 @@ describe('task.cancel RPC Handler', () => {
 		it('throws when task needs attention', async () => {
 			const failedTask = { ...mockTask, status: 'needs_attention' as const };
 			setup({ task: failedTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task cannot be cancelled'
 			);
 		});
@@ -645,7 +759,7 @@ describe('task.cancel RPC Handler', () => {
 		it('throws when task status is cancelled', async () => {
 			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
 			setup({ task: cancelledTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task cannot be cancelled'
 			);
 		});
@@ -657,29 +771,29 @@ describe('task.cancel RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService(true);
 			setup({ task: inProgressTask, submittedForReview: false, runtimeService: service });
 
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
-			expect(runtime.cancelTask).toHaveBeenCalledWith('task-1');
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
+			expect(runtime.cancelTask).toHaveBeenCalledWith(TASK_UUID);
 			expect(result).toEqual({ task: inProgressTask });
 		});
 
 		it('cancels a pending task without active group', async () => {
 			const pendingTask = { ...mockTask, status: 'pending' as const };
 			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 			expect(result).toEqual({ task: { ...pendingTask, status: 'cancelled' } });
 		});
 
 		it('cancels an in_progress task without active group', async () => {
 			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
 			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 			expect(result).toEqual({ task: { ...inProgressTask, status: 'cancelled' } });
 		});
 
 		it('cancels a review task without active group', async () => {
 			const reviewTask = { ...mockTask, status: 'review' as const };
 			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 			expect(result).toEqual({ task: { ...reviewTask, status: 'cancelled' } });
 		});
 	});
@@ -726,7 +840,7 @@ describe('task.reject RPC Handler', () => {
 		});
 
 		it('throws when roomId is missing', async () => {
-			await expect(getHandler()({ taskId: 'task-1', feedback: 'not good' }, {})).rejects.toThrow(
+			await expect(getHandler()({ taskId: TASK_UUID, feedback: 'not good' }, {})).rejects.toThrow(
 				'Room ID is required'
 			);
 		});
@@ -738,20 +852,20 @@ describe('task.reject RPC Handler', () => {
 		});
 
 		it('throws when feedback is missing', async () => {
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Feedback is required for rejection'
 			);
 		});
 
 		it('throws when feedback is empty string', async () => {
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: '' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: '' }, {})
 			).rejects.toThrow('Feedback is required for rejection');
 		});
 
 		it('throws when feedback is whitespace only', async () => {
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: '   ' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: '   ' }, {})
 			).rejects.toThrow('Feedback is required for rejection');
 		});
 	});
@@ -760,7 +874,7 @@ describe('task.reject RPC Handler', () => {
 		it('throws when runtimeService is not provided', async () => {
 			setup({ runtimeService: undefined });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: 'not good' }, {})
 			).rejects.toThrow('Runtime service is required');
 		});
 
@@ -768,7 +882,7 @@ describe('task.reject RPC Handler', () => {
 			const reviewTask = { ...mockTask, status: 'review' as const };
 			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: 'not good' }, {})
 			).rejects.toThrow('No runtime found for room');
 		});
 	});
@@ -778,7 +892,7 @@ describe('task.reject RPC Handler', () => {
 			const { service } = makeRuntimeService();
 			setup({ task: null, runtimeService: service });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: 'not good' }, {})
 			).rejects.toThrow('Task not found');
 		});
 
@@ -787,7 +901,7 @@ describe('task.reject RPC Handler', () => {
 			const { service } = makeRuntimeService();
 			setup({ task: inProgressTask, runtimeService: service });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: 'not good' }, {})
 			).rejects.toThrow('Task is not in review status');
 		});
 	});
@@ -813,7 +927,7 @@ describe('task.reject RPC Handler', () => {
 			);
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: 'not good' }, {})
 			).rejects.toThrow('No active session group for this task');
 		});
 	});
@@ -825,11 +939,11 @@ describe('task.reject RPC Handler', () => {
 			setup({ task: reviewTask, submittedForReview: true, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', feedback: 'please fix the bug' },
+				{ roomId: 'room-1', taskId: TASK_UUID, feedback: 'please fix the bug' },
 				{}
 			);
 			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
-				'task-1',
+				TASK_UUID,
 				'[Human Rejection]\n\nplease fix the bug',
 				{ approved: false }
 			);
@@ -842,7 +956,7 @@ describe('task.reject RPC Handler', () => {
 			setup({ task: reviewTask, submittedForReview: true, runtimeService: service });
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'please fix' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, feedback: 'please fix' }, {})
 			).rejects.toThrow('Failed to reject task');
 		});
 	});
@@ -895,7 +1009,7 @@ describe('task.setStatus RPC Handler', () => {
 	}) {
 		const cancelTask = mock(async () => ({
 			success: options?.cancelSuccess ?? true,
-			cancelledTaskIds: options?.cancelSuccess === false ? [] : ['task-1'],
+			cancelledTaskIds: options?.cancelSuccess === false ? [] : [TASK_UUID],
 		}));
 		const terminateTaskGroup = mock(async () => options?.terminateSuccess ?? true);
 		const runtime = { cancelTask, terminateTaskGroup };
@@ -945,7 +1059,7 @@ describe('task.setStatus RPC Handler', () => {
 		});
 
 		it('throws when roomId is missing', async () => {
-			await expect(getHandler()({ taskId: 'task-1', status: 'completed' }, {})).rejects.toThrow(
+			await expect(getHandler()({ taskId: TASK_UUID, status: 'completed' }, {})).rejects.toThrow(
 				'Room ID is required'
 			);
 		});
@@ -957,7 +1071,7 @@ describe('task.setStatus RPC Handler', () => {
 		});
 
 		it('throws when status is missing', async () => {
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Status is required'
 			);
 		});
@@ -967,7 +1081,7 @@ describe('task.setStatus RPC Handler', () => {
 		it('throws when task is not found', async () => {
 			setup({ task: null, runtimeService: makeNullRuntimeService() });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'completed' }, {})
 			).rejects.toThrow('Task not found');
 		});
 	});
@@ -977,7 +1091,7 @@ describe('task.setStatus RPC Handler', () => {
 			const pendingTask = { ...mockTask, status: 'pending' as const };
 			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'completed' }, {})
 			).rejects.toThrow('Invalid status transition');
 		});
 
@@ -985,7 +1099,7 @@ describe('task.setStatus RPC Handler', () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'pending' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'pending' }, {})
 			).rejects.toThrow('Invalid status transition');
 		});
 
@@ -1002,7 +1116,7 @@ describe('task.setStatus RPC Handler', () => {
 				'needs_attention',
 			] as const) {
 				await expect(
-					getHandler()({ roomId: 'room-1', taskId: 'task-1', status: targetStatus }, {})
+					getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: targetStatus }, {})
 				).rejects.toThrow('Invalid status transition');
 			}
 		});
@@ -1019,7 +1133,7 @@ describe('task.setStatus RPC Handler', () => {
 			});
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'completed' }, {})
 			).rejects.toThrow('Failed to terminate task group');
 		});
 
@@ -1033,10 +1147,10 @@ describe('task.setStatus RPC Handler', () => {
 			});
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'completed' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed' },
 				{}
 			);
-			expect(terminateTaskGroup).toHaveBeenCalledWith('task-1');
+			expect(terminateTaskGroup).toHaveBeenCalledWith(TASK_UUID);
 			expect(result).toEqual({ task: { ...mockTask, status: 'completed' } });
 		});
 
@@ -1052,10 +1166,10 @@ describe('task.setStatus RPC Handler', () => {
 			});
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'cancelled' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'cancelled' },
 				{}
 			);
-			expect(cancelTask).toHaveBeenCalledWith('task-1');
+			expect(cancelTask).toHaveBeenCalledWith(TASK_UUID);
 			expect(terminateTaskGroup).not.toHaveBeenCalled();
 			expect(result).toEqual({ task: mockTask });
 		});
@@ -1070,7 +1184,7 @@ describe('task.setStatus RPC Handler', () => {
 			});
 
 			// Moving to 'review' is not a terminal state, so group shouldn't be terminated
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'review' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'review' }, {});
 			expect(cancelTask).not.toHaveBeenCalled();
 			expect(terminateTaskGroup).not.toHaveBeenCalled();
 		});
@@ -1085,7 +1199,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			// This should succeed without attempting to cancel any group
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'completed' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed' },
 				{}
 			);
 			expect(result).toEqual({ task: { ...mockTask, status: 'completed' } });
@@ -1096,7 +1210,7 @@ describe('task.setStatus RPC Handler', () => {
 		it('allows valid transition from in_progress to completed', async () => {
 			setup({ task: mockTask, runtimeService: makeNullRuntimeService() });
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', result: 'Done' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed', result: 'Done' },
 				{}
 			);
 			expect(result).toEqual({ task: { ...mockTask, status: 'completed' } });
@@ -1106,7 +1220,7 @@ describe('task.setStatus RPC Handler', () => {
 			const failedTask = { ...mockTask, status: 'needs_attention' as const };
 			setup({ task: failedTask, runtimeService: makeNullRuntimeService() });
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'pending' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'pending' },
 				{}
 			);
 			expect(result).toEqual({ task: { ...failedTask, status: 'pending' } });
@@ -1116,7 +1230,7 @@ describe('task.setStatus RPC Handler', () => {
 			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
 			setup({ task: cancelledTask, runtimeService: makeNullRuntimeService() });
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'in_progress' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'in_progress' },
 				{}
 			);
 			expect(result).toEqual({ task: { ...cancelledTask, status: 'in_progress' } });
@@ -1128,7 +1242,7 @@ describe('task.setStatus RPC Handler', () => {
 			setup({ task: completedTask, runtimeService: service });
 
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'in_progress' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'in_progress' },
 				{}
 			);
 			// completed → in_progress: group is NOT reset/terminated — lightweight revival
@@ -1165,9 +1279,9 @@ describe('task.setStatus RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService();
 			setup({ task: completedTask, runtimeService: service });
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'archived' }, {});
 
-			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1', undefined);
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith(TASK_UUID, undefined);
 		});
 
 		it('emits task update and room overview after archiving via runtime', async () => {
@@ -1187,7 +1301,7 @@ describe('task.setStatus RPC Handler', () => {
 			);
 
 			const handler = mh.handlers.get('task.setStatus')!;
-			await handler({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {});
+			await handler({ roomId: 'room-1', taskId: TASK_UUID, status: 'archived' }, {});
 
 			expect(daemonHub.emit).toHaveBeenCalledWith(
 				'room.task.update',
@@ -1200,11 +1314,11 @@ describe('task.setStatus RPC Handler', () => {
 			const factory = makeSetStatusWithArchiveFactory(completedTask);
 			setup({ task: completedTask, runtimeService: undefined, taskManagerFactory: factory });
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'archived' }, {});
 
 			expect(
 				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
-			).toHaveBeenCalledWith('task-1', undefined);
+			).toHaveBeenCalledWith(TASK_UUID, undefined);
 		});
 
 		it('calls taskManager.archiveTask when runtime has no runtime for room', async () => {
@@ -1216,11 +1330,11 @@ describe('task.setStatus RPC Handler', () => {
 				taskManagerFactory: factory,
 			});
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'archived' }, {});
 
 			expect(
 				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
-			).toHaveBeenCalledWith('task-1', undefined);
+			).toHaveBeenCalledWith(TASK_UUID, undefined);
 		});
 
 		it('throws for invalid transition from in_progress to archived', async () => {
@@ -1228,7 +1342,7 @@ describe('task.setStatus RPC Handler', () => {
 			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'archived' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'archived' }, {})
 			).rejects.toThrow('Invalid status transition');
 		});
 	});
@@ -1240,7 +1354,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			// pending → completed is invalid in runtime mode but allowed in manual mode
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'manual' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed', mode: 'manual' },
 				{}
 			);
 			expect(result).toEqual({ task: { ...pendingTask, status: 'completed' } });
@@ -1252,7 +1366,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			// archived → pending is normally terminal (no transitions), but manual mode allows it
 			const result = await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'pending', mode: 'manual' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'pending', mode: 'manual' },
 				{}
 			);
 			expect(result).toEqual({ task: { ...archivedTask, status: 'pending' } });
@@ -1264,7 +1378,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			await expect(
 				getHandler()(
-					{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'runtime' },
+					{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed', mode: 'runtime' },
 					{}
 				)
 			).rejects.toThrow('Invalid status transition');
@@ -1275,7 +1389,7 @@ describe('task.setStatus RPC Handler', () => {
 			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
 
 			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
+				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, status: 'completed' }, {})
 			).rejects.toThrow('Invalid status transition');
 		});
 
@@ -1289,14 +1403,14 @@ describe('task.setStatus RPC Handler', () => {
 			});
 
 			await getHandler()(
-				{ roomId: 'room-1', taskId: 'task-1', status: 'completed', mode: 'manual' },
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed', mode: 'manual' },
 				{}
 			);
 
 			// Verify that setTaskStatus was called with mode: 'manual'
 			const taskManagerInstance = (factory as ReturnType<typeof mock>).mock.results[0].value;
 			expect(taskManagerInstance.setTaskStatus).toHaveBeenCalledWith(
-				'task-1',
+				TASK_UUID,
 				'completed',
 				expect.objectContaining({ mode: 'manual' })
 			);
@@ -1338,7 +1452,7 @@ describe('task.interruptSession RPC Handler', () => {
 		});
 
 		it('throws when roomId is missing', async () => {
-			await expect(getHandler()({ taskId: 'task-1' }, {})).rejects.toThrow('Room ID is required');
+			await expect(getHandler()({ taskId: TASK_UUID }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws when taskId is missing', async () => {
@@ -1349,7 +1463,7 @@ describe('task.interruptSession RPC Handler', () => {
 	describe('task status validation', () => {
 		it('throws when task is not found', async () => {
 			setup({ task: null, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task not found'
 			);
 		});
@@ -1357,7 +1471,7 @@ describe('task.interruptSession RPC Handler', () => {
 		it('throws when task status is pending', async () => {
 			const pendingTask = { ...mockTask, status: 'pending' as const };
 			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task cannot be interrupted'
 			);
 		});
@@ -1365,7 +1479,7 @@ describe('task.interruptSession RPC Handler', () => {
 		it('throws when task status is completed', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task cannot be interrupted'
 			);
 		});
@@ -1374,7 +1488,7 @@ describe('task.interruptSession RPC Handler', () => {
 			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
 			// makeNullRuntimeService returns a service with getRuntime() = null (no room runtime)
 			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'No runtime found for room'
 			);
 		});
@@ -1386,8 +1500,8 @@ describe('task.interruptSession RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService(true);
 			setup({ task: inProgressTask, runtimeService: service });
 
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
-			expect(runtime.interruptTaskSession).toHaveBeenCalledWith('task-1');
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
+			expect(runtime.interruptTaskSession).toHaveBeenCalledWith(TASK_UUID);
 			// Returns just { success: true }, NOT the task (task status is unchanged)
 			expect(result).toEqual({ success: true });
 		});
@@ -1397,8 +1511,8 @@ describe('task.interruptSession RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService(true);
 			setup({ task: reviewTask, runtimeService: service });
 
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
-			expect(runtime.interruptTaskSession).toHaveBeenCalledWith('task-1');
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
+			expect(runtime.interruptTaskSession).toHaveBeenCalledWith(TASK_UUID);
 			expect(result).toEqual({ success: true });
 		});
 
@@ -1408,7 +1522,7 @@ describe('task.interruptSession RPC Handler', () => {
 			const { service } = makeRuntimeService(true, false);
 			setup({ task: inProgressTask, runtimeService: service });
 
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Failed to interrupt task session'
 			);
 		});
@@ -1471,7 +1585,7 @@ describe('task.archive RPC Handler', () => {
 		});
 
 		it('throws when roomId is missing', async () => {
-			await expect(getHandler()({ taskId: 'task-1' }, {})).rejects.toThrow('Room ID is required');
+			await expect(getHandler()({ taskId: TASK_UUID }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws when taskId is missing', async () => {
@@ -1482,7 +1596,7 @@ describe('task.archive RPC Handler', () => {
 	describe('task state validation', () => {
 		it('throws when task is not found', async () => {
 			setup({ task: null, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				'Task not found'
 			);
 		});
@@ -1490,7 +1604,7 @@ describe('task.archive RPC Handler', () => {
 		it('throws when task is in_progress (non-terminal)', async () => {
 			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
 			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				"Cannot archive task in 'in_progress' state"
 			);
 		});
@@ -1498,7 +1612,7 @@ describe('task.archive RPC Handler', () => {
 		it('throws when task is pending (non-terminal)', async () => {
 			const pendingTask = { ...mockTask, status: 'pending' as const };
 			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				"Cannot archive task in 'pending' state"
 			);
 		});
@@ -1506,7 +1620,7 @@ describe('task.archive RPC Handler', () => {
 		it('throws when task is review (non-terminal)', async () => {
 			const reviewTask = { ...mockTask, status: 'review' as const };
 			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
-			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+			await expect(getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {})).rejects.toThrow(
 				"Cannot archive task in 'review' state"
 			);
 		});
@@ -1518,9 +1632,9 @@ describe('task.archive RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService();
 			setup({ task: completedTask, runtimeService: service });
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 
-			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith(TASK_UUID);
 		});
 
 		it('allows archiving cancelled tasks via runtime', async () => {
@@ -1528,9 +1642,9 @@ describe('task.archive RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService();
 			setup({ task: cancelledTask, runtimeService: service });
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 
-			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith(TASK_UUID);
 		});
 
 		it('allows archiving needs_attention tasks via runtime', async () => {
@@ -1538,9 +1652,9 @@ describe('task.archive RPC Handler', () => {
 			const { service, runtime } = makeRuntimeService();
 			setup({ task: failedTask, runtimeService: service });
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 
-			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith(TASK_UUID);
 		});
 	});
 
@@ -1550,12 +1664,12 @@ describe('task.archive RPC Handler', () => {
 			const factory = makeArchiveTaskManagerFactory(completedTask);
 			setup({ task: completedTask, runtimeService: undefined, taskManagerFactory: factory });
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 
 			// archiveTask must be called even without a runtime
 			expect(
 				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
-			).toHaveBeenCalledWith('task-1');
+			).toHaveBeenCalledWith(TASK_UUID);
 		});
 
 		it('calls taskManager.archiveTask when runtime is not found for room', async () => {
@@ -1567,20 +1681,20 @@ describe('task.archive RPC Handler', () => {
 				taskManagerFactory: factory,
 			});
 
-			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 
 			expect(
 				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
-			).toHaveBeenCalledWith('task-1');
+			).toHaveBeenCalledWith(TASK_UUID);
 		});
 
 		it('returns the task after archiving without runtime', async () => {
 			const completedTask = { ...mockTask, status: 'completed' as const };
 			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
 
-			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			const result = await getHandler()({ roomId: 'room-1', taskId: TASK_UUID }, {});
 
-			expect(result).toMatchObject({ task: expect.objectContaining({ id: 'task-1' }) });
+			expect(result).toMatchObject({ task: expect.objectContaining({ id: TASK_UUID }) });
 		});
 	});
 });
