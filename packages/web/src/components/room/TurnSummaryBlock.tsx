@@ -18,6 +18,7 @@ export interface TurnSummaryBlockProps {
 	turn: TurnBlock;
 	onClick: (turn: TurnBlock) => void;
 	isSelected?: boolean;
+	turnNumber?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +119,7 @@ export function TurnSummaryBlock({
 	turn,
 	onClick,
 	isSelected = false,
+	turnNumber,
 }: TurnSummaryBlockProps): JSX.Element {
 	const roleConfig = ROLE_COLORS[turn.agentRole] ?? {
 		border: 'border-l-gray-500',
@@ -135,11 +137,17 @@ export function TurnSummaryBlock({
 
 	const selectedRingClass = isSelected ? 'ring-1 ring-blue-500' : '';
 
+	// Build descriptive aria-label for accessibility
+	const ariaLabel = turnNumber
+		? `Turn ${turnNumber} by ${turn.agentLabel || turn.agentRole}: ${turn.toolCallCount} tool calls, ${turn.thinkingCount} thinking blocks, ${turn.assistantCount} assistant messages, ${duration}`
+		: `${turn.agentLabel || turn.agentRole}: ${turn.toolCallCount} tool calls, ${turn.thinkingCount} thinking blocks, ${turn.assistantCount} assistant messages, ${duration}`;
+
 	return (
 		<div
 			data-testid="turn-block"
 			role="button"
 			tabIndex={0}
+			aria-label={ariaLabel}
 			class={[
 				'relative cursor-pointer rounded-md border border-dark-700 bg-dark-800 p-3 transition-colors hover:bg-dark-750',
 				leftBorderClass,
@@ -168,6 +176,11 @@ export function TurnSummaryBlock({
 
 			{/* Title bar */}
 			<div class="flex items-center gap-2 overflow-hidden">
+				{turnNumber && (
+					<span class="shrink-0 rounded bg-dark-700 px-1.5 py-0.5 text-xs font-medium text-gray-400">
+						{turnNumber}
+					</span>
+				)}
 				<span
 					data-testid="turn-block-agent-name"
 					class={`truncate text-sm font-semibold ${roleConfig.labelColor}`}
@@ -201,7 +214,7 @@ export function TurnSummaryBlock({
 			{/* Preview area */}
 			<div
 				data-testid="turn-block-preview"
-				class="mt-2 max-h-20 overflow-y-auto text-xs [&_*]:text-xs"
+				class="mt-2 max-h-32 overflow-y-auto text-xs [&_*]:text-xs"
 			>
 				{turn.previewMessage ? (
 					<SDKMessageRenderer message={turn.previewMessage} taskContext={true} />

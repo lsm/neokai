@@ -4,14 +4,24 @@
  * Consumes a flat SessionGroupMessage[] from useGroupMessages, parses each message
  * via parseGroupMessage(), and groups them into structured TurnBlock items with stats.
  *
- * Handles multi-agent interleaving: a new turn starts whenever authorSessionId changes
- * from the previous non-runtime message. Runtime messages (status, rate_limited,
- * model_fallback, leader_summary — identified by authorRole === 'system') are buffered
- * and emitted at turn boundaries, so they never fragment a single agent's turn.
+ * A "turn" is everything an agent does between two terminate states. Specifically, a turn
+ * ends (is flushed) when either:
+ *   1. A different authorSessionId starts speaking (multi-agent handoff), OR
+ *   2. A `result` message is received (the current agent's session terminated).
+ *
+ * Runtime messages (status, rate_limited, model_fallback, leader_summary — identified by
+ * authorRole === 'system') are buffered and emitted at turn boundaries, so they never
+ * fragment a single agent's turn.
+ *
+ * Task-dispatch preservation: When a session switch causes a single task-dispatch user
+ * message (type='user' with a top-level uuid) to be flushed alone, it is held and
+ * prepended to that session's next turn. This prevents concurrent session startup from
+ * splitting a planner/worker run into an orphan 1-message turn + a continuationwithout context.
  */
 
-import { useMemo } from 'preact/hooks';
+import { useMemo, useRef } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import { isTextBlock, type ContentBlock } from '@neokai/shared/sdk/type-guards';
 import {
 	parseGroupMessage,
 	type ParsedGroupMessage,
@@ -119,6 +129,19 @@ function countAssistantBlocks(msg: SDKMessage): { toolCalls: number; thinking: n
 }
 
 /**
+ * Check if an assistant message has at least one text content block.
+ */
+function hasTextContent(msg: SDKMessage): boolean {
+	if (msg.type !== 'assistant') return false;
+
+	const assistantMsg = msg as { type: 'assistant'; message?: { content?: ContentBlock[] } };
+	const content = assistantMsg.message?.content;
+	if (!Array.isArray(content)) return false;
+
+	return content.some((block) => isTextBlock(block));
+}
+
+/**
  * Return the name of the last tool_use block in an assistant message, or null.
  * Used to set `lastAction` on the current turn.
  */
@@ -207,10 +230,11 @@ interface TurnAccumulator {
 /**
  * Transforms a flat SessionGroupMessage[] into a structured TurnBlockItem[].
  *
- * Runtime messages (status, rate_limited, model_fallback, leader_summary) are
- * buffered while an agent turn is in progress and emitted only when the turn ends
- * (i.e. when a different agent starts speaking). This prevents a status update
- * arriving mid-turn from fragmenting what should be one cohesive turn block.
+ * A turn spans all messages between two terminate states (result messages). It is flushed
+ * when either a different authorSessionId starts speaking OR a result message is received.
+ * Runtime messages (status, rate_limited, model_fallback, leader_summary) are buffered
+ * while a turn is in progress and emitted only at turn boundaries, so they never fragment
+ * what should be one cohesive turn block.
  *
  * @param messages - Raw messages from useGroupMessages. Must already be sorted by createdAt.
  * @param isAtTail - Whether these messages represent the current tail of the conversation.
@@ -220,6 +244,10 @@ interface TurnAccumulator {
  * @returns An ordered array of TurnBlockItems (turn blocks interleaved with runtime items).
  */
 export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true): TurnBlockItem[] {
+	// Cache completed turn objects by ID so memo(AgentTurnBlock) can skip re-renders
+	// when only the active (last) turn is changing.
+	const prevTurnsRef = useRef(new Map<string, TurnBlock>());
+
 	return useMemo(() => {
 		// Parse all raw messages; skip any that fail to parse.
 		const parsedMessages = messages
@@ -232,9 +260,18 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 		// They are emitted after the turn is flushed so that a status update
 		// arriving mid-turn does not fragment the turn into two separate blocks.
 		let pendingRuntime: RuntimeMessage[] = [];
+		// When a session switch splits off a single task-dispatch user message into its
+		// own mini-turn, we hold it here and prepend it to that session's next turn.
+		// Keys are authorSessionId; values are the held user message.
+		const pendingTaskMsg = new Map<string, SDKMessage>();
 
-		/** Flush the current accumulator, then drain any buffered runtime items. */
-		const flushTurnAndRuntime = (): void => {
+		/**
+		 * Flush the current accumulator, then drain any buffered runtime items.
+		 * @param bySessionChange - true when flushing because a different session started
+		 *   speaking (vs. flushed by result or end-of-stream). Used to detect isolated
+		 *   task-dispatch messages that should be held rather than emitted alone.
+		 */
+		const flushTurnAndRuntime = (bySessionChange = false): void => {
 			if (!current) {
 				// No open turn — drain any buffered runtime items immediately.
 				for (const rt of pendingRuntime) {
@@ -245,6 +282,45 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 			}
 
 			const { sessionId, agentRole, firstMsgUuid, startTime, msgs } = current;
+
+			// Skip creating empty turns — these occur when a turn was opened but only
+			// contained runtime messages (which are buffered and emitted separately).
+			// The turn would render as a blank block with no meaningful content.
+			if (msgs.length === 0) {
+				current = null;
+				// Emit buffered runtime messages.
+				for (const rt of pendingRuntime) {
+					items.push(rt);
+				}
+				pendingRuntime = [];
+				return;
+			}
+
+			// ── Task-dispatch preservation ────────────────────────────────────────
+			// When a session switch splits off exactly one task-dispatch user message
+			// (type='user' with a top-level uuid), hold it instead of emitting a
+			// useless 1-message turn. It will be prepended to the session's next turn.
+			//
+			// This fixes the race condition where concurrent agent startup causes:
+			//   LEADER:assistant (T=862ms) → PLANNER:user (T=866ms) → LEADER:user (T=883ms)
+			// which would otherwise produce an orphan 1-message PLANNER turn followed by
+			// a PLANNER continuation turn that lacks the original task context.
+			if (
+				bySessionChange &&
+				msgs.length === 1 &&
+				msgs[0].type === 'user' &&
+				getMessageUuid(msgs[0]) !== null
+			) {
+				pendingTaskMsg.set(sessionId, msgs[0]);
+				current = null;
+				// Drain runtime messages that arrived after the held message.
+				for (const rt of pendingRuntime) {
+					items.push(rt);
+				}
+				pendingRuntime = [];
+				return;
+			}
+
 			const lastMsg = msgs[msgs.length - 1] ?? null;
 			const agentLabel = ROLE_COLORS[agentRole]?.label ?? agentRole;
 			const { isError, errorMessage } = extractTurnErrorInfo(msgs);
@@ -308,19 +384,35 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 
 			const { authorRole, authorSessionId } = meta;
 
+			// ── Skip SDK system messages ──────────────────────────────────────────
+			// SDK messages with type 'system' (init, task_started, etc.) are injected
+			// with _taskMeta by the daemon mapper and carry a real agent role, so they
+			// pass the runtime filter above. However they render as nothing in the UI
+			// (init/task_started are explicitly hidden; other subtypes are rare noise).
+			// Accumulating them into turns creates visually empty blocks when they are
+			// the only messages before a session switch. Discard them silently here.
+			if (msg.type === 'system') {
+				continue;
+			}
+
 			// ── Turn boundary: new session starts speaking ────────────────────────
 			if (current && current.sessionId !== authorSessionId) {
-				flushTurnAndRuntime();
+				flushTurnAndRuntime(/* bySessionChange */ true);
 			}
 
 			// ── Open a new turn accumulator ───────────────────────────────────────
 			if (!current) {
+				const held: SDKMessage | null = pendingTaskMsg.get(authorSessionId) ?? null;
+				if (held) pendingTaskMsg.delete(authorSessionId);
+
 				current = {
 					sessionId: authorSessionId,
 					agentRole: authorRole,
-					firstMsgUuid: getMessageUuid(msg),
-					startTime: getMessageTimestamp(msg),
-					msgs: [],
+					// If a held task message exists, use its uuid/timestamp as the turn anchor
+					// so the turn ID and start time reflect when the task was actually dispatched.
+					firstMsgUuid: held ? getMessageUuid(held) : getMessageUuid(msg),
+					startTime: held ? getMessageTimestamp(held) : getMessageTimestamp(msg),
+					msgs: held ? [held] : [],
 					toolCallCount: 0,
 					thinkingCount: 0,
 					assistantCount: 0,
@@ -332,16 +424,55 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 			const { toolCalls, thinking } = countAssistantBlocks(msg);
 			current.toolCallCount += toolCalls;
 			current.thinkingCount += thinking;
-			if (msg.type === 'assistant') current.assistantCount++;
+			// Only count assistant messages that have text content
+			if (msg.type === 'assistant' && hasTextContent(msg)) current.assistantCount++;
 
 			const toolName = extractLastToolName(msg);
 			if (toolName) current.lastAction = toolName;
 
 			current.msgs.push(msg);
+
+			// ── Turn boundary: result message terminates the current turn ─────────
+			// A `result` message is the agent's terminate state. Flush now so that
+			// any subsequent messages from the same session start a fresh turn.
+			if (msg.type === 'result') {
+				flushTurnAndRuntime();
+			}
 		}
 
 		// Flush any remaining accumulator and drain any buffered runtime items.
 		flushTurnAndRuntime();
+
+		// Emit any held task-dispatch messages that never got a continuation turn.
+		// This handles sessions that dispatched a task but haven't responded yet.
+		for (const [sessionId, held] of pendingTaskMsg) {
+			const meta = getTaskMeta(held);
+			if (!meta) continue;
+			const agentRole = meta.authorRole;
+			const agentLabel = ROLE_COLORS[agentRole]?.label ?? agentRole;
+			const startTime = getMessageTimestamp(held);
+			items.push({
+				type: 'turn',
+				turn: {
+					id: getMessageUuid(held) ?? `${sessionId}-${startTime}`,
+					sessionId,
+					agentRole,
+					agentLabel,
+					startTime,
+					endTime: startTime,
+					messageCount: 1,
+					toolCallCount: 0,
+					thinkingCount: 0,
+					assistantCount: 0,
+					lastAction: null,
+					previewMessage: held,
+					isActive: false,
+					isError: false,
+					errorMessage: null,
+					messages: [held],
+				},
+			});
+		}
 
 		// ── Post-process: active turn detection ──────────────────────────────────
 		// The last turn block is "active" if:
@@ -362,6 +493,28 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 				}
 			}
 		}
+
+		// Stabilize completed turn references so memo(AgentTurnBlock) skips re-renders
+		// for turns whose data has not changed. Only the last active turn changes on each delta.
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
+			if (item.type !== 'turn' || item.turn.isActive) continue;
+			const prev = prevTurnsRef.current.get(item.turn.id);
+			if (
+				prev &&
+				prev.messageCount === item.turn.messageCount &&
+				prev.endTime === item.turn.endTime &&
+				prev.isError === item.turn.isError
+			) {
+				items[i] = { type: 'turn', turn: prev };
+			}
+		}
+		// Refresh the cache with the current set of turns.
+		const nextCache = new Map<string, TurnBlock>();
+		for (const item of items) {
+			if (item.type === 'turn') nextCache.set(item.turn.id, item.turn);
+		}
+		prevTurnsRef.current = nextCache;
 
 		return items;
 		// useGroupMessages always returns a new array reference on every delta

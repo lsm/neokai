@@ -50,6 +50,7 @@ export function ToolResultCard({
 	messageUuid,
 	sessionId,
 	isOutputRemoved = false,
+	disableExpand = false,
 	className,
 }: ToolResultCardProps) {
 	// Type-safe access to input/output properties
@@ -219,7 +220,7 @@ export function ToolResultCard({
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
 			{/* Header - clickable to expand/collapse */}
 			<button
-				onClick={() => setIsExpanded(!isExpanded)}
+				onClick={() => !disableExpand && setIsExpanded(!isExpanded)}
 				class={cn(
 					'w-full flex items-center justify-between p-3 transition-colors',
 					'hover:bg-opacity-80 dark:hover:bg-opacity-80'
@@ -250,18 +251,25 @@ export function ToolResultCard({
 							/>
 						</svg>
 					)}
-					<svg
-						class={cn(
-							'w-5 h-5 transition-transform',
-							colors.iconColor,
-							isExpanded ? 'rotate-180' : ''
-						)}
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-					</svg>
+					{!disableExpand && (
+						<svg
+							class={cn(
+								'w-5 h-5 transition-transform',
+								colors.iconColor,
+								isExpanded ? 'rotate-180' : ''
+							)}
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M19 9l-7 7-7-7"
+							/>
+						</svg>
+					)}
 				</div>
 			</button>
 

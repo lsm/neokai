@@ -950,6 +950,297 @@ describe('useTurnBlocks', () => {
 		});
 	});
 
+	// ── SDK system message filtering ─────────────────────────────────────────
+
+	describe('SDK system message filtering', () => {
+		it('discards sdk system messages so they do not accumulate in turns', () => {
+			// A session that sends only system:init before another session starts
+			// should produce NO turn (no visible content).
+			const sysInit = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				type: 'system',
+				content: { subtype: 'init' },
+			});
+			const plannerMsg = makeAgentMessage({
+				authorRole: 'planner',
+				authorSessionId: 'sess-planner',
+			});
+
+			const items = renderUseTurnBlocks([sysInit, plannerMsg], true);
+			// The system message should not create a leader turn — only the planner turn
+			expect(items).toHaveLength(1);
+			expect(asTurn(items[0]).agentRole).toBe('planner');
+		});
+
+		it('does not count sdk system messages toward turn messageCount', () => {
+			const msgs = [
+				makeAgentMessage({ authorRole: 'leader', authorSessionId: 'sess-leader', type: 'user' }),
+				makeAgentMessage({
+					authorRole: 'leader',
+					authorSessionId: 'sess-leader',
+					type: 'system',
+					content: { subtype: 'init' },
+				}),
+				makeAgentMessage({
+					authorRole: 'leader',
+					authorSessionId: 'sess-leader',
+					type: 'system',
+					content: { subtype: 'task_started' },
+				}),
+				makeAgentMessage({
+					authorRole: 'leader',
+					authorSessionId: 'sess-leader',
+					type: 'assistant',
+				}),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			expect(items).toHaveLength(1);
+			// Only user + assistant counted (2 system messages discarded)
+			expect(asTurn(items[0]).messageCount).toBe(2);
+		});
+	});
+
+	// ── Result message as turn boundary ─────────────────────────────────────
+
+	describe('result message as turn boundary', () => {
+		it('flushes the turn when a result message is received', () => {
+			// Same session: run1 ends with result, then run2 begins → 2 turns
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 3000 }),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			expect(items).toHaveLength(2);
+			expect(asTurn(items[0]).sessionId).toBe('sess-1');
+			expect(asTurn(items[0]).messageCount).toBe(2); // agent msg + result
+			expect(asTurn(items[1]).sessionId).toBe('sess-1');
+			expect(asTurn(items[1]).messageCount).toBe(1);
+		});
+
+		it('result message is included in its own turn (not left out)', () => {
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			expect(items).toHaveLength(1);
+			const turn = asTurn(items[0]);
+			expect(turn.messageCount).toBe(2);
+			expect(turn.messages[1].type).toBe('result');
+		});
+
+		it('first turn is inactive (has result), second turn is active', () => {
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 3000 }),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			expect(asTurn(items[0]).isActive).toBe(false);
+			expect(asTurn(items[1]).isActive).toBe(true);
+		});
+
+		it('multiple result-bounded runs from the same session produce one turn each', () => {
+			// run1 → result → run2 → result → run3 (no result yet)
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 3000 }),
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 4000 }),
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 5000 }),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			expect(items).toHaveLength(3);
+			expect(asTurn(items[0]).isActive).toBe(false);
+			expect(asTurn(items[1]).isActive).toBe(false);
+			expect(asTurn(items[2]).isActive).toBe(true);
+		});
+
+		it('buffered runtime messages are emitted after the result-flushed turn', () => {
+			// status arrives mid-turn, then result terminates the turn
+			const msgs = [
+				makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+				makeStatusMessage({ createdAt: 1500 }),
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			// turn + runtime (emitted after the turn)
+			expect(items).toHaveLength(2);
+			expect(items[0].type).toBe('turn');
+			expect(asTurn(items[0]).messageCount).toBe(2); // agent + result
+			expect(items[1].type).toBe('runtime');
+		});
+
+		it('a standalone result-only turn is valid', () => {
+			// Edge case: only a result message arrives (no preceding agent message)
+			const msgs = [
+				makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
+			];
+			const items = renderUseTurnBlocks(msgs, true);
+			expect(items).toHaveLength(1);
+			const turn = asTurn(items[0]);
+			expect(turn.messageCount).toBe(1);
+			expect(turn.messages[0].type).toBe('result');
+		});
+	});
+
+	// ── Task-dispatch preservation ───────────────────────────────────────────
+
+	describe('task-dispatch preservation', () => {
+		it('holds an isolated task-dispatch user message and prepends it to the next turn from the same session', () => {
+			// Reproduces the race condition from real data (timestamps in ms):
+			//   LEADER:assistant (T=862)  — already in leader turn
+			//   PLANNER:user     (T=866)  — task dispatch, only 4ms later → split off
+			//   LEADER:assistant (T=900)  — leader continues (same session)
+			//   LEADER:result    (T=19000)
+			//   PLANNER:assistant (T=21000) — continuation — WITHOUT task context normally
+			//   PLANNER:result   (T=39000)
+			//
+			// Without preservation: PLANNER gets two turns — [user@866] and [assistant@21000+].
+			// With preservation: PLANNER gets one turn — [user@866 (held), assistant@21000, result].
+			const leaderAssistant1 = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				type: 'assistant',
+				createdAt: 862,
+			});
+			const plannerTask = makeAgentMessage({
+				authorRole: 'planner',
+				authorSessionId: 'sess-planner',
+				type: 'user',
+				uuid: 'task-uuid-1',
+				createdAt: 866,
+			});
+			const leaderAssistant2 = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				type: 'assistant',
+				createdAt: 900,
+			});
+			const leaderResult = makeResultMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				createdAt: 19000,
+			});
+			const plannerAssistant = makeAgentMessage({
+				authorRole: 'planner',
+				authorSessionId: 'sess-planner',
+				type: 'assistant',
+				createdAt: 21000,
+			});
+			const plannerResult = makeResultMessage({
+				authorRole: 'planner',
+				authorSessionId: 'sess-planner',
+				createdAt: 39000,
+			});
+
+			const items = renderUseTurnBlocks(
+				[
+					leaderAssistant1,
+					plannerTask,
+					leaderAssistant2,
+					leaderResult,
+					plannerAssistant,
+					plannerResult,
+				],
+				false
+			);
+
+			const turns = items.filter((it) => it.type === 'turn').map(asTurn);
+			const plannerTurns = turns.filter((t) => t.agentRole === 'planner');
+
+			// Key assertion: planner must NOT have a split turn.
+			// It should have exactly ONE turn that includes the task user message.
+			expect(plannerTurns).toHaveLength(1);
+			const plannerTurn = plannerTurns[0];
+			// Planner turn includes the originally held task message as its first message
+			expect(plannerTurn.messages[0].type).toBe('user');
+			expect((plannerTurn.messages[0] as { uuid?: string }).uuid).toBe('task-uuid-1');
+			// messageCount = user(task) + assistant + result = 3
+			expect(plannerTurn.messageCount).toBe(3);
+			// Turn start time reflects when the task was dispatched (T=866), not T=21000
+			expect(plannerTurn.startTime).toBe(866);
+		});
+
+		it('does not hold an isolated tool-result user message (no uuid)', () => {
+			// Tool result user messages have no top-level uuid — they should NOT be held.
+			_idCounter++;
+			const toolResultMsg: SessionGroupMessage = {
+				id: _idCounter,
+				groupId: 'group-1',
+				sessionId: 'sess-worker',
+				role: 'coder',
+				messageType: 'user',
+				content: JSON.stringify({
+					type: 'user',
+					// no uuid — this is a tool result, not a task dispatch
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }],
+					},
+					timestamp: 1000,
+					_taskMeta: {
+						authorRole: 'coder',
+						authorSessionId: 'sess-worker',
+						turnId: 't1',
+						iteration: 1,
+					},
+				}),
+				createdAt: 1000,
+			};
+			const leaderMsg = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				createdAt: 2000,
+			});
+			const workerMsg2 = makeAgentMessage({
+				authorRole: 'coder',
+				authorSessionId: 'sess-worker',
+				createdAt: 3000,
+			});
+
+			const items = renderUseTurnBlocks([toolResultMsg, leaderMsg, workerMsg2], false);
+			// worker[tool-result-user], leader, worker → 3 turns (no hold, no uuid)
+			expect(items.filter((it) => it.type === 'turn')).toHaveLength(3);
+		});
+
+		it('emits a held task message as a standalone turn if no continuation arrives', () => {
+			// Planner receives a task message but gets interrupted by the leader,
+			// and no further planner messages arrive before end-of-stream.
+			const leaderAssistant = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				type: 'assistant',
+				createdAt: 1000,
+			});
+			const plannerTask = makeAgentMessage({
+				authorRole: 'planner',
+				authorSessionId: 'sess-planner',
+				type: 'user',
+				uuid: 'pending-task',
+				createdAt: 1001,
+			});
+			// Only leader messages follow — planner never sends more
+			const leaderContinues = makeAgentMessage({
+				authorRole: 'leader',
+				authorSessionId: 'sess-leader',
+				type: 'assistant',
+				createdAt: 2000,
+			});
+
+			const items = renderUseTurnBlocks([leaderAssistant, plannerTask, leaderContinues], false);
+			const turns = items.filter((it) => it.type === 'turn').map(asTurn);
+
+			// Planner's held task message is emitted as a standalone turn at the end
+			const plannerTurn = turns.find((t) => t.agentRole === 'planner');
+			expect(plannerTurn).toBeDefined();
+			expect(plannerTurn!.messageCount).toBe(1);
+			expect((plannerTurn!.messages[0] as { uuid?: string }).uuid).toBe('pending-task');
+		});
+	});
+
 	// ── Real-time delta ──────────────────────────────────────────────────────
 
 	describe('real-time delta', () => {
