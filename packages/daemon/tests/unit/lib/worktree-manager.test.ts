@@ -759,6 +759,120 @@ describe('WorktreeManager', () => {
 	});
 
 	// ---------------------------------------------------------------------------
+	// getWorktreeBaseDir — TEST_WORKTREE_BASE_DIR override
+	// ---------------------------------------------------------------------------
+	describe('getWorktreeBaseDir TEST_WORKTREE_BASE_DIR override', () => {
+		const originalEnv = process.env.TEST_WORKTREE_BASE_DIR;
+
+		afterEach(() => {
+			if (originalEnv === undefined) {
+				delete process.env.TEST_WORKTREE_BASE_DIR;
+			} else {
+				process.env.TEST_WORKTREE_BASE_DIR = originalEnv;
+			}
+		});
+
+		it('uses TEST_WORKTREE_BASE_DIR as the root when set', async () => {
+			const testBaseDir = '/tmp/neokai-test-override';
+			process.env.TEST_WORKTREE_BASE_DIR = testBaseDir;
+
+			const repoPath = '/test/repo';
+			const shortKey = manager.getProjectShortKey(repoPath);
+
+			existsSyncResults.set('/test/repo/.git', true);
+			mockGitRevparse.mockResolvedValue('.git');
+			// project dir does NOT exist yet → triggers mkdirSync
+			existsSyncResults.set(`${testBaseDir}/${shortKey}`, false);
+			existsSyncResults.set(`${testBaseDir}/${shortKey}/worktrees`, false);
+			existsSyncResults.set(`${testBaseDir}/${shortKey}/worktrees/sess-override`, false);
+			mockGitRaw.mockResolvedValue('');
+
+			const result = await manager.createWorktree({
+				sessionId: 'sess-override',
+				repoPath,
+			});
+
+			// Worktree path must use the override base dir, not ~/.neokai
+			expect(result?.worktreePath).toBe(`${testBaseDir}/${shortKey}/worktrees/sess-override`);
+			expect(result?.worktreePath).not.toContain('/home/testuser');
+		});
+
+		it('falls back to ~/.neokai when TEST_WORKTREE_BASE_DIR is not set', async () => {
+			delete process.env.TEST_WORKTREE_BASE_DIR;
+
+			const repoPath = '/test/repo';
+			const shortKey = manager.getProjectShortKey(repoPath);
+
+			existsSyncResults.set('/test/repo/.git', true);
+			mockGitRevparse.mockResolvedValue('.git');
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}`, false);
+			existsSyncResults.set(`/home/testuser/.neokai/projects/${shortKey}/worktrees`, false);
+			existsSyncResults.set(
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-home`,
+				false
+			);
+			mockGitRaw.mockResolvedValue('');
+
+			const result = await manager.createWorktree({
+				sessionId: 'sess-home',
+				repoPath,
+			});
+
+			expect(result?.worktreePath).toBe(
+				`/home/testuser/.neokai/projects/${shortKey}/worktrees/sess-home`
+			);
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// verifyWorktree — backward compatibility with old long-path format
+	// ---------------------------------------------------------------------------
+	describe('verifyWorktree old-format path compatibility', () => {
+		it('recognizes a worktree stored with the old encoded path format', async () => {
+			// Old format: ~/.neokai/projects/-Users-alice-my-app/worktrees/session-abc
+			// verifyWorktree uses the DB-stored worktreePath directly, so old and new
+			// path formats coexist in the DB indefinitely with no conflict.
+			const oldFormatPath =
+				'/home/testuser/.neokai/projects/-Users-alice-my-app/worktrees/session-abc';
+			const mainRepoPath = '/Users/alice/my-app';
+
+			existsSyncResults.set(oldFormatPath, true);
+			existsSyncResults.set(`${mainRepoPath}/.git`, true);
+			mockGitRevparse.mockResolvedValue('.git');
+			// git worktree list includes the old-format path
+			mockGitRaw.mockResolvedValue(
+				`worktree ${oldFormatPath}\nHEAD abc123\nbranch refs/heads/session/session-abc\n`
+			);
+
+			const result = await manager.verifyWorktree({
+				isWorktree: true,
+				worktreePath: oldFormatPath,
+				mainRepoPath,
+				branch: 'session/session-abc',
+			});
+
+			expect(result).toBe(true);
+		});
+
+		it('returns false for old-format path when directory no longer exists', async () => {
+			const oldFormatPath =
+				'/home/testuser/.neokai/projects/-Users-alice-my-app/worktrees/session-abc';
+			const mainRepoPath = '/Users/alice/my-app';
+
+			existsSyncResults.set(oldFormatPath, false);
+
+			const result = await manager.verifyWorktree({
+				isWorktree: true,
+				worktreePath: oldFormatPath,
+				mainRepoPath,
+				branch: 'session/session-abc',
+			});
+
+			expect(result).toBe(false);
+		});
+	});
+
+	// ---------------------------------------------------------------------------
 	// getWorktreeBaseDir — collision detection
 	// All three scenarios use the existing fs mocks from the outer beforeEach.
 	// ---------------------------------------------------------------------------
