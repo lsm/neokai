@@ -52,6 +52,21 @@ describe('ROOM_TASK_ROUTE_PATTERN — short ID support', () => {
 		const result = getRoomTaskIdFromPath(`/room/${ROOM_UUID}/task/t-42/extra`);
 		expect(result).toBeNull();
 	});
+
+	it('returns null for zero counter (t-0 is semantically invalid)', () => {
+		const result = getRoomTaskIdFromPath(`/room/${ROOM_UUID}/task/t-0`);
+		expect(result).toBeNull();
+	});
+
+	it('returns null for leading-zero counter (t-01)', () => {
+		const result = getRoomTaskIdFromPath(`/room/${ROOM_UUID}/task/t-01`);
+		expect(result).toBeNull();
+	});
+
+	it('matches g- prefix short ID (route is intentionally permissive about prefix letter)', () => {
+		const result = getRoomTaskIdFromPath(`/room/${ROOM_UUID}/task/g-42`);
+		expect(result).toEqual({ roomId: ROOM_UUID, taskId: 'g-42' });
+	});
 });
 
 describe('SPACE_TASK_ROUTE_PATTERN — short ID support', () => {
@@ -93,5 +108,20 @@ describe('SPACE_TASK_ROUTE_PATTERN — short ID support', () => {
 	it('returns null for extra path segments after task short ID', () => {
 		const result = getSpaceTaskIdFromPath(`/space/${SPACE_UUID}/task/t-42/extra`);
 		expect(result).toBeNull();
+	});
+
+	it('returns null for zero counter (t-0 is semantically invalid)', () => {
+		const result = getSpaceTaskIdFromPath(`/space/${SPACE_UUID}/task/t-0`);
+		expect(result).toBeNull();
+	});
+
+	it('returns null for leading-zero counter (t-01)', () => {
+		const result = getSpaceTaskIdFromPath(`/space/${SPACE_UUID}/task/t-01`);
+		expect(result).toBeNull();
+	});
+
+	it('matches g- prefix short ID (route is intentionally permissive about prefix letter)', () => {
+		const result = getSpaceTaskIdFromPath(`/space/${SPACE_UUID}/task/g-42`);
+		expect(result).toEqual({ spaceId: SPACE_UUID, taskId: 'g-42' });
 	});
 });
