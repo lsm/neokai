@@ -3,8 +3,8 @@
  *
  * Tests:
  * - Renders name and description fields
- * - Add step button adds a new step card
- * - Remove step removes the card
+ * - Add Step button adds a new node card
+ * - Remove node removes the card
  * - Reorder: move up / move down
  * - Agent dropdown (via WorkflowNodeCard) excludes 'leader' agent
  * - Template selection pre-fills steps

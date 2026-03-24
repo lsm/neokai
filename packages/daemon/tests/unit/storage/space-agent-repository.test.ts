@@ -256,7 +256,7 @@ describe('SpaceAgentRepository', () => {
 		it('returns referenced with workflow names when nodes use the agent', () => {
 			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			insertWorkflow(db, 'wf-1', 'space-1', 'Deploy Workflow');
-			insertWorkflowNode(db, 'step-1', 'wf-1', agent.id);
+			insertWorkflowNode(db, 'node-1', 'wf-1', agent.id);
 
 			const result = repo.isAgentReferenced(agent.id);
 			expect(result.referenced).toBe(true);
@@ -266,8 +266,8 @@ describe('SpaceAgentRepository', () => {
 		it('returns unique workflow names even with multiple nodes from same workflow', () => {
 			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			insertWorkflow(db, 'wf-2', 'space-1', 'CI Workflow');
-			insertWorkflowNode(db, 'step-a', 'wf-2', agent.id);
-			insertWorkflowNode(db, 'step-b', 'wf-2', agent.id);
+			insertWorkflowNode(db, 'node-a', 'wf-2', agent.id);
+			insertWorkflowNode(db, 'node-b', 'wf-2', agent.id);
 
 			const result = repo.isAgentReferenced(agent.id);
 			expect(result.workflowNames).toHaveLength(1);

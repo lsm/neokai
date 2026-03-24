@@ -274,7 +274,7 @@ describe('SpaceAgentManager', () => {
 			if (!created.ok) throw new Error('create failed');
 
 			insertWorkflow(db, 'wf-1', 'space-1', 'Release Workflow');
-			insertWorkflowNode(db, 'step-1', 'wf-1', created.value.id);
+			insertWorkflowNode(db, 'node-1', 'wf-1', created.value.id);
 
 			const result = manager.delete(created.value.id);
 			expect(result.ok).toBe(false);

@@ -77,32 +77,32 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		name: 'CI Workflow',
 		description: 'Runs CI pipeline',
 		nodes: [
-			{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Code step' },
+			{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Code step' },
 			{
-				id: 'step-uuid-2',
+				id: 'node-uuid-2',
 				agentId: 'agent-uuid-3',
 				name: 'Review step',
 				instructions: 'Review carefully',
 			},
-			{ id: 'step-uuid-3', agentId: 'agent-uuid-2', name: 'Plan step' },
+			{ id: 'node-uuid-3', agentId: 'agent-uuid-2', name: 'Plan step' },
 		],
 		transitions: [
-			{ id: 'trans-uuid-1', from: 'step-uuid-1', to: 'step-uuid-2' },
+			{ id: 'trans-uuid-1', from: 'node-uuid-1', to: 'node-uuid-2' },
 			{
 				id: 'trans-uuid-2',
-				from: 'step-uuid-2',
-				to: 'step-uuid-3',
+				from: 'node-uuid-2',
+				to: 'node-uuid-3',
 				condition: { type: 'human' },
 				order: 0,
 			},
 		],
-		startNodeId: 'step-uuid-1',
+		startNodeId: 'node-uuid-1',
 		rules: [
 			{
 				id: 'rule-uuid-1',
 				name: 'All tests must pass',
 				content: 'Run `bun test` before completing each step.',
-				appliesTo: ['step-uuid-1', 'step-uuid-2'],
+				appliesTo: ['node-uuid-1', 'node-uuid-2'],
 			},
 			{
 				id: 'rule-uuid-2',
@@ -273,10 +273,10 @@ describe('exportWorkflow', () => {
 
 	test('falls back to UUID when transition step not found', () => {
 		const workflow = makeWorkflow({
-			transitions: [{ id: 'trans-uuid-1', from: 'step-uuid-UNKNOWN', to: 'step-uuid-1' }],
+			transitions: [{ id: 'trans-uuid-1', from: 'node-uuid-UNKNOWN', to: 'node-uuid-1' }],
 		});
 		const exported = exportWorkflow(workflow, []);
-		expect(exported.transitions[0].fromNode).toBe('step-uuid-UNKNOWN');
+		expect(exported.transitions[0].fromNode).toBe('node-uuid-UNKNOWN');
 		expect(exported.transitions[0].toNode).toBe('Code step');
 	});
 
@@ -287,9 +287,9 @@ describe('exportWorkflow', () => {
 	});
 
 	test('falls back to UUID for startStep when not found', () => {
-		const workflow = makeWorkflow({ startNodeId: 'step-uuid-MISSING' });
+		const workflow = makeWorkflow({ startNodeId: 'node-uuid-MISSING' });
 		const exported = exportWorkflow(workflow, []);
-		expect(exported.startNode).toBe('step-uuid-MISSING');
+		expect(exported.startNode).toBe('node-uuid-MISSING');
 	});
 
 	test('remaps rule appliesTo node UUIDs → node names', () => {
@@ -297,7 +297,7 @@ describe('exportWorkflow', () => {
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// rule 0: appliesTo step-uuid-1 and step-uuid-2 → names
+		// rule 0: appliesTo node-uuid-1 and node-uuid-2 → names
 		expect(exported.rules[0].appliesTo).toEqual(['Code step', 'Review step']);
 	});
 
@@ -313,17 +313,17 @@ describe('exportWorkflow', () => {
 	test('partial appliesTo resolution — keeps resolved subset, drops stale UUIDs', () => {
 		const workflow = makeWorkflow({
 			nodes: [
-				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
-				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
+				{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
+				{ id: 'node-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
 			],
 			transitions: [],
-			startNodeId: 'step-uuid-1',
+			startNodeId: 'node-uuid-1',
 			rules: [
 				{
 					id: 'rule-uuid-1',
 					name: 'Partial rule',
 					content: 'One valid, one stale.',
-					appliesTo: ['step-uuid-1', 'step-uuid-STALE'],
+					appliesTo: ['node-uuid-1', 'node-uuid-STALE'],
 				},
 			],
 		});
@@ -335,15 +335,15 @@ describe('exportWorkflow', () => {
 
 	test('all-stale appliesTo → appliesTo omitted (rule becomes global)', () => {
 		const workflow = makeWorkflow({
-			nodes: [{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' }],
+			nodes: [{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' }],
 			transitions: [],
-			startNodeId: 'step-uuid-1',
+			startNodeId: 'node-uuid-1',
 			rules: [
 				{
 					id: 'rule-uuid-1',
 					name: 'Stale rule',
 					content: 'All refs are stale.',
-					appliesTo: ['step-uuid-STALE-1', 'step-uuid-STALE-2'],
+					appliesTo: ['node-uuid-STALE-1', 'node-uuid-STALE-2'],
 				},
 			],
 		});
@@ -379,18 +379,18 @@ describe('exportWorkflow', () => {
 	test('includes isCyclic in exported transitions', () => {
 		const workflow = makeWorkflow({
 			nodes: [
-				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
-				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
+				{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Step A' },
+				{ id: 'node-uuid-2', agentId: 'agent-uuid-2', name: 'Step B' },
 			],
 			transitions: [
 				{
 					id: 'trans-uuid-1',
-					from: 'step-uuid-1',
-					to: 'step-uuid-2',
+					from: 'node-uuid-1',
+					to: 'node-uuid-2',
 					isCyclic: true,
 				},
 			],
-			startNodeId: 'step-uuid-1',
+			startNodeId: 'node-uuid-1',
 			rules: [],
 		});
 		const exported = exportWorkflow(workflow, []);
@@ -1102,18 +1102,18 @@ describe('round-trip: export → JSON → validate', () => {
 	test('condition type with expression round-trip', () => {
 		const workflow = makeWorkflow({
 			nodes: [
-				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Build' },
-				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Deploy' },
+				{ id: 'node-uuid-1', agentId: 'agent-uuid-1', name: 'Build' },
+				{ id: 'node-uuid-2', agentId: 'agent-uuid-2', name: 'Deploy' },
 			],
 			transitions: [
 				{
 					id: 'trans-uuid-1',
-					from: 'step-uuid-1',
-					to: 'step-uuid-2',
+					from: 'node-uuid-1',
+					to: 'node-uuid-2',
 					condition: { type: 'condition', expression: 'bun test --exit-zero' },
 				},
 			],
-			startNodeId: 'step-uuid-1',
+			startNodeId: 'node-uuid-1',
 			rules: [],
 		});
 		const exported = exportWorkflow(workflow, []);
@@ -1159,9 +1159,9 @@ describe('rule appliesTo round-trip', () => {
 		const json = JSON.stringify(exported);
 
 		// node UUIDs must NOT appear
-		expect(json).not.toContain('step-uuid-1');
-		expect(json).not.toContain('step-uuid-2');
-		expect(json).not.toContain('step-uuid-3');
+		expect(json).not.toContain('node-uuid-1');
+		expect(json).not.toContain('node-uuid-2');
+		expect(json).not.toContain('node-uuid-3');
 
 		// transition UUIDs must NOT appear
 		expect(json).not.toContain('trans-uuid-1');
@@ -1216,7 +1216,7 @@ describe('exportWorkflow — multi-agent nodes', () => {
 			description: 'Tests multi-agent nodes',
 			nodes: [
 				{
-					id: 'step-uuid-1',
+					id: 'node-uuid-1',
 					name: 'Parallel code+review',
 					agents: [
 						{ agentId: 'agent-uuid-1', instructions: 'Write the feature' },
@@ -1231,13 +1231,13 @@ describe('exportWorkflow — multi-agent nodes', () => {
 					],
 				},
 				{
-					id: 'step-uuid-2',
+					id: 'node-uuid-2',
 					name: 'Single plan step',
 					agentId: 'agent-uuid-2',
 				},
 			],
-			transitions: [{ id: 'trans-1', from: 'step-uuid-1', to: 'step-uuid-2' }],
-			startNodeId: 'step-uuid-1',
+			transitions: [{ id: 'trans-1', from: 'node-uuid-1', to: 'node-uuid-2' }],
+			startNodeId: 'node-uuid-1',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -1310,13 +1310,13 @@ describe('exportWorkflow — multi-agent nodes', () => {
 		const workflow = makeMultiAgentWorkflow({
 			nodes: [
 				{
-					id: 'step-uuid-1',
+					id: 'node-uuid-1',
 					name: 'Solo with channel',
 					agentId: 'agent-uuid-1',
 					channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 				},
 			],
-			startNodeId: 'step-uuid-1',
+			startNodeId: 'node-uuid-1',
 			transitions: [],
 		});
 		const agents = [makeAgent()];
@@ -1335,8 +1335,8 @@ describe('exportWorkflow — multi-agent nodes', () => {
 
 	test('export produces no agentRef when node has neither agentId nor agents', () => {
 		const workflow = makeMultiAgentWorkflow({
-			nodes: [{ id: 'step-uuid-1', name: 'Broken step' } as any],
-			startNodeId: 'step-uuid-1',
+			nodes: [{ id: 'node-uuid-1', name: 'Broken step' } as any],
+			startNodeId: 'node-uuid-1',
 			transitions: [],
 		});
 		const exported = exportWorkflow(workflow, []);
@@ -1504,7 +1504,7 @@ describe('round-trip: multi-agent + channels', () => {
 			description: 'Coder and reviewer in parallel',
 			nodes: [
 				{
-					id: 'step-1',
+					id: 'node-1',
 					name: 'Code and Review',
 					agents: [
 						{ agentId: 'agent-uuid-1', instructions: 'Implement the feature' },
@@ -1516,13 +1516,13 @@ describe('round-trip: multi-agent + channels', () => {
 					instructions: 'Collaborate on the feature',
 				},
 				{
-					id: 'step-2',
+					id: 'node-2',
 					name: 'Final Plan',
 					agentId: 'agent-uuid-2',
 				},
 			],
-			transitions: [{ id: 't-1', from: 'step-1', to: 'step-2' }],
-			startNodeId: 'step-1',
+			transitions: [{ id: 't-1', from: 'node-1', to: 'node-2' }],
+			startNodeId: 'node-1',
 			rules: [],
 			tags: ['collab'],
 			createdAt: 1000,
@@ -1586,8 +1586,8 @@ describe('round-trip: multi-agent + channels', () => {
 		expect(json).not.toContain('agent-uuid-1');
 		expect(json).not.toContain('agent-uuid-2');
 		expect(json).not.toContain('agent-uuid-3');
-		expect(json).not.toContain('step-1');
-		expect(json).not.toContain('step-2');
+		expect(json).not.toContain('node-1');
+		expect(json).not.toContain('node-2');
 		expect(json).toContain('My Coder');
 		expect(json).toContain('Reviewer');
 		expect(json).toContain('Simple Agent');
