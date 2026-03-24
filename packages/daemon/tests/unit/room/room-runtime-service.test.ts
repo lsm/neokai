@@ -400,7 +400,8 @@ describe('RoomRuntimeService restart recovery', () => {
 				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
 				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
 				consecutive_failures INTEGER NOT NULL DEFAULT 0,
-				replan_count INTEGER NOT NULL DEFAULT 0
+				replan_count INTEGER NOT NULL DEFAULT 0,
+				short_id TEXT
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY,

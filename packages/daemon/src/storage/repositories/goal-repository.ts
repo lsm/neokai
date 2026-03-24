@@ -21,6 +21,7 @@ import type {
 } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import type { ReactiveDatabase } from '../reactive-database';
+import type { ShortIdAllocator } from '../../lib/short-id-allocator';
 
 export interface CreateGoalParams {
 	roomId: string;
@@ -78,7 +79,8 @@ export interface UpdateExecutionParams {
 export class GoalRepository {
 	constructor(
 		private db: BunDatabase,
-		private reactiveDb: ReactiveDatabase
+		private reactiveDb: ReactiveDatabase,
+		private shortIdAllocator?: ShortIdAllocator
 	) {}
 
 	/**
@@ -87,6 +89,7 @@ export class GoalRepository {
 	createGoal(params: CreateGoalParams): RoomGoal {
 		const id = generateUUID();
 		const now = Date.now();
+		const shortId = this.shortIdAllocator?.allocate('goal', params.roomId) ?? null;
 
 		const stmt = this.db.prepare(
 			`INSERT INTO goals (
@@ -94,9 +97,9 @@ export class GoalRepository {
 				metrics, created_at, updated_at,
 				mission_type, autonomy_level, schedule, schedule_paused, next_run_at,
 				structured_metrics, max_consecutive_failures, max_planning_attempts, consecutive_failures,
-				replan_count
+				replan_count, short_id
 			)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -120,26 +123,51 @@ export class GoalRepository {
 			params.maxConsecutiveFailures ?? 3,
 			params.maxPlanningAttempts ?? 0,
 			params.consecutiveFailures ?? 0,
-			params.replanCount ?? 0
+			params.replanCount ?? 0,
+			shortId
 		);
 
 		this.reactiveDb.notifyChange('goals');
-		return this.getGoal(id)!;
+		return this.getGoalDirect(id)!;
 	}
 
 	/**
-	 * Get a goal by ID
+	 * Get a goal by ID (raw, no backfill — used internally to avoid recursion)
 	 */
-	getGoal(id: string): RoomGoal | null {
+	private getGoalDirect(id: string): RoomGoal | null {
 		const stmt = this.db.prepare(`SELECT * FROM goals WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
-
 		if (!row) return null;
 		return this.rowToGoal(row);
 	}
 
 	/**
-	 * List goals for a room
+	 * Get a goal by ID, with lazy short ID backfill for legacy rows.
+	 */
+	getGoal(id: string): RoomGoal | null {
+		const goal = this.getGoalDirect(id);
+		if (!goal) return null;
+		if (!goal.shortId && this.shortIdAllocator) {
+			const shortId = this.shortIdAllocator.allocate('goal', goal.roomId);
+			this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, id);
+			return { ...goal, shortId };
+		}
+		return goal;
+	}
+
+	/**
+	 * Get a goal by its short ID within a room.
+	 */
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
+		const stmt = this.db.prepare(`SELECT * FROM goals WHERE room_id = ? AND short_id = ?`);
+		const row = stmt.get(roomId, shortId) as Record<string, unknown> | undefined;
+		if (!row) return null;
+		return this.rowToGoal(row);
+	}
+
+	/**
+	 * List goals for a room.
+	 * Lazy backfill: any row missing short_id gets one assigned inline.
 	 */
 	listGoals(roomId: string, status?: GoalStatus): RoomGoal[] {
 		let query = `SELECT * FROM goals WHERE room_id = ?`;
@@ -154,7 +182,15 @@ export class GoalRepository {
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToGoal(r));
+		return rows.map((row) => {
+			const goal = this.rowToGoal(row);
+			if (!goal.shortId && this.shortIdAllocator) {
+				const shortId = this.shortIdAllocator.allocate('goal', roomId);
+				this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, goal.id);
+				return { ...goal, shortId };
+			}
+			return goal;
+		});
 	}
 
 	/**
@@ -597,6 +633,7 @@ export class GoalRepository {
 		return {
 			id: row.id as string,
 			roomId: row.room_id as string,
+			shortId: (row.short_id as string | null) ?? undefined,
 			title: row.title as string,
 			description: row.description as string,
 			status: row.status as GoalStatus,
