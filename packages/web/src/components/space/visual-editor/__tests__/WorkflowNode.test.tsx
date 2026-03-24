@@ -260,7 +260,10 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			agents: [
+				{ agentId: 'agent-1', role: 'coder' },
+				{ agentId: 'agent-2', role: 'reviewer' },
+			],
 		};
 		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		const badges = getByTestId('agent-badges');
@@ -279,7 +282,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 	});
 
 	it('renders single agent name when agents array is empty', () => {
-		const step = { ...STEP_DRAFT, agents: [] as { agentId: string }[] };
+		const step = { ...STEP_DRAFT, agents: [] as { agentId: string; role: string }[] };
 		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		// Empty agents array = single-agent mode
 		expect(getByTestId('agent-name')).toBeTruthy();
@@ -290,7 +293,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'unknown-agent-id' }],
+			agents: [{ agentId: 'unknown-agent-id', role: 'coder' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		expect(getByTestId('agent-badges').textContent).toContain('unknown-agent-id');
@@ -300,7 +303,10 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			agents: [
+				{ agentId: 'agent-1', role: 'coder' },
+				{ agentId: 'agent-2', role: 'reviewer' },
+			],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		const node = getByTestId('workflow-node-step-local-1');

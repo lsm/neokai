@@ -568,11 +568,33 @@ export type WorkflowTransitionInput = Omit<WorkflowTransition, 'id'>;
 
 /**
  * A single agent entry within a multi-agent workflow node.
- * References a SpaceAgent by ID and optionally overrides instructions for that agent.
+ * References a SpaceAgent by ID with an optional per-slot configuration override.
  */
 export interface WorkflowNodeAgent {
 	/** ID of the SpaceAgent assigned to execute this node slot */
 	agentId: string;
+	/**
+	 * Unique identifier for this agent slot within the node.
+	 * Used for channel routing (`WorkflowChannel.from`/`to`) and must be unique across
+	 * all agent slots in the same node.
+	 *
+	 * This is a **slot-specific label** distinct from `SpaceAgent.role`, which identifies
+	 * the agent's job category (e.g. `"coder"`, `"reviewer"`). The same `SpaceAgent` may
+	 * appear in multiple slots with different `WorkflowNodeAgent.role` values (e.g.
+	 * `"strict-reviewer"` and `"quick-reviewer"`). When added via the UI a second time,
+	 * a numeric suffix is appended automatically (e.g. `"coder"` → `"coder-2"`).
+	 */
+	role: string;
+	/**
+	 * Override the agent's default model for this slot.
+	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
+	 */
+	model?: string;
+	/**
+	 * Override the agent's default system prompt for this slot.
+	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
+	 */
+	systemPrompt?: string;
 	/** Per-agent instructions override — appended to the agent's system prompt */
 	instructions?: string;
 }
@@ -596,14 +618,14 @@ export const TASK_AGENT_NODE_ID = '__task_agent__';
 /**
  * A directed messaging channel between agents in a workflow node.
  * Channels define which agents may send messages to which other agents.
- * `from` and `to` reference agent roles (matching `SpaceAgent.role`) or the
+ * `from` and `to` reference agent roles (matching `WorkflowNodeAgent.role`) or the
  * wildcard `'*'` which matches all agents in the node.
  *
  * No channels = no messaging constraints (agents are fully isolated).
  */
 export interface WorkflowChannel {
 	/**
-	 * Source role string (matches SpaceAgent.role) or `'*'` for all agents in the node.
+	 * Source role string (matches `WorkflowNodeAgent.role`) or `'*'` for all agents in the node.
 	 */
 	from: string;
 	/**
@@ -659,7 +681,7 @@ export interface WorkflowNode {
 	/**
 	 * Directed messaging topology between agents in this node.
 	 * No channels = no messaging constraints (agents are fully isolated).
-	 * Roles referenced in `from`/`to` must match `SpaceAgent.role` values for agents
+	 * Roles referenced in `from`/`to` must match `WorkflowNodeAgent.role` values for agents
 	 * in this node, or the wildcard `'*'`.
 	 */
 	channels?: WorkflowChannel[];
@@ -712,7 +734,7 @@ export interface WorkflowNodeInput {
 	instructions?: string;
 	/**
 	 * Directed messaging topology between agents in this node.
-	 * Roles referenced in `from`/`to` must match `SpaceAgent.role` values for agents
+	 * Roles referenced in `from`/`to` must match `WorkflowNodeAgent.role` values for agents
 	 * in this node, or the wildcard `'*'`.
 	 */
 	channels?: WorkflowChannel[];
@@ -860,6 +882,21 @@ export interface UpdateSpaceWorkflowParams {
 export interface ExportedWorkflowNodeAgent {
 	/** Name of the SpaceAgent (portable, not a UUID) */
 	agentRef: string;
+	/**
+	 * Unique identifier for this agent slot within the node.
+	 * Must be unique across all agents in the same exported node.
+	 */
+	role: string;
+	/**
+	 * Override the agent's default model for this slot.
+	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
+	 */
+	model?: string;
+	/**
+	 * Override the agent's default system prompt for this slot.
+	 * TODO: Not yet applied at runtime — workflow-executor.ts does not read this field.
+	 */
+	systemPrompt?: string;
 	/** Per-agent instructions override */
 	instructions?: string;
 }

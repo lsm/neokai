@@ -795,7 +795,10 @@ describe('multi-agent step serialization', () => {
 				{
 					id: 's1',
 					name: 'Parallel Step',
-					agents: [{ agentId: 'a1' }, { agentId: 'a2', instructions: 'focus on security' }],
+					agents: [
+						{ agentId: 'a1', role: 'coder' },
+						{ agentId: 'a2', role: 'reviewer', instructions: 'focus on security' },
+					],
 				},
 			],
 		});
@@ -816,7 +819,10 @@ describe('multi-agent step serialization', () => {
 				{
 					id: 's1',
 					name: 'Parallel Step',
-					agents: [{ agentId: 'a1' }, { agentId: 'a2' }],
+					agents: [
+						{ agentId: 'a1', role: 'coder' },
+						{ agentId: 'a2', role: 'reviewer' },
+					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'PR' },
 						{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' },
@@ -850,7 +856,10 @@ describe('multi-agent step serialization', () => {
 						id: 's1',
 						name: 'Parallel Step',
 						agentId: '',
-						agents: [{ agentId: 'a1' }, { agentId: 'a2', instructions: 'custom' }],
+						agents: [
+							{ agentId: 'a1', role: 'coder' },
+							{ agentId: 'a2', role: 'reviewer', instructions: 'custom' },
+						],
 						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 						instructions: '',
 					},
@@ -882,7 +891,7 @@ describe('multi-agent step serialization', () => {
 						id: 's1',
 						name: 'Step',
 						agentId: '',
-						agents: [{ agentId: 'a1' }],
+						agents: [{ agentId: 'a1', role: 'coder' }],
 						channels: [],
 						instructions: '',
 					},
@@ -919,7 +928,10 @@ describe('multi-agent step serialization', () => {
 				{
 					id: 's1',
 					name: 'Parallel',
-					agents: [{ agentId: 'a1', instructions: 'focus on tests' }, { agentId: 'a2' }],
+					agents: [
+						{ agentId: 'a1', role: 'coder', instructions: 'focus on tests' },
+						{ agentId: 'a2', role: 'reviewer' },
+					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
 						{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' as const },

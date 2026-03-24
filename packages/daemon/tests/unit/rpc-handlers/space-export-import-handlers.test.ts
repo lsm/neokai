@@ -1438,8 +1438,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', instructions: 'Write code' },
-									{ agentRef: 'Reviewer' },
+									{ agentRef: 'Coder', role: 'coder', instructions: 'Write code' },
+									{ agentRef: 'Reviewer', role: 'reviewer' },
 								],
 							},
 						},
@@ -1483,8 +1483,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', instructions: 'Implement the feature' },
-									{ agentRef: 'Reviewer', instructions: 'Review thoroughly' },
+									{ agentRef: 'Coder', role: 'coder', instructions: 'Implement the feature' },
+									{ agentRef: 'Reviewer', role: 'reviewer', instructions: 'Review thoroughly' },
 								],
 							},
 						},
@@ -1521,7 +1521,10 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Parallel',
-								agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
+								agents: [
+									{ agentRef: 'Coder', role: 'coder' },
+									{ agentRef: 'Reviewer', role: 'reviewer' },
+								],
 								channels: [
 									{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
 								],
@@ -1557,8 +1560,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder' },
-									{ agentRef: 'GhostAgent' }, // not in bundle or space
+									{ agentRef: 'Coder', role: 'coder' },
+									{ agentRef: 'GhostAgent', role: 'ghost' }, // not in bundle or space
 								],
 							},
 						},
@@ -1582,7 +1585,10 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Parallel',
-								agents: [{ agentRef: 'Coder' }, { agentRef: 'Missing' }],
+								agents: [
+									{ agentRef: 'Coder', role: 'coder' },
+									{ agentRef: 'Missing', role: 'missing' },
+								],
 							},
 						},
 					],
@@ -1627,7 +1633,10 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Parallel',
-								agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
+								agents: [
+									{ agentRef: 'Coder', role: 'coder' },
+									{ agentRef: 'Reviewer', role: 'reviewer' },
+								],
 								channels: [
 									// 'typo-role' is not matched by coder or reviewer
 									{ from: 'typo-role', to: 'reviewer', direction: 'one-way' as const },
@@ -1657,7 +1666,7 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Solo',
-								agents: [{ agentRef: 'Coder' }],
+								agents: [{ agentRef: 'Coder', role: 'coder' }],
 								channels: [{ from: '*', to: '*', direction: 'bidirectional' as const }],
 							},
 						},
@@ -1688,7 +1697,7 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Step',
-								agents: [{ agentRef: 'LocalCoder' }],
+								agents: [{ agentRef: 'LocalCoder', role: 'coder' }],
 								channels: [
 									// 'bad-role' is not matched by LocalCoder (role='coder')
 									{ from: 'bad-role', to: 'coder', direction: 'one-way' as const },
@@ -1726,7 +1735,10 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Parallel',
-								agents: [{ agentRef: 'LocalCoder' }, { agentRef: 'LocalReviewer' }],
+								agents: [
+									{ agentRef: 'LocalCoder', role: 'coder' },
+									{ agentRef: 'LocalReviewer', role: 'reviewer' },
+								],
 							},
 						},
 					],
@@ -1879,7 +1891,7 @@ type MultiAgentStepEntry =
 	| {
 			multiAgentStep: {
 				name: string;
-				agents: Array<{ agentRef: string; instructions?: string }>;
+				agents: Array<{ agentRef: string; role: string; instructions?: string }>;
 				channels?: Array<{
 					from: string;
 					to: string | string[];
@@ -2132,8 +2144,8 @@ describe('full export→import round-trip', () => {
 					id: 'step-ma',
 					name: 'Code and Review',
 					agents: [
-						{ agentId: 'src-coder', instructions: 'Implement the feature' },
-						{ agentId: 'src-reviewer', instructions: 'Review thoroughly' },
+						{ agentId: 'src-coder', role: 'coder', instructions: 'Implement the feature' },
+						{ agentId: 'src-reviewer', role: 'reviewer', instructions: 'Review thoroughly' },
 					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
@@ -2178,11 +2190,13 @@ describe('full export→import round-trip', () => {
 		expect(importedAgentIds).not.toContain('src-coder');
 		expect(importedAgentIds).not.toContain('src-reviewer');
 
-		// Per-agent instructions preserved
+		// Per-agent instructions and roles preserved
 		const coderEntry = importedStep.agents!.find((a) => a.agentId === coderImported.id)!;
 		const reviewerEntry = importedStep.agents!.find((a) => a.agentId === reviewerImported.id)!;
 		expect(coderEntry.instructions).toBe('Implement the feature');
+		expect(coderEntry.role).toBe('coder');
 		expect(reviewerEntry.instructions).toBe('Review thoroughly');
+		expect(reviewerEntry.role).toBe('reviewer');
 
 		// Shared step instructions preserved
 		expect(importedStep.instructions).toBe('Collaborate on the task');
@@ -2193,6 +2207,57 @@ describe('full export→import round-trip', () => {
 		expect(importedStep.channels![0].to).toBe('reviewer');
 		expect(importedStep.channels![0].direction).toBe('bidirectional');
 		expect(importedStep.channels![0].label).toBe('feedback');
+	});
+
+	it('import rejects bundle with empty role in agents[] entry (Zod validation)', async () => {
+		const bundle = {
+			version: 1,
+			name: 'Bad Bundle',
+			agents: [{ version: 1, type: 'agent', name: 'Coder', role: 'coder' }],
+			workflows: [
+				{
+					name: 'Bad Workflow',
+					nodes: [
+						{
+							name: 'Bad Node',
+							agents: [{ agentRef: 'Coder', role: '' }], // empty role — must be rejected
+						},
+					],
+					transitions: [],
+					rules: [],
+					tags: [],
+				},
+			],
+		};
+		await expect(
+			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+		).rejects.toThrow();
+	});
+
+	it('import rejects bundle with missing role in agents[] entry (Zod validation)', async () => {
+		const bundle = {
+			version: 1,
+			name: 'Bad Bundle',
+			agents: [{ version: 1, type: 'agent', name: 'Coder', role: 'coder' }],
+			workflows: [
+				{
+					name: 'Bad Workflow',
+					nodes: [
+						{
+							name: 'Bad Node',
+							// @ts-expect-error intentionally omitting required role
+							agents: [{ agentRef: 'Coder' }],
+						},
+					],
+					transitions: [],
+					rules: [],
+					tags: [],
+				},
+			],
+		};
+		await expect(
+			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+		).rejects.toThrow();
 	});
 
 	it('channel topology round-trip: one-way channel preserved', async () => {
@@ -2221,7 +2286,10 @@ describe('full export→import round-trip', () => {
 				{
 					id: 'step-ow',
 					name: 'Directed',
-					agents: [{ agentId: 'src-a' }, { agentId: 'src-b' }],
+					agents: [
+						{ agentId: 'src-a', role: 'alpha' },
+						{ agentId: 'src-b', role: 'beta' },
+					],
 					channels: [{ from: 'alpha', to: 'beta', direction: 'one-way' }],
 				},
 			],
@@ -2280,7 +2348,11 @@ describe('full export→import round-trip', () => {
 				{
 					id: 'step-fo',
 					name: 'Fan Out',
-					agents: [{ agentId: 'src-hub' }, { agentId: 'src-spoke1' }, { agentId: 'src-spoke2' }],
+					agents: [
+						{ agentId: 'src-hub', role: 'hub' },
+						{ agentId: 'src-spoke1', role: 'spoke1' },
+						{ agentId: 'src-spoke2', role: 'spoke2' },
+					],
 					channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 				},
 			],
@@ -2323,7 +2395,7 @@ describe('full export→import round-trip', () => {
 				{
 					id: 'step-wc',
 					name: 'Broadcast',
-					agents: [{ agentId: 'src-wa' }],
+					agents: [{ agentId: 'src-wa', role: 'wild' }],
 					channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
 				},
 			],
@@ -2389,8 +2461,8 @@ describe('full export→import round-trip', () => {
 					id: 'step-collab',
 					name: 'Implement and Review',
 					agents: [
-						{ agentId: 'src-coder2', instructions: 'Implement' },
-						{ agentId: 'src-review', instructions: 'Review' },
+						{ agentId: 'src-coder2', role: 'coder', instructions: 'Implement' },
+						{ agentId: 'src-review', role: 'reviewer', instructions: 'Review' },
 					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 				},
@@ -2499,8 +2571,8 @@ describe('full export→import round-trip', () => {
 					id: 'step-bad',
 					name: 'Parallel',
 					agents: [
-						{ agentId: 'src-known' },
-						{ agentId: 'src-ghost' }, // not in bundle
+						{ agentId: 'src-known', role: 'coder' },
+						{ agentId: 'src-ghost', role: 'ghost' }, // not in bundle
 					],
 				},
 			],
@@ -2543,7 +2615,7 @@ describe('full export→import round-trip', () => {
 				{
 					id: 'step-bc',
 					name: 'Work',
-					agents: [{ agentId: 'src-solo' }],
+					agents: [{ agentId: 'src-solo', role: 'coder' }],
 					channels: [
 						// 'nonexistent-role' is not the role of Solo Coder
 						{ from: 'nonexistent-role', to: 'coder', direction: 'one-way' },
@@ -2589,7 +2661,7 @@ describe('full export→import round-trip', () => {
 				{
 					id: 'step-exec-bc',
 					name: 'Work',
-					agents: [{ agentId: 'src-exec-solo' }],
+					agents: [{ agentId: 'src-exec-solo', role: 'coder' }],
 					channels: [
 						// 'bad-exec-role' does not match the agent's role 'coder'
 						{ from: 'bad-exec-role', to: 'coder', direction: 'one-way' },

@@ -994,7 +994,7 @@ export class SpaceRuntime {
 	 * Resolves the channel topology for a workflow step and stores it in the run's
 	 * config for use by session group creation (Milestone 6).
 	 *
-	 * Calls `resolveNodeChannels()` using all Space agents as the lookup table.
+	 * Resolves channel topology using `WorkflowNodeAgent.role` entries from the step.
 	 * Stores the result under `run.config._resolvedChannels`.
 	 *
 	 * TODO Milestone 6: pass resolvedChannels to session group metadata in
@@ -1010,10 +1010,8 @@ export class SpaceRuntime {
 
 		const config = (run.config ?? {}) as Record<string, unknown>;
 
-		const allAgents = this.config.spaceAgentManager.listBySpaceId(spaceId);
-
 		// Resolve user-declared channels from workflow data (empty array if none declared)
-		const resolved = resolveNodeChannels(step, allAgents);
+		const resolved = resolveNodeChannels(step);
 
 		this.config.workflowRunRepo.updateRun(runId, {
 			config: { ...config, _resolvedChannels: resolved },

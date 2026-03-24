@@ -333,7 +333,10 @@ describe('SpaceWorkflowRepository', () => {
 				{
 					id: 'step-multi',
 					name: 'Parallel Step',
-					agents: [{ agentId: 'agent-multi-1' }, { agentId: 'agent-multi-2' }],
+					agents: [
+						{ agentId: 'agent-multi-1', role: 'multi-1' },
+						{ agentId: 'agent-multi-2', role: 'multi-2' },
+					],
 				},
 			],
 		});
@@ -365,8 +368,8 @@ describe('SpaceWorkflowRepository', () => {
 					id: 'step-1',
 					name: 'Parallel Step',
 					agents: [
-						{ agentId: 'agent-multi-1', instructions: 'do A' },
-						{ agentId: 'agent-multi-2' },
+						{ agentId: 'agent-multi-1', role: 'multi-1', instructions: 'do A' },
+						{ agentId: 'agent-multi-2', role: 'multi-2' },
 					],
 					instructions: 'shared instructions',
 				},
@@ -401,7 +404,10 @@ describe('SpaceWorkflowRepository', () => {
 				{
 					id: 'step-1',
 					name: 'Channels Step',
-					agents: [{ agentId: 'agent-multi-1' }, { agentId: 'agent-multi-2' }],
+					agents: [
+						{ agentId: 'agent-multi-1', role: 'multi-1' },
+						{ agentId: 'agent-multi-2', role: 'multi-2' },
+					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'feedback' },
 						{ from: 'reviewer', to: ['coder', 'security'], direction: 'bidirectional' },
@@ -1105,7 +1111,10 @@ describe('SpaceWorkflowManager', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					agents: [
+						{ agentId: 'agent-a', role: 'a' },
+						{ agentId: 'agent-b', role: 'b' },
+					],
 				},
 			],
 		});
@@ -1133,7 +1142,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: 'coder', to: 'reviewer', direction: 'invalid' as never }],
 					},
 				],
@@ -1149,7 +1161,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: '', to: 'reviewer', direction: 'one-way' }],
 					},
 				],
@@ -1165,7 +1180,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: 'coder', to: '', direction: 'one-way' }],
 					},
 				],
@@ -1181,7 +1199,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: 'coder', to: [], direction: 'one-way' }],
 					},
 				],
@@ -1231,7 +1252,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: '   ', to: 'reviewer', direction: 'one-way' }],
 					},
 				],
@@ -1247,7 +1271,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: 'coder', to: '   ', direction: 'one-way' }],
 					},
 				],
@@ -1263,7 +1290,10 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+						agents: [
+							{ agentId: 'agent-a', role: 'a' },
+							{ agentId: 'agent-b', role: 'b' },
+						],
 						channels: [{ from: 'coder', to: ['reviewer', '   '], direction: 'one-way' }],
 					},
 				],
@@ -1278,7 +1308,10 @@ describe('SpaceWorkflowManager', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					agents: [
+						{ agentId: 'agent-a', role: 'a' },
+						{ agentId: 'agent-b', role: 'b' },
+					],
 					channels: [
 						{ from: '*', to: 'reviewer', direction: 'one-way' },
 						{ from: 'coder', to: '*', direction: 'bidirectional' },
@@ -1297,7 +1330,10 @@ describe('SpaceWorkflowManager', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					agents: [
+						{ agentId: 'agent-a', role: 'a' },
+						{ agentId: 'agent-b', role: 'b' },
+					],
 					channels: [{ from: 'hub', to: ['spoke-a', 'spoke-b'], direction: 'bidirectional' }],
 				},
 			],
@@ -1326,7 +1362,10 @@ describe('SpaceWorkflowManager', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-coder-id' }, { agentId: 'agent-reviewer-id' }],
+					agents: [
+						{ agentId: 'agent-coder-id', role: 'coder' },
+						{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 				},
 			],
@@ -1349,7 +1388,7 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id' }],
+						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 						channels: [{ from: 'unknown-role', to: 'coder', direction: 'one-way' }],
 					},
 				],
@@ -1372,7 +1411,7 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{
 						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id' }],
+						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 						channels: [{ from: 'coder', to: 'unknown-role', direction: 'one-way' }],
 					},
 				],
@@ -1394,7 +1433,7 @@ describe('SpaceWorkflowManager', () => {
 			nodes: [
 				{
 					name: 'Step',
-					agents: [{ agentId: 'agent-coder-id' }],
+					agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 					channels: [{ from: '*', to: 'coder', direction: 'one-way' }],
 				},
 			],
@@ -1417,7 +1456,7 @@ describe('SpaceWorkflowManager', () => {
 					{
 						id: 'step-x',
 						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id' }],
+						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
 						channels: [{ from: 'coder', to: 'bad-role', direction: 'one-way' }],
 					},
 				],
@@ -1438,8 +1477,8 @@ describe('SpaceWorkflowManager', () => {
 					id: 'step-1',
 					name: 'Parallel Review',
 					agents: [
-						{ agentId: 'agent-coder', instructions: 'write code' },
-						{ agentId: 'agent-reviewer' },
+						{ agentId: 'agent-coder', role: 'coder', instructions: 'write code' },
+						{ agentId: 'agent-reviewer', role: 'reviewer' },
 					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'submit' }],
 					instructions: 'shared context',
@@ -1476,7 +1515,10 @@ describe('SpaceWorkflowManager', () => {
 				{
 					id: 'step-new',
 					name: 'New Parallel Step',
-					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					agents: [
+						{ agentId: 'agent-a', role: 'a' },
+						{ agentId: 'agent-b', role: 'b' },
+					],
 					channels: [{ from: 'security', to: ['coder', 'reviewer'], direction: 'bidirectional' }],
 				},
 			],
@@ -1498,7 +1540,10 @@ describe('SpaceWorkflowManager', () => {
 				{
 					id: 'step-1',
 					name: 'Parallel Step',
-					agents: [{ agentId: 'agent-a' }, { agentId: 'agent-b' }],
+					agents: [
+						{ agentId: 'agent-a', role: 'a' },
+						{ agentId: 'agent-b', role: 'b' },
+					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 				},
 			],
@@ -1522,7 +1567,10 @@ describe('SpaceWorkflowManager', () => {
 				{
 					id: 'step-m',
 					name: 'Parallel',
-					agents: [{ agentId: 'agent-x' }, { agentId: 'agent-y' }],
+					agents: [
+						{ agentId: 'agent-x', role: 'x' },
+						{ agentId: 'agent-y', role: 'y' },
+					],
 					channels: [{ from: 'x', to: 'y', direction: 'bidirectional' }],
 				},
 			],
@@ -1539,5 +1587,88 @@ describe('SpaceWorkflowManager', () => {
 		const readMulti = manager.getWorkflow(multi.id)!;
 		expect(readMulti.nodes[0].agents).toHaveLength(2);
 		expect(readMulti.nodes[0].channels).toHaveLength(1);
+	});
+
+	// -------------------------------------------------------------------------
+	// Role field validation (no agentLookup needed)
+	// -------------------------------------------------------------------------
+
+	test('createWorkflow rejects agents[] entry with empty role (no lookup)', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Empty Role',
+				nodes: [
+					{
+						name: 'Step',
+						agents: [{ agentId: 'agent-a', role: '' }],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow rejects agents[] with duplicate roles in same node (no lookup)', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Duplicate Roles',
+				nodes: [
+					{
+						name: 'Step',
+						agents: [
+							{ agentId: 'agent-a', role: 'same-role' },
+							{ agentId: 'agent-b', role: 'same-role' },
+						],
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow accepts same agentId with different roles (no lookup)', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Same Agent Diff Roles',
+			nodes: [
+				{
+					name: 'Step',
+					agents: [
+						{ agentId: 'agent-a', role: 'strict-reviewer' },
+						{ agentId: 'agent-a', role: 'quick-reviewer' },
+					],
+				},
+			],
+		});
+		expect(wf.nodes[0].agents).toHaveLength(2);
+		expect(wf.nodes[0].agents![0].role).toBe('strict-reviewer');
+		expect(wf.nodes[0].agents![1].role).toBe('quick-reviewer');
+	});
+
+	// -------------------------------------------------------------------------
+	// Read-time backfill for legacy rows without role
+	// -------------------------------------------------------------------------
+
+	test('repo backfills role = agentId for legacy rows persisted without role', () => {
+		// Simulate a legacy row: persist raw JSON without role fields
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Legacy No-Role WF',
+			nodes: [
+				{
+					id: 'step-legacy',
+					name: 'Legacy Step',
+					// @ts-expect-error intentionally omitting role to simulate pre-role DB rows
+					agents: [{ agentId: 'agent-old-1' }, { agentId: 'agent-old-2' }],
+				},
+			],
+		});
+
+		const read = repo.getWorkflow(wf.id)!;
+		const node = read.nodes[0];
+		expect(node.agents).toHaveLength(2);
+		// Backfill: role must equal agentId when absent
+		expect(node.agents![0].role).toBe('agent-old-1');
+		expect(node.agents![1].role).toBe('agent-old-2');
 	});
 });

@@ -1219,8 +1219,8 @@ describe('exportWorkflow — multi-agent nodes', () => {
 					id: 'node-uuid-1',
 					name: 'Parallel code+review',
 					agents: [
-						{ agentId: 'agent-uuid-1', instructions: 'Write the feature' },
-						{ agentId: 'agent-uuid-3' },
+						{ agentId: 'agent-uuid-1', role: 'coder', instructions: 'Write the feature' },
+						{ agentId: 'agent-uuid-3', role: 'reviewer' },
 					],
 					channels: [
 						{
@@ -1383,7 +1383,10 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'My Coder', instructions: 'Code it' }, { agentRef: 'Reviewer' }],
+					agents: [
+						{ agentRef: 'My Coder', role: 'coder', instructions: 'Code it' },
+						{ agentRef: 'Reviewer', role: 'reviewer' },
+					],
 					name: 'Parallel Step',
 				},
 			],
@@ -1409,7 +1412,10 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'Coder' }, { agentRef: 'Reviewer' }],
+					agents: [
+						{ agentRef: 'Coder', role: 'coder' },
+						{ agentRef: 'Reviewer', role: 'reviewer' },
+					],
 					channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 					name: 'Step',
 				},
@@ -1435,7 +1441,11 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'Hub' }, { agentRef: 'Spoke1' }, { agentRef: 'Spoke2' }],
+					agents: [
+						{ agentRef: 'Hub', role: 'hub' },
+						{ agentRef: 'Spoke1', role: 'spoke1' },
+						{ agentRef: 'Spoke2', role: 'spoke2' },
+					],
 					channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 					name: 'Fan-out',
 				},
@@ -1507,8 +1517,8 @@ describe('round-trip: multi-agent + channels', () => {
 					id: 'node-1',
 					name: 'Code and Review',
 					agents: [
-						{ agentId: 'agent-uuid-1', instructions: 'Implement the feature' },
-						{ agentId: 'agent-uuid-3', instructions: 'Review the code' },
+						{ agentId: 'agent-uuid-1', role: 'coder', instructions: 'Implement the feature' },
+						{ agentId: 'agent-uuid-3', role: 'reviewer', instructions: 'Review the code' },
 					],
 					channels: [
 						{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
@@ -1591,5 +1601,90 @@ describe('round-trip: multi-agent + channels', () => {
 		expect(json).toContain('My Coder');
 		expect(json).toContain('Reviewer');
 		expect(json).toContain('Simple Agent');
+	});
+
+	test('exported agents[] entries include role field', () => {
+		const workflow = makeMultiAgentWorkflowForRoundTrip();
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		const node = exported.nodes[0];
+		expect(node.agents![0].role).toBe('coder');
+		expect(node.agents![1].role).toBe('reviewer');
+	});
+
+	test('role field survives export → JSON → validate round-trip', () => {
+		const workflow = makeMultiAgentWorkflowForRoundTrip();
+		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents![0].role).toBe('coder');
+			expect(result.value.nodes[0].agents![1].role).toBe('reviewer');
+		}
+	});
+
+	test('model and systemPrompt slot overrides survive export → JSON → validate round-trip', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-overrides',
+			spaceId: 'space-1',
+			name: 'Override Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Overriding Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							model: 'claude-opus-4-6',
+							systemPrompt: 'You are a strict reviewer.',
+						},
+						{
+							agentId: 'agent-uuid-3',
+							role: 'reviewer',
+							// no model/systemPrompt overrides
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		// Verify export includes model/systemPrompt
+		const exportedNode = exported.nodes[0];
+		expect(exportedNode.agents![0].model).toBe('claude-opus-4-6');
+		expect(exportedNode.agents![0].systemPrompt).toBe('You are a strict reviewer.');
+		expect(exportedNode.agents![1].model).toBeUndefined();
+		expect(exportedNode.agents![1].systemPrompt).toBeUndefined();
+
+		// Verify round-trip via JSON serialization + validate
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			const node = result.value.nodes[0];
+			expect(node.agents![0].agentRef).toBe('My Coder');
+			expect(node.agents![0].role).toBe('coder');
+			expect(node.agents![0].model).toBe('claude-opus-4-6');
+			expect(node.agents![0].systemPrompt).toBe('You are a strict reviewer.');
+			expect(node.agents![1].agentRef).toBe('Reviewer');
+			expect(node.agents![1].role).toBe('reviewer');
+			expect(node.agents![1].model).toBeUndefined();
+			expect(node.agents![1].systemPrompt).toBeUndefined();
+		}
 	});
 });

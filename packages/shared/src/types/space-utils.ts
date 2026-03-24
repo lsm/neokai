@@ -21,9 +21,9 @@ import type { SpaceAgent, WorkflowChannel, WorkflowNode, WorkflowNodeAgent } fro
  * Wildcard and array `to` declarations are expanded into one entry per resolved pair.
  */
 export interface ResolvedChannel {
-	/** Role of the sending agent (matches SpaceAgent.role) */
+	/** Role of the sending agent (matches WorkflowNodeAgent.role) */
 	fromRole: string;
-	/** Role of the receiving agent (matches SpaceAgent.role) */
+	/** Role of the receiving agent (matches WorkflowNodeAgent.role) */
 	toRole: string;
 	/** Agent ID of the sender */
 	fromAgentId: string;
@@ -53,7 +53,9 @@ export interface ResolvedChannel {
  *    (`agentId`, if also set, is silently ignored — callers should validate
  *    and warn users that `agents` overrides `agentId` at edit time.)
  * 2. If only `agentId` is provided, returns a single-element array:
- *    `[{ agentId, instructions: node.instructions }]`.
+ *    `[{ agentId, role: agentId, instructions: node.instructions }]`.
+ *    (The `agentId` is used as a synthetic role since no explicit role is available
+ *    in the legacy shorthand format.)
  * 3. If neither is provided, throws an `Error`.
  *
  * @param node - The workflow node to resolve agents for.
@@ -66,7 +68,7 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
 	}
 
 	if (node.agentId) {
-		return [{ agentId: node.agentId, instructions: node.instructions }];
+		return [{ agentId: node.agentId, role: node.agentId, instructions: node.instructions }];
 	}
 
 	throw new Error(
@@ -85,7 +87,7 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  *
  * Resolution algorithm:
  * - Each channel's `from`/`to` role strings are resolved against the node's agents via
- *   the provided `SpaceAgent[]` lookup table (role strings matched via SpaceAgent.role).
+ *   the `WorkflowNodeAgent.role` field — the per-slot role set on each agent entry.
  * - `'*'` in `from` or `to` (as the sole element) expands to all agent roles in the node.
  *   Note: `'*'` mixed with other roles in an array `to` is treated as a literal role name;
  *   use `validateNodeChannels` to catch this pattern at edit time.
@@ -94,9 +96,9 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  *   - **Hub-spoke** (`A ↔ [B, C, D]`): hub→each spoke + each spoke→hub, all with
  *     `isHubSpoke: true`. Spoke-to-spoke routing is intentionally omitted.
  * - Self-loops (fromRole === toRole) are skipped.
- * - Roles not resolvable via the provided `agents` list are skipped silently;
+ * - Roles not present in the node's agent list are skipped silently;
  *   use `validateNodeChannels` to surface these as errors before calling this function.
- * - When two node agents share the same SpaceAgent.role, the last one wins in the
+ * - When two node agents share the same `role`, the last one wins in the
  *   role→agentId map. Duplicate roles are flagged by `validateNodeChannels`.
  *
  * Supported topology patterns:
@@ -107,24 +109,20 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  * - `* → B`        all agents send to B
  * - `A → *`        A sends to all agents
  *
- * @param node   - The workflow node whose channels are to be resolved.
- * @param agents - All `SpaceAgent` records in the Space; used to map agentId → role.
+ * @param node - The workflow node whose channels are to be resolved.
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
  * @throws {Error} When neither `agentId` nor `agents` is provided on the node
  *   (propagated from `resolveNodeAgents`). Callers should validate nodes before calling this.
  */
-export function resolveNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): ResolvedChannel[] {
+export function resolveNodeChannels(node: WorkflowNode): ResolvedChannel[] {
 	if (!node.channels || node.channels.length === 0) return [];
 
 	const nodeAgents = resolveNodeAgents(node);
 
-	// Build role → agentId map for agents present in this node.
+	// Build role → agentId map using the per-slot role on each WorkflowNodeAgent entry.
 	const roleToAgentId = new Map<string, string>();
 	for (const sa of nodeAgents) {
-		const spaceAgent = agents.find((a) => a.id === sa.agentId);
-		if (spaceAgent) {
-			roleToAgentId.set(spaceAgent.role, sa.agentId);
-		}
+		roleToAgentId.set(sa.role, sa.agentId);
 	}
 
 	const allRoles = [...roleToAgentId.keys()];
@@ -206,12 +204,13 @@ function expandChannel(
  * Checks:
  * - At least one of `agentId` or `agents` is provided (delegates to `resolveNodeAgents`).
  * - All node agent IDs are found in the provided `agents` list.
- * - No two node agents share the same `SpaceAgent.role` (ambiguous channel targeting).
- * - `from`/`to` role strings are either the wildcard `'*'` or match a known role.
+ * - No two node agent slots share the same `WorkflowNodeAgent.role` (ambiguous channel targeting).
+ *   Note: the same `agentId` may appear multiple times if each slot has a distinct `role`.
+ * - `from`/`to` role strings are either the wildcard `'*'` or match a known `WorkflowNodeAgent.role`.
  * - `'*'` is not mixed with other roles in an array `to` (use a plain `'*'` string instead).
  *
  * @param node   - The workflow node to validate.
- * @param agents - All `SpaceAgent` records in the Space.
+ * @param agents - All `SpaceAgent` records in the Space (used to verify agentId existence).
  * @returns Array of human-readable error strings. Empty array means no errors.
  * @public
  */
@@ -228,25 +227,27 @@ export function validateNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): 
 		return errors;
 	}
 
-	// Build known roles set from node agents; detect duplicate roles.
+	// Build known roles set from WorkflowNodeAgent.role; detect duplicate slot roles.
 	const knownRoles = new Set<string>();
 	const seenRoles = new Set<string>();
 	for (const sa of nodeAgents) {
-		const spaceAgent = agents.find((a) => a.id === sa.agentId);
-		if (spaceAgent) {
-			if (seenRoles.has(spaceAgent.role)) {
-				errors.push(
-					`Node "${node.name}" has two agents with role "${spaceAgent.role}". ` +
-						'Duplicate roles make channel targeting ambiguous.'
-				);
-			} else {
-				seenRoles.add(spaceAgent.role);
-				knownRoles.add(spaceAgent.role);
-			}
-		} else {
+		// Verify the agentId exists in the space.
+		const spaceAgentExists = agents.some((a) => a.id === sa.agentId);
+		if (!spaceAgentExists) {
 			errors.push(
 				`Node agent with agentId "${sa.agentId}" was not found in the provided space agents list.`
 			);
+		}
+
+		// Validate role uniqueness within the node (duplicate roles make channel targeting ambiguous).
+		if (seenRoles.has(sa.role)) {
+			errors.push(
+				`Node "${node.name}" has two agent slots with role "${sa.role}". ` +
+					'Duplicate roles make channel targeting ambiguous.'
+			);
+		} else {
+			seenRoles.add(sa.role);
+			knownRoles.add(sa.role);
 		}
 	}
 

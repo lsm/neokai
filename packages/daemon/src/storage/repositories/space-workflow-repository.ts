@@ -113,7 +113,11 @@ function rowToNode(row: NodeRow): WorkflowNode {
 		node.instructions = cfg.instructions;
 	}
 	if (cfg.agents && cfg.agents.length > 0) {
-		node.agents = cfg.agents;
+		// Backfill role = agentId for rows persisted before the role field was introduced.
+		node.agents = cfg.agents.map((a: WorkflowNodeAgent) => ({
+			...a,
+			role: a.role?.trim() ? a.role : a.agentId,
+		}));
 	}
 	if (cfg.channels && cfg.channels.length > 0) {
 		node.channels = cfg.channels;
