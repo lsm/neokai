@@ -105,6 +105,9 @@ export function setupGoalHandlers(
 			throw new Error('Goal title is required');
 		}
 
+		// nextRunAt is auto-computed in GoalManager.createGoal for recurring goals
+		// with a schedule. No need to compute it here.
+
 		const goalManager = goalManagerFactory(params.roomId);
 		const goal = await goalManager.createGoal({
 			title: params.title,
