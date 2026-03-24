@@ -667,7 +667,7 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 						const messagesToRender = nestedMessages.slice(firstShownIdx);
 
 						return (
-							<div class="border-b border-gray-200 dark:border-gray-700 p-3">
+							<div class="p-3">
 								<div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
 									Messages ({nestedMessages.length})
 								</div>
