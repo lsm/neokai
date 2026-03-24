@@ -16,6 +16,7 @@ import type {
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
+import { ShortIdAllocator } from '../lib/short-id-allocator';
 import { SessionRepository } from './repositories/session-repository';
 import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
 import { SettingsRepository } from './repositories/settings-repository';
@@ -77,12 +78,13 @@ export class Database {
 
 		// Initialize repositories with the raw BunDatabase instance
 		const db = this.core.getDb();
+		const shortIdAllocator = new ShortIdAllocator(db);
 		this.sessionRepo = new SessionRepository(db);
 		this.sdkMessageRepo = new SDKMessageRepository(db);
 		this.settingsRepo = new SettingsRepository(db);
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
-		this.goalRepo = new GoalRepository(db, reactiveDb);
+		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
 		this.jobQueueRepo = new JobQueueRepository(db);
 	}
 
@@ -334,6 +336,10 @@ export class Database {
 
 	getGoal(id: string): RoomGoal | null {
 		return this.goalRepo.getGoal(id);
+	}
+
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
+		return this.goalRepo.getGoalByShortId(roomId, shortId);
 	}
 
 	listGoals(roomId: string, status?: import('@neokai/shared').GoalStatus): RoomGoal[] {

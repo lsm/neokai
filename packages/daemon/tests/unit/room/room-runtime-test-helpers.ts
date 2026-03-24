@@ -153,7 +153,8 @@ const DB_SCHEMA = `
 		max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
 		max_planning_attempts INTEGER NOT NULL DEFAULT 0,
 		consecutive_failures INTEGER NOT NULL DEFAULT 0,
-		replan_count INTEGER NOT NULL DEFAULT 0
+		replan_count INTEGER NOT NULL DEFAULT 0,
+		short_id TEXT
 	);
 	CREATE TABLE tasks (
 		id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
