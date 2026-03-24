@@ -130,14 +130,32 @@ Trade-off: trigram indexes are larger (~3–5× vs. porter for typical English t
 
 With quantization + preload, it runs **17× faster than sqlite-vec** with minimal recall degradation (quantization is an approximation by definition — it trades a small amount of recall for a large speed gain). Uses only ~30 MB RAM by default.
 
+**sqlite-vector (sqliteai) SQL API** — uses ordinary BLOB columns, not virtual tables:
+
 ```sql
-CREATE VIRTUAL TABLE memory_vectors USING vec0(embedding float[384]);
+-- Ordinary table with a BLOB column for the float vector
+CREATE TABLE memory_vectors (
+  rowid    INTEGER PRIMARY KEY,
+  embedding BLOB    -- stores FLOAT32 vector bytes
+);
 
-INSERT INTO memory_vectors(rowid, embedding) VALUES (42, '[0.12, -0.07, ...]');
+-- One-time setup: register the column for vector search
+SELECT vector_init('memory_vectors', 'embedding', 'type=FLOAT32,dimension=384');
 
--- ANN search (no pre-indexing required)
-SELECT rowid, distance FROM memory_vectors WHERE embedding MATCH '[...]' LIMIT 10;
+-- Insert: convert float array to BLOB via vector_to_blob()
+INSERT INTO memory_vectors(rowid, embedding)
+VALUES (42, vector_to_blob('[0.12, -0.07, ...]', 'FLOAT32'));
+
+-- ANN search: JOIN against vector_quantize_scan() table-valued function.
+-- The ? placeholder receives the query embedding as a BLOB.
+SELECT mv.rowid, v.distance
+FROM memory_vectors AS mv
+JOIN vector_quantize_scan('memory_vectors', 'embedding', ?, 10) AS v
+  ON mv.rowid = v.rowid
+ORDER BY v.distance;
 ```
+
+> **Note:** Do not confuse this API with **sqlite-vec** (`asg017/sqlite-vec`), which uses `CREATE VIRTUAL TABLE ... USING vec0(...)`. sqlite-vector uses ordinary tables + `vector_init()` + `vector_quantize_scan()`. The two libraries have entirely different SQL interfaces.
 
 **Note on sqlite-vec vs. sqlite-vector:** sqlite-vec (by Alex Garcia, `asg017/sqlite-vec`) is the original extension, now merged into SQLite core as `vec1` at sqlite.org. Both are stable. sqlite-vector is newer and faster with quantization; sqlite-vec has broader ecosystem integration. Either can work for Phase 2.
 
@@ -536,12 +554,18 @@ ALTER TABLE memory_entries ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pe
 
 ```typescript
 // Pseudocode for Phase 2 MemoryManager.search()
-function search(query, scope, limit) {
-  const ftsResults = repo.searchFts(query, scope, limit * 2);           // always runs
-  const vecResults = repo.searchVector(queryEmbedding, scope, limit * 2); // only 'ready' entries
+async function search(query: string, scope: MemoryScope | undefined, limit: number) {
+  // 1. Generate the query embedding first (fastembed-js, ~10 ms on CPU)
+  const queryEmbedding = await embeddingModel.embed(query);  // Float32Array, length 384
 
-  // For entries not yet embedded, ftsResults already covers them.
-  // RRF merge: vecResults entries get both scores; FTS-only entries get only FTS score.
+  // 2. Run both retrieval paths concurrently
+  const [ftsResults, vecResults] = await Promise.all([
+    repo.searchFts(query, scope, limit * 2),                    // always runs; covers pending entries
+    repo.searchVector(queryEmbedding, scope, limit * 2),        // only 'ready' entries
+  ]);
+
+  // 3. Merge with Reciprocal Rank Fusion (k=60)
+  // Entries not yet embedded appear only in ftsResults — no silent omission.
   return reciprocalRankFusion(ftsResults, vecResults, limit);
 }
 ```
