@@ -1487,4 +1487,142 @@ describe('Goal RPC Handlers', () => {
 			expect(result.executions[0].id).toBe('exec-1');
 		});
 	});
+
+	describe('short ID support', () => {
+		const GOAL_UUID = 'f1e2d3c4-b5a6-4789-a123-456789abcdef';
+		const ROOM_UUID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+
+		/** Build a fresh hub + handlers wired with a goalRepo that resolves 'g-1' → GOAL_UUID. */
+		function setupWithGoalRepo(resolveShortId: boolean) {
+			const hubData = createMockMessageHub();
+			const daemonData = createMockDaemonHub();
+			const goalRepo = {
+				getGoalByShortId: mock((_roomId: string, _shortId: string): { id: string } | null =>
+					resolveShortId ? { id: GOAL_UUID } : null
+				),
+			};
+			setupGoalHandlers(
+				hubData.hub,
+				daemonData.daemonHub,
+				createMockGoalManager,
+				undefined,
+				undefined,
+				goalRepo
+			);
+			return { hubData, daemonData, goalRepo };
+		}
+
+		describe('goal.get with short ID', () => {
+			it('resolves short ID to UUID before calling getGoal', async () => {
+				const { hubData } = setupWithGoalRepo(true);
+				const handler = hubData.handlers.get('goal.get')!;
+
+				mockGoalManager.getGoal.mockClear();
+
+				await handler({ roomId: ROOM_UUID, goalId: 'g-1' }, {});
+
+				expect(mockGoalManager.getGoal).toHaveBeenCalledWith(GOAL_UUID);
+			});
+
+			it('throws when short ID is not found', async () => {
+				const { hubData } = setupWithGoalRepo(false);
+				const handler = hubData.handlers.get('goal.get')!;
+
+				await expect(handler({ roomId: ROOM_UUID, goalId: 'g-9999' }, {})).rejects.toThrow(
+					'Goal not found: g-9999'
+				);
+			});
+
+			it('passes UUID through without calling goalRepo.getGoalByShortId', async () => {
+				const { hubData, goalRepo } = setupWithGoalRepo(true);
+				const handler = hubData.handlers.get('goal.get')!;
+
+				mockGoalManager.getGoal.mockClear();
+
+				await handler({ roomId: ROOM_UUID, goalId: GOAL_UUID }, {});
+
+				expect(goalRepo.getGoalByShortId).not.toHaveBeenCalled();
+				expect(mockGoalManager.getGoal).toHaveBeenCalledWith(GOAL_UUID);
+			});
+		});
+
+		describe('goal.update with short ID', () => {
+			it('resolves short ID to UUID before calling updateGoalStatus', async () => {
+				const { hubData } = setupWithGoalRepo(true);
+				const handler = hubData.handlers.get('goal.update')!;
+
+				mockGoalManager.updateGoalStatus.mockClear();
+
+				await handler(
+					{
+						roomId: ROOM_UUID,
+						goalId: 'g-1',
+						updates: { status: 'active' as GoalStatus },
+					},
+					{}
+				);
+
+				expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith(
+					GOAL_UUID,
+					'active',
+					expect.anything()
+				);
+			});
+
+			it('resolves short ID to UUID before calling updateGoalPriority', async () => {
+				const { hubData } = setupWithGoalRepo(true);
+				const handler = hubData.handlers.get('goal.update')!;
+
+				mockGoalManager.updateGoalPriority.mockClear();
+
+				await handler(
+					{
+						roomId: ROOM_UUID,
+						goalId: 'g-1',
+						updates: { priority: 'high' as GoalPriority },
+					},
+					{}
+				);
+
+				expect(mockGoalManager.updateGoalPriority).toHaveBeenCalledWith(GOAL_UUID, 'high');
+			});
+
+			it('throws when short ID is not found', async () => {
+				const { hubData } = setupWithGoalRepo(false);
+				const handler = hubData.handlers.get('goal.update')!;
+
+				await expect(
+					handler(
+						{ roomId: ROOM_UUID, goalId: 'g-9999', updates: { status: 'active' as GoalStatus } },
+						{}
+					)
+				).rejects.toThrow('Goal not found: g-9999');
+			});
+		});
+
+		describe('goal.list includes shortId', () => {
+			it('returns goals with shortId when present', async () => {
+				const goalWithShortId: RoomGoal = {
+					id: GOAL_UUID,
+					roomId: ROOM_UUID,
+					title: 'Short ID Goal',
+					description: '',
+					status: 'active' as GoalStatus,
+					priority: 'normal' as GoalPriority,
+					progress: 0,
+					linkedTaskIds: [],
+					shortId: 'g-1',
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				};
+				mockGoalManager.listGoals.mockResolvedValueOnce([goalWithShortId]);
+
+				const handler = messageHubData.handlers.get('goal.list')!;
+				const result = (await handler({ roomId: ROOM_UUID }, {})) as { goals: RoomGoal[] };
+
+				expect(result.goals).toHaveLength(1);
+				expect(result.goals[0].shortId).toBe('g-1');
+			});
+		});
+	});
 });
