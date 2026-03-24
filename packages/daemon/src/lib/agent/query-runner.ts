@@ -51,6 +51,9 @@ function getStartupMaxRetries(): number {
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STARTUP_MAX_RETRIES;
 }
 
+// Read once at module load — consistent with the original STARTUP_TIMEOUT_MS pattern.
+// Env vars set after the process starts will not be picked up; the values displayed
+// in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 const STARTUP_RECOVERY_DELAY_MS = getStartupRecoveryDelayMs();
 const STARTUP_MAX_RETRIES = getStartupMaxRetries();
@@ -482,16 +485,21 @@ export class QueryRunner {
 
 						const processingState = stateManager.getState();
 
-						// For startup timeouts that exhausted all retries, provide actionable recovery hints.
-						const startupTimeoutUserMessage = isStartupTimeout
-							? `The AI session failed to start after ${STARTUP_MAX_RETRIES + 1} attempt(s) ` +
-								`(workspace: ${session.workspacePath}). ` +
-								`Common causes: another Claude Code session is using the same workspace, ` +
-								`a stale lock file in .claude/, or the workspace is under heavy load. ` +
-								`Try: closing other Claude sessions on this workspace, ` +
-								`then resend your message. ` +
-								`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
-							: undefined;
+						// For startup timeouts / conversation-not-found that exhausted all retries,
+						// provide actionable recovery hints. Both error types are handled symmetrically
+						// (same retry gate, same sdkSessionId clearing), so both deserve a hint.
+						const startupTimeoutUserMessage =
+							isStartupTimeout || isConversationNotFound
+								? `The AI session failed to ${isStartupTimeout ? 'start' : 'resume'} after ${STARTUP_MAX_RETRIES + 1} attempt(s) ` +
+									`(workspace: ${session.workspacePath}). ` +
+									(isStartupTimeout
+										? `Common causes: another Claude Code session is using the same workspace, ` +
+											`a stale lock file in .claude/, or the workspace is under heavy load. `
+										: `The previous session file could not be found or is corrupt. `) +
+									`Try: closing other Claude sessions on this workspace, ` +
+									`then resend your message. ` +
+									`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+								: undefined;
 
 						await errorManager.handleError(
 							session.id,

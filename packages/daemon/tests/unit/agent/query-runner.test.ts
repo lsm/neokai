@@ -803,6 +803,7 @@ describe('QueryRunner', () => {
 		});
 
 		it('should NOT invoke onStartupTimeoutAutoRecover when isCleaningUp returns true', async () => {
+			jest.useFakeTimers();
 			const recoverSpy = mock(async () => {});
 			const ctx = createContext({
 				isCleaningUp: () => true,
@@ -812,8 +813,10 @@ describe('QueryRunner', () => {
 			runner.start();
 			await ctx.queryPromise?.catch(() => {});
 
-			await new Promise((resolve) => setTimeout(resolve, 400));
+			jest.runAllTimers();
+			await new Promise((resolve) => setImmediate(resolve));
 			expect(recoverSpy).not.toHaveBeenCalled();
+			jest.useRealTimers();
 		});
 
 		it('should surface error normally and NOT recover when retry limit (2) is already reached', async () => {
@@ -853,24 +856,42 @@ describe('QueryRunner', () => {
 		});
 
 		it('should use exponential backoff: second attempt delay is 2× the first', async () => {
-			// First attempt: delay = BASE * 2^0 = BASE * 1
-			// Second attempt: delay = BASE * 2^1 = BASE * 2
-			// We verify the second attempt waits longer by checking the attempt count after scheduling
-			const ctx1 = createContext({
-				startupTimeoutAutoRecoverAttempts: 0, // first attempt
-				onStartupTimeoutAutoRecover: mock(async () => {}),
+			// First attempt: delay = BASE * 2^(1-1) = BASE * 1
+			// Second attempt: delay = BASE * 2^(2-1) = BASE * 2
+			const capturedDelays: number[] = [];
+			const originalSetTimeout = globalThis.setTimeout;
+			// Spy on setTimeout to capture delay arguments for recovery calls
+			const setTimeoutSpy = mock((fn: () => void, delay?: number) => {
+				capturedDelays.push(delay ?? 0);
+				return originalSetTimeout(fn, 0); // fire immediately to avoid slow tests
 			});
-			new QueryRunner(ctx1).start();
-			await ctx1.queryPromise?.catch(() => {});
-			expect(ctx1.startupTimeoutAutoRecoverAttempts).toBe(1); // incremented for attempt 1
+			globalThis.setTimeout = setTimeoutSpy as unknown as typeof setTimeout;
 
-			const ctx2 = createContext({
-				startupTimeoutAutoRecoverAttempts: 1, // second attempt
-				onStartupTimeoutAutoRecover: mock(async () => {}),
-			});
-			new QueryRunner(ctx2).start();
-			await ctx2.queryPromise?.catch(() => {});
-			expect(ctx2.startupTimeoutAutoRecoverAttempts).toBe(2); // incremented for attempt 2
+			try {
+				const ctx1 = createContext({
+					startupTimeoutAutoRecoverAttempts: 0, // first attempt
+					onStartupTimeoutAutoRecover: mock(async () => {}),
+				});
+				new QueryRunner(ctx1).start();
+				await ctx1.queryPromise?.catch(() => {});
+
+				const ctx2 = createContext({
+					startupTimeoutAutoRecoverAttempts: 1, // second attempt
+					onStartupTimeoutAutoRecover: mock(async () => {}),
+				});
+				new QueryRunner(ctx2).start();
+				await ctx2.queryPromise?.catch(() => {});
+			} finally {
+				globalThis.setTimeout = originalSetTimeout;
+			}
+
+			// Each run captures one setTimeout call (the recovery defer).
+			// Delays must satisfy the 2× exponential relationship.
+			expect(capturedDelays.length).toBeGreaterThanOrEqual(2);
+			const delay1 = capturedDelays[0];
+			const delay2 = capturedDelays[1];
+			expect(delay1).toBeGreaterThan(0);
+			expect(delay2).toBe(delay1 * 2);
 		});
 
 		it('should increment startupTimeoutAutoRecoverAttempts when recovery is scheduled', async () => {
