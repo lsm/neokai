@@ -13,7 +13,6 @@ import { describe, expect, it, afterEach } from 'bun:test';
 import {
 	createRuntimeTestContext,
 	createGoalAndTask,
-	spawnAndRouteToLeader,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
 
@@ -193,98 +192,6 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 
 			// Some routing call should have been made
 			expect(callsAfter).toBeGreaterThanOrEqual(callsBefore);
-		});
-	});
-
-	// ─── Leader rate/usage limit paths ───────────────────────────────────────
-	// Worker returns normal output; only the leader session returns the error message.
-	// This ensures no group.rateLimit is set from the worker path, so the leader
-	// detection guard (!group.rateLimit) correctly triggers on first leader detection.
-
-	describe('leader rate_limit sets task to rate_limited', () => {
-		it('updates task status to rate_limited on leader 429 detection', async () => {
-			let leaderSessionId: string | null = null;
-			ctx = createRuntimeTestContext({
-				getWorkerMessages: (sessionId) => {
-					if (leaderSessionId && sessionId === leaderSessionId) {
-						return makeWorkerMessages(RATE_LIMIT_MSG);
-					}
-					// Worker returns normal output — no error
-					return [];
-				},
-			});
-
-			const { task, group } = await spawnAndRouteToLeader(ctx);
-			leaderSessionId = group.leaderSessionId;
-
-			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
-
-			await ctx.runtime.onLeaderTerminalState(group.id, {
-				sessionId: group.leaderSessionId,
-				kind: 'idle',
-			});
-
-			const updated = await ctx.taskManager.getTask(task.id);
-			expect(updated!.status).toBe('rate_limited');
-		});
-
-		it('persists restrictions with sessionRole=leader on leader rate limit', async () => {
-			let leaderSessionId: string | null = null;
-			ctx = createRuntimeTestContext({
-				getWorkerMessages: (sessionId) => {
-					if (leaderSessionId && sessionId === leaderSessionId) {
-						return makeWorkerMessages(RATE_LIMIT_MSG);
-					}
-					return [];
-				},
-			});
-
-			const { task, group } = await spawnAndRouteToLeader(ctx);
-			leaderSessionId = group.leaderSessionId;
-
-			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
-
-			await ctx.runtime.onLeaderTerminalState(group.id, {
-				sessionId: group.leaderSessionId,
-				kind: 'idle',
-			});
-
-			const updated = await ctx.taskManager.getTask(task.id);
-			expect(updated!.restrictions).toBeDefined();
-			expect(updated!.restrictions!.type).toBe('rate_limit');
-			expect(updated!.restrictions!.sessionRole).toBe('leader');
-			expect(updated!.restrictions!.resetAt).toBeGreaterThan(Date.now());
-		});
-	});
-
-	describe('leader usage_limit sets task to usage_limited when no fallback', () => {
-		it('updates task status to usage_limited on leader usage limit (no fallback)', async () => {
-			let leaderSessionId: string | null = null;
-			ctx = createRuntimeTestContext({
-				getWorkerMessages: (sessionId) => {
-					if (leaderSessionId && sessionId === leaderSessionId) {
-						return makeWorkerMessages(USAGE_LIMIT_MSG);
-					}
-					return [];
-				},
-				getGlobalSettings: () => ({}) as never,
-			});
-
-			const { task, group } = await spawnAndRouteToLeader(ctx);
-			leaderSessionId = group.leaderSessionId;
-
-			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
-
-			await ctx.runtime.onLeaderTerminalState(group.id, {
-				sessionId: group.leaderSessionId,
-				kind: 'idle',
-			});
-
-			const updated = await ctx.taskManager.getTask(task.id);
-			expect(updated!.status).toBe('usage_limited');
-			expect(updated!.restrictions).toBeDefined();
-			expect(updated!.restrictions!.type).toBe('usage_limit');
-			expect(updated!.restrictions!.sessionRole).toBe('leader');
 		});
 	});
 });

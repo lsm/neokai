@@ -2260,16 +2260,12 @@ export class RoomRuntime {
 								resetsAt: rateLimitBackoff.resetsAt,
 								sessionRole,
 							});
-							this.persistTaskRestriction(
+							void this.persistTaskRestriction(
 								group.taskId,
 								rateLimitBackoff,
 								'rate_limit',
 								`API rate limit (HTTP 429) in ${role}`
-							).catch((err: unknown) => {
-								log.error(
-									`Failed to persist rate limit restriction for task ${group.taskId}: ${String(err)}`
-								);
-							});
+							);
 						}
 					}
 
