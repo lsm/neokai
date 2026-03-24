@@ -87,9 +87,9 @@ affected file.
 in-memory view of file contents via the `textDocument/didOpen`, `textDocument/didChange`,
 and `textDocument/didClose` notification protocol. When an agent edits a file via the
 `Edit` tool, this write bypasses the LSP layer entirely — the language server still sees the
-pre-edit content. Any subsequent `lsp__diagnostics` or `lsp__hover` call will operate on
+pre-edit content. Any subsequent `mcp__lsp__diagnostics` or `mcp__lsp__hover` call will operate on
 stale state until the file is synced. This is a critical integration concern addressed in
-§3.6.
+§3.3.
 
 ### 1.5 How NeoKai Could Leverage SDK LSP Today
 
@@ -110,7 +110,7 @@ code change is required.
 - No control over which language servers are installed in user environments
 - No structured code intelligence API accessible programmatically from the NeoKai daemon
 - Agents have no code intelligence in the default NeoKai configuration today
-- LSP document sync (§3.6) must be handled explicitly if NeoKai manages LSP servers directly
+- LSP document sync (§3.3) must be handled explicitly if NeoKai manages LSP servers directly
 
 ---
 
@@ -156,11 +156,12 @@ deployment that doesn't have a pre-configured Claude Code user environment.
 
 **Description**: NeoKai runs a local MCP server that proxies LSP protocol to standard
 language server processes (`typescript-language-server`, `rust-analyzer`, `pylsp`). Agents
-call `lsp__goto_definition(file, position)` (MCP tool naming: server name `lsp` → tool
-`lsp__goto_definition`).
+call `mcp__lsp__goto_definition(file, position)` (MCP tool naming convention:
+`mcp__${serverName}__${toolName}`, so server `lsp` + tool `goto_definition` →
+`mcp__lsp__goto_definition`).
 
 ```
-Agent → MCP tool call (lsp__goto_definition) → NeoKai MCP server
+Agent → MCP tool call (mcp__lsp__goto_definition) → NeoKai MCP server
   → LSP JSON-RPC (stdio) → typescript-language-server
   ← location result ←
 ```
@@ -184,7 +185,7 @@ Agent → MCP tool call (lsp__goto_definition) → NeoKai MCP server
 - Need to ship language server binaries in container images or require user installation
 - Each language requires a separate server binary
 - LSP server startup latency (first request cold start: 1–5 seconds)
-- Requires NeoKai to send document sync notifications after every `Edit` (see §3.6)
+- Requires NeoKai to send document sync notifications after every `Edit` (see §3.3)
 
 **Verdict**: Best balance of completeness and implementation effort. Recommended primary
 approach.
@@ -321,8 +322,8 @@ This is the most important architectural consideration for native LSP integratio
 
 When an agent calls `Edit`, `MultiEdit`, or `Write`, the file is written directly to disk
 via the daemon's file manager. The LSP server does **not** observe this change — it still
-holds the pre-edit content in its in-memory buffer. Subsequent calls to `lsp__diagnostics`,
-`lsp__hover`, or `lsp__find_references` will operate on stale state and return incorrect
+holds the pre-edit content in its in-memory buffer. Subsequent calls to `mcp__lsp__diagnostics`,
+`mcp__lsp__hover`, or `mcp__lsp__find_references` will operate on stale state and return incorrect
 results.
 
 **Required solution: `DocumentSyncTracker`**
@@ -352,15 +353,16 @@ in-flight edits before a save.
 ### 3.4 MCP Tool Definitions for Agents
 
 The LSP capabilities are exposed as tools in a NeoKai-managed MCP server. Tool names follow
-the MCP `<serverName>__<toolName>` convention; if the server is registered as `lsp`, tools
-are called `lsp__hover`, `lsp__goto_definition`, etc.
+the MCP `mcp__${serverName}__${toolName}` convention (verified from CLI binary, matching the
+`mcp__ide__getDiagnostics` pattern); if the server is registered as `lsp`, tools are called
+`mcp__lsp__hover`, `mcp__lsp__goto_definition`, etc.
 
 ```typescript
 // packages/daemon/src/lib/lsp/lsp-mcp-server.ts
 
 const LSP_TOOLS = [
   {
-    name: 'lsp__hover',
+    name: 'mcp__lsp__hover',
     description: 'Get type information and documentation for the symbol at a position',
     inputSchema: {
       type: 'object',
@@ -373,7 +375,7 @@ const LSP_TOOLS = [
     },
   },
   {
-    name: 'lsp__goto_definition',
+    name: 'mcp__lsp__goto_definition',
     description: 'Jump to where a function, variable, or type is defined',
     inputSchema: {
       type: 'object',
@@ -386,7 +388,7 @@ const LSP_TOOLS = [
     },
   },
   {
-    name: 'lsp__find_references',
+    name: 'mcp__lsp__find_references',
     description: 'Find all usages of the symbol at this position across the project',
     inputSchema: {
       type: 'object',
@@ -400,7 +402,7 @@ const LSP_TOOLS = [
     },
   },
   {
-    name: 'lsp__rename',
+    name: 'mcp__lsp__rename',
     description: 'Propose a rename of a symbol across all files in the project (returns proposed edits, does not apply them)',
     inputSchema: {
       type: 'object',
@@ -414,7 +416,7 @@ const LSP_TOOLS = [
     },
   },
   {
-    name: 'lsp__diagnostics',
+    name: 'mcp__lsp__diagnostics',
     description: 'Get current errors and warnings for a file (reflects last saved state)',
     inputSchema: {
       type: 'object',
@@ -425,7 +427,7 @@ const LSP_TOOLS = [
     },
   },
   {
-    name: 'lsp__document_symbols',
+    name: 'mcp__lsp__document_symbols',
     description: 'List all symbols (functions, classes, variables) defined in a file',
     inputSchema: {
       type: 'object',
@@ -436,7 +438,7 @@ const LSP_TOOLS = [
     },
   },
   {
-    name: 'lsp__workspace_symbols',
+    name: 'mcp__lsp__workspace_symbols',
     description: 'Search for symbols by name across the entire project',
     inputSchema: {
       type: 'object',
@@ -449,9 +451,9 @@ const LSP_TOOLS = [
 ];
 ```
 
-**Note on `lsp__completion`**: Autocompletion is an interactive editor feature triggered on
+**Note on `mcp__lsp__completion`**: Autocompletion is an interactive editor feature triggered on
 each keypress. LLM agents already have full file content in context and do not benefit from
-this — they predict tokens themselves. `lsp__completion` is intentionally omitted from the
+this — they predict tokens themselves. `mcp__lsp__completion` is intentionally omitted from the
 tool list to keep the tool count lean.
 
 ### 3.5 Example Agent Interaction Flow
@@ -460,19 +462,19 @@ tool list to keep the tool count lean.
 Agent working on TypeScript codebase:
 
 1. Agent reads a file, sees `getUserById(id)` on line 45
-2. Agent calls: lsp__goto_definition({ file: "src/api.ts", line: 45, character: 12 })
+2. Agent calls: mcp__lsp__goto_definition({ file: "src/api.ts", line: 45, character: 12 })
 3. → LspManager finds existing tsserver for this worktree
 4. → LspClient sends textDocument/definition request
 5. → tsserver returns: { uri: "src/db/users.ts", range: { start: {line: 23} } }
 6. Agent reads: src/db/users.ts:23 — sees the full implementation
-7. Agent calls: lsp__find_references({ file: "src/db/users.ts", line: 23, character: 17 })
+7. Agent calls: mcp__lsp__find_references({ file: "src/db/users.ts", line: 23, character: 17 })
 8. → Returns all 12 call sites across the project
 9. Agent makes targeted edits at each call site; after each Edit, DocumentSyncTracker
    sends textDocument/didSave to keep LSP state current
-10. Agent calls lsp__diagnostics to verify no type errors remain after edits
+10. Agent calls mcp__lsp__diagnostics to verify no type errors remain after edits
 ```
 
-### 3.6 Integration Points in NeoKai
+### 3.5 Integration Points in NeoKai
 
 **1. Per-session MCP registration with shared LspManager**
 
@@ -578,9 +580,9 @@ Which languages to support in Phase 1?
 ### Rename Safety
 - LSP rename is syntactically complete (covers all statically-analyzable references) but
   will miss dynamic access patterns (`obj['methodName']` in JavaScript/Python)
-- `lsp__rename` should return proposed edits without applying them, letting the agent review
+- `mcp__lsp__rename` should return proposed edits without applying them, letting the agent review
   and apply them explicitly via `Edit`/`MultiEdit`
-- Agents should be guided (via system prompt) to call `lsp__find_references` first to
+- Agents should be guided (via system prompt) to call `mcp__lsp__find_references` first to
   understand scope before issuing a rename
 
 ---
@@ -599,7 +601,7 @@ Scores are 1–5 where **5 is best** in each dimension.
 
 **Recommended path:**
 1. **Phase 1** (2–4 weeks): Implement MCP-based LSP proxy (Approach B) for TypeScript and
-   Python. Agents get `lsp__*` tools when `tools.useLspTools` is enabled. Includes
+   Python. Agents get `mcp__lsp__*` tools when `tools.useLspTools` is enabled. Includes
    `DocumentSyncTracker` for `didSave` notifications after agent file writes.
 2. **Phase 2** (4–8 weeks): Add Tree-sitter fallback (Approach C) for structural queries
    in deployments without language server binaries.
