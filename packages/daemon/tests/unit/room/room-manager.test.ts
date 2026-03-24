@@ -279,8 +279,10 @@ describe('RoomManager', () => {
 			expect(withShort?.shortId).toBe('t-1');
 
 			const withoutShort = overview?.activeTasks.find((t) => t.id === 'task-no-short');
-			// Legacy tasks without short_id may have undefined shortId or have it backfilled
 			expect(withoutShort).toBeDefined();
+			// RoomManager creates TaskRepository without a ShortIdAllocator, so lazy backfill
+			// never fires — legacy tasks without short_id in DB always return undefined shortId
+			expect(withoutShort?.shortId).toBeUndefined();
 		});
 
 		it('should include shortId in allTasks summaries', () => {
