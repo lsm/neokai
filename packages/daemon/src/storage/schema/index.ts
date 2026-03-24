@@ -328,6 +328,24 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// Application-level MCP server registry
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS app_mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        source_type TEXT NOT NULL CHECK(source_type IN ('stdio', 'sse', 'http')),
+        command TEXT,
+        args TEXT,
+        env TEXT,
+        url TEXT,
+        headers TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    `);
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
