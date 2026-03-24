@@ -170,6 +170,7 @@ const DB_SCHEMA = `
 		pr_url TEXT,
 		pr_number INTEGER,
 		pr_created_at INTEGER,
+		short_id TEXT,
 		updated_at INTEGER
 	);
 	CREATE TABLE session_groups (
