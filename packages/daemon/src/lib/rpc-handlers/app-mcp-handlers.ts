@@ -1,16 +1,28 @@
 /**
- * App MCP Registry RPC Handlers
+ * App MCP RPC Handlers
  *
- * Exposes the application-level MCP server registry via RPC:
- * - mcp.registry.list       — list all registry entries
- * - mcp.registry.get        — get a single entry by id
- * - mcp.registry.create     — add a new entry, emit mcp.registry.changed
- * - mcp.registry.update     — update an entry, emit mcp.registry.changed
- * - mcp.registry.delete     — remove an entry, emit mcp.registry.changed
- * - mcp.registry.setEnabled — toggle enabled flag, emit mcp.registry.changed
+ * Contains two sets of handlers:
  *
- * Note: mcp.registry.listErrors is registered in mcp-handlers.ts (requires
- * the concrete AppMcpLifecycleManager).
+ * 1. App MCP Registry RPC Handlers (registerAppMcpHandlers)
+ *    Exposes the application-level MCP server registry via RPC:
+ *    - mcp.registry.list       — list all registry entries
+ *    - mcp.registry.get        — get a single entry by id
+ *    - mcp.registry.create     — add a new entry, emit mcp.registry.changed
+ *    - mcp.registry.update     — update an entry, emit mcp.registry.changed
+ *    - mcp.registry.delete     — remove an entry, emit mcp.registry.changed
+ *    - mcp.registry.setEnabled — toggle enabled flag, emit mcp.registry.changed
+ *
+ *    Note: mcp.registry.listErrors is registered in mcp-handlers.ts (requires
+ *    the concrete AppMcpLifecycleManager).
+ *
+ * 2. Per-Room MCP Enablement RPC Handlers (setupAppMcpHandlers)
+ *    Provides RPC methods for managing per-room MCP enablement overrides:
+ *    - mcp.room.getEnabled    — list server IDs enabled for a room
+ *    - mcp.room.setEnabled    — upsert an enablement override for one server
+ *    - mcp.room.resetToGlobal — remove all per-room overrides for a room
+ *
+ *    Each mutating handler emits `mcp.registry.changed` so that daemon-internal
+ *    components (e.g., the lifecycle manager) can hot-reload configuration.
  */
 
 import type { MessageHub } from '@neokai/shared';
@@ -21,12 +33,21 @@ import type {
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
+import type { Database } from '../../storage/database';
+import type {
+	McpRoomGetEnabledRequest,
+	McpRoomGetEnabledResponse,
+	McpRoomSetEnabledRequest,
+	McpRoomSetEnabledResponse,
+	McpRoomResetToGlobalRequest,
+	McpRoomResetToGlobalResponse,
+} from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('app-mcp-handlers');
 
 // ---------------------------------------------------------------------------
-// Handler context
+// Registry handler context
 // ---------------------------------------------------------------------------
 
 export interface AppMcpHandlerContext {
@@ -45,7 +66,7 @@ function emitChanged(daemonHub: DaemonHub): void {
 }
 
 // ---------------------------------------------------------------------------
-// Handler registration
+// Registry handler registration
 // ---------------------------------------------------------------------------
 
 export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandlerContext): void {
@@ -150,5 +171,64 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
 		emitChanged(daemonHub);
 		log.info(`mcp.registry.setEnabled: set entry ${id} enabled=${enabled}`);
 		return { server } satisfies { server: AppMcpServer };
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Per-room enablement handler registration
+// ---------------------------------------------------------------------------
+
+export function setupAppMcpHandlers(
+	messageHub: MessageHub,
+	daemonHub: DaemonHub,
+	db: Database
+): void {
+	/**
+	 * Get the IDs of all MCP servers that are explicitly enabled for a room.
+	 * Only returns servers with an explicit override row; servers with no override
+	 * are not included (consumers should treat them as following global defaults).
+	 */
+	messageHub.onRequest('mcp.room.getEnabled', (data) => {
+		const { roomId } = data as McpRoomGetEnabledRequest;
+		const serverIds = db.roomMcpEnablement.getEnabledServerIds(roomId);
+		return { serverIds } satisfies McpRoomGetEnabledResponse;
+	});
+
+	/**
+	 * Upsert an enablement override for a single MCP server in a room.
+	 * Emits `mcp.registry.changed` after writing.
+	 */
+	messageHub.onRequest('mcp.room.setEnabled', (data) => {
+		const { roomId, serverId, enabled } = data as McpRoomSetEnabledRequest;
+
+		// Validate that the server exists
+		const server = db.appMcpServers.get(serverId);
+		if (!server) {
+			throw new Error(`MCP server not found: ${serverId}`);
+		}
+
+		db.roomMcpEnablement.setEnabled(roomId, serverId, enabled);
+
+		daemonHub
+			.emit('mcp.registry.changed', { sessionId: 'global' })
+			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+
+		return { ok: true } satisfies McpRoomSetEnabledResponse;
+	});
+
+	/**
+	 * Remove all per-room enablement overrides for a room, reverting to global defaults.
+	 * Emits `mcp.registry.changed` after writing.
+	 */
+	messageHub.onRequest('mcp.room.resetToGlobal', (data) => {
+		const { roomId } = data as McpRoomResetToGlobalRequest;
+
+		db.roomMcpEnablement.resetToGlobal(roomId);
+
+		daemonHub
+			.emit('mcp.registry.changed', { sessionId: 'global' })
+			.catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
+
+		return { ok: true } satisfies McpRoomResetToGlobalResponse;
 	});
 }

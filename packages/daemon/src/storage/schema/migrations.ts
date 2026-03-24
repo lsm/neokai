@@ -205,6 +205,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// it marks a task completed. This is the canonical location for agent completion state
 	// (alongside the existing status, completed_at, and task_agent_session_id columns).
 	runMigration51(db);
+
+	// Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
+	runMigration52(db);
 }
 
 /**
@@ -3191,6 +3194,24 @@ export function runMigration50(db: BunDatabase): void {
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER,
       updated_at INTEGER
+    )
+  `);
+}
+
+/**
+ * Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
+ *
+ * Stores which registry servers are explicitly enabled/disabled per room.
+ * ON DELETE CASCADE ensures orphaned rows are removed when an app_mcp_servers entry is deleted,
+ * or when a room is deleted.
+ */
+export function runMigration52(db: BunDatabase): void {
+	db.exec(`
+    CREATE TABLE IF NOT EXISTS room_mcp_enablement (
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (room_id, server_id)
     )
   `);
 }

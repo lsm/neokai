@@ -77,7 +77,7 @@ import { setupReferenceHandlers } from './reference-handlers';
 import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
 import type { AppMcpLifecycleManager } from '../mcp';
-import { registerAppMcpHandlers } from './app-mcp-handlers';
+import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -297,6 +297,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		db: deps.db,
 		daemonHub: deps.daemonHub,
 	});
+
+	// Per-room MCP enablement RPC handlers
+	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());

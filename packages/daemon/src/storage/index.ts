@@ -35,6 +35,7 @@ import {
 import { JobQueueRepository } from './repositories/job-queue-repository';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 import { TaskRepository } from './repositories/task-repository';
+import { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -57,6 +58,7 @@ export { GoalRepository } from './repositories/goal-repository';
 export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
+export { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -75,6 +77,7 @@ export class Database {
 	private jobQueueRepo!: JobQueueRepository;
 	private appMcpServerRepo!: AppMcpServerRepository;
 	private taskRepo!: TaskRepository;
+	private roomMcpEnablementRepo!: RoomMcpEnablementRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -97,6 +100,7 @@ export class Database {
 		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
 		this.jobQueueRepo = new JobQueueRepository(db);
 		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
+		this.roomMcpEnablementRepo = new RoomMcpEnablementRepository(db, reactiveDb);
 	}
 
 	// ============================================================================
@@ -446,6 +450,13 @@ export class Database {
 	 */
 	get appMcpServers(): AppMcpServerRepository {
 		return this.appMcpServerRepo;
+	}
+
+	/**
+	 * Get the per-room MCP enablement repository
+	 */
+	get roomMcpEnablement(): RoomMcpEnablementRepository {
+		return this.roomMcpEnablementRepo;
 	}
 
 	close(): void {
