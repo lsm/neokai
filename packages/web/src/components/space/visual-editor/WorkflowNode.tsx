@@ -133,6 +133,8 @@ export function WorkflowNode({
 
 	// ---- Window-level listeners (always registered, guard on dragState) ----
 	// Mirrors the pattern used by VisualCanvas for its spacebar+drag pan.
+	// For the Task Agent node, dragState.current is never set (handleMouseDown
+	// returns early), so both handlers short-circuit immediately — they are no-ops.
 	useEffect(() => {
 		const onMouseMove = (e: MouseEvent) => {
 			if (!dragState.current) return;
@@ -158,7 +160,12 @@ export function WorkflowNode({
 			if (!dragState.current) return;
 			dragState.current = null;
 			if (nodeRef.current) {
-				nodeRef.current.style.cursor = 'grab';
+				// Only reset to 'grab' for draggable nodes — Task Agent uses 'default'
+				// and dragState.current can never be set for it, so this branch is
+				// unreachable for Task Agent. Guard here for defence-in-depth.
+				if (!isTaskAgent) {
+					nodeRef.current.style.cursor = 'grab';
+				}
 				nodeRef.current.style.boxShadow = '';
 			}
 		};

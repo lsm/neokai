@@ -314,6 +314,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {
+		// Task Agent is pinned — its position must never change.
+		if (localId === TASK_AGENT_NODE_ID) return;
 		setNodes((prev) =>
 			prev.map((n) => (n.step.localId === localId ? { ...n, position: newPosition } : n))
 		);
