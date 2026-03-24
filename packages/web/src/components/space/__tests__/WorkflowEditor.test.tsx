@@ -3,8 +3,8 @@
  *
  * Tests:
  * - Renders name and description fields
- * - Add step button adds a new step card
- * - Remove step removes the card
+ * - Add Step button adds a new node card
+ * - Remove node removes the card
  * - Reorder: move up / move down
  * - Agent dropdown (via WorkflowNodeCard) excludes 'leader' agent
  * - Template selection pre-fills steps
@@ -160,21 +160,21 @@ describe('WorkflowEditor', () => {
 		expect(getByText('1 step')).toBeTruthy();
 		fireEvent.click(getByText('Add Step'));
 		expect(getByText('2 steps')).toBeTruthy();
-		const removeButtons = getAllByTitle('Remove step');
+		const removeButtons = getAllByTitle('Remove node');
 		fireEvent.click(removeButtons[0]);
 		expect(getByText('1 step')).toBeTruthy();
 	});
 
 	it('disables Remove button when only one step remains', () => {
 		const { getByTitle } = render(<WorkflowEditor {...defaultProps} />);
-		const removeBtn = getByTitle('Remove step') as HTMLButtonElement;
+		const removeBtn = getByTitle('Remove node') as HTMLButtonElement;
 		expect(removeBtn.disabled).toBe(true);
 	});
 
 	it('enables Remove button when more than one step exists', () => {
 		const { getByText, getAllByTitle } = render(<WorkflowEditor {...defaultProps} />);
 		fireEvent.click(getByText('Add Step'));
-		const removeBtns = getAllByTitle('Remove step') as HTMLButtonElement[];
+		const removeBtns = getAllByTitle('Remove node') as HTMLButtonElement[];
 		expect(removeBtns[0].disabled).toBe(false);
 		expect(removeBtns[1].disabled).toBe(false);
 	});

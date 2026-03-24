@@ -440,11 +440,11 @@ describe('SpaceRuntime', () => {
 		});
 
 		test('cancels DB run record when task creation fails (prevents silent rehydration loop)', async () => {
-			// Create a workflow where the startStepId references a valid step but the
+			// Create a workflow where the startNodeId references a valid node but the
 			// agentId references an agent that is then deleted, causing createTask to fail
 			// due to the foreign key constraint on space_tasks.agent_id.
-			// Instead, use FK-bypass to create a workflow with a bogus startStepId to
-			// trigger the "Start step not found" path which also exercises the cleanup.
+			// Instead, use FK-bypass to create a workflow with a bogus startNodeId to
+			// trigger the "Start node not found" path which also exercises the cleanup.
 			db.exec('PRAGMA foreign_keys = OFF');
 			let workflow: SpaceWorkflow;
 			try {

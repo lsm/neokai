@@ -95,7 +95,7 @@ export function insertWorkflow(db: Database, id: string, spaceId: string, name: 
 	).run(id, spaceId, name, now, now);
 }
 
-export function insertWorkflowStep(
+export function insertWorkflowNode(
 	db: Database,
 	id: string,
 	workflowId: string,
@@ -104,5 +104,5 @@ export function insertWorkflowStep(
 	const now = Date.now();
 	db.prepare(
 		`INSERT INTO space_workflow_nodes (id, workflow_id, name, agent_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Step ${id}`, agentId, 0, now, now);
+	).run(id, workflowId, `Node ${id}`, agentId, 0, now, now);
 }
