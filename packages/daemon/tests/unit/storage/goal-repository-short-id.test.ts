@@ -213,4 +213,39 @@ describe('GoalRepository — short ID', () => {
 			expect(goals.find((g) => g.id === g2.id)!.shortId).toBe('g-2');
 		});
 	});
+
+	describe('lazy backfill in getGoalsForTask', () => {
+		it('backfills short_id for legacy rows returned by getGoalsForTask', () => {
+			// Insert a legacy row without short_id, with task-1 linked
+			db.prepare(
+				`INSERT INTO goals (id, room_id, title, description, status, priority, progress, linked_task_ids, metrics, created_at, updated_at)
+				 VALUES ('goal-leg', 'room-1', 'Legacy Goal', '', 'active', 'normal', 0, '["task-1"]', '{}', 1000, 1000)`
+			).run();
+
+			const goals = repo.getGoalsForTask('task-1');
+			expect(goals.length).toBe(1);
+			expect(goals[0].shortId).toBe('g-1');
+
+			// Verify the DB row was updated
+			const row = db.prepare(`SELECT short_id FROM goals WHERE id = 'goal-leg'`).get() as {
+				short_id: string;
+			};
+			expect(row.short_id).toBe('g-1');
+		});
+
+		it('does not alter already-assigned short IDs in getGoalsForTask', () => {
+			const goal = repo.createGoal({ roomId: 'room-1', title: 'G' });
+			expect(goal.shortId).toBe('g-1');
+
+			// Link task-1 to the goal
+			repo.updateGoal(goal.id, { linkedTaskIds: ['task-1'] });
+
+			const beforeCounter = allocator.getCounter('goal', 'room-1');
+			const goals = repo.getGoalsForTask('task-1');
+			const afterCounter = allocator.getCounter('goal', 'room-1');
+
+			expect(afterCounter).toBe(beforeCounter);
+			expect(goals[0].shortId).toBe('g-1');
+		});
+	});
 });

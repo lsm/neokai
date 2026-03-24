@@ -168,6 +168,11 @@ export class GoalRepository {
 	/**
 	 * List goals for a room.
 	 * Lazy backfill: any row missing short_id gets one assigned inline.
+	 * Each allocation is a separate atomic counter increment; under SQLite's
+	 * single-writer model concurrent callers cannot observe the same counter
+	 * value — a second concurrent listGoals for the same room would block on
+	 * the write lock and read already-written short_id values when it proceeds.
+	 * Counter values are never reused; a skipped value is cosmetic only.
 	 */
 	listGoals(roomId: string, status?: GoalStatus): RoomGoal[] {
 		let query = `SELECT * FROM goals WHERE room_id = ?`;
@@ -368,14 +373,24 @@ export class GoalRepository {
 	}
 
 	/**
-	 * Get goals that have a specific task linked
+	 * Get goals that have a specific task linked.
+	 * Applies the same lazy short ID backfill as listGoals so callers always
+	 * receive goals with shortId populated.
 	 */
 	getGoalsForTask(taskId: string): RoomGoal[] {
 		const stmt = this.db.prepare(
 			`SELECT * FROM goals WHERE linked_task_ids LIKE ? ORDER BY created_at ASC`
 		);
 		const rows = stmt.all(`%"${taskId}"%`) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToGoal(r));
+		return rows.map((row) => {
+			const goal = this.rowToGoal(row);
+			if (!goal.shortId && this.shortIdAllocator) {
+				const shortId = this.shortIdAllocator.allocate('goal', goal.roomId);
+				this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, goal.id);
+				return { ...goal, shortId };
+			}
+			return goal;
+		});
 	}
 
 	/**
