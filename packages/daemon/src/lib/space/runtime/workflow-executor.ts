@@ -9,7 +9,7 @@
  * - Condition evaluation for transitions (always, human, condition)
  * - Timeout enforcement on condition-type transitions
  * - Retry logic: re-evaluate condition only (NOT re-run agent)
- * - Persisting currentStepId on SpaceWorkflowRun after advance
+ * - Persisting currentNodeId on SpaceWorkflowRun after advance
  * - Creating SpaceTask DB records (pending only) — does NOT spawn sessions
  *
  * advance() evaluates outgoing transitions from the current step in ascending
@@ -295,7 +295,7 @@ export class WorkflowExecutor {
 	 *   2. Get outgoing transitions from current step (sorted by order)
 	 *   3. If no transitions → mark run completed, return { step: current, tasks: [] }
 	 *   4. Evaluate each transition's condition (with retry) until one passes
-	 *   5. Persist currentStepId pointing to the transition's target step
+	 *   5. Persist currentNodeId pointing to the transition's target node
 	 *   6. Create a pending SpaceTask for the target step
 	 *
 	 * If no transition's condition passes, the run is set to 'needs_attention'
@@ -403,9 +403,9 @@ export class WorkflowExecutor {
 	}
 
 	/**
-	 * Follows a transition: updates currentStepId and creates one SpaceTask per agent
-	 * in the target step. Multi-agent steps produce multiple parallel tasks, all sharing
-	 * the same `workflowRunId` and `workflowStepId`. Single-agent steps produce one task.
+	 * Follows a transition: updates currentNodeId and creates one SpaceTask per agent
+	 * in the target node. Multi-agent nodes produce multiple parallel tasks, all sharing
+	 * the same `workflowRunId` and `workflowNodeId`. Single-agent nodes produce one task.
 	 */
 	private async followTransition(
 		transition: WorkflowTransition
@@ -437,7 +437,7 @@ export class WorkflowExecutor {
 			}
 		}
 
-		// Persist new currentStepId
+		// Persist new currentNodeId
 		const updatedRun = this.workflowRunRepo.updateCurrentStep(this.run.id, nextStep.id);
 		if (!updatedRun) throw new Error('Failed to persist step ID update');
 		this.run = updatedRun;
@@ -447,7 +447,7 @@ export class WorkflowExecutor {
 		const stepAgents = resolveNodeAgents(nextStep);
 
 		// Create one pending SpaceTask per agent. All tasks share the same workflowRunId
-		// and workflowStepId so SpaceRuntime can track them as a group.
+		// and workflowNodeId so SpaceRuntime can track them as a group.
 		// Per-agent instructions override step-level instructions when present.
 		const tasks: SpaceTask[] = [];
 		for (const agentEntry of stepAgents) {
