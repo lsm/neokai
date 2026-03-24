@@ -125,13 +125,13 @@ export type { ValidationResult } from './export-format';
 // Types — re-exported from @neokai/shared for convenience
 export type {
 	SpaceWorkflow,
-	WorkflowStep,
+	WorkflowNode,
 	WorkflowRule,
 	WorkflowCondition,
 	WorkflowConditionType,
 	WorkflowTransition,
 	WorkflowTransitionInput,
-	WorkflowStepInput,
+	WorkflowNodeInput,
 	WorkflowRuleInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,

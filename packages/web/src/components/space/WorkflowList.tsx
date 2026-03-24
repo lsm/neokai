@@ -55,15 +55,15 @@ function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionTyp
 const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
-	if (workflow.steps.length === 0) {
+	if (workflow.nodes.length === 0) {
 		return <span class="text-xs text-gray-700 italic">No steps</span>;
 	}
 
-	// Build ordered step list following startStepId
-	const stepMap = new Map(workflow.steps.map((s) => [s.id, s]));
+	// Build ordered step list following startNodeId
+	const stepMap = new Map(workflow.nodes.map((s) => [s.id, s]));
 	const ordered: string[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = workflow.startStepId;
+	let currentId: string | undefined = workflow.startNodeId;
 
 	while (currentId && !visited.has(currentId)) {
 		visited.add(currentId);
@@ -74,8 +74,8 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 		currentId = outgoing[0]?.to;
 	}
 
-	// Append orphaned steps (not reachable from startStepId)
-	for (const s of workflow.steps) {
+	// Append orphaned steps (not reachable from startNodeId)
+	for (const s of workflow.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push(s.id);
 		}
@@ -239,7 +239,7 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 			{/* Step count + tags footer */}
 			<div class="mt-2.5 flex items-center gap-2 flex-wrap">
 				<span class="text-xs text-gray-600">
-					{workflow.steps.length} {workflow.steps.length === 1 ? 'step' : 'steps'}
+					{workflow.nodes.length} {workflow.nodes.length === 1 ? 'step' : 'steps'}
 				</span>
 				{workflow.tags.length > 0 && (
 					<>

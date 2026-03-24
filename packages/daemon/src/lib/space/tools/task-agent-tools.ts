@@ -48,7 +48,7 @@ import {
 	ListGroupMembersSchema,
 } from './task-agent-tool-schemas';
 import { SendMessageSchema } from './step-agent-tool-schemas';
-import { resolveStepAgents } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type {
 	SpawnStepAgentInput,
 	CheckStepStatusInput,
@@ -254,7 +254,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			// Find the step
-			const step = workflow.steps.find((s) => s.id === step_id);
+			const step = workflow.nodes.find((s) => s.id === step_id);
 			if (!step) {
 				return jsonResult({
 					success: false,
@@ -264,7 +264,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			// Find the pending task for this step (created by WorkflowExecutor.followTransition)
 			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
-			const stepTasks = allRunTasks.filter((t) => t.workflowStepId === step_id);
+			const stepTasks = allRunTasks.filter((t) => t.workflowNodeId === step_id);
 			if (stepTasks.length === 0) {
 				return jsonResult({
 					success: false,
@@ -293,9 +293,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			// Ensure customAgentId is set — fall back to the primary step agent ID for preset agents.
 			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
-			// but those agents are still SpaceAgent records. Use resolveStepAgents to get the
+			// but those agents are still SpaceAgent records. Use resolveNodeAgents to get the
 			// correct primary agentId regardless of whether the step uses agentId or agents[].
-			const primaryAgentId = resolveStepAgents(step)[0]?.agentId;
+			const primaryAgentId = resolveNodeAgents(step)[0]?.agentId;
 			const effectiveTask = {
 				...stepTask,
 				customAgentId: stepTask.customAgentId ?? primaryAgentId,
@@ -462,19 +462,19 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						error: `Workflow run not found: ${workflowRunId}`,
 					});
 				}
-				if (!run.currentStepId) {
+				if (!run.currentNodeId) {
 					return jsonResult({
 						success: false,
 						error: 'No current step on the workflow run. Call spawn_step_agent first.',
 					});
 				}
-				stepId = run.currentStepId;
+				stepId = run.currentNodeId;
 			}
 
 			// Find task(s) for this step
 			const stepTasks = taskRepo
 				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.workflowStepId === stepId);
+				.filter((t) => t.workflowNodeId === stepId);
 
 			if (stepTasks.length === 0) {
 				return jsonResult({
@@ -604,7 +604,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Verify the current step's task is completed in the DB
 			const stepTasks = taskRepo
 				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.workflowStepId === currentStep.id);
+				.filter((t) => t.workflowNodeId === currentStep.id);
 
 			const allCompleted = stepTasks.length > 0 && stepTasks.every((t) => t.status === 'completed');
 
@@ -617,7 +617,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 						`Current step "${currentStep.name}" has not completed yet. ` +
 						`Task status: ${taskStatus}. ` +
 						`Wait for the step agent to finish before calling advance_workflow.`,
-					currentStepId: currentStep.id,
+					currentNodeId: currentStep.id,
 					currentStepName: currentStep.name,
 					taskStatus,
 				});

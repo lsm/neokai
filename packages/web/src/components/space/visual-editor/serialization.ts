@@ -4,7 +4,7 @@
  * data model used by the backend.
  *
  * Key design decisions:
- * - `startStepId` is passed through from the editor state (explicitly set by the
+ * - `startNodeId` is passed through from the editor state (explicitly set by the
  *   user via "Set as Start"), never auto-detected from graph topology.
  * - Transition `order` is computed from the left-to-right x-position of the
  *   target node among all outgoing edges of a given source node.
@@ -31,7 +31,7 @@ import type {
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 	WorkflowCondition,
-	WorkflowStepAgent,
+	WorkflowNodeAgent,
 	WorkflowChannel,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
@@ -84,7 +84,7 @@ export interface VisualEditorState {
 	 * The step key (step.id for existing, step.localId for new) of the
 	 * start node. Managed explicitly by the user.
 	 */
-	startStepId: string;
+	startNodeId: string;
 	rules: RuleDraft[];
 	tags: string[];
 }
@@ -104,14 +104,14 @@ export interface VisualEditorState {
 export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorState {
 	// Determine whether auto-layout is needed (any step missing from layout)
 	const layoutMap = workflow.layout;
-	const needsAutoLayout = !layoutMap || workflow.steps.some((s) => !layoutMap[s.id]);
+	const needsAutoLayout = !layoutMap || workflow.nodes.some((s) => !layoutMap[s.id]);
 
 	// Lazily compute auto-layout only when at least one step lacks a stored position
 	const layoutFallback = needsAutoLayout
-		? autoLayout(workflow.steps, workflow.transitions, workflow.startStepId)
+		? autoLayout(workflow.nodes, workflow.transitions, workflow.startNodeId)
 		: new Map<string, Point>();
 
-	const nodes: VisualNode[] = workflow.steps.map((s) => {
+	const nodes: VisualNode[] = workflow.nodes.map((s) => {
 		let position: Point;
 		if (layoutMap && layoutMap[s.id]) {
 			position = { x: layoutMap[s.id].x, y: layoutMap[s.id].y };
@@ -137,15 +137,15 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		condition: t.condition ? { ...t.condition } : undefined,
 	}));
 
-	// startStepId: use the step.id directly (matches the edge keys).
-	// Fall back to the first step's id if the workflow's startStepId is missing.
+	// startNodeId: use the step.id directly (matches the edge keys).
+	// Fall back to the first step's id if the workflow's startNodeId is missing.
 	const startKey =
-		workflow.steps.find((s) => s.id === workflow.startStepId)?.id ?? workflow.steps[0]?.id ?? '';
+		workflow.nodes.find((s) => s.id === workflow.startNodeId)?.id ?? workflow.nodes[0]?.id ?? '';
 
 	return {
 		nodes,
 		edges,
-		startStepId: startKey,
+		startNodeId: startKey,
 		rules: rulesToDrafts(workflow.rules ?? []),
 		tags: workflow.tags ?? [],
 	};
@@ -159,11 +159,11 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
  * Shared structure returned by both create and update serialisation.
  */
 interface BuiltWorkflowFields {
-	steps: Array<{
+	nodes: Array<{
 		id: string;
 		name: string;
 		agentId?: string;
-		agents?: WorkflowStepAgent[];
+		agents?: WorkflowNodeAgent[];
 		channels?: WorkflowChannel[];
 		instructions?: string;
 	}>;
@@ -173,7 +173,7 @@ interface BuiltWorkflowFields {
 		condition?: WorkflowCondition;
 		order: number;
 	}>;
-	startStepId: string;
+	startNodeId: string;
 	rules: Array<{ id?: string; name: string; content: string; appliesTo?: string[] }>;
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
@@ -215,8 +215,8 @@ function buildWorkflowFields(state: VisualEditorState): {
 		nodeMap.set(key, { node, persistedId });
 	}
 
-	// Also build a lookup by localId so startStepId can reference either key style
-	// (e.g. when startStepId was set to step.localId rather than step.id).
+	// Also build a lookup by localId so startNodeId can reference either key style
+	// (e.g. when startNodeId was set to step.localId rather than step.id).
 	const localIdMap = new Map<string, { node: VisualNode; persistedId: string }>();
 	for (const [, entry] of nodeMap) {
 		localIdMap.set(entry.node.step.localId, entry);
@@ -227,13 +227,13 @@ function buildWorkflowFields(state: VisualEditorState): {
 	for (const [key, { persistedId }] of nodeMap) {
 		keyToPersistedId.set(key, persistedId);
 	}
-	// Also map localId -> persistedId (covers startStepId and appliesTo references)
+	// Also map localId -> persistedId (covers startNodeId and appliesTo references)
 	for (const [, entry] of nodeMap) {
 		keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
 	}
 
 	// Build steps
-	const steps = state.nodes.map((node, i) => {
+	const nodes = state.nodes.map((node, i) => {
 		const key = node.step.id ?? node.step.localId;
 		const persistedId = nodeMap.get(key)!.persistedId;
 		const hasMultiAgent = Array.isArray(node.step.agents) && node.step.agents.length > 0;
@@ -305,17 +305,17 @@ function buildWorkflowFields(state: VisualEditorState): {
 		layout[persistedId] = { x: node.position.x, y: node.position.y };
 	}
 
-	// Resolve startStepId — prefer exact key match, then localId match, then first node
+	// Resolve startNodeId — prefer exact key match, then localId match, then first node
 	const startEntry =
-		nodeMap.get(state.startStepId) ??
-		localIdMap.get(state.startStepId) ??
+		nodeMap.get(state.startNodeId) ??
+		localIdMap.get(state.startNodeId) ??
 		(state.nodes.length > 0
 			? {
 					persistedId: nodeMap.get(state.nodes[0].step.id ?? state.nodes[0].step.localId)!
 						.persistedId,
 				}
 			: null);
-	const startStepId = startEntry?.persistedId ?? '';
+	const startNodeId = startEntry?.persistedId ?? '';
 
 	// Build rules — blank rules (both name and content empty/whitespace) are filtered out
 	const rules = state.rules
@@ -328,7 +328,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 		}));
 
 	return {
-		fields: { steps, transitions, startStepId, rules, layout, tags: state.tags },
+		fields: { nodes, transitions, startNodeId, rules, layout, tags: state.tags },
 		keyToPersistedId,
 	};
 }
@@ -353,9 +353,9 @@ export function visualStateToCreateParams(
 		spaceId,
 		name,
 		description,
-		steps: fields.steps,
+		nodes: fields.nodes,
 		transitions: fields.transitions,
-		startStepId: fields.startStepId || undefined,
+		startNodeId: fields.startNodeId || undefined,
 		// WorkflowRuleInput omits `id` — strip it from each rule
 		rules: fields.rules.map(({ id: _id, ...rest }) => rest),
 		layout: fields.layout,
@@ -377,9 +377,9 @@ export function visualStateToUpdateParams(
 
 	return {
 		...overrides,
-		steps: fields.steps,
+		nodes: fields.nodes,
 		transitions: fields.transitions,
-		startStepId: fields.startStepId || null,
+		startNodeId: fields.startNodeId || null,
 		// WorkflowRule requires `id` — generate one for new rules that lack a persisted id
 		rules: fields.rules.map((r) => ({
 			id: r.id ?? generateUUID(),

@@ -128,7 +128,7 @@ class MockSessionGroupRepository {
 			name: params.name,
 			description: params.description,
 			workflowRunId: params.workflowRunId,
-			currentStepId: params.currentStepId,
+			currentNodeId: params.currentNodeId,
 			taskId: params.taskId,
 			status: params.status ?? 'active',
 			members: [],

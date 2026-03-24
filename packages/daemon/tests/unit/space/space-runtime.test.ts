@@ -75,13 +75,13 @@ function seedAgentRow(
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	steps: Array<{ id: string; name: string; agentId: string; instructions?: string }>,
+	nodes: Array<{ id: string; name: string; agentId: string; instructions?: string }>,
 	conditions: Array<{ type: 'always' | 'human'; description?: string }> = []
 ): SpaceWorkflow {
 	// Build transitions: step[i] → step[i+1] with conditions[i]
-	const transitions = steps.slice(0, -1).map((step, i) => ({
+	const transitions = nodes.slice(0, -1).map((step, i) => ({
 		from: step.id,
-		to: steps[i + 1].id,
+		to: nodes[i + 1].id,
 		condition: conditions[i] ?? { type: 'always' as const },
 		order: 0,
 	}));
@@ -90,9 +90,9 @@ function buildLinearWorkflow(
 		spaceId,
 		name: `Test Workflow ${Date.now()}-${Math.random()}`,
 		description: 'Test',
-		steps,
+		nodes,
 		transitions,
-		startStepId: steps[0].id,
+		startNodeId: nodes[0].id,
 		rules: [],
 		tags: [],
 	});
@@ -293,9 +293,9 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Rules Test Workflow',
-				steps: [{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER }],
+				nodes: [{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER }],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [
 					{ name: 'Global Rule', content: 'Always be concise', appliesTo: [] },
 					{ name: 'Another Global', content: 'Write tests', appliesTo: undefined as never },
@@ -311,12 +311,12 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Filtered Rules Workflow',
-				steps: [
+				nodes: [
 					{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER },
 					{ id: STEP_B, name: 'Step B', agentId: AGENT_PLANNER },
 				],
 				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [
 					{ name: 'Step A Rule', content: 'Rule for step A only', appliesTo: [STEP_A] },
 					{ name: 'Step B Rule', content: 'Rule for step B only', appliesTo: [STEP_B] },
@@ -356,7 +356,7 @@ describe('SpaceRuntime', () => {
 			expect(run.spaceId).toBe(SPACE_ID);
 			expect(run.workflowId).toBe(workflow.id);
 			expect(run.status).toBe('in_progress');
-			expect(run.currentStepId).toBe(STEP_A);
+			expect(run.currentNodeId).toBe(STEP_A);
 		});
 
 		test('creates initial SpaceTask for the start step', async () => {
@@ -369,7 +369,7 @@ describe('SpaceRuntime', () => {
 			expect(tasks).toHaveLength(1);
 			const task = tasks[0];
 			expect(task.workflowRunId).toBe(run.id);
-			expect(task.workflowStepId).toBe(STEP_A);
+			expect(task.workflowNodeId).toBe(STEP_A);
 			expect(task.status).toBe('pending');
 			expect(task.title).toBe('Plan');
 		});
@@ -410,9 +410,9 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				name: `MaxIter Test ${Date.now()}`,
 				description: 'Test',
-				steps: [{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER }],
+				nodes: [{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER }],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 				maxIterations: 3,
@@ -453,9 +453,9 @@ describe('SpaceRuntime', () => {
 					spaceId: SPACE_ID,
 					name: `Broken Start ${Date.now()}`,
 					description: '',
-					steps: [{ id: 'step-bad', name: 'Step', agentId: AGENT_PLANNER }],
+					nodes: [{ id: 'step-bad', name: 'Step', agentId: AGENT_PLANNER }],
 					transitions: [],
-					startStepId: 'nonexistent-start-step-id',
+					startNodeId: 'nonexistent-start-step-id',
 					rules: [],
 					tags: [],
 				});
@@ -540,7 +540,7 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Start ${Date.now()}`,
 				description: '',
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Multi Step',
@@ -548,7 +548,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -570,7 +570,7 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Custom ${Date.now()}`,
 				description: '',
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Custom Multi Step',
@@ -578,7 +578,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -600,9 +600,9 @@ describe('SpaceRuntime', () => {
 					spaceId: SPACE_ID,
 					name: `No Agent Step ${Date.now()}`,
 					description: '',
-					steps: [{ id: STEP_A, name: 'Broken Step' } as never],
+					nodes: [{ id: STEP_A, name: 'Broken Step' } as never],
 					transitions: [],
-					startStepId: STEP_A,
+					startNodeId: STEP_A,
 					rules: [],
 					tags: [],
 				});
@@ -657,7 +657,7 @@ describe('SpaceRuntime', () => {
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
 			expect(allTasks).toHaveLength(2);
 
-			const stepBTask = allTasks.find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = allTasks.find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 			expect(stepBTask!.goalId).toBe('goal-propagate');
 		});
@@ -689,7 +689,7 @@ describe('SpaceRuntime', () => {
 			// Complete step B → tick
 			const stepBTask = taskRepo
 				.listByWorkflowRun(run.id)
-				.find((t) => t.workflowStepId === STEP_B)!;
+				.find((t) => t.workflowNodeId === STEP_B)!;
 			taskRepo.updateTask(stepBTask.id, { status: 'completed' });
 			await runtime.executeTick();
 
@@ -753,7 +753,7 @@ describe('SpaceRuntime', () => {
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
 			expect(allTasks).toHaveLength(2);
 
-			const stepBTask = allTasks.find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = allTasks.find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 			expect(stepBTask!.status).toBe('pending');
 			expect(stepBTask!.taskType).toBe('coding');
@@ -819,14 +819,14 @@ describe('SpaceRuntime', () => {
 			taskRepo.updateTask(initialTasks[0].id, { status: 'completed' });
 			await runtime.executeTick();
 
-			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 
 			// Complete step B task → tick → step C task created
 			taskRepo.updateTask(stepBTask!.id, { status: 'completed' });
 			await runtime.executeTick();
 
-			const stepCTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_C);
+			const stepCTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_C);
 			expect(stepCTask).toBeDefined();
 
 			// Complete step C task → tick → run completes (terminal step)
@@ -857,7 +857,7 @@ describe('SpaceRuntime', () => {
 
 			const stepBTask = taskRepo
 				.listByWorkflowRun(run.id)
-				.find((t) => t.workflowStepId === STEP_B)!;
+				.find((t) => t.workflowNodeId === STEP_B)!;
 
 			expect(stepBTask.taskType).toBe('coding');
 		});
@@ -881,7 +881,7 @@ describe('SpaceRuntime', () => {
 
 			const stepBTask = taskRepo
 				.listByWorkflowRun(run.id)
-				.find((t) => t.workflowStepId === STEP_B)!;
+				.find((t) => t.workflowNodeId === STEP_B)!;
 
 			expect(stepBTask.taskType).toBe('coding');
 			expect(stepBTask.customAgentId).toBe(AGENT_CUSTOM);
@@ -909,11 +909,11 @@ describe('SpaceRuntime', () => {
 					spaceId: SPACE_ID,
 					name: `Broken ${Date.now()}-${Math.random()}`,
 					description: '',
-					steps: [{ id: stepId, name: stepName, agentId: AGENT_PLANNER }],
+					nodes: [{ id: stepId, name: stepName, agentId: AGENT_PLANNER }],
 					transitions: [
 						{ from: stepId, to: 'ghost-step-that-does-not-exist', condition: { type: 'always' } },
 					],
-					startStepId: stepId,
+					startNodeId: stepId,
 					rules: [],
 					tags: [],
 				});
@@ -933,7 +933,7 @@ describe('SpaceRuntime', () => {
 			await expect(runtime.executeTick()).rejects.toThrow();
 		});
 
-		test('processRunTick cancels and removes run when currentStepId is inconsistent with workflow', async () => {
+		test('processRunTick cancels and removes run when currentNodeId is inconsistent with workflow', async () => {
 			// Create a valid workflow and start a run normally
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
@@ -942,10 +942,10 @@ describe('SpaceRuntime', () => {
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(runtime.executorCount).toBe(1);
 
-			// Externally corrupt the run's currentStepId to a step that doesn't exist
+			// Externally corrupt the run's currentNodeId to a step that doesn't exist
 			// in the workflow (simulates data inconsistency, e.g. a workflow was updated
 			// after a run was started).
-			workflowRunRepo.updateRun(run.id, { currentStepId: 'step-that-does-not-exist' });
+			workflowRunRepo.updateRun(run.id, { currentNodeId: 'step-that-does-not-exist' });
 
 			// executeTick() should throw (data inconsistency error), but also:
 			// 1. cancel the DB run record so it is not rehydrated on next restart
@@ -1067,7 +1067,7 @@ describe('SpaceRuntime', () => {
 			// Second tick — gate passes
 			await runtime.executeTick();
 
-			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 		});
 	});
@@ -1159,7 +1159,7 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Rehydration Run',
-				currentStepId: STEP_A,
+				currentNodeId: STEP_A,
 			});
 			const run = workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;
 
@@ -1169,7 +1169,7 @@ describe('SpaceRuntime', () => {
 				title: 'Plan',
 				description: '',
 				workflowRunId: run.id,
-				workflowStepId: STEP_A,
+				workflowNodeId: STEP_A,
 				status: 'completed',
 			});
 			expect(task.status).toBe('completed');
@@ -1192,7 +1192,7 @@ describe('SpaceRuntime', () => {
 			// Executor for the run should now exist
 			// The completed step A task should trigger advancement to step B
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
-			const stepBTask = allTasks.find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = allTasks.find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 		});
 
@@ -1221,7 +1221,7 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Orphaned Run',
-				currentStepId: STEP_A,
+				currentNodeId: STEP_A,
 			});
 			workflowRunRepo.updateStatus(pendingRun.id, 'in_progress');
 
@@ -1258,7 +1258,7 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
 				title: 'Gate Run',
-				currentStepId: STEP_A,
+				currentNodeId: STEP_A,
 			});
 			const run = workflowRunRepo.updateStatus(pendingRun.id, 'needs_attention')!;
 			taskRepo.createTask({
@@ -1266,7 +1266,7 @@ describe('SpaceRuntime', () => {
 				title: 'Plan',
 				description: '',
 				workflowRunId: run.id,
-				workflowStepId: STEP_A,
+				workflowNodeId: STEP_A,
 				status: 'completed',
 			});
 
@@ -1294,7 +1294,7 @@ describe('SpaceRuntime', () => {
 			// Second tick: gate now passes, run advances to step B
 			await freshRuntime.executeTick();
 
-			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 		});
 	});
@@ -1436,7 +1436,7 @@ describe('SpaceRuntime', () => {
 			// Step B task should have been created by direct advance()
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
 			expect(allTasks).toHaveLength(2);
-			expect(allTasks.find((t) => t.workflowStepId === STEP_B)).toBeDefined();
+			expect(allTasks.find((t) => t.workflowNodeId === STEP_B)).toBeDefined();
 		});
 
 		test('skips tick when Task Agent is alive (in_progress task with taskAgentSessionId)', async () => {
@@ -1643,12 +1643,12 @@ describe('SpaceRuntime', () => {
 			// Simulate Task Agent completing step A:
 			// - calls advance_workflow → creates step B task (pending, no taskAgentSessionId)
 			// - calls report_result → marks step A task as completed
-			// - advance() creates the step B task and advances the run's currentStepId
+			// - advance() creates the step B task and advances the run's currentNodeId
 			taskRepo.updateTask(tasks[0].id, { status: 'completed', taskAgentSessionId: null });
 			// Manually call advance to simulate Task Agent's advance_workflow tool
 			await rt.getExecutor(run.id)!.advance();
 
-			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 
 			// Tick 2: should spawn Task Agent for step B
@@ -1722,7 +1722,7 @@ describe('SpaceRuntime', () => {
 				title: 'Plan B',
 				description: '',
 				workflowRunId: run.id,
-				workflowStepId: STEP_A,
+				workflowNodeId: STEP_A,
 				status: 'in_progress',
 			});
 
@@ -1827,7 +1827,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Start ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel Start',
@@ -1838,7 +1838,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1848,7 +1848,7 @@ describe('SpaceRuntime', () => {
 			expect(tasks).toHaveLength(2);
 			for (const task of tasks) {
 				expect(task.workflowRunId).toBe(run.id);
-				expect(task.workflowStepId).toBe(STEP_A);
+				expect(task.workflowNodeId).toBe(STEP_A);
 				expect(task.status).toBe('pending');
 			}
 
@@ -1865,14 +1865,14 @@ describe('SpaceRuntime', () => {
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			expect(tasks).toHaveLength(1);
-			expect(tasks[0].workflowStepId).toBe(STEP_A);
+			expect(tasks[0].workflowNodeId).toBe(STEP_A);
 		});
 
 		test('startWorkflowRun() applies per-agent taskType for multi-agent start step', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent TaskType ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Mixed Start',
@@ -1880,7 +1880,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1903,7 +1903,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Complete ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel A',
@@ -1912,7 +1912,7 @@ describe('SpaceRuntime', () => {
 					{ id: STEP_B, name: 'Step B', agentId: AGENT_CODER },
 				],
 				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1928,7 +1928,7 @@ describe('SpaceRuntime', () => {
 
 			// No new task for STEP_B should have been created
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
-			const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
+			const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTasks).toHaveLength(0);
 		});
 
@@ -1936,7 +1936,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `All Complete ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel A',
@@ -1945,7 +1945,7 @@ describe('SpaceRuntime', () => {
 					{ id: STEP_B, name: 'Step B', agentId: AGENT_CODER },
 				],
 				transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1961,7 +1961,7 @@ describe('SpaceRuntime', () => {
 
 			// Step B task should now exist
 			const allTasks = taskRepo.listByWorkflowRun(run.id);
-			const stepBTasks = allTasks.filter((t) => t.workflowStepId === STEP_B);
+			const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTasks).toHaveLength(1);
 		});
 
@@ -1969,7 +1969,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Failure ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel Fail',
@@ -1977,7 +1977,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1999,7 +1999,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Terminal ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel Waiting',
@@ -2007,7 +2007,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -2065,7 +2065,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Channel Step ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Code and Review',
@@ -2081,7 +2081,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -2124,7 +2124,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Duplicate Role Test',
-				steps: [
+				nodes: [
 					{
 						id: stepId,
 						name: 'Two Coders Same Role',
@@ -2132,7 +2132,7 @@ describe('SpaceRuntime', () => {
 					},
 				],
 				transitions: [],
-				startStepId: stepId,
+				startNodeId: stepId,
 				rules: [],
 			});
 
@@ -2158,7 +2158,7 @@ describe('SpaceRuntime', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Channel then No-Channel',
-				steps: [
+				nodes: [
 					{
 						id: stepA,
 						name: 'With Channels',
@@ -2169,7 +2169,7 @@ describe('SpaceRuntime', () => {
 					{ id: stepB, name: 'Without Channels', agentId: AGENT_CODER },
 				],
 				transitions: [{ from: stepA, to: stepB, condition: { type: 'always' } }],
-				startStepId: stepA,
+				startNodeId: stepA,
 				rules: [],
 			});
 
@@ -2184,7 +2184,7 @@ describe('SpaceRuntime', () => {
 			// Mark step A tasks as completed so we can advance
 			const stepATasks = taskRepo
 				.listByWorkflowRun(run.id)
-				.filter((t) => t.workflowStepId === stepA);
+				.filter((t) => t.workflowNodeId === stepA);
 			for (const t of stepATasks) {
 				taskRepo.updateTask(t.id, { status: 'completed' });
 			}

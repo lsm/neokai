@@ -239,8 +239,8 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		if (workflowRun.description) {
 			sections.push(`**Description:** ${workflowRun.description}`);
 		}
-		if (workflowRun.currentStepId) {
-			sections.push(`**Current Step ID:** ${workflowRun.currentStepId}`);
+		if (workflowRun.currentNodeId) {
+			sections.push(`**Current Step ID:** ${workflowRun.currentNodeId}`);
 		}
 	}
 
@@ -257,10 +257,10 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 			sections.push(`\n**Workflow description:** ${workflow.description}`);
 		}
 
-		if (workflow.steps.length > 0) {
+		if (workflow.nodes.length > 0) {
 			sections.push(`\n**Steps:**`);
-			for (const step of workflow.steps) {
-				const isCurrent = step.id === workflowRun.currentStepId;
+			for (const step of workflow.nodes) {
+				const isCurrent = step.id === workflowRun.currentNodeId;
 				const marker = isCurrent ? ' ← current step' : '';
 				sections.push(`- **${step.name}** (id: \`${step.id}\`)${marker}`);
 				if (step.instructions) {

@@ -8,7 +8,7 @@
  * Expanded: name input, agent dropdown, entry/exit gate selectors, instructions
  */
 
-import type { SpaceAgent, WorkflowStepAgent, WorkflowChannel } from '@neokai/shared';
+import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
 import type { WorkflowConditionType } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { GateConfig, CONDITION_LABELS } from './visual-editor/GateConfig';
@@ -27,7 +27,7 @@ export interface StepDraft {
 	/** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
 	agentId: string;
 	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
-	agents?: WorkflowStepAgent[];
+	agents?: WorkflowNodeAgent[];
 	/** Directed messaging topology between agents. */
 	channels?: WorkflowChannel[];
 	instructions: string;
@@ -128,7 +128,7 @@ interface MultiAgentSectionProps {
 function MultiAgentSection({ step, agents, onUpdate }: MultiAgentSectionProps) {
 	const stepAgents = step.agents ?? [];
 
-	function updateAgents(next: WorkflowStepAgent[]) {
+	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
@@ -609,7 +609,7 @@ export function WorkflowStepCard({
 									type="button"
 									onClick={() => {
 										const firstId = step.agentId;
-										const existing: WorkflowStepAgent[] = firstId ? [{ agentId: firstId }] : [];
+										const existing: WorkflowNodeAgent[] = firstId ? [{ agentId: firstId }] : [];
 										onUpdate({ ...step, agents: existing, agentId: '' });
 									}}
 									class="text-xs text-blue-400 hover:text-blue-300 transition-colors"

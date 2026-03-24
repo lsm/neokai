@@ -13,7 +13,7 @@ export interface CreateSessionGroupParams {
 	name: string;
 	description?: string;
 	workflowRunId?: string;
-	currentStepId?: string;
+	currentNodeId?: string;
 	taskId?: string;
 	/** Initial lifecycle status (default: 'active') */
 	status?: 'active' | 'completed' | 'failed';
@@ -23,7 +23,7 @@ export interface UpdateSessionGroupParams {
 	name?: string;
 	description?: string;
 	workflowRunId?: string | null;
-	currentStepId?: string | null;
+	currentNodeId?: string | null;
 	taskId?: string | null;
 	status?: 'active' | 'completed' | 'failed';
 }
@@ -67,7 +67,7 @@ export class SpaceSessionGroupRepository {
 				params.name,
 				params.description ?? null,
 				params.workflowRunId ?? null,
-				params.currentStepId ?? null,
+				params.currentNodeId ?? null,
 				params.taskId ?? null,
 				params.status ?? 'active',
 				now,
@@ -153,9 +153,9 @@ export class SpaceSessionGroupRepository {
 			fields.push('workflow_run_id = ?');
 			values.push(params.workflowRunId ?? null);
 		}
-		if (params.currentStepId !== undefined) {
+		if (params.currentNodeId !== undefined) {
 			fields.push('current_node_id = ?');
-			values.push(params.currentStepId ?? null);
+			values.push(params.currentNodeId ?? null);
 		}
 		if (params.taskId !== undefined) {
 			fields.push('task_id = ?');
@@ -393,7 +393,7 @@ export class SpaceSessionGroupRepository {
 			name: row.name as string,
 			description: (row.description as string | null) ?? undefined,
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
-			currentStepId: (row.current_node_id as string | null) ?? undefined,
+			currentNodeId: (row.current_node_id as string | null) ?? undefined,
 			taskId: (row.task_id as string | null) ?? undefined,
 			status: ((row.status as string | null) ?? 'active') as 'active' | 'completed' | 'failed',
 			members,

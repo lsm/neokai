@@ -43,12 +43,12 @@ import type {
 	SpaceWorkflowRun,
 	Space,
 	SpaceAgent,
-	WorkflowStep,
+	WorkflowNode,
 	WorkflowTransition,
 	WorkflowRule,
 	SessionFeatures,
 } from '@neokai/shared';
-import { resolveStepAgents } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import { inferProviderForModel } from '../../providers/registry';
 
@@ -84,8 +84,8 @@ export interface TaskAgentContext {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function formatStep(step: WorkflowStep, agents: SpaceAgent[]): string {
-	const stepAgents = resolveStepAgents(step);
+function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
+	const stepAgents = resolveNodeAgents(step);
 	let agentLabel: string;
 	if (stepAgents.length === 1) {
 		const a = agents.find((ag) => ag.id === stepAgents[0].agentId);
@@ -366,10 +366,10 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			parts.push(`\n${wf.description}`);
 		}
 
-		if (wf.steps.length > 0) {
+		if (wf.nodes.length > 0) {
 			parts.push(`\n### Steps (execution order defined by transitions)\n`);
-			parts.push(`**Start step:** \`${wf.startStepId}\`\n`);
-			for (const step of wf.steps) {
+			parts.push(`**Start step:** \`${wf.startNodeId}\`\n`);
+			for (const step of wf.nodes) {
 				parts.push(formatStep(step, context.availableAgents));
 			}
 		} else {
@@ -398,10 +398,10 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			if (run.description) {
 				parts.push(`**Run Description:** ${run.description}`);
 			}
-			if (run.currentStepId) {
-				const currentStep = wf.steps.find((s) => s.id === run.currentStepId);
-				const stepName = currentStep ? currentStep.name : run.currentStepId;
-				parts.push(`**Current Step:** ${stepName} (\`${run.currentStepId}\`)`);
+			if (run.currentNodeId) {
+				const currentStep = wf.nodes.find((s) => s.id === run.currentNodeId);
+				const stepName = currentStep ? currentStep.name : run.currentNodeId;
+				parts.push(`**Current Step:** ${stepName} (\`${run.currentNodeId}\`)`);
 			}
 		}
 	} else {
@@ -442,13 +442,13 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 
 	// ---- Start instruction --------------------------------------------------
 	parts.push(`\n---\n`);
-	if (context.workflow && context.workflow.steps.length > 0) {
+	if (context.workflow && context.workflow.nodes.length > 0) {
 		// Normal case: workflow with steps — spawn the start step's agent.
 		parts.push(
 			`Begin executing the workflow now. Start by calling \`spawn_step_agent\` ` +
-				`for the start step (\`${context.workflow.startStepId}\`).`
+				`for the start step (\`${context.workflow.startNodeId}\`).`
 		);
-	} else if (context.workflow && context.workflow.steps.length === 0) {
+	} else if (context.workflow && context.workflow.nodes.length === 0) {
 		// Degenerate case: workflow exists but defines no steps.
 		// spawn_step_agent requires a step_id, so there is nothing to execute.
 		// Surface this as an immediate failure rather than leaving the agent in

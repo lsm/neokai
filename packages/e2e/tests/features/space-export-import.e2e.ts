@@ -306,14 +306,14 @@ test.describe('Space Export/Import', () => {
 					version: 1,
 					type: 'workflow',
 					name: 'Bundle Workflow',
-					steps: [
+					nodes: [
 						{
 							name: 'step-1',
 							agentRef: 'Bundle Agent',
 						},
 					],
 					transitions: [],
-					startStep: 'step-1',
+					startNode: 'step-1',
 					rules: [],
 					tags: [],
 				},

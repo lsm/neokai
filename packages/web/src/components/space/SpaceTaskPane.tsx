@@ -338,8 +338,8 @@ export function SpaceTaskPane({ taskId, onClose }: SpaceTaskPaneProps) {
 						</svg>
 						<span>
 							Workflow Step
-							{task.workflowStepId && (
-								<span class="ml-1 font-mono text-gray-600">{task.workflowStepId.slice(0, 8)}</span>
+							{task.workflowNodeId && (
+								<span class="ml-1 font-mono text-gray-600">{task.workflowNodeId.slice(0, 8)}</span>
 							)}
 						</span>
 					</div>

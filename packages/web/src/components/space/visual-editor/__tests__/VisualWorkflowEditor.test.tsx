@@ -108,12 +108,12 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'My Workflow',
 		description: 'A workflow description',
-		steps: [
+		nodes: [
 			{ id: STEP_1_ID, name: 'Plan', agentId: 'agent-1', instructions: 'Plan it' },
 			{ id: STEP_2_ID, name: 'Code', agentId: 'agent-2', instructions: '' },
 		],
 		transitions: [{ id: 'tr-1', from: STEP_1_ID, to: STEP_2_ID, order: 0 }],
-		startStepId: STEP_1_ID,
+		startNodeId: STEP_1_ID,
 		rules: [],
 		tags: [],
 		createdAt: 0,
@@ -141,8 +141,8 @@ beforeEach(() => {
 		makeAgent('agent-2', 'Coder', 'coder'),
 	];
 	mockWorkflows.value = [];
-	mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', steps: [], transitions: [], tags: [] });
-	mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', steps: [], transitions: [], tags: [] });
+	mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], transitions: [], tags: [] });
+	mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], transitions: [], tags: [] });
 	mockCreateWorkflow.mockClear();
 	mockUpdateWorkflow.mockClear();
 });

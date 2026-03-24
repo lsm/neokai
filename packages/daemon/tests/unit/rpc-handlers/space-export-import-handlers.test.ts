@@ -4,7 +4,7 @@
  * Tests for:
  * - spaceExport.agents, spaceExport.workflows, spaceExport.bundle
  * - spaceImport.preview (conflict detection, validation, cross-ref checking)
- * - spaceImport.execute (all conflict resolutions, agent name→UUID mapping, step ID remapping)
+ * - spaceImport.execute (all conflict resolutions, agent name→UUID mapping, node ID remapping)
  *
  * Uses in-memory SQLite with real repositories and managers so the full
  * business-logic path (including SpaceWorkflowManager validation) is exercised.
@@ -396,7 +396,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipeline',
-				steps: [{ name: 'Code', agentId: agent.id }],
+				nodes: [{ name: 'Code', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -407,8 +407,8 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect(bundle.workflows).toHaveLength(1);
 			const wf = bundle.workflows[0];
 			expect(wf.name).toBe('Pipeline');
-			expect(wf.steps[0].agentRef).toBe('Coder'); // UUID resolved to name
-			expect(wf.steps[0].name).toBe('Code');
+			expect(wf.nodes[0].agentRef).toBe('Coder'); // UUID resolved to name
+			expect(wf.nodes[0].name).toBe('Code');
 		});
 
 		it('includes only referenced agents in the bundle', async () => {
@@ -417,7 +417,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipeline',
-				steps: [{ name: 'Code', agentId: coder.id }],
+				nodes: [{ name: 'Code', agentId: coder.id }],
 				transitions: [],
 			});
 
@@ -435,13 +435,13 @@ describe('Space Export/Import RPC Handlers', () => {
 			const wf1 = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'WF1',
-				steps: [{ name: 'S1', agentId: agent.id }],
+				nodes: [{ name: 'S1', agentId: agent.id }],
 				transitions: [],
 			});
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'WF2',
-				steps: [{ name: 'S2', agentId: agent.id }],
+				nodes: [{ name: 'S2', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -459,7 +459,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'TwoStep',
-				steps: [
+				nodes: [
 					{ id: 'step-1', name: 'First', agentId: agent.id },
 					{ id: 'step-2', name: 'Second', agentId: agent.id },
 				],
@@ -471,8 +471,8 @@ describe('Space Export/Import RPC Handlers', () => {
 			});
 
 			const wf = bundle.workflows[0];
-			expect(wf.transitions[0].fromStep).toBe('First');
-			expect(wf.transitions[0].toStep).toBe('Second');
+			expect(wf.transitions[0].fromNode).toBe('First');
+			expect(wf.transitions[0].toNode).toBe('Second');
 		});
 	});
 
@@ -484,7 +484,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W',
-				steps: [{ name: 'S', agentId: agent.id }],
+				nodes: [{ name: 'S', agentId: agent.id }],
 				transitions: [],
 			});
 
@@ -503,13 +503,13 @@ describe('Space Export/Import RPC Handlers', () => {
 			const wf1 = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W1',
-				steps: [{ name: 'S', agentId: a1.id }],
+				nodes: [{ name: 'S', agentId: a1.id }],
 				transitions: [],
 			});
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W2',
-				steps: [{ name: 'S', agentId: a1.id }],
+				nodes: [{ name: 'S', agentId: a1.id }],
 				transitions: [],
 			});
 
@@ -574,13 +574,13 @@ describe('Space Export/Import RPC Handlers', () => {
 			const existing = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipeline',
-				steps: [{ name: 'S', agentId: agent.id }],
+				nodes: [{ name: 'S', agentId: agent.id }],
 				transitions: [],
 			});
 
 			const bundle = makeBundle(
 				[{ name: 'A', role: 'coder' }],
-				[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'S' }] }]
+				[{ name: 'Pipeline', nodes: [{ agentRef: 'A', name: 'S' }] }]
 			);
 
 			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
@@ -598,7 +598,7 @@ describe('Space Export/Import RPC Handlers', () => {
 		it('flags unresolved agent ref as validation error', async () => {
 			const bundle = makeBundle(
 				[],
-				[{ name: 'Pipeline', steps: [{ agentRef: 'Ghost', name: 'S' }] }]
+				[{ name: 'Pipeline', nodes: [{ agentRef: 'Ghost', name: 'S' }] }]
 			);
 
 			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
@@ -616,7 +616,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			// Bundle has no agents but workflow references ExistingAgent (from target space)
 			const bundle = makeBundle(
 				[],
-				[{ name: 'Pipeline', steps: [{ agentRef: 'ExistingAgent', name: 'S' }] }]
+				[{ name: 'Pipeline', nodes: [{ agentRef: 'ExistingAgent', name: 'S' }] }]
 			);
 
 			const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
@@ -663,7 +663,7 @@ describe('Space Export/Import RPC Handlers', () => {
 		it('creates agents and workflows with no conflicts', async () => {
 			const bundle = makeBundle(
 				[{ name: 'Coder', role: 'coder', systemPrompt: 'You code.' }],
-				[{ name: 'Pipeline', steps: [{ agentRef: 'Coder', name: 'Code' }] }]
+				[{ name: 'Pipeline', nodes: [{ agentRef: 'Coder', name: 'Code' }] }]
 			);
 
 			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -689,7 +689,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				const bundle = makeBundle(
 					[{ name: 'Coder', role: 'reviewer' }], // different role
-					[{ name: 'Pipeline', steps: [{ agentRef: 'Coder', name: 'Code' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'Coder', name: 'Code' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -711,7 +711,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				// Workflow should still be importable and reference the existing agent UUID
 				expect(result.workflows[0].action).toBe('created');
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(existing.id);
+				expect(wf.nodes[0].agentId).toBe(existing.id);
 			});
 
 			it('skips conflicting workflow', async () => {
@@ -719,13 +719,13 @@ describe('Space Export/Import RPC Handlers', () => {
 				const existingWf = workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'Pipeline',
-					steps: [{ name: 'S', agentId: agent.id }],
+					nodes: [{ name: 'S', agentId: agent.id }],
 					transitions: [],
 				});
 
 				const bundle = makeBundle(
 					[{ name: 'A', role: 'coder' }],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'S' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'A', name: 'S' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -772,13 +772,13 @@ describe('Space Export/Import RPC Handlers', () => {
 				workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'Pipeline',
-					steps: [{ name: 'S', agentId: agent.id }],
+					nodes: [{ name: 'S', agentId: agent.id }],
 					transitions: [],
 				});
 
 				const bundle = makeBundle(
 					[{ name: 'A', role: 'coder' }],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'S2' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'A', name: 'S2' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -823,13 +823,13 @@ describe('Space Export/Import RPC Handlers', () => {
 				workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'Pipeline',
-					steps: [{ name: 'OldStep', agentId: agent.id }],
+					nodes: [{ name: 'OldStep', agentId: agent.id }],
 					transitions: [],
 				});
 
 				const bundle = makeBundle(
 					[{ name: 'A', role: 'coder' }],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'A', name: 'NewStep' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'A', name: 'NewStep' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -842,7 +842,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				const all = workflowRepo.listWorkflows(SPACE_ID);
 				expect(all).toHaveLength(1);
-				expect(all[0].steps[0].name).toBe('NewStep');
+				expect(all[0].nodes[0].name).toBe('NewStep');
 			});
 		});
 
@@ -852,7 +852,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			it('resolves agent name→UUID from bundle agents', async () => {
 				const bundle = makeBundle(
 					[{ name: 'BundleAgent', role: 'coder' }],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'BundleAgent', name: 'S' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'BundleAgent', name: 'S' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -862,7 +862,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				const importedAgentId = result.agents[0].id;
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(importedAgentId);
+				expect(wf.nodes[0].agentId).toBe(importedAgentId);
 			});
 
 			it('resolves agent name→UUID from existing space agents (not in bundle)', async () => {
@@ -871,7 +871,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				// Bundle has workflow referencing LocalAgent but does not include LocalAgent as agent
 				const bundle = makeBundle(
 					[],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'LocalAgent', name: 'S' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'LocalAgent', name: 'S' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -880,7 +880,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				});
 
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(existing.id);
+				expect(wf.nodes[0].agentId).toBe(existing.id);
 			});
 
 			it('prefers bundle agent over existing space agent of same name', async () => {
@@ -889,7 +889,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				// Bundle includes Agent → will be renamed (conflict resolution: rename)
 				const bundle = makeBundle(
 					[{ name: 'Agent', role: 'reviewer' }],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'Agent', name: 'S' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'Agent', name: 'S' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -900,13 +900,13 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				// When Agent is skipped, bundle cross-ref maps to the existing agent UUID
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-				expect(wf.steps[0].agentId).toBe(existingAgent.id);
+				expect(wf.nodes[0].agentId).toBe(existingAgent.id);
 			});
 
 			it('throws when agent ref cannot be resolved', async () => {
 				const bundle = makeBundle(
 					[],
-					[{ name: 'Pipeline', steps: [{ agentRef: 'GhostAgent', name: 'S' }] }]
+					[{ name: 'Pipeline', nodes: [{ agentRef: 'GhostAgent', name: 'S' }] }]
 				);
 
 				await expect(
@@ -928,14 +928,14 @@ describe('Space Export/Import RPC Handlers', () => {
 				// appliesTo should contain step UUIDs (not step names)
 				expect(rule.appliesTo).toHaveLength(1);
 				// The step UUID should correspond to the 'Code' step
-				const codeStep = wf.steps.find((s) => s.name === 'Code')!;
+				const codeStep = wf.nodes.find((s) => s.name === 'Code')!;
 				expect(rule.appliesTo![0]).toBe(codeStep.id);
 			});
 
 			it('assigns fresh step UUIDs (not re-using exported names as IDs)', async () => {
 				const bundle = makeBundle(
 					[{ name: 'A', role: 'coder' }],
-					[{ name: 'W', steps: [{ agentRef: 'A', name: 'MyStep' }] }]
+					[{ name: 'W', nodes: [{ agentRef: 'A', name: 'MyStep' }] }]
 				);
 
 				const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -945,7 +945,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 				const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
 				// Step ID should be a UUID (not 'MyStep' or any string from the bundle)
-				const stepId = wf.steps[0].id;
+				const stepId = wf.nodes[0].id;
 				expect(stepId).toMatch(/^[0-9a-f-]{36}$/i);
 				expect(stepId).not.toBe('MyStep');
 			});
@@ -963,12 +963,12 @@ describe('Space Export/Import RPC Handlers', () => {
 
 			expect(result.agents).toHaveLength(2);
 			const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-			expect(wf.steps).toHaveLength(2);
+			expect(wf.nodes).toHaveLength(2);
 			expect(wf.transitions).toHaveLength(1);
 
 			// Transition should reference correct step UUIDs
-			const step1 = wf.steps.find((s) => s.name === 'Code')!;
-			const step2 = wf.steps.find((s) => s.name === 'Review')!;
+			const step1 = wf.nodes.find((s) => s.name === 'Code')!;
+			const step2 = wf.nodes.find((s) => s.name === 'Review')!;
 			expect(wf.transitions[0].from).toBe(step1.id);
 			expect(wf.transitions[0].to).toBe(step2.id);
 		});
@@ -988,27 +988,27 @@ describe('Space Export/Import RPC Handlers', () => {
 						version: 1,
 						type: 'workflow',
 						name: 'CyclicWorkflow',
-						steps: [
+						nodes: [
 							{ agentRef: 'Planner', name: 'Plan' },
 							{ agentRef: 'Coder', name: 'Code' },
 							{ agentRef: 'Verifier', name: 'Verify' },
 						],
 						transitions: [
 							{
-								fromStep: 'Plan',
-								toStep: 'Code',
+								fromNode: 'Plan',
+								toNode: 'Code',
 								condition: { type: 'human', description: 'Approve plan' },
 								order: 0,
 							},
 							{
-								fromStep: 'Code',
-								toStep: 'Verify',
+								fromNode: 'Code',
+								toNode: 'Verify',
 								condition: { type: 'always' },
 								order: 0,
 							},
 							{
-								fromStep: 'Verify',
-								toStep: 'Plan',
+								fromNode: 'Verify',
+								toNode: 'Plan',
 								condition: {
 									type: 'task_result',
 									expression: 'failed',
@@ -1018,8 +1018,8 @@ describe('Space Export/Import RPC Handlers', () => {
 								isCyclic: true,
 							},
 							{
-								fromStep: 'Verify',
-								toStep: 'Code',
+								fromNode: 'Verify',
+								toNode: 'Code',
 								condition: {
 									type: 'task_result',
 									expression: 'passed',
@@ -1028,7 +1028,7 @@ describe('Space Export/Import RPC Handlers', () => {
 								order: 1,
 							},
 						],
-						startStep: 'Plan',
+						startNode: 'Plan',
 						rules: [],
 						tags: ['cyclic'],
 					},
@@ -1046,8 +1046,8 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect(wf.transitions).toHaveLength(4);
 
 			// Find the cyclic Verify→Plan transition
-			const planStep = wf.steps.find((s) => s.name === 'Plan')!;
-			const verifyStep = wf.steps.find((s) => s.name === 'Verify')!;
+			const planStep = wf.nodes.find((s) => s.name === 'Plan')!;
+			const verifyStep = wf.nodes.find((s) => s.name === 'Verify')!;
 			const cyclicTransition = wf.transitions.find(
 				(t) => t.from === verifyStep.id && t.to === planStep.id
 			)!;
@@ -1067,7 +1067,7 @@ describe('Space Export/Import RPC Handlers', () => {
 		it('returns empty warnings array on clean import', async () => {
 			const bundle = makeBundle(
 				[{ name: 'A', role: 'coder' }],
-				[{ name: 'W', steps: [{ agentRef: 'A', name: 'S' }] }]
+				[{ name: 'W', nodes: [{ agentRef: 'A', name: 'S' }] }]
 			);
 
 			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1094,9 +1094,9 @@ describe('Space Export/Import RPC Handlers', () => {
 							version: 1,
 							type: 'workflow',
 							name: 'BadWorkflow',
-							steps: [{ agentRef: 'GhostAgent', name: 'S' }],
+							nodes: [{ agentRef: 'GhostAgent', name: 'S' }],
 							transitions: [],
-							startStep: 'S',
+							startNode: 'S',
 							rules: [],
 							tags: [],
 						},
@@ -1120,7 +1120,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				const existingWf = workflowManager.createWorkflow({
 					spaceId: SPACE_ID,
 					name: 'ToReplace',
-					steps: [{ name: 'S', agentId: existingAgent.id }],
+					nodes: [{ name: 'S', agentId: existingAgent.id }],
 					transitions: [],
 				});
 
@@ -1135,9 +1135,9 @@ describe('Space Export/Import RPC Handlers', () => {
 							version: 1,
 							type: 'workflow',
 							name: 'ToReplace',
-							steps: [{ agentRef: 'GhostAgent', name: 'S2' }],
+							nodes: [{ agentRef: 'GhostAgent', name: 'S2' }],
 							transitions: [],
-							startStep: 'S2',
+							startNode: 'S2',
 							rules: [],
 							tags: [],
 						},
@@ -1311,7 +1311,7 @@ describe('Space Export/Import RPC Handlers', () => {
 		it('emits spaceWorkflow.created for each newly created workflow', async () => {
 			const bundle = makeBundle(
 				[{ name: 'Coder', role: 'coder' }],
-				[{ name: 'Pipe', steps: [{ agentRef: 'Coder', name: 's1' }] }]
+				[{ name: 'Pipe', nodes: [{ agentRef: 'Coder', name: 's1' }] }]
 			);
 
 			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1333,14 +1333,14 @@ describe('Space Export/Import RPC Handlers', () => {
 			const existingWf = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Pipe',
-				steps: [{ name: 's1', agentId: existingAgentId }],
+				nodes: [{ name: 's1', agentId: existingAgentId }],
 				transitions: [],
 			});
 			const oldWorkflowId = existingWf.id;
 
 			const bundle = makeBundle(
 				[{ name: 'Coder', role: 'coder' }],
-				[{ name: 'Pipe', steps: [{ agentRef: 'Coder', name: 's1' }] }]
+				[{ name: 'Pipe', nodes: [{ agentRef: 'Coder', name: 's1' }] }]
 			);
 
 			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1364,7 +1364,7 @@ describe('Space Export/Import RPC Handlers', () => {
 		it('emits spaceAgent.created and spaceWorkflow.created for bundle with both', async () => {
 			const bundle = makeBundle(
 				[{ name: 'AgentA', role: 'coder' }],
-				[{ name: 'WfA', steps: [{ agentRef: 'AgentA', name: 'step' }] }]
+				[{ name: 'WfA', nodes: [{ agentRef: 'AgentA', name: 'step' }] }]
 			);
 
 			await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1433,7 +1433,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Collab Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1455,7 +1455,7 @@ describe('multi-agent step import', () => {
 
 		expect(result.agents).toHaveLength(2);
 		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const step = wf.steps[0];
+		const step = wf.nodes[0];
 
 		// Multi-agent step should have agents array, not single agentId
 		expect(step.agents).toHaveLength(2);
@@ -1478,7 +1478,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1499,7 +1499,7 @@ describe('multi-agent step import', () => {
 		});
 
 		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const agentEntries = wf.steps[0].agents!;
+		const agentEntries = wf.nodes[0].agents!;
 		const byAgentId = new Map(agentEntries.map((a) => [a.agentId, a]));
 
 		const coderId = result.agents.find((a) => a.name === 'Coder')!.id;
@@ -1517,7 +1517,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1538,7 +1538,7 @@ describe('multi-agent step import', () => {
 		});
 
 		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const step = wf.steps[0];
+		const step = wf.nodes[0];
 		expect(step.channels).toHaveLength(1);
 		expect(step.channels![0].from).toBe('coder');
 		expect(step.channels![0].to).toBe('reviewer');
@@ -1552,7 +1552,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1578,7 +1578,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1607,7 +1607,7 @@ describe('multi-agent step import', () => {
 		});
 
 		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const step = wf.steps[0];
+		const step = wf.nodes[0];
 		// Single-agent step uses agentId field, not agents[]
 		const coderId = result.agents[0].id;
 		expect(step.agentId).toBe(coderId);
@@ -1623,7 +1623,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1653,7 +1653,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Solo',
@@ -1684,7 +1684,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Step',
@@ -1722,7 +1722,7 @@ describe('multi-agent step import', () => {
 			[
 				{
 					name: 'Pipeline',
-					steps: [
+					nodes: [
 						{
 							multiAgentStep: {
 								name: 'Parallel',
@@ -1740,7 +1740,7 @@ describe('multi-agent step import', () => {
 		});
 
 		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const agentIds = wf.steps[0].agents!.map((a) => a.agentId);
+		const agentIds = wf.nodes[0].agents!.map((a) => a.agentId);
 		expect(agentIds).toContain(existing1.id);
 		expect(agentIds).toContain(existing2.id);
 	});
@@ -1751,7 +1751,7 @@ describe('multi-agent step import', () => {
 type BundleAgent = { name: string; role: string; systemPrompt?: string; model?: string };
 type BundleWorkflow = {
 	name: string;
-	steps: Array<{ agentRef: string; name: string; instructions?: string }>;
+	nodes: Array<{ agentRef: string; name: string; instructions?: string }>;
 };
 
 function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object {
@@ -1771,13 +1771,13 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 			version: 1,
 			type: 'workflow',
 			name: w.name,
-			steps: w.steps.map((s) => ({
+			nodes: w.nodes.map((s) => ({
 				agentRef: s.agentRef,
 				name: s.name,
 				...(s.instructions ? { instructions: s.instructions } : {}),
 			})),
 			transitions: [],
-			startStep: w.steps[0]?.name ?? '',
+			startNode: w.nodes[0]?.name ?? '',
 			rules: [],
 			tags: [],
 		})),
@@ -1796,18 +1796,18 @@ function makeBundleWithCondition(type: string, expression: string | undefined): 
 				version: 1,
 				type: 'workflow',
 				name: 'ConditionWF',
-				steps: [
+				nodes: [
 					{ agentRef: 'A', name: 'S1' },
 					{ agentRef: 'A', name: 'S2' },
 				],
 				transitions: [
 					{
-						fromStep: 'S1',
-						toStep: 'S2',
+						fromNode: 'S1',
+						toNode: 'S2',
 						condition: expression !== undefined ? { type, expression } : { type },
 					},
 				],
-				startStep: 'S1',
+				startNode: 'S1',
 				rules: [],
 				tags: [],
 			},
@@ -1827,14 +1827,14 @@ function makeBundleWithRules(): object {
 				version: 1,
 				type: 'workflow',
 				name: 'RulesWF',
-				steps: [{ agentRef: 'Coder', name: 'Code' }],
+				nodes: [{ agentRef: 'Coder', name: 'Code' }],
 				transitions: [],
-				startStep: 'Code',
+				startNode: 'Code',
 				rules: [
 					{
 						name: 'No hacks',
 						content: 'Do not write hacks.',
-						appliesTo: ['Code'], // step name — should be remapped to step UUID
+						appliesTo: ['Code'], // node name — should be remapped to node UUID
 					},
 				],
 				tags: [],
@@ -1858,12 +1858,12 @@ function makeTwoStepBundle(): object {
 				version: 1,
 				type: 'workflow',
 				name: 'CodingPipeline',
-				steps: [
+				nodes: [
 					{ agentRef: 'Coder', name: 'Code' },
 					{ agentRef: 'Reviewer', name: 'Review' },
 				],
-				transitions: [{ fromStep: 'Code', toStep: 'Review' }],
-				startStep: 'Code',
+				transitions: [{ fromNode: 'Code', toNode: 'Review' }],
+				startNode: 'Code',
 				rules: [],
 				tags: [],
 			},
@@ -1894,7 +1894,7 @@ function makeMultiAgentBundle(
 	agents: BundleAgent[],
 	workflows: Array<{
 		name: string;
-		steps: MultiAgentStepEntry[];
+		nodes: MultiAgentStepEntry[];
 	}>
 ): object {
 	return {
@@ -1911,7 +1911,7 @@ function makeMultiAgentBundle(
 			version: 1,
 			type: 'workflow',
 			name: w.name,
-			steps: w.steps.map((s) => {
+			nodes: w.nodes.map((s) => {
 				if ('multiAgentStep' in s) {
 					const ms = s.multiAgentStep;
 					const step: Record<string, unknown> = {
@@ -1929,10 +1929,10 @@ function makeMultiAgentBundle(
 				};
 			}),
 			transitions: [],
-			startStep: w.steps[0]
-				? 'multiAgentStep' in w.steps[0]
-					? w.steps[0].multiAgentStep.name
-					: w.steps[0].name
+			startNode: w.nodes[0]
+				? 'multiAgentStep' in w.nodes[0]
+					? w.nodes[0].multiAgentStep.name
+					: w.nodes[0].name
 				: '',
 			rules: [],
 			tags: [],
@@ -1952,9 +1952,9 @@ function makeSingleAgentBundle(agentName: string, agentRole: string, stepName: s
 				version: 1,
 				type: 'workflow',
 				name: 'Legacy Workflow',
-				steps: [{ agentRef: agentName, name: stepName }],
+				nodes: [{ agentRef: agentName, name: stepName }],
 				transitions: [],
-				startStep: stepName,
+				startNode: stepName,
 				rules: [],
 				tags: [],
 			},
@@ -2031,7 +2031,7 @@ describe('full export→import round-trip', () => {
 			spaceId: 'other-space',
 			name: 'Code Pipeline',
 			description: 'A simple coder workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'src-step-1',
 					name: 'Code',
@@ -2040,7 +2040,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'src-step-1',
+			startNodeId: 'src-step-1',
 			rules: [
 				{
 					id: 'src-rule-1',
@@ -2084,7 +2084,7 @@ describe('full export→import round-trip', () => {
 		expect(importedAgent.systemPrompt).toBe('You write code.');
 		expect(importedAgent.tools).toEqual(['bash', 'read_file']);
 
-		const step = importedWf.steps[0];
+		const step = importedWf.nodes[0];
 		expect(step.name).toBe('Code');
 		expect(step.agentId).toBe(importedAgent.id);
 		// Must NOT be the original source UUID
@@ -2127,7 +2127,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-ma',
 			spaceId: 'other-space',
 			name: 'Collab Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-ma',
 					name: 'Code and Review',
@@ -2142,7 +2142,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-ma',
+			startNodeId: 'step-ma',
 			rules: [],
 			tags: ['collab'],
 			createdAt: 1000,
@@ -2159,7 +2159,7 @@ describe('full export→import round-trip', () => {
 		expect(result.workflows).toHaveLength(1);
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const importedStep = importedWf.steps[0];
+		const importedStep = importedWf.nodes[0];
 
 		// Multi-agent step preserved
 		expect(importedStep.agents).toHaveLength(2);
@@ -2217,7 +2217,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-ow',
 			spaceId: 'other-space',
 			name: 'One-Way Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-ow',
 					name: 'Directed',
@@ -2226,7 +2226,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-ow',
+			startNodeId: 'step-ow',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -2240,7 +2240,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const ch = importedWf.steps[0].channels![0];
+		const ch = importedWf.nodes[0].channels![0];
 		expect(ch.from).toBe('alpha');
 		expect(ch.to).toBe('beta');
 		expect(ch.direction).toBe('one-way');
@@ -2276,7 +2276,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-fanout',
 			spaceId: 'other-space',
 			name: 'Fan-Out Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-fo',
 					name: 'Fan Out',
@@ -2285,7 +2285,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-fo',
+			startNodeId: 'step-fo',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -2299,7 +2299,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const ch = importedWf.steps[0].channels![0];
+		const ch = importedWf.nodes[0].channels![0];
 		expect(ch.from).toBe('hub');
 		expect(ch.to).toEqual(['spoke1', 'spoke2']);
 		expect(ch.direction).toBe('one-way');
@@ -2319,7 +2319,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-wc',
 			spaceId: 'other-space',
 			name: 'Wildcard Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-wc',
 					name: 'Broadcast',
@@ -2328,7 +2328,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-wc',
+			startNodeId: 'step-wc',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -2342,7 +2342,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const ch = importedWf.steps[0].channels![0];
+		const ch = importedWf.nodes[0].channels![0];
 		expect(ch.from).toBe('*');
 		expect(ch.to).toBe('*');
 		expect(ch.direction).toBe('bidirectional');
@@ -2378,7 +2378,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-mix',
 			spaceId: 'other-space',
 			name: 'Mixed Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-plan',
 					name: 'Plan',
@@ -2396,7 +2396,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [{ id: 'trans-1', from: 'step-plan', to: 'step-collab' }],
-			startStepId: 'step-plan',
+			startNodeId: 'step-plan',
 			rules: [],
 			tags: ['mixed'],
 			createdAt: 1000,
@@ -2414,16 +2414,16 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		expect(importedWf.steps).toHaveLength(2);
+		expect(importedWf.nodes).toHaveLength(2);
 
 		// Step 0: single-agent (plan)
-		const planStep = importedWf.steps.find((s) => s.name === 'Plan')!;
+		const planStep = importedWf.nodes.find((s) => s.name === 'Plan')!;
 		expect(planStep.agentId).toBeDefined();
 		expect(planStep.agents).toBeUndefined();
 		expect(planStep.instructions).toBe('Create a plan');
 
 		// Step 1: multi-agent (implement and review)
-		const collabStep = importedWf.steps.find((s) => s.name === 'Implement and Review')!;
+		const collabStep = importedWf.nodes.find((s) => s.name === 'Implement and Review')!;
 		expect(collabStep.agents).toHaveLength(2);
 		expect(collabStep.agentId).toBeUndefined();
 		expect(collabStep.channels).toHaveLength(1);
@@ -2434,7 +2434,7 @@ describe('full export→import round-trip', () => {
 		const transition = importedWf.transitions[0];
 		expect(transition.from).toBe(planStep.id);
 		expect(transition.to).toBe(collabStep.id);
-		expect(importedWf.startStepId).toBe(planStep.id);
+		expect(importedWf.startNodeId).toBe(planStep.id);
 
 		// Tags preserved
 		expect(importedWf.tags).toEqual(['mixed']);
@@ -2455,9 +2455,9 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-legacy',
 			spaceId: 'other-space',
 			name: 'Legacy Workflow',
-			steps: [{ id: 'step-l', name: 'Code', agentId: 'src-legacy' }],
+			nodes: [{ id: 'step-l', name: 'Code', agentId: 'src-legacy' }],
 			transitions: [],
-			startStepId: 'step-l',
+			startNodeId: 'step-l',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -2471,7 +2471,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const step = importedWf.steps[0];
+		const step = importedWf.nodes[0];
 		// Old-style single agentId must be preserved as scalar agentId
 		expect(step.agentId).toBeDefined();
 		expect(step.agents).toBeUndefined();
@@ -2494,7 +2494,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-err',
 			spaceId: 'other-space',
 			name: 'Bad Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-bad',
 					name: 'Parallel',
@@ -2505,7 +2505,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-bad',
+			startNodeId: 'step-bad',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -2539,7 +2539,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-badch',
 			spaceId: 'other-space',
 			name: 'Bad Channel Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-bc',
 					name: 'Work',
@@ -2551,7 +2551,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-bc',
+			startNodeId: 'step-bc',
 			rules: [],
 			tags: [],
 			createdAt: 1000,
@@ -2585,7 +2585,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-wf-exec-badch',
 			spaceId: 'other-space',
 			name: 'Exec Bad Channel Workflow',
-			steps: [
+			nodes: [
 				{
 					id: 'step-exec-bc',
 					name: 'Work',
@@ -2597,7 +2597,7 @@ describe('full export→import round-trip', () => {
 				},
 			],
 			transitions: [],
-			startStepId: 'step-exec-bc',
+			startNodeId: 'step-exec-bc',
 			rules: [],
 			tags: [],
 			createdAt: 1000,

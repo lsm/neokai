@@ -154,9 +154,9 @@ function makeStepCtx(
 		spaceId,
 		name: 'cam-wf',
 		description: '',
-		steps: [],
+		nodes: [],
 		transitions: [],
-		startStepId: '',
+		startNodeId: '',
 		rules: [],
 	});
 	const run = runRepo.createRun({
@@ -354,9 +354,9 @@ function buildSingleStepWf(ctx: TaskCtx) {
 	return ctx.workflowManager.createWorkflow({
 		spaceId: ctx.spaceId,
 		name: 'Single-Step WF',
-		steps: [{ id: stepId, name: 'Only Step', agentId: ctx.agentId }],
+		nodes: [{ id: stepId, name: 'Only Step', agentId: ctx.agentId }],
 		transitions: [],
-		startStepId: stepId,
+		startNodeId: stepId,
 		rules: [],
 	});
 }

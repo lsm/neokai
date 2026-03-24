@@ -4,13 +4,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { autoLayout } from '../layout.ts';
-import type { WorkflowStep, WorkflowTransition } from '@neokai/shared';
+import type { WorkflowNode, WorkflowTransition } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeStep(id: string): WorkflowStep {
+function makeStep(id: string): WorkflowNode {
 	return { id, name: id, agentId: 'agent-1' };
 }
 

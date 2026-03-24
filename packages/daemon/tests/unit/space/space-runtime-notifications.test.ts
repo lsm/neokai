@@ -104,12 +104,12 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, role: s
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	steps: Array<{ id: string; name: string; agentId: string }>,
+	nodes: Array<{ id: string; name: string; agentId: string }>,
 	conditions: Array<{ type: 'always' | 'human' }> = []
 ): SpaceWorkflow {
-	const transitions = steps.slice(0, -1).map((step, i) => ({
+	const transitions = nodes.slice(0, -1).map((step, i) => ({
 		from: step.id,
-		to: steps[i + 1].id,
+		to: nodes[i + 1].id,
 		condition: conditions[i] ?? { type: 'always' as const },
 		order: 0,
 	}));
@@ -118,9 +118,9 @@ function buildLinearWorkflow(
 		spaceId,
 		name: `Workflow ${Date.now()}-${Math.random()}`,
 		description: '',
-		steps,
+		nodes,
 		transitions,
-		startStepId: steps[0].id,
+		startNodeId: nodes[0].id,
 		rules: [],
 		tags: [],
 	});
@@ -475,7 +475,7 @@ describe('SpaceRuntime — notification events', () => {
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Complete step B → run completes
-			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowStepId === STEP_B);
+			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 			taskRepo.updateTask(stepBTask!.id, { status: 'completed' });
 			await runtime.executeTick();
@@ -1324,7 +1324,7 @@ describe('SpaceRuntime — notification events', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Parallel Fail Notify ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel Step',
@@ -1332,7 +1332,7 @@ describe('SpaceRuntime — notification events', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1356,7 +1356,7 @@ describe('SpaceRuntime — notification events', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Terminal Notify ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel Partial',
@@ -1364,7 +1364,7 @@ describe('SpaceRuntime — notification events', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});
@@ -1409,7 +1409,7 @@ describe('SpaceRuntime — notification events', () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Fail Dedup ${Date.now()}`,
-				steps: [
+				nodes: [
 					{
 						id: STEP_A,
 						name: 'Parallel Dedup',
@@ -1417,7 +1417,7 @@ describe('SpaceRuntime — notification events', () => {
 					},
 				],
 				transitions: [],
-				startStepId: STEP_A,
+				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
 			});

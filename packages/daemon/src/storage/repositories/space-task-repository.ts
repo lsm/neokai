@@ -40,7 +40,7 @@ export class SpaceTaskRepository {
 			params.assignedAgent ?? 'coder',
 			params.customAgentId ?? null,
 			params.workflowRunId ?? null,
-			params.workflowStepId ?? null,
+			params.workflowNodeId ?? null,
 			params.createdByTaskId ?? null,
 			params.goalId ?? null,
 			JSON.stringify(params.dependsOn ?? []),
@@ -184,9 +184,9 @@ export class SpaceTaskRepository {
 			fields.push('workflow_run_id = ?');
 			values.push(params.workflowRunId ?? null);
 		}
-		if (params.workflowStepId !== undefined) {
+		if (params.workflowNodeId !== undefined) {
 			fields.push('workflow_node_id = ?');
-			values.push(params.workflowStepId ?? null);
+			values.push(params.workflowNodeId ?? null);
 		}
 		if (params.progress !== undefined) {
 			fields.push('progress = ?');
@@ -354,7 +354,7 @@ export class SpaceTaskRepository {
 			assignedAgent: (row.assigned_agent as SpaceTask['assignedAgent'] | null) ?? undefined,
 			customAgentId: (row.custom_agent_id as string | null) ?? undefined,
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
-			workflowStepId: (row.workflow_node_id as string | null) ?? undefined,
+			workflowNodeId: (row.workflow_node_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
 			goalId: (row.goal_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,

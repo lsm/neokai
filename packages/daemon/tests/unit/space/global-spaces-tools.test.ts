@@ -319,9 +319,9 @@ function buildSingleStepWorkflow(
 	return workflowManager.createWorkflow({
 		spaceId,
 		name,
-		steps: [{ id: stepId, name: 'Work', agentId }],
+		nodes: [{ id: stepId, name: 'Work', agentId }],
 		transitions: [],
-		startStepId: stepId,
+		startNodeId: stepId,
 		rules: [],
 		tags: [],
 	});
