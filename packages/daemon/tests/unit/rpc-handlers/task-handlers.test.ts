@@ -344,7 +344,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 
 			expect(result).toEqual({ success: true });
 			// Sets status to review before reviving
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please retry');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please retry', 'worker');
 		});
 
 		it('throws and rolls back status when reviveTaskForMessage returns false', async () => {
@@ -379,7 +379,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry', 'worker');
 			// Verify rollback: first transitioned to 'review', then rolled back to 'needs_attention'
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'review');
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'needs_attention');
@@ -398,7 +398,11 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			expect(result).toEqual({ success: true });
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please continue');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				'task-1',
+				'please continue',
+				'worker'
+			);
 		});
 
 		it('throws and rolls back when reviveTaskForMessage fails for completed task', async () => {
@@ -432,7 +436,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'continue' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'continue');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'continue', 'worker');
 			// Verify intermediate transition to in_progress, then rollback to completed
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'completed');
@@ -451,7 +455,11 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			);
 
 			expect(result).toEqual({ success: true });
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'restart please');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				'task-1',
+				'restart please',
+				'worker'
+			);
 		});
 
 		it('throws and rolls back when reviveTaskForMessage fails for cancelled task', async () => {
@@ -485,10 +493,58 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry');
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry', 'worker');
 			// Verify intermediate transition to in_progress, then rollback to cancelled
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
 			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'cancelled');
+		});
+	});
+
+	describe('target parameter routing for needs_attention tasks', () => {
+		it('passes target=worker to reviveTaskForMessage when human selects worker', async () => {
+			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setup({ task: needsAttentionTask, runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'hello worker', target: 'worker' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'hello worker', 'worker');
+		});
+
+		it('passes target=leader to reviveTaskForMessage when human selects leader', async () => {
+			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setup({ task: needsAttentionTask, runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'hello leader', target: 'leader' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'hello leader', 'leader');
+		});
+
+		it('defaults to target=worker when no target specified', async () => {
+			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setup({ task: needsAttentionTask, runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'hello default' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				'task-1',
+				'hello default',
+				'worker'
+			);
 		});
 	});
 

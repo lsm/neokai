@@ -4,12 +4,12 @@
  * Data access layer for SpaceWorkflow, SpaceWorkflowStep, and SpaceWorkflowTransition records.
  *
  * Storage layout:
- *   space_workflows             — id, space_id, name, description, start_step_id, config (JSON), layout (JSON), created_at, updated_at
- *   space_workflow_steps        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
- *   space_workflow_transitions  — id, workflow_id, from_step_id, to_step_id, condition (JSON), order_index, is_cyclic, created_at, updated_at
+ *   space_workflows             — id, space_id, name, description, start_node_id, config (JSON), layout (JSON), created_at, updated_at
+ *   space_workflow_nodes        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
+ *   space_workflow_transitions  — id, workflow_id, from_node_id, to_node_id, condition (JSON), order_index, is_cyclic, created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
- * The `config` column on space_workflow_steps stores: { instructions? }
+ * The `config` column on space_workflow_nodes stores: { instructions? }
  * The `condition` column on space_workflow_transitions stores: WorkflowCondition JSON or null
  */
 
@@ -39,7 +39,7 @@ interface WorkflowRow {
 	space_id: string;
 	name: string;
 	description: string;
-	start_step_id: string | null;
+	start_node_id: string | null;
 	config: string | null;
 	layout: string | null;
 	max_iterations: number | null;
@@ -61,8 +61,8 @@ interface StepRow {
 interface TransitionRow {
 	id: string;
 	workflow_id: string;
-	from_step_id: string;
-	to_step_id: string;
+	from_node_id: string;
+	to_node_id: string;
 	condition: string | null;
 	order_index: number;
 	is_cyclic: number | null;
@@ -77,7 +77,7 @@ interface WorkflowConfigJson {
 	extra?: Record<string, unknown>;
 }
 
-// JSON stored inside space_workflow_steps.config
+// JSON stored inside space_workflow_nodes.config
 interface StepConfigJson {
 	instructions?: string;
 	/** Multi-agent array — present when the step uses the agents[] format */
@@ -125,8 +125,8 @@ function rowToTransition(row: TransitionRow): WorkflowTransition {
 	const condition = parseJson<WorkflowCondition | null>(row.condition, null);
 	return {
 		id: row.id,
-		from: row.from_step_id,
-		to: row.to_step_id,
+		from: row.from_node_id,
+		to: row.to_node_id,
 		condition: condition ?? undefined,
 		order: row.order_index,
 		isCyclic: row.is_cyclic !== null ? Boolean(row.is_cyclic) : undefined,
@@ -140,7 +140,7 @@ function rowToWorkflow(
 ): SpaceWorkflow {
 	const cfg = parseJson<WorkflowConfigJson>(row.config, {});
 	// Derive startStepId: use explicit column, fall back to first step
-	const startStepId = row.start_step_id ?? steps[0]?.id ?? '';
+	const startStepId = row.start_node_id ?? steps[0]?.id ?? '';
 	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
 	return {
 		id: row.id,
@@ -197,7 +197,7 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_step_id, config, layout, max_iterations, created_at, updated_at)
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, max_iterations, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
@@ -272,7 +272,7 @@ export class SpaceWorkflowRepository {
 			values.push(params.description ?? '');
 		}
 		if (params.startStepId !== undefined) {
-			fields.push('start_step_id = ?');
+			fields.push('start_node_id = ?');
 			values.push(params.startStepId ?? null);
 		}
 
@@ -325,7 +325,7 @@ export class SpaceWorkflowRepository {
 		if (hasStepReplacement) {
 			// Must delete transitions before steps (FK constraint)
 			this.db.prepare(`DELETE FROM space_workflow_transitions WHERE workflow_id = ?`).run(id);
-			this.db.prepare(`DELETE FROM space_workflow_steps WHERE workflow_id = ?`).run(id);
+			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(id);
 			const steps = params.steps ?? [];
 			for (let i = 0; i < steps.length; i++) {
 				const step = steps[i];
@@ -377,7 +377,7 @@ export class SpaceWorkflowRepository {
 		// contains the UUID as a substring, which is safe because UUIDs are globally unique.
 		const stepRows = this.db
 			.prepare(
-				`SELECT DISTINCT workflow_id FROM space_workflow_steps
+				`SELECT DISTINCT workflow_id FROM space_workflow_nodes
          WHERE agent_id = ? OR config LIKE '%' || ? || '%'`
 			)
 			.all(agentId, agentId) as Array<{ workflow_id: string }>;
@@ -397,7 +397,7 @@ export class SpaceWorkflowRepository {
 	private fetchSteps(workflowId: string): WorkflowStep[] {
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM space_workflow_steps WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
+				`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY order_index ASC, rowid ASC`
 			)
 			.all(workflowId) as StepRow[];
 		return rows.map(rowToStep);
@@ -436,7 +436,7 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflow_steps
+				`INSERT INTO space_workflow_nodes
            (id, workflow_id, name, description, agent_id, order_index, config, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
@@ -466,7 +466,7 @@ export class SpaceWorkflowRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_workflow_transitions
-           (id, workflow_id, from_step_id, to_step_id, condition, order_index, is_cyclic, created_at, updated_at)
+           (id, workflow_id, from_node_id, to_node_id, condition, order_index, is_cyclic, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(

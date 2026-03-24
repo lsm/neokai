@@ -1024,7 +1024,11 @@ export function setupTaskHandlers(
 				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
 			}
 
-			const revived = await runtime.reviveTaskForMessage(params.taskId, params.message.trim());
+			const revived = await runtime.reviveTaskForMessage(
+				params.taskId,
+				params.message.trim(),
+				target
+			);
 			if (!revived) {
 				// Rollback: restore task to original status
 				try {

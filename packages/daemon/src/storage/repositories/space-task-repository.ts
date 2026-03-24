@@ -25,7 +25,7 @@ export class SpaceTaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_step_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
+			`INSERT INTO space_tasks (id, space_id, title, description, status, priority, task_type, assigned_agent, custom_agent_id, workflow_run_id, workflow_node_id, created_by_task_id, goal_id, depends_on, task_agent_session_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
@@ -185,7 +185,7 @@ export class SpaceTaskRepository {
 			values.push(params.workflowRunId ?? null);
 		}
 		if (params.workflowStepId !== undefined) {
-			fields.push('workflow_step_id = ?');
+			fields.push('workflow_node_id = ?');
 			values.push(params.workflowStepId ?? null);
 		}
 		if (params.progress !== undefined) {
@@ -354,7 +354,7 @@ export class SpaceTaskRepository {
 			assignedAgent: (row.assigned_agent as SpaceTask['assignedAgent'] | null) ?? undefined,
 			customAgentId: (row.custom_agent_id as string | null) ?? undefined,
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
-			workflowStepId: (row.workflow_step_id as string | null) ?? undefined,
+			workflowStepId: (row.workflow_node_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
 			goalId: (row.goal_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,

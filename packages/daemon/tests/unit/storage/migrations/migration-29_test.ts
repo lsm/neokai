@@ -6,11 +6,11 @@
  * Covers:
  * - All Space tables created correctly on a fresh DB (including space_workflow_transitions)
  * - space_agents has role/provider columns from the start (no CHECK constraint on role)
- * - space_workflows has start_step_id column from the start
- * - space_workflow_runs has current_step_id column from the start
+ * - space_workflows has start_node_id column from the start (renamed by M45)
+ * - space_workflow_runs has current_node_id column from the start (renamed by M45)
  * - Migration is idempotent (runs twice without error)
  * - No existing tables are affected
- * - space_tasks has custom_agent_id, workflow_run_id, workflow_step_id columns from the start
+ * - space_tasks has custom_agent_id, workflow_run_id, workflow_node_id columns from the start (renamed by M45)
  * - FK CASCADE deletes work: delete space → all child rows deleted
  * - space_tasks.workflow_run_id SET NULL on workflow run delete
  * - CHECK constraints are enforced (status, priority, etc.)
@@ -81,7 +81,7 @@ describe('Migration 29: Space system tables', () => {
 			'spaces',
 			'space_agents',
 			'space_workflows',
-			'space_workflow_steps',
+			'space_workflow_nodes',
 			'space_workflow_transitions',
 			'space_workflow_runs',
 			'space_tasks',
@@ -113,9 +113,9 @@ describe('Migration 29: Space system tables', () => {
 		expect(columnExists(db, 'space_tasks', 'workflow_run_id')).toBe(true);
 	});
 
-	test('space_tasks has workflow_step_id column from the start', () => {
+	test('space_tasks has workflow_node_id column from the start', () => {
 		runMigrations(db, () => {});
-		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(true);
+		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(true);
 	});
 
 	// -------------------------------------------------------------------------
@@ -132,7 +132,7 @@ describe('Migration 29: Space system tables', () => {
 			'title',
 			'description',
 			'current_step_index',
-			'current_step_id',
+			'current_node_id',
 			'status',
 			'config',
 			'created_at',
@@ -167,9 +167,9 @@ describe('Migration 29: Space system tables', () => {
 		}
 	});
 
-	test('space_workflows has start_step_id column', () => {
+	test('space_workflows has start_node_id column', () => {
 		runMigrations(db, () => {});
-		expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(true);
+		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
 	});
 
 	test('space_workflow_runs status CHECK constraint is enforced', () => {
@@ -216,17 +216,17 @@ describe('Migration 29: Space system tables', () => {
 			// already creates an implicit index, so an explicit one would be redundant.
 			'idx_space_agents_space_id',
 			'idx_space_workflows_space_id',
-			'idx_space_workflow_steps_workflow_id',
-			'idx_space_workflow_steps_order',
+			'idx_space_workflow_nodes_workflow_id',
+			'idx_space_workflow_nodes_order',
 			'idx_space_workflow_transitions_workflow_id',
-			'idx_space_workflow_transitions_from_step',
+			'idx_space_workflow_transitions_from_node',
 			'idx_space_workflow_runs_space_id',
 			'idx_space_workflow_runs_workflow_id',
 			'idx_space_workflow_runs_status',
 			'idx_space_tasks_space_id',
 			'idx_space_tasks_status',
 			'idx_space_tasks_workflow_run_id',
-			'idx_space_tasks_workflow_step_id',
+			'idx_space_tasks_workflow_node_id',
 			'idx_space_tasks_custom_agent_id',
 			'idx_space_session_groups_space_id',
 			'idx_space_session_group_members_group_id',
@@ -267,7 +267,7 @@ describe('Migration 29: Space system tables', () => {
 
 		// Insert a workflow step
 		db.exec(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at)
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at)
 			 VALUES ('step-1', 'wf-1', 'Step 1', 0, ${now}, ${now})`
 		);
 
@@ -304,7 +304,7 @@ describe('Migration 29: Space system tables', () => {
 			0
 		);
 		expect(
-			db.prepare(`SELECT * FROM space_workflow_steps WHERE workflow_id = 'wf-1'`).all()
+			db.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = 'wf-1'`).all()
 		).toHaveLength(0);
 		expect(
 			db.prepare(`SELECT * FROM space_workflow_runs WHERE space_id = 'sp-1'`).all()
@@ -513,10 +513,10 @@ describe('Migration 29: Space system tables', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// SET NULL on space_workflow_steps delete
+	// SET NULL on space_workflow_nodes delete
 	// -------------------------------------------------------------------------
 
-	test('deleting a workflow step sets space_tasks.workflow_step_id to NULL', () => {
+	test('deleting a workflow node sets space_tasks.workflow_node_id to NULL', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
@@ -530,24 +530,24 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('wf-step', 'sp-step', 'Workflow Step', ${now}, ${now})`
 		);
 		db.exec(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at)
+			`INSERT INTO space_workflow_nodes (id, workflow_id, name, order_index, created_at, updated_at)
 			 VALUES ('step-s1', 'wf-step', 'Step 1', 0, ${now}, ${now})`
 		);
 		db.exec(
-			`INSERT INTO space_tasks (id, space_id, title, workflow_step_id, created_at, updated_at)
+			`INSERT INTO space_tasks (id, space_id, title, workflow_node_id, created_at, updated_at)
 			 VALUES ('task-step', 'sp-step', 'Task Step', 'step-s1', ${now}, ${now})`
 		);
 
-		// Delete the workflow step
-		db.exec(`DELETE FROM space_workflow_steps WHERE id = 'step-s1'`);
+		// Delete the workflow node
+		db.exec(`DELETE FROM space_workflow_nodes WHERE id = 'step-s1'`);
 
-		// Task should still exist, but workflow_step_id should be NULL
+		// Task should still exist, but workflow_node_id should be NULL
 		const task = db.prepare(`SELECT * FROM space_tasks WHERE id = 'task-step'`).get() as Record<
 			string,
 			unknown
 		>;
 		expect(task).toBeTruthy();
-		expect(task['workflow_step_id']).toBeNull();
+		expect(task['workflow_node_id']).toBeNull();
 	});
 
 	// -------------------------------------------------------------------------
