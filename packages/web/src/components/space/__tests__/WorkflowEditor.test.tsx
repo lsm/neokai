@@ -519,7 +519,7 @@ describe('WorkflowEditor', () => {
 			});
 
 			const call = mockCreateWorkflow.mock.calls[0][0];
-			const savedStepId = call.steps[0]?.id;
+			const savedStepId = call.nodes[0]?.id;
 			const savedRules = call.rules ?? [];
 
 			// The scoped rule must have at least one appliesTo entry — a zero length
