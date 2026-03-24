@@ -2332,6 +2332,155 @@ describe('Room Agent Tools', () => {
 		});
 	});
 
+	describe('set_schedule', () => {
+		it('should set a schedule on a recurring mission', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Daily sync', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(
+				await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' })
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.missionType).toBe('recurring');
+			expect((goal.schedule as Record<string, unknown>).expression).toBe('0 9 * * *');
+			expect(result.nextRunAt).toBeDefined();
+			expect(result.nextRunAtISO).toBeDefined();
+		});
+
+		it('should set a schedule using @daily preset', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Daily check', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(
+				await handlers.set_schedule({ goal_id: goalId, cron_expression: '@daily' })
+			);
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect((goal.schedule as Record<string, unknown>).expression).toBe('@daily');
+		});
+
+		it('should return error when setting schedule on non-recurring goal', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'One-shot goal', mission_type: 'one_shot' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(
+				await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not a recurring mission');
+		});
+
+		it('should return error for invalid cron expression', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Bad cron', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(
+				await handlers.set_schedule({ goal_id: goalId, cron_expression: 'invalid' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid cron expression');
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(
+				await handlers.set_schedule({ goal_id: 'no-such-goal', cron_expression: '0 9 * * *' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Goal not found');
+		});
+	});
+
+	describe('pause_schedule', () => {
+		it('should pause a schedule on a recurring mission', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Paused mission', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			// First set a schedule
+			await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' });
+
+			// Then pause it
+			const result = parseResult(await handlers.pause_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.schedulePaused).toBe(true);
+		});
+
+		it('should return error when pausing non-recurring goal', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'One-shot', mission_type: 'one_shot' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(await handlers.pause_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not a recurring mission');
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.pause_schedule({ goal_id: 'no-such' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Goal not found');
+		});
+	});
+
+	describe('resume_schedule', () => {
+		it('should resume a paused schedule on a recurring mission', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'Resume mission', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			// Set and pause a schedule
+			await handlers.set_schedule({ goal_id: goalId, cron_expression: '0 9 * * *' });
+			await handlers.pause_schedule({ goal_id: goalId });
+
+			// Resume it
+			const result = parseResult(await handlers.resume_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(true);
+			const goal = result.goal as Record<string, unknown>;
+			expect(goal.schedulePaused).toBe(false);
+		});
+
+		it('should return error when resuming non-recurring goal', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'One-shot', mission_type: 'one_shot' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(await handlers.resume_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not a recurring mission');
+		});
+
+		it('should return error when resuming goal without schedule', async () => {
+			const created = parseResult(
+				await handlers.create_goal({ title: 'No schedule', mission_type: 'recurring' })
+			);
+			const goalId = created.goalId as string;
+
+			const result = parseResult(await handlers.resume_schedule({ goal_id: goalId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('no schedule set');
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.resume_schedule({ goal_id: 'no-such' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Goal not found');
+		});
+	});
+
 	describe('set_task_status — archived', () => {
 		it('should archive a completed task', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: 'D' });
