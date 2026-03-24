@@ -488,17 +488,22 @@ export class QueryRunner {
 						// For startup timeouts / conversation-not-found that exhausted all retries,
 						// provide actionable recovery hints. Both error types are handled symmetrically
 						// (same retry gate, same sdkSessionId clearing), so both deserve a hint.
-						const startupTimeoutUserMessage =
-							isStartupTimeout || isConversationNotFound
-								? `The AI session failed to ${isStartupTimeout ? 'start' : 'resume'} after ${STARTUP_MAX_RETRIES + 1} attempt(s) ` +
+						// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
+						// missing/corrupt session file — the session ID was already cleared above,
+						// so the next message will automatically start a fresh session.
+						const startupTimeoutUserMessage = isStartupTimeout
+							? `The AI session failed to start after ${STARTUP_MAX_RETRIES + 1} attempt(s) ` +
+								`(workspace: ${session.workspacePath}). ` +
+								`Common causes: another Claude Code session is using the same workspace, ` +
+								`a stale lock file in .claude/, or the workspace is under heavy load. ` +
+								`Try: closing other Claude sessions on this workspace, ` +
+								`then resend your message. ` +
+								`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+							: isConversationNotFound
+								? `The AI session could not be resumed after ${STARTUP_MAX_RETRIES + 1} attempt(s) ` +
 									`(workspace: ${session.workspacePath}). ` +
-									(isStartupTimeout
-										? `Common causes: another Claude Code session is using the same workspace, ` +
-											`a stale lock file in .claude/, or the workspace is under heavy load. `
-										: `The previous session file could not be found or is corrupt. `) +
-									`Try: closing other Claude sessions on this workspace, ` +
-									`then resend your message. ` +
-									`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+									`The previous session file could not be found or is corrupt. ` +
+									`The session has been reset automatically — please resend your message to start fresh.`
 								: undefined;
 
 						await errorManager.handleError(

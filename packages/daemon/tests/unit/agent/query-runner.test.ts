@@ -885,9 +885,9 @@ describe('QueryRunner', () => {
 				globalThis.setTimeout = originalSetTimeout;
 			}
 
-			// Each run captures one setTimeout call (the recovery defer).
-			// Delays must satisfy the 2× exponential relationship.
-			expect(capturedDelays.length).toBeGreaterThanOrEqual(2);
+			// Each QueryRunner run produces exactly one setTimeout (the recovery defer).
+			// Asserting === 2 guards against accidental extra calls shifting the indices.
+			expect(capturedDelays.length).toBe(2);
 			const delay1 = capturedDelays[0];
 			const delay2 = capturedDelays[1];
 			expect(delay1).toBeGreaterThan(0);
@@ -906,7 +906,7 @@ describe('QueryRunner', () => {
 			expect(ctx.startupTimeoutAutoRecoverAttempts).toBe(1);
 		});
 
-		it('should pass actionable user message to handleError when all retries exhausted', async () => {
+		it('should pass actionable user message to handleError when all retries exhausted (startup timeout)', async () => {
 			const ctx = createContext({
 				startupTimeoutAutoRecoverAttempts: 2, // at limit, no handler needed
 			});
@@ -918,10 +918,32 @@ describe('QueryRunner', () => {
 				'test-session-id',
 				expect.any(Error),
 				expect.any(String), // category
-				expect.stringContaining('workspace'), // user message mentions workspace
+				expect.stringContaining('NEOKAI_SDK_STARTUP_TIMEOUT_MS'), // timeout hint for startup failure
 				expect.anything(),
 				expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
 			);
+		});
+
+		it('should pass session-reset hint (no timeout mention) when conversation-not-found retries exhausted', async () => {
+			buildSpy.mockRejectedValue(new Error('No conversation found for session abc123'));
+			const ctx = createContext({
+				startupTimeoutAutoRecoverAttempts: 2, // at limit
+			});
+			runner = new QueryRunner(ctx);
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(handleErrorSpy).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.any(Error),
+				expect.any(String),
+				expect.stringContaining('session has been reset automatically'), // actionable hint
+				expect.anything(),
+				expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+			);
+			// NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a missing session file
+			const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+			expect(userMessage).not.toContain('NEOKAI_SDK_STARTUP_TIMEOUT_MS');
 		});
 	});
 });
