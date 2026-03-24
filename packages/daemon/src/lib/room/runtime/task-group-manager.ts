@@ -183,8 +183,8 @@ export class TaskGroupManager {
 	readonly workspacePath: string;
 	private _model?: string;
 	private _provider?: string;
-	readonly workerModel?: string;
-	readonly workerProvider?: string;
+	private _workerModel?: string;
+	private _workerProvider?: string;
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.groupRepo = config.groupRepo;
@@ -198,8 +198,8 @@ export class TaskGroupManager {
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
 		this._provider = config.provider;
-		this.workerModel = config.workerModel;
-		this.workerProvider = config.workerProvider;
+		this._workerModel = config.workerModel;
+		this._workerProvider = config.workerProvider;
 		this.daemonHub = config.daemonHub;
 	}
 
@@ -219,12 +219,28 @@ export class TaskGroupManager {
 		this._provider = provider;
 	}
 
+	/** Get the current model for worker sessions */
+	get workerModel(): string | undefined {
+		return this._workerModel;
+	}
+
+	/** Get the current provider for worker sessions */
+	get workerProvider(): string | undefined {
+		return this._workerProvider;
+	}
+
+	/** Update the model and provider for worker sessions (e.g., when user changes worker model mid-task) */
+	updateWorkerModel(model: string | undefined, provider?: string): void {
+		this._workerModel = model;
+		this._workerProvider = provider;
+	}
+
 	/**
 	 * Get the effective model to use for worker sessions.
 	 * Returns workerModel if set, otherwise falls back to model.
 	 */
 	getWorkerModel(): string | undefined {
-		return this.workerModel ?? this._model;
+		return this._workerModel ?? this._model;
 	}
 
 	/**

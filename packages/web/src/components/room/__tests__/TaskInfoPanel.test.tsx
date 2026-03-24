@@ -473,6 +473,38 @@ describe('TaskInfoPanel', () => {
 			expect(modelEl?.textContent).toBe('claude-opus-4-6');
 		});
 
+		it('should show separate model selectors for worker and leader when both have model config', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'active',
+				config: { model: 'claude-opus-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			// Both Worker and Leader labels should be shown with Model:
+			expect(container.textContent).toMatch(/Worker:.*Model:/);
+			expect(container.textContent).toMatch(/Leader:.*Model:/);
+			// Both model selectors should be rendered
+			const modelSelectors = container.querySelectorAll('[data-testid="model-selector-mock"]');
+			expect(modelSelectors).toHaveLength(2);
+			expect(modelSelectors[0]?.textContent).toBe('claude-sonnet-4-6');
+			expect(modelSelectors[1]?.textContent).toBe('claude-opus-4-6');
+		});
+
 		it('should show empty state when no info and no actions', () => {
 			const { container } = render(
 				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
