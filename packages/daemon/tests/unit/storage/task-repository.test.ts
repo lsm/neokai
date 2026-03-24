@@ -39,6 +39,7 @@ describe('TaskRepository', () => {
 				result TEXT,
 				error TEXT,
 				depends_on TEXT NOT NULL DEFAULT '[]',
+				short_id TEXT,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
 				completed_at INTEGER,
