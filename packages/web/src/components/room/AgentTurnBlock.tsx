@@ -11,6 +11,7 @@
  * - general: slate
  */
 
+import { memo } from 'preact/compat';
 import { useMemo, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
@@ -59,7 +60,7 @@ function isRenderable(msg: SDKMessage): boolean {
 interface AgentTurnBlockProps {
 	turn: TurnBlock;
 	className?: string;
-	onClick?: () => void;
+	onHeaderClick?: (turn: TurnBlock) => void;
 }
 
 /**
@@ -445,7 +446,7 @@ function NestedMessageRenderer({
 	);
 }
 
-export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps) {
+function AgentTurnBlockInner({ turn, className, onHeaderClick }: AgentTurnBlockProps) {
 	const colors = useMemo(() => getRoleColors(turn.agentRole), [turn.agentRole]);
 
 	// Extract the first user message as input prompt, rest are nested messages
@@ -480,10 +481,10 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 			<div
 				class={cn(
 					'flex items-center justify-between p-3',
-					onClick &&
+					onHeaderClick &&
 						'cursor-pointer hover:brightness-95 dark:hover:brightness-110 transition-[filter]'
 				)}
-				onClick={onClick}
+				onClick={onHeaderClick ? () => onHeaderClick(turn) : undefined}
 			>
 				<div class="flex items-center gap-2 min-w-0 flex-1">
 					{/* Agent icon */}
@@ -596,7 +597,7 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 					)}
 
 					{/* Chevron — shown only when header is clickable */}
-					{onClick && (
+					{onHeaderClick && (
 						<svg
 							class="w-4 h-4 text-gray-400 dark:text-gray-500 ml-1 flex-shrink-0"
 							fill="none"
@@ -716,3 +717,5 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 		</div>
 	);
 }
+
+export const AgentTurnBlock = memo(AgentTurnBlockInner);

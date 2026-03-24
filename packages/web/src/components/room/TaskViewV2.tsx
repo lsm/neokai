@@ -153,6 +153,10 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 		setSelectedTurn(null);
 	}, []);
 
+	const handleTurnClick = useCallback((turn: TurnBlock) => {
+		setSelectedTurn(turn);
+	}, []);
+
 	if (isLoading) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
@@ -426,10 +430,7 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 									if (item.type === 'turn') {
 										return (
 											<div key={item.turn.id} class="mb-4">
-												<AgentTurnBlock
-													turn={item.turn}
-													onClick={() => setSelectedTurn(item.turn)}
-												/>
+												<AgentTurnBlock turn={item.turn} onHeaderClick={handleTurnClick} />
 											</div>
 										);
 									}

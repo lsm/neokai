@@ -19,7 +19,7 @@
  * splitting a planner/worker run into an orphan 1-message turn + a continuationwithout context.
  */
 
-import { useMemo } from 'preact/hooks';
+import { useMemo, useRef } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { isTextBlock, type ContentBlock } from '@neokai/shared/sdk/type-guards';
 import {
@@ -244,6 +244,10 @@ interface TurnAccumulator {
  * @returns An ordered array of TurnBlockItems (turn blocks interleaved with runtime items).
  */
 export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true): TurnBlockItem[] {
+	// Cache completed turn objects by ID so memo(AgentTurnBlock) can skip re-renders
+	// when only the active (last) turn is changing.
+	const prevTurnsRef = useRef(new Map<string, TurnBlock>());
+
 	return useMemo(() => {
 		// Parse all raw messages; skip any that fail to parse.
 		const parsedMessages = messages
@@ -489,6 +493,28 @@ export function useTurnBlocks(messages: SessionGroupMessage[], isAtTail = true):
 				}
 			}
 		}
+
+		// Stabilize completed turn references so memo(AgentTurnBlock) skips re-renders
+		// for turns whose data has not changed. Only the last active turn changes on each delta.
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
+			if (item.type !== 'turn' || item.turn.isActive) continue;
+			const prev = prevTurnsRef.current.get(item.turn.id);
+			if (
+				prev &&
+				prev.messageCount === item.turn.messageCount &&
+				prev.endTime === item.turn.endTime &&
+				prev.isError === item.turn.isError
+			) {
+				items[i] = { type: 'turn', turn: prev };
+			}
+		}
+		// Refresh the cache with the current set of turns.
+		const nextCache = new Map<string, TurnBlock>();
+		for (const item of items) {
+			if (item.type === 'turn') nextCache.set(item.turn.id, item.turn);
+		}
+		prevTurnsRef.current = nextCache;
 
 		return items;
 		// useGroupMessages always returns a new array reference on every delta
