@@ -79,6 +79,17 @@ function getMsgTime(timestamp: number): string {
 	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDuration(ms: number): string {
+	const totalSecs = Math.round(ms / 1000);
+	if (totalSecs < 60) return `${totalSecs}s`;
+	const totalMins = Math.floor(totalSecs / 60);
+	const secs = totalSecs % 60;
+	if (totalMins < 60) return secs > 0 ? `${totalMins}m ${secs}s` : `${totalMins}m`;
+	const hours = Math.floor(totalMins / 60);
+	const mins = totalMins % 60;
+	return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
 function getMsgFullTime(timestamp: number): string {
 	if (!timestamp) return '';
 	return new Date(timestamp).toLocaleString();
@@ -684,13 +695,15 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 
 				{/* Turn timing footer */}
 				{turn.startTime > 0 && (
-					<div class="border-t border-gray-200 dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-						<span>{getMsgTime(turn.startTime)}</span>
+					<div class="border-t-2 border-gray-200/60 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-800/40 px-4 py-2.5 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+						<span class="font-medium">{getMsgTime(turn.startTime)}</span>
 						{turn.endTime && (
 							<>
-								<span>→</span>
-								<span>{getMsgTime(turn.endTime)}</span>
-								<span class="ml-auto">{Math.round((turn.endTime - turn.startTime) / 1000)}s</span>
+								<span class="text-gray-400 dark:text-gray-500">→</span>
+								<span class="font-medium">{getMsgTime(turn.endTime)}</span>
+								<span class="ml-auto font-mono tabular-nums">
+									{formatDuration(turn.endTime - turn.startTime)}
+								</span>
 							</>
 						)}
 					</div>
