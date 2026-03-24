@@ -357,19 +357,16 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 	}, [inputMessage]);
 
 	return (
-		<div
-			class={cn(
-				'border rounded-lg overflow-hidden',
-				colors.bg,
-				colors.border,
-				onClick &&
-					'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-current transition-shadow',
-				className
-			)}
-			onClick={onClick}
-		>
-			{/* Header - always visible, matches SubagentBlock header style */}
-			<div class="flex items-center justify-between p-3">
+		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+			{/* Header - clickable to open slide-out panel */}
+			<div
+				class={cn(
+					'flex items-center justify-between p-3',
+					onClick &&
+						'cursor-pointer hover:brightness-95 dark:hover:brightness-110 transition-[filter]'
+				)}
+				onClick={onClick}
+			>
 				<div class="flex items-center gap-2 min-w-0 flex-1">
 					{/* Agent icon */}
 					<span class={colors.icon}>
@@ -477,6 +474,18 @@ export function AgentTurnBlock({ turn, className, onClick }: AgentTurnBlockProps
 								strokeWidth={2}
 								d="M6 18L18 6M6 6l12 12"
 							/>
+						</svg>
+					)}
+
+					{/* Chevron — shown only when header is clickable */}
+					{onClick && (
+						<svg
+							class="w-4 h-4 text-gray-400 dark:text-gray-500 ml-1 flex-shrink-0"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
 						</svg>
 					)}
 				</div>
