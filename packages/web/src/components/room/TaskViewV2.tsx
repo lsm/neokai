@@ -180,7 +180,10 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
 
 	return (
-		<div data-testid="task-view-v2" class="flex-1 flex flex-col overflow-hidden bg-dark-900">
+		<div
+			data-testid="task-view-v2"
+			class="flex-1 flex flex-col overflow-hidden bg-dark-900 relative"
+		>
 			{/* Header */}
 			<div class="border-b border-dark-700 bg-dark-850 px-4 py-3 flex items-center gap-3 flex-shrink-0">
 				<button
@@ -658,15 +661,17 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 				</div>
 
 				{/* Slide-out panel — overlays the turn blocks area */}
-				<SlideOutPanel
-					isOpen={selectedTurn !== null}
-					sessionId={selectedTurn?.sessionId ?? null}
-					agentLabel={selectedTurn?.agentLabel}
-					agentRole={selectedTurn?.agentRole}
-					onClose={handleClosePanel}
-					widthClass="w-full sm:w-[70%] lg:w-1/2"
-				/>
 			</div>
+
+			{/* Slide-out panel — overlays the full TaskViewV2 area */}
+			<SlideOutPanel
+				isOpen={selectedTurn !== null}
+				sessionId={selectedTurn?.sessionId ?? null}
+				agentLabel={selectedTurn?.agentLabel}
+				agentRole={selectedTurn?.agentRole}
+				onClose={handleClosePanel}
+				widthClass="w-full sm:w-[70%] lg:w-1/2"
+			/>
 
 			{/* Human input area */}
 			<HumanInputArea
