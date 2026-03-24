@@ -546,12 +546,15 @@ function ShortIdBadge({ shortId }: { shortId: string }) {
 
 	const handleCopy = (e: MouseEvent) => {
 		e.stopPropagation();
-		navigator.clipboard.writeText(shortId).then(() => {
-			copied.value = true;
-			setTimeout(() => {
-				copied.value = false;
-			}, 1500);
-		});
+		navigator.clipboard
+			.writeText(shortId)
+			.then(() => {
+				copied.value = true;
+				setTimeout(() => {
+					copied.value = false;
+				}, 1500);
+			})
+			.catch(() => {});
 	};
 
 	return (

@@ -168,7 +168,8 @@ SELECT
   pr_number           AS prNumber,
   pr_created_at       AS prCreatedAt,
   input_draft         AS inputDraft,
-  updated_at          AS updatedAt
+  updated_at          AS updatedAt,
+  short_id            AS shortId
 FROM tasks
 WHERE room_id = ?
 ORDER BY created_at DESC, id DESC

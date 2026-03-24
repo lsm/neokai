@@ -56,6 +56,7 @@ ROOM_FILES=(
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
   room-tick-job.test.ts
+  short-id-flow.test.ts
 )
 
 FEATURES_FILES=(

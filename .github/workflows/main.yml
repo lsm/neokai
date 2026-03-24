@@ -224,6 +224,10 @@ jobs:
           # - module: room-reviewer
           #   test_path: tests/online/room/room-reviewer-flow.test.ts
           #   timeout: 10
+          # - module: room-short-id
+          #   test_path: tests/online/room/short-id-flow.test.ts
+          #   mock_sdk: true
+          #   timeout: 10
           # rpc-1: heaviest files (task-lifecycle ~647 + config-handlers ~573 lines ≈ 1 220)
           - module: rpc-1
             test_path: >-
