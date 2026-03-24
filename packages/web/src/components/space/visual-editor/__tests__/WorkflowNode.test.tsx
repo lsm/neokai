@@ -24,6 +24,7 @@ import { useState } from 'preact/hooks';
 import { WorkflowNode } from '../WorkflowNode';
 import type { WorkflowNodeProps } from '../WorkflowNode';
 import type { SpaceAgent } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { Point } from '../types';
 
 afterEach(() => cleanup());
@@ -516,5 +517,97 @@ describe('WorkflowNode drag-and-drop', () => {
 		expect(onPositionChange).toHaveBeenLastCalledWith('step-local-1', { x: 80, y: 70 });
 
 		windowMouseUp();
+	});
+});
+
+// ============================================================================
+// Task Agent node tests
+// ============================================================================
+
+const TASK_AGENT_STEP = {
+	localId: TASK_AGENT_NODE_ID,
+	id: TASK_AGENT_NODE_ID,
+	name: 'Task Agent',
+	agentId: '',
+	instructions: '',
+};
+
+describe('WorkflowNode Task Agent rendering', () => {
+	it('renders with data-task-agent attribute', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-task-agent')).toBe('true');
+	});
+
+	it('renders Task Agent badge', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(getByTestId('task-agent-badge').textContent).toBe('Task Agent');
+	});
+
+	it('renders step name as amber text', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const stepName = getByTestId('step-name');
+		expect(stepName.className).toContain('text-amber-100');
+	});
+
+	it('applies amber border style', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.className).toContain('border-amber-400');
+	});
+
+	it('applies amber background style', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.className).toContain('bg-amber-950');
+	});
+
+	it('has higher z-index than regular nodes', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.style.zIndex).toBe('10');
+	});
+
+	it('does not render input port', () => {
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(queryByTestId('port-input')).toBeNull();
+	});
+
+	it('does not render output port', () => {
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(queryByTestId('port-output')).toBeNull();
+	});
+
+	it('does not show step number badge', () => {
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(queryByTestId('step-badge')).toBeNull();
+	});
+
+	it('does not trigger drag on mousedown', () => {
+		const onPositionChange = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP, onPositionChange })} />
+		);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(50, 50);
+		expect(onPositionChange).not.toHaveBeenCalled();
+		windowMouseUp();
+	});
+
+	it('does not fire onClick when clicked', () => {
+		const onClick = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP, onClick })} />
+		);
+		// Task Agent node does not register onClick (no handleClick in its JSX)
+		fireEvent.click(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`));
+		expect(onClick).not.toHaveBeenCalled();
+	});
+
+	it('uses default cursor (not grab)', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.style.cursor).toBe('default');
 	});
 });

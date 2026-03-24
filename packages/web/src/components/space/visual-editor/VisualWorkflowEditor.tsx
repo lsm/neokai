@@ -314,6 +314,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}
 
 	const handleNodePositionChange = useCallback((localId: string, newPosition: Point) => {
+		// Task Agent is pinned — its position must never change.
+		if (localId === TASK_AGENT_NODE_ID) return;
 		setNodes((prev) =>
 			prev.map((n) => (n.step.localId === localId ? { ...n, position: newPosition } : n))
 		);
@@ -422,6 +424,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleCreateTransition = useCallback(
 		(fromLocalId: string, toLocalId: string) => {
+			// Task Agent is not a step in the execution flow — prevent it from being
+			// a source or target of workflow transitions.
+			if (fromLocalId === TASK_AGENT_NODE_ID || toLocalId === TASK_AGENT_NODE_ID) return;
+
 			const fromKey = localIdToStepKey.get(fromLocalId) ?? fromLocalId;
 			const toKey = localIdToStepKey.get(toLocalId) ?? toLocalId;
 			setEdges((prev) => {

@@ -16,6 +16,7 @@
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
 import type { Point } from './types';
@@ -104,6 +105,7 @@ export function WorkflowNode({
 	onClick,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
+	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
 
 	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
@@ -131,6 +133,8 @@ export function WorkflowNode({
 
 	// ---- Window-level listeners (always registered, guard on dragState) ----
 	// Mirrors the pattern used by VisualCanvas for its spacebar+drag pan.
+	// For the Task Agent node, dragState.current is never set (handleMouseDown
+	// returns early), so both handlers short-circuit immediately — they are no-ops.
 	useEffect(() => {
 		const onMouseMove = (e: MouseEvent) => {
 			if (!dragState.current) return;
@@ -156,7 +160,12 @@ export function WorkflowNode({
 			if (!dragState.current) return;
 			dragState.current = null;
 			if (nodeRef.current) {
-				nodeRef.current.style.cursor = 'grab';
+				// Only reset to 'grab' for draggable nodes — Task Agent uses 'default'
+				// and dragState.current can never be set for it, so this branch is
+				// unreachable for Task Agent. Guard here for defence-in-depth.
+				if (!isTaskAgent) {
+					nodeRef.current.style.cursor = 'grab';
+				}
 				nodeRef.current.style.boxShadow = '';
 			}
 		};
@@ -169,9 +178,14 @@ export function WorkflowNode({
 		};
 	}, [stepId]);
 
-	// ---- Card body mousedown — starts drag ----
+	// ---- Card body mousedown — starts drag (disabled for Task Agent) ----
 	const handleMouseDown = useCallback(
 		(e: MouseEvent) => {
+			// Task Agent is pinned — it cannot be dragged
+			if (isTaskAgent) {
+				e.stopPropagation();
+				return;
+			}
 			// Only primary button
 			if (e.button !== 0) return;
 			e.stopPropagation(); // prevent canvas pan from triggering
@@ -191,7 +205,7 @@ export function WorkflowNode({
 				nodeRef.current.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)';
 			}
 		},
-		[position.x, position.y]
+		[isTaskAgent, position.x, position.y]
 	);
 
 	// ---- Card click — for selection (suppressed after drag) ----
@@ -235,17 +249,66 @@ export function WorkflowNode({
 	}, [onPortMouseLeave, stepId]);
 
 	// ---- Styles ----
-	const borderClass = isStartNode
-		? 'border-green-500'
-		: isSelected
-			? 'border-blue-500'
-			: 'border-gray-700';
+	const borderClass = isTaskAgent
+		? 'border-amber-400'
+		: isStartNode
+			? 'border-green-500'
+			: isSelected
+				? 'border-blue-500'
+				: 'border-gray-700';
+
+	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
 
 	const inputPortBg = isDropTarget ? '#22c55e' : '#6b7280';
 	const inputPortBorder = isDropTarget ? '#16a34a' : '#374151';
 	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+
+	// Task Agent: render a visually distinct pinned node with no ports
+	if (isTaskAgent) {
+		return (
+			<div
+				ref={nodeRef}
+				data-testid={`workflow-node-${stepId}`}
+				data-step-id={stepId}
+				data-task-agent="true"
+				style={{
+					position: 'absolute',
+					left: position.x,
+					top: position.y,
+					minWidth: 160,
+					cursor: 'default',
+					userSelect: 'none',
+					zIndex: 10,
+				}}
+				class={`rounded-lg border-2 ${bgClass} ${borderClass}`}
+				onMouseDown={handleMouseDown}
+			>
+				<div class="px-3 py-2">
+					{/* Header row: Task Agent badge */}
+					<div class="flex items-center justify-between mb-1">
+						<span
+							data-testid="task-agent-badge"
+							class="text-xs font-bold text-amber-400 uppercase tracking-wider"
+						>
+							Task Agent
+						</span>
+					</div>
+					{/* Name */}
+					<p
+						data-testid="step-name"
+						class="text-sm font-medium text-amber-100 truncate"
+						style={{ maxWidth: 180 }}
+					>
+						{step.name || 'Task Agent'}
+					</p>
+					{/* Channel topology */}
+					<ChannelTopologyBadge step={step} />
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div
@@ -260,7 +323,7 @@ export function WorkflowNode({
 				cursor: 'grab',
 				userSelect: 'none',
 			}}
-			class={`rounded-lg border-2 bg-gray-800 ${borderClass} ${ringClass}`}
+			class={`rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
 			onMouseDown={handleMouseDown}
 			onClick={handleClick}
 		>
