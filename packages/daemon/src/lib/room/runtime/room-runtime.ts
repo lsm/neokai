@@ -196,6 +196,14 @@ export class RoomRuntime {
 	 */
 	private stuckWorkerRecoveryInFlight = new Set<string>();
 
+	/**
+	 * Task IDs whose group spawn is currently in-flight (async).
+	 * Guards against concurrent ticks re-attempting spawn for the same task while
+	 * `spawnGroupForTask` is awaiting worktree creation or DB insert — the window
+	 * where the task is still 'pending' in the DB but a spawn is already underway.
+	 */
+	private spawningTaskIds = new Set<string>();
+
 	readonly taskGroupManager: TaskGroupManager;
 
 	/**
@@ -2782,6 +2790,12 @@ export class RoomRuntime {
 				);
 				continue;
 			}
+			if (this.spawningTaskIds.has(task.id)) {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — spawn already in-flight`
+				);
+				continue;
+			}
 			if (await this.taskManager.areDependenciesMet(task)) {
 				readyTasks.push(task);
 			} else {
@@ -3333,6 +3347,24 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
+		// Guard: skip immediately if this task's spawn is already in-flight from a prior tick.
+		// This prevents redundant spawn attempts during the async window between a tick firing
+		// and the group DB record being created (task is still 'pending' during that window).
+		if (this.spawningTaskIds.has(task.id)) {
+			log.debug(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") — spawn already in-flight, skipping`
+			);
+			return;
+		}
+		this.spawningTaskIds.add(task.id);
+		try {
+			await this._spawnGroupForTaskInner(task);
+		} finally {
+			this.spawningTaskIds.delete(task.id);
+		}
+	}
+
+	private async _spawnGroupForTaskInner(task: NeoTask): Promise<void> {
 		// Clean zombie groups for this task before the active-group dedup check.
 		// Handles the case where a previous crashed session left an active group with
 		// missing sessions. Without this, getActiveGroupsForTask() would detect the
@@ -3345,7 +3377,7 @@ export class RoomRuntime {
 		// completedAt === null would be missed by getGroupByTaskId() which returns only the latest.
 		const allActiveGroups = this.groupRepo.getActiveGroupsForTask(task.id);
 		if (allActiveGroups.length > 0) {
-			log.warn(
+			log.debug(
 				`[spawnGroupForTask] Task ${task.id} ("${task.title}") already has ${allActiveGroups.length} active group(s) (${allActiveGroups.map((g) => g.id).join(', ')}) — skipping duplicate spawn`
 			);
 			return;
@@ -3458,11 +3490,11 @@ export class RoomRuntime {
 			);
 		} catch (err) {
 			// UNIQUE constraint violation means a concurrent tick already spawned a group
-			// for this task (race between two ticks that both passed the active-group check).
-			// This is expected under high concurrency — log at warn, not error.
+			// for this task. With the spawningTaskIds guard this should be rare, but the
+			// DB constraint remains as a final safety net — log at debug to reduce noise.
 			const errStr = String(err);
 			if (errStr.includes('UNIQUE constraint failed')) {
-				log.warn(
+				log.debug(
 					`[spawnGroupForTask] Task ${task.id} ("${task.title}"): UNIQUE constraint — ` +
 						`concurrent tick already spawned a group. Skipping.`
 				);
