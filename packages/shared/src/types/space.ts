@@ -575,8 +575,14 @@ export interface WorkflowNodeAgent {
 	agentId: string;
 	/**
 	 * Unique identifier for this agent slot within the node.
-	 * Used for channel routing and must be unique across all agents in the same node.
-	 * Example values: "strict-reviewer", "quick-reviewer", "security-scanner".
+	 * Used for channel routing (`WorkflowChannel.from`/`to`) and must be unique across
+	 * all agent slots in the same node.
+	 *
+	 * This is a **slot-specific label** distinct from `SpaceAgent.role`, which identifies
+	 * the agent's job category (e.g. `"coder"`, `"reviewer"`). The same `SpaceAgent` may
+	 * appear in multiple slots with different `WorkflowNodeAgent.role` values (e.g.
+	 * `"strict-reviewer"` and `"quick-reviewer"`). When added via the UI a second time,
+	 * a numeric suffix is appended automatically (e.g. `"coder"` → `"coder-2"`).
 	 */
 	role: string;
 	/**

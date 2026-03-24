@@ -84,7 +84,14 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		const role = agentInfo?.role ?? agentId;
+		const baseRole = agentInfo?.role ?? agentId;
+		// Ensure the slot role is unique within this node. When the same agent is added
+		// multiple times, append a numeric suffix to distinguish the slots.
+		const usedRoles = new Set(stepAgents.map((a) => a.role));
+		let role = baseRole;
+		for (let i = 2; usedRoles.has(role); i++) {
+			role = `${baseRole}-${i}`;
+		}
 		const next = [...stepAgents, { agentId, role }];
 		// Merge agents + channels into a single onUpdate call to avoid stale-reference overwrites
 		const newChannels = step.channels === undefined ? buildTaskAgentChannels(next) : step.channels;

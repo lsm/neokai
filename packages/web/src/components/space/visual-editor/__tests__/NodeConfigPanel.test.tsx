@@ -452,13 +452,13 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.channels).toBeUndefined();
 		});
 
-		it('shows add-agent-select dropdown for agents not yet in step', () => {
+		it('shows add-agent-select dropdown with all agents (same agent may be added multiple times)', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', role: 'planner' }],
 			});
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			// agent-2 is not in step yet, should appear in dropdown
+			// All agents appear in the dropdown regardless of whether they are already in the step
 			const select = getByTestId('add-agent-select');
 			expect(select.textContent).toContain('Coder');
 		});

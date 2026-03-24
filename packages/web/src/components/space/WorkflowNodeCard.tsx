@@ -135,7 +135,14 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
-		const role = agentInfo?.role ?? agentId;
+		const baseRole = agentInfo?.role ?? agentId;
+		// Ensure the slot role is unique within this node. When the same agent is added
+		// multiple times, append a numeric suffix to distinguish the slots.
+		const usedRoles = new Set(nodeAgents.map((a) => a.role));
+		let role = baseRole;
+		for (let i = 2; usedRoles.has(role); i++) {
+			role = `${baseRole}-${i}`;
+		}
 		updateAgents([...nodeAgents, { agentId, role }]);
 	}
 
