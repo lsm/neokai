@@ -142,6 +142,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			assigned_agent TEXT
 				CHECK(assigned_agent IN ('coder', 'general')),
 			custom_agent_id TEXT,
+			slot_role TEXT,
 			workflow_run_id TEXT,
 			workflow_node_id TEXT,
 			created_by_task_id TEXT,
