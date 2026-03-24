@@ -37,7 +37,7 @@ describe('resolveTaskId', () => {
 	test('throws when short ID not found', () => {
 		const repo = makeTaskRepo(null);
 		expect(() => resolveTaskId('t-9999', ROOM_ID, repo as TaskRepository)).toThrow(
-			'Task not found'
+			'Task not found: t-9999'
 		);
 	});
 
@@ -80,7 +80,7 @@ describe('resolveGoalId', () => {
 	test('throws when short ID not found', () => {
 		const repo = makeGoalRepo(null);
 		expect(() => resolveGoalId('g-9999', ROOM_ID, repo as GoalRepository)).toThrow(
-			'Goal not found'
+			'Goal not found: g-9999'
 		);
 	});
 

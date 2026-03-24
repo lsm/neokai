@@ -14,7 +14,7 @@ export function resolveTaskId(input: string, roomId: string, taskRepo: TaskRepos
 	}
 	const task = taskRepo.getTaskByShortId(roomId, input);
 	if (!task) {
-		throw new Error('Task not found');
+		throw new Error(`Task not found: ${input}`);
 	}
 	return task.id;
 }
@@ -31,7 +31,7 @@ export function resolveGoalId(input: string, roomId: string, goalRepo: GoalRepos
 	}
 	const goal = goalRepo.getGoalByShortId(roomId, input);
 	if (!goal) {
-		throw new Error('Goal not found');
+		throw new Error(`Goal not found: ${input}`);
 	}
 	return goal.id;
 }
