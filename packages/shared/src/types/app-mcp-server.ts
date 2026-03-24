@@ -48,9 +48,11 @@ export interface AppMcpServer {
 
 /**
  * Request payload to create a new application-level MCP server entry.
- * `id` is generated server-side.
+ * `id` is generated server-side. `enabled` defaults to `true` if omitted.
  */
-export type CreateAppMcpServerRequest = Omit<AppMcpServer, 'id'>;
+export type CreateAppMcpServerRequest = Omit<AppMcpServer, 'id' | 'enabled'> & {
+	enabled?: boolean;
+};
 
 /**
  * Request payload to update an existing application-level MCP server entry.
