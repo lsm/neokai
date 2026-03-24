@@ -129,6 +129,13 @@ export class TaskRepository {
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
+		// Backfill: allocate a short ID for any row that was created before migration 47
+		// or via a code path that lacked an allocator. Each allocation is a separate
+		// atomic counter increment, so under SQLite's single-writer model concurrent
+		// callers cannot observe the same counter value — a second concurrent listTasks
+		// for the same room would block on the write lock and read already-written
+		// short_id values when it proceeds. Counter values are never reused; a skipped
+		// value is cosmetic and does not affect correctness.
 		return rows.map((row) => {
 			const task = this.rowToTask(row);
 			if (!task.shortId && this.shortIdAllocator) {
@@ -312,7 +319,9 @@ export class TaskRepository {
 	 * Convert a database row to a NeoTask object
 	 */
 	/**
-	 * Get draft tasks created by a specific planning task
+	 * Get draft tasks created by a specific planning task.
+	 * Applies the same lazy short ID backfill as listTasks so callers always
+	 * receive tasks with shortId populated.
 	 */
 	getDraftTasksByCreator(createdByTaskId: string): NeoTask[] {
 		const rows = this.db
@@ -320,7 +329,15 @@ export class TaskRepository {
 				`SELECT * FROM tasks WHERE created_by_task_id = ? AND status = 'draft' ORDER BY created_at ASC`
 			)
 			.all(createdByTaskId) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToTask(r));
+		return rows.map((row) => {
+			const task = this.rowToTask(row);
+			if (!task.shortId && this.shortIdAllocator) {
+				const shortId = this.shortIdAllocator.allocate('task', task.roomId);
+				this.db.prepare(`UPDATE tasks SET short_id = ? WHERE id = ?`).run(shortId, task.id);
+				return { ...task, shortId };
+			}
+			return task;
+		});
 	}
 
 	private rowToTask(row: Record<string, unknown>): NeoTask {
