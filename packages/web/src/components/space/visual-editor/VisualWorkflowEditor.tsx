@@ -422,6 +422,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleCreateTransition = useCallback(
 		(fromLocalId: string, toLocalId: string) => {
+			// Task Agent is not a step in the execution flow — prevent it from being
+			// a source or target of workflow transitions.
+			if (fromLocalId === TASK_AGENT_NODE_ID || toLocalId === TASK_AGENT_NODE_ID) return;
+
 			const fromKey = localIdToStepKey.get(fromLocalId) ?? fromLocalId;
 			const toKey = localIdToStepKey.get(toLocalId) ?? toLocalId;
 			setEdges((prev) => {

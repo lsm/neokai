@@ -1030,6 +1030,80 @@ describe('VisualWorkflowEditor', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Task Agent visible node
+	// -------------------------------------------------------------------------
+
+	describe('Task Agent visible node', () => {
+		it('Task Agent node is always rendered in create mode', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
+		});
+
+		it('Task Agent node is always rendered in edit mode', () => {
+			const { getByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
+			);
+			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
+		});
+
+		it('Task Agent node renders with amber border (distinct style)', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			expect(node.className).toContain('border-amber-400');
+		});
+
+		it('Task Agent node renders with amber background (distinct style)', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			expect(node.className).toContain('bg-amber-950');
+		});
+
+		it('Task Agent node shows "Task Agent" badge', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(getByTestId('task-agent-badge').textContent).toBe('Task Agent');
+		});
+
+		it('Task Agent node has no input port', () => {
+			const { queryByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			// The Task Agent node does not render input/output ports
+			const node = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			expect(node?.querySelector('[data-testid="port-input"]')).toBeNull();
+		});
+
+		it('Task Agent node has no output port', () => {
+			const { queryByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			const node = queryByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			expect(node?.querySelector('[data-testid="port-output"]')).toBeNull();
+		});
+
+		it('Task Agent node cannot be deleted via keyboard Delete', () => {
+			const { getAllByTestId, getByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
+			);
+			// Click the Task Agent node — it should not become selected
+			const taskAgentNode = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			fireEvent.click(taskAgentNode);
+			// Press Delete — should not delete the Task Agent
+			fireEvent.keyDown(document.body, { key: 'Delete' });
+			// Task Agent must still be present
+			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
+			// Total node count unchanged
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(3); // Task Agent + 2 steps
+		});
+
+		it('Task Agent node cannot be deleted via Backspace', () => {
+			const { getAllByTestId, getByTestId } = render(
+				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
+			);
+			const taskAgentNode = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+			fireEvent.click(taskAgentNode);
+			fireEvent.keyDown(document.body, { key: 'Backspace' });
+			expect(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`)).toBeTruthy();
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(3);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// Rules section
 	// -------------------------------------------------------------------------
 
