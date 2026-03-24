@@ -29,28 +29,40 @@ The `WorktreeManager` does not store anything in the DB — it operates purely o
 
 ### Task 4.1 — Implement Project Short Key Generation in WorktreeManager
 
-**Description**: Add a `getProjectShortKey(repoPath: string): string` method to `WorktreeManager` that produces a short, deterministic, human-readable directory name for a given repo path, and update `getWorktreeBaseDir` to use it.
+**Description**: Add a `getProjectShortKey(repoPath: string): string` method to `WorktreeManager` that produces a short, deterministic, human-readable directory name for a given repo path, and update `getWorktreeBaseDir` to use it — with collision detection via a sentinel file to handle the (rare) case where two different repo paths hash to the same short key.
 
 **Subtasks**:
 1. In `packages/daemon/src/lib/worktree-manager.ts`, add a private method `getProjectShortKey(repoPath: string): string`:
    - Extract the last component of the path: `basename(repoPath)` — e.g., `dev-neokai`
-   - Compute a 8-character hex hash of the full normalized path using `Bun.hash()` or a simple djb2/FNV-1a hash (avoid importing crypto for this small utility)
+   - Compute an 8-character hex hash of the full normalized path using `Bun.hash()` or a simple djb2/FNV-1a hash (avoid importing crypto for this small utility)
    - Return `${lastComponent}-${hash8chars}` — e.g., `dev-neokai-a3b2c1d4`
    - Sanitize: replace characters invalid in directory names with `-` (keep alphanumeric, hyphens, underscores)
-2. Update `getWorktreeBaseDir(gitRoot: string)` to call `getProjectShortKey(gitRoot)` instead of `encodeRepoPath(gitRoot)`, so new worktrees go into the short path
-3. Keep `encodeRepoPath` — it is still used by `cleanupOrphanedWorktrees` to detect session worktrees (the `.includes('.neokai/projects')` check still works regardless of key format)
-4. Write unit tests for `getProjectShortKey`:
+2. Update `getWorktreeBaseDir(gitRoot: string)` to resolve the short key with collision detection (see subtask 3), so new worktrees go into the short path
+3. Implement collision detection in `getWorktreeBaseDir` using a sentinel file approach:
+   - After computing `shortKey`, determine the candidate base dir: `~/.neokai/projects/{shortKey}`
+   - **On first use** (directory doesn't exist yet): create the directory and write a `.neokai-repo-root` sentinel file inside it containing the full normalized `gitRoot` path (UTF-8 text, one line). Then return this directory as the base dir.
+   - **On subsequent use** (directory already exists): read the `.neokai-repo-root` sentinel file (if present) and compare its contents to the normalized `gitRoot`.
+     - If they match (same repo): proceed normally, return the short-key base dir.
+     - If they differ (collision — different repo mapped to same short key): log a warning (e.g., `console.warn('[WorktreeManager] Short key collision detected for "${shortKey}": expected "${storedPath}", got "${gitRoot}". Falling back to full encoding.')`) and fall back to `encodeRepoPath(gitRoot)` to produce the full-length base dir. This preserves the existing safe behavior for the colliding repo.
+   - If the directory exists but has no sentinel file (e.g., created by an older version): write the sentinel for the current repo path and proceed normally.
+4. Keep `encodeRepoPath` — it remains used by `cleanupOrphanedWorktrees` and as the collision fallback
+5. Write unit tests for `getProjectShortKey`:
    - Same path always returns the same key (deterministic)
-   - Different paths return different keys (collision resistance via hash)
    - Output contains only safe filesystem characters
    - Output is shorter than the full encoded path
+6. Write unit tests for the collision detection logic in `getWorktreeBaseDir`:
+   - **No collision**: first call for a fresh directory creates the sentinel file and returns the short-key path
+   - **Same repo, second call**: reads sentinel, confirms match, returns same short-key path
+   - **Collision scenario**: simulate two different repo paths producing the same `shortKey` — first repo claims the directory and writes its sentinel; second repo detects a mismatch, logs a warning, and falls back to the full `encodeRepoPath` encoding (the two repos resolve to different base directories)
 
 **Acceptance Criteria**:
 - `getProjectShortKey('/Users/alice/code/my-project')` returns a string like `my-project-a3b2c1d4`
 - The key is deterministic — calling twice with the same input returns the same result
-- New worktrees are created at `~/.neokai/projects/{shortKey}/worktrees/...`
+- New worktrees for a repo are created at `~/.neokai/projects/{shortKey}/worktrees/...` after the sentinel file is written
+- A `.neokai-repo-root` sentinel file is written into each short-key directory on first use, containing the full normalized repo path
+- When two different repo paths produce the same short key, the second repo logs a warning and falls back to the full `encodeRepoPath` directory — both repos operate on distinct directories with no data mixing
 - Old worktrees (with long paths) continue to work — `verifyWorktree` checks the `worktreePath` stored in DB, so existing records still point to the old path which still exists on disk
-- Unit tests pass
+- All unit tests pass (including the collision scenario test)
 
 **Depends on**: Milestone 1 complete (can run in parallel with Milestones 2–3)
 
