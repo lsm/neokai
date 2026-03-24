@@ -1003,4 +1003,72 @@ describe('GoalsEditor', () => {
 			expect(container.textContent).toContain('Deploy to staging');
 		});
 	});
+
+	describe('Short ID Badge', () => {
+		it('should show short ID badge when goal has shortId', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-7' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid="goal-short-id-badge-g-7"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toBe('#g-7');
+		});
+
+		it('should not show short ID badge when goal has no shortId', () => {
+			const goals = [createMockGoal('goal-1')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid^="goal-short-id-badge-"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should show tooltip on short ID badge', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-3' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid="goal-short-id-badge-g-3"]');
+			expect(badge?.getAttribute('title')).toBe('Click to copy short ID');
+		});
+
+		it('should stop propagation when clicking badge', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-5' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-5"]'
+			) as HTMLElement;
+
+			// Track expand state — clicking header toggles expand; clicking badge should not
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			fireEvent.click(header);
+			const expandedContent = container.innerHTML;
+
+			// Click badge — expansion state should not change again
+			fireEvent.click(badge);
+			expect(container.innerHTML).toBe(expandedContent);
+		});
+
+		it('should copy short ID to clipboard on click', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				writable: true,
+				configurable: true,
+			});
+
+			const goals = [createMockGoal('goal-1', { shortId: 'g-9' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-9"]'
+			) as HTMLElement;
+
+			fireEvent.click(badge);
+			expect(writeText).toHaveBeenCalledWith('g-9');
+		});
+
+		it('should show fallback text for goals without shortId', () => {
+			const goals = [createMockGoal('goal-uuid-only')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			// Goal title still renders
+			expect(container.textContent).toContain('Goal goal-uuid-only');
+			// But no short ID badge
+			expect(container.querySelector('[data-testid^="goal-short-id-badge-"]')).toBeNull();
+		});
+	});
 });

@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import type {
 	RoomGoal,
 	GoalPriority,
@@ -255,6 +256,33 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		>
 			{label}
 		</span>
+	);
+}
+
+// ─── Short ID Badge ───────────────────────────────────────────────────────────
+
+function GoalShortIdBadge({ shortId }: { shortId: string }) {
+	const copied = useSignal(false);
+
+	const handleCopy = (e: MouseEvent) => {
+		e.stopPropagation();
+		navigator.clipboard.writeText(shortId).then(() => {
+			copied.value = true;
+			setTimeout(() => {
+				copied.value = false;
+			}, 1500);
+		});
+	};
+
+	return (
+		<button
+			data-testid={`goal-short-id-badge-${shortId}`}
+			onClick={handleCopy}
+			title="Click to copy short ID"
+			class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
+		>
+			{copied.value ? '\u2713 copied' : `#${shortId}`}
+		</button>
 	);
 }
 
@@ -1258,7 +1286,10 @@ function GoalItem({
 				>
 					{/* Row 1: Title + actions */}
 					<div class="flex items-start justify-between gap-2 mb-1.5">
-						<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+						<div class="flex items-center gap-2 min-w-0">
+							<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							{goal.shortId && <GoalShortIdBadge shortId={goal.shortId} />}
+						</div>
 						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
 								Edit
