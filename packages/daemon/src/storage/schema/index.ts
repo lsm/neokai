@@ -20,6 +20,8 @@ export { runMigration47 } from './migrations';
 // knip-ignore-next-line
 export { runMigration48 } from './migrations';
 // knip-ignore-next-line
+export { runMigration49 } from './migrations';
+// knip-ignore-next-line
 export { runMigration50 } from './migrations';
 
 /**
@@ -206,7 +208,6 @@ export function createTables(db: BunDatabase): void {
         consecutive_failures INTEGER NOT NULL DEFAULT 0,
         replan_count INTEGER NOT NULL DEFAULT 0,
         short_id TEXT,
-        restrictions TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -332,7 +333,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Application-level MCP server registry
 	db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
         id TEXT PRIMARY KEY,

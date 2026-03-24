@@ -451,10 +451,6 @@ export class RoomRuntimeService {
 			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
 			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
 			this.ctx.defaultModel;
-		const workerModel =
-			(agentModels?.worker && agentModels.worker.trim() !== '' ? agentModels.worker : undefined) ??
-			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
-			this.ctx.defaultModel;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -465,7 +461,6 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: leaderModel,
-			workerModel,
 			defaultModel: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,

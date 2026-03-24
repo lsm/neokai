@@ -193,8 +193,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 49: Add restrictions column to tasks and expand status CHECK constraint
 	// to include 'rate_limited' and 'usage_limited'. These new statuses let the runtime
 	// surface API limit state in the UI and enable auto-resume on tick.
-	// Migration 50: Create app_mcp_servers table for application-level MCP server registry.
 	runMigration49(db);
+
+	// Migration 50: Create app_mcp_servers table for application-level MCP server registry.
+	// This table stores MCP server configurations that are available globally.
+	// Idempotent via CREATE TABLE IF NOT EXISTS.
+	runMigration50(db);
 }
 
 /**
@@ -3030,7 +3034,7 @@ export function runMigration48(db: BunDatabase): void {
  * are added by recreating the tasks table with DROP/INSERT SELECT/RENAME. This is
  * idempotent: if the column or the new status values already exist the migration is a no-op.
  */
-export function runMigration50(db: BunDatabase): void {
+export function runMigration49(db: BunDatabase): void {
 	if (!tableExists(db, 'tasks')) return;
 
 	// Add the restrictions column if absent (new databases already have it via createTables).
@@ -3142,12 +3146,11 @@ export function runMigration50(db: BunDatabase): void {
 }
 
 /**
- * Migration 49: Create app_mcp_servers table for application-level MCP server registry.
- *
- * This table stores MCP server configurations registered at the application level,
- * available to any room or session. Idempotent via CREATE TABLE IF NOT EXISTS.
+ * Migration 50: Create app_mcp_servers table for application-level MCP server registry.
+ * This table stores MCP server configurations that are available globally to any room or session.
+ * Idempotent via CREATE TABLE IF NOT EXISTS.
  */
-function runMigration49(db: BunDatabase): void {
+export function runMigration50(db: BunDatabase): void {
 	db.exec(`
     CREATE TABLE IF NOT EXISTS app_mcp_servers (
       id TEXT PRIMARY KEY,

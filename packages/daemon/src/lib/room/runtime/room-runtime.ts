@@ -122,8 +122,6 @@ export interface RoomRuntimeConfig {
 	workspacePath: string;
 	/** Leader model (agentModels.leader > room.defaultModel > global default) */
 	model?: string;
-	/** Worker model (agentModels.worker > room.defaultModel > global default) */
-	workerModel?: string;
 	/** Global default model for fallback when room doesn't specify one */
 	defaultModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
@@ -311,10 +309,6 @@ export class RoomRuntime {
 			workspacePath: config.workspacePath,
 			model: config.model,
 			provider: config.model ? this.resolveProviderForModel(config.model) : undefined,
-			workerModel: config.workerModel,
-			workerProvider: config.workerModel
-				? this.resolveProviderForModel(config.workerModel)
-				: undefined,
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
