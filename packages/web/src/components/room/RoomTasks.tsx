@@ -12,6 +12,7 @@ import { useState } from 'preact/hooks';
 import { signal, effect } from '@preact/signals';
 import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
 import { toast } from '../../lib/toast.ts';
+import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 
 /** Tab filter types */
 export type TaskFilterTab = 'active' | 'review' | 'done' | 'archived';
@@ -672,8 +673,12 @@ function TaskItem({
 					</div>
 				</div>
 				<div class="ml-4 flex items-center gap-2 flex-shrink-0">
-					{task.progress !== undefined && (
-						<span class="text-xs text-gray-400">{task.progress}%</span>
+					{task.progress != null && task.progress > 0 && (
+						<CircularProgressIndicator
+							progress={task.progress}
+							size={24}
+							title={`Task progress: ${task.progress}%`}
+						/>
 					)}
 					{task.prUrl && (
 						<a
@@ -788,14 +793,6 @@ function TaskItem({
 							</span>
 						);
 					})}
-				</div>
-			)}
-			{task.progress !== undefined && (
-				<div class="mt-2 h-1 bg-dark-700 rounded-full overflow-hidden">
-					<div
-						class="h-full bg-blue-500 transition-all duration-300"
-						style={{ width: `${task.progress}%` }}
-					/>
 				</div>
 			)}
 			{/* Reject form — always rendered; max-height controls collapse with transition-all duration-200 */}

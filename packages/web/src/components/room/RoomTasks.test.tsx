@@ -464,21 +464,28 @@ describe('RoomTasks', () => {
 			selectedTabSignal.value = 'active';
 		});
 
-		it('should show progress percentage when defined', () => {
+		it('should show circular progress indicator when progress is defined', () => {
 			const tasks = [createTask('t1', 'in_progress', { progress: 75 })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			expect(container.textContent).toContain('75%');
+			// Circular indicator renders an SVG, not a percentage text
+			const svg = container.querySelector('svg[width="24"]');
+			expect(svg).toBeTruthy();
 		});
 
-		it('should show progress bar when progress is defined', () => {
+		it('should show circular progress indicator instead of flat bar when progress is defined', () => {
 			const tasks = [createTask('t1', 'in_progress', { progress: 50 })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const progressBar = container.querySelector('.bg-blue-500');
-			expect(progressBar).toBeTruthy();
+			// No flat blue progress bar
+			const flatBar = container.querySelector('.bg-blue-500');
+			expect(flatBar).toBeFalsy();
+
+			// Circular indicator renders an SVG
+			const svg = container.querySelector('svg[width="24"]');
+			expect(svg).toBeTruthy();
 		});
 	});
 
