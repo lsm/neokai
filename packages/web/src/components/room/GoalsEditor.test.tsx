@@ -26,8 +26,8 @@ describe('GoalsEditor', () => {
 		priority: 'normal',
 		progress: 50,
 		linkedTaskIds: [],
-		createdAt: Math.floor(Date.now() / 1000) - 86400,
-		updatedAt: Math.floor(Date.now() / 1000),
+		createdAt: Date.now() - 86400 * 1000,
+		updatedAt: Date.now(),
 		...overrides,
 	});
 
@@ -127,6 +127,20 @@ describe('GoalsEditor', () => {
 			const goals = [createMockGoal('goal-1', { description: 'Visible description text' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 			expect(container.textContent).toContain('Visible description text');
+		});
+
+		it('should show relative time for createdAt (not "just now" for old goals)', () => {
+			// createdAt is milliseconds since epoch — 1 day ago
+			const goals = [createMockGoal('goal-1', { createdAt: Date.now() - 86400 * 1000 })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('1 day ago');
+			expect(container.textContent).not.toContain('just now');
+		});
+
+		it('should show "just now" for very recent goals', () => {
+			const goals = [createMockGoal('goal-1', { createdAt: Date.now() - 5000 })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('just now');
 		});
 	});
 

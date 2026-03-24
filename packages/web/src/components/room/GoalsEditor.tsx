@@ -109,7 +109,7 @@ const COMMON_TIMEZONES = [
 // ─── Helper Utilities ─────────────────────────────────────────────────────────
 
 function relativeTime(ts: number): string {
-	const diff = Date.now() - ts * 1000;
+	const diff = Date.now() - ts;
 	const mins = Math.floor(diff / 60000);
 	if (mins < 1) return 'just now';
 	if (mins < 60) return `${mins}m ago`;
@@ -1256,16 +1256,9 @@ function GoalItem({
 					class="px-4 py-3 cursor-pointer hover:bg-dark-800/50 transition-colors active:bg-dark-800"
 					onClick={onToggleExpand}
 				>
-					{/* Row 1: Status indicator + priority badge + mission type badge + actions */}
-					<div class="flex items-center justify-between mb-2">
-						<div class="flex items-center gap-2 flex-wrap">
-							<StatusIndicator status={goal.status} />
-							<PriorityBadge priority={goal.priority} />
-							{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
-							{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
-								<AutonomyBadge level={goal.autonomyLevel} />
-							)}
-						</div>
+					{/* Row 1: Title + actions */}
+					<div class="flex items-start justify-between gap-2 mb-1.5">
+						<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
 						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
 								Edit
@@ -1276,8 +1269,15 @@ function GoalItem({
 						</div>
 					</div>
 
-					{/* Row 2: Title */}
-					<h4 class="text-base font-semibold text-gray-100 leading-snug mb-1">{goal.title}</h4>
+					{/* Row 2: Status + badges */}
+					<div class="flex items-center gap-2 flex-wrap mb-2">
+						<StatusIndicator status={goal.status} />
+						<PriorityBadge priority={goal.priority} />
+						{missionType !== 'one_shot' && <MissionTypeBadge type={missionType} />}
+						{goal.autonomyLevel && goal.autonomyLevel !== 'supervised' && (
+							<AutonomyBadge level={goal.autonomyLevel} />
+						)}
+					</div>
 
 					{/* Row 3: Description (truncated, optional) */}
 					{goal.description && (
