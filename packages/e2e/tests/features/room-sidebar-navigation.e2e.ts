@@ -68,7 +68,7 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}$`));
 
 		// Verify dashboard view is shown (room tab bar visible)
-		// Use the tab-specific selector to avoid matching mobile bottom tabs
+		// Use more semantic selector for robustness
 		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
 			timeout: 10000,
 		});

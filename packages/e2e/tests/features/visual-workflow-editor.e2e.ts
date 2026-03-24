@@ -77,12 +77,7 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 1: Create workflow with visual editor ──────────────────────────
 
-	// NOTE: When the Task Agent pinned node feature is implemented (Tasks 4.1-4.3), the
-	// toHaveCount assertions in this test will need to add +1 to account for the always-
-	// present Task Agent node. For example, "3" Add-Step clicks will produce 4 nodes
-	// (Task Agent + 3 regular nodes), not 3. Update line ~111 accordingly.
-
-	// TODO: Skipped due to save issue - editor does not close after clicking save
+	// Tracking: https://github.com/lsm/neokai/issues/815 (save issue - editor does not close after clicking save)
 	test.skip('Create workflow with visual editor', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -172,10 +167,7 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 2: Node positions are restored after save and reopen ──────────
 
-	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
-	// assertion on line ~250 will need to change from 2 to 3 (adds Task Agent node).
-
-	// TODO: Skipped due to save issue - editor does not close after clicking save
+	// Tracking: https://github.com/lsm/neokai/issues/815 (save issue - editor does not close after clicking save)
 	test.skip('Node positions are restored after save and reopen', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
@@ -280,13 +272,7 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 3: Load template in visual editor ──────────────────────────────
 
-	// NOTE: When the Task Agent pinned node feature is implemented:
-	// - The toHaveCount on line ~316 will need to change from 2 to 3 (adds Task Agent node)
-	// - The template-picker-button visibility assertion below will be unreachable because
-	//   the Task Agent node is always present, so the canvas is never truly "empty"
-	//   and the picker is hidden immediately on editor open.
-
-	// TODO: Skipped due to save issue - editor does not close after clicking save
+	// Tracking: https://github.com/lsm/neokai/issues/815 (save issue - editor does not close after clicking save)
 	test.skip('Load template in visual editor', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -667,7 +653,8 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 12: Channel edges are visually distinct from transition edges ─────
 
-	// TODO: Skipped due to JavaScript error in test
+	// Tracking: https://github.com/lsm/neokai/issues/816 (JS error: hub.request is not a function in page.evaluate)
+	// The test uses page.evaluate with hub.request but the hub may not be initialized at that point.
 	test.skip('Channel edges are visually distinct from transition edges', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
@@ -758,7 +745,8 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 13: Task Agent channel edges are rendered ───────────────────────
 
-	// TODO: Skipped due to test failure
+	// Tracking: https://github.com/lsm/neokai/issues/817 (stale node count - toHaveCount(1) should be 2)
+	// The test expects 1 node but Task Agent virtual node is always injected at index 0.
 	test.skip('Task Agent channel edges are rendered', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
