@@ -284,15 +284,12 @@ function formatTo(to: string | string[]): string {
 	return Array.isArray(to) ? `[${to.join(', ')}]` : to;
 }
 
-function ChannelsSection({ node, agents, onUpdate }: ChannelsSectionProps) {
+function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 	const channels = node.channels ?? [];
 	const nodeAgents = node.agents ?? [];
 
 	// Collect known roles from node agents (+ wildcard)
-	const knownRoles = [
-		'*',
-		...nodeAgents.map((sa) => agents.find((a) => a.id === sa.agentId)?.role ?? sa.agentId),
-	];
+	const knownRoles = ['*', ...nodeAgents.map((sa) => sa.role)];
 
 	function updateChannels(next: WorkflowChannel[]) {
 		onUpdate({ ...node, channels: next.length > 0 ? next : undefined });

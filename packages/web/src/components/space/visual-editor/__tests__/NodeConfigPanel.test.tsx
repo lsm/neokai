@@ -596,5 +596,54 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.channels[0].to).toBe('reviewer');
 			expect(updatedStep.channels[0].direction).toBe('one-way');
 		});
+
+		it('channel-from-select dropdown options are slot roles (WorkflowNodeAgent.role), not SpaceAgent.role', () => {
+			// When the same agent is added twice with roles "coder" and "coder-2",
+			// both slot roles must appear as distinct options in the channel dropdown.
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', role: 'coder' },
+					{ agentId: 'agent-2', role: 'coder-2' },
+				],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			const fromSelect = getByTestId('channel-from-select');
+			// Both slot-specific roles must be present as options
+			expect(fromSelect.textContent).toContain('coder');
+			expect(fromSelect.textContent).toContain('coder-2');
+		});
+
+		it('adding the same agent twice generates a unique slot role with numeric suffix', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-2', role: 'coder' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			// Add agent-2 (Coder) a second time
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents).toHaveLength(2);
+			expect(updatedStep.agents[0].role).toBe('coder');
+			// Second slot must get a unique suffix to avoid duplicate-role validation error
+			expect(updatedStep.agents[1].role).toBe('coder-2');
+		});
+
+		it('adding the same agent three times produces coder, coder-2, coder-3', () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{ agentId: 'agent-2', role: 'coder' },
+					{ agentId: 'agent-2', role: 'coder-2' },
+				],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+			expect(updatedStep.agents).toHaveLength(3);
+			expect(updatedStep.agents[2].role).toBe('coder-3');
+		});
 	});
 });

@@ -285,15 +285,12 @@ interface ChannelsPanelSectionProps {
 	onUpdate: (step: NodeDraft) => void;
 }
 
-function ChannelsPanelSection({ step, agents, onUpdate }: ChannelsPanelSectionProps) {
+function ChannelsPanelSection({ step, onUpdate }: ChannelsPanelSectionProps) {
 	const channels = step.channels ?? [];
 	const stepAgents = step.agents ?? [];
 
 	// Collect known roles from step agents (+ wildcard)
-	const knownRoles = [
-		'*',
-		...stepAgents.map((sa) => agents.find((a) => a.id === sa.agentId)?.role ?? sa.agentId),
-	];
+	const knownRoles = ['*', ...stepAgents.map((sa) => sa.role)];
 
 	const [newFrom, setNewFrom] = useState('');
 	const [newTo, setNewTo] = useState('');
