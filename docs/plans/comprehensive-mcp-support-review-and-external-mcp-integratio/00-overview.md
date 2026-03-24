@@ -18,7 +18,7 @@ The existing system reads MCP server configs from `.mcp.json` / `settings.json` 
 - Stores registry entries in the SQLite `app_mcp_servers` table.
 - At room-chat session startup, `RoomRuntimeService` reads the registry, applies per-room enablement, and passes the resolved `mcpServers` map to `setRuntimeMcpServers()` alongside the existing `room-agent-tools` server.
 - For worker (coder/general) sessions, enabled registry entries are injected via `session.setRuntimeMcpServers()` after session creation — preserving the SDK's existing auto-load of file-based MCP servers (`config.mcpServers` remains `undefined`).
-- The Planner and plan-writer sub-agents gain access to web-search tools from a configured web-search MCP entry.
+- The Planner and plan-writer sub-agents already have built-in `WebFetch` and `WebSearch` tools — no additional wiring needed. Milestone 6 documents this and seeds useful default MCP entries for end-users.
 
 No existing MCP file-based flows are removed — the registry is additive.
 
@@ -29,7 +29,7 @@ No existing MCP file-based flows are removed — the registry is additive.
 3. **MCP Lifecycle Manager** — Convert registry entries to SDK configs, inject via `setRuntimeMcpServers()` into room sessions (Task 3.2), worker sessions (Task 3.3), and space agents (Task 3.4). Validation error reporting for misconfigured entries. Health-check/auto-restart deferred to a future iteration.
 4. **Room and Session MCP Integration** — Per-room enablement stored in the DB, integration in `RoomRuntimeService` and `QueryOptionsBuilder`, and online tests.
 5. **Web UI for MCP Registry** — Settings panel for adding/editing/deleting application-level MCP entries with enable/disable per room.
-6. **Planner Web Search Capability** — Evaluate and integrate a web-search MCP (Brave/DuckDuckGo/Fetch), wire it into Planner and plan-writer agents.
+6. **Default MCP Seeds and Planner Web Search Verification** — Document that the Planner and plan-writer already have `WebFetch`/`WebSearch` built-in tools (no new wiring needed). Seed `fetch-mcp` and `brave-search` as default registry entries for end-users.
 7. **E2E Tests** — End-to-end Playwright test: add an MCP, enable in a room, verify tools available to the room agent.
 
 ## Cross-Milestone Dependencies
@@ -47,4 +47,4 @@ Milestone 1 (Audit) should complete before implementation milestones begin. If t
 
 ## Total Estimated Task Count
 
-17 tasks across 7 milestones.
+15 tasks across 7 milestones. (Task 6.3 "wire web search into planner" and Task 7.2 "planner web search smoke test" were removed — the planner already has built-in WebFetch/WebSearch tools.)

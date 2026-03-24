@@ -1,49 +1,53 @@
-# Milestone 6: Planner Web Search Capability
+# Milestone 6: Default MCP Seeds and Planner Web Search Verification
 
 ## Milestone Goal
 
-Integrate a web-search MCP server into the Planner agent (and its plan-writer sub-agent) so they can perform real-time internet searches during planning. The implementation uses the application-level MCP registry from Milestone 2 and the lifecycle manager from Milestone 3 to make the search server available.
+**Clarification:** The original goal ("planner web search capability") referred to the planner agent used in the planning workflow being able to search the internet. This capability is **already implemented**: both the Planner agent and the plan-writer sub-agent include `WebFetch` and `WebSearch` in their tool lists (`planner-agent.ts` lines 242-243 for plan-writer, lines 592-593 for Planner). No new infrastructure is required for this.
+
+This milestone therefore covers two things:
+1. **Document** the existing planner web search capability so it is not accidentally removed in future refactors.
+2. **Seed** useful default MCP entries (`fetch-mcp`, `brave-search`) into the application-level registry at daemon startup — these are useful defaults for end-users and are required by the E2E test in Task 7.1.
 
 ## Scope
 
-Daemon package (planner-agent.ts), plus optional user-facing setup instructions in `docs/`. No new infrastructure — leverages the registry built in prior milestones.
+Daemon package (startup seeding) and one documentation task. No new agent wiring.
 
 ---
 
-## Task 6.1: Evaluate and Select Web Search MCP
+## Task 6.1: Document Planner Web Search Capability
 
 **Agent type:** general
 
 **Description:**
-Research the available web-search MCP options and select the best one for NeoKai's planner. Document the decision.
+Verify and document that the Planner agent and plan-writer sub-agent already have web search capability via built-in `WebFetch` and `WebSearch` tools. Produce a short document so this capability is visible and not accidentally regressed.
 
 **Subtasks (ordered):**
 
-1. Evaluate the following candidates:
-   - `@modelcontextprotocol/server-brave-search` (requires BRAVE_API_KEY, free tier available)
-   - `mcp-server-fetch` / `mcp-fetch` (no API key required, fetches URLs and converts to text — useful for reading docs but limited search)
-   - DuckDuckGo community MCP server (no API key, rate-limited)
-   - Tavily MCP (`tavily-mcp`, requires TAVILY_API_KEY, AI-optimized search)
-2. Assessment criteria: (a) no/low-cost API key for development, (b) quality of structured search results, (c) npm/uvx installability, (d) community adoption, (e) compatibility with NeoKai's stdio MCP model.
-3. Recommendation: Select **Brave Search MCP** as primary (free tier API key, high result quality, official MCP package) and **mcp-server-fetch** as a zero-config fallback for URL retrieval.
-4. Write evaluation findings in `docs/mcp-web-search-evaluation.md`.
-5. Produce a PR with the document.
+1. Read `packages/daemon/src/lib/room/agents/planner-agent.ts` to confirm:
+   - The Planner agent's `AgentSubAgentDef` (for plan-writer) includes `'WebFetch'` and `'WebSearch'` in its `tools` array.
+   - The Planner agent's own `AgentSessionInit` includes `'WebFetch'` and `'WebSearch'` in its `tools` array.
+2. Confirm there are no `allowedTools` or permission filters downstream that would block these tools for the Planner or plan-writer.
+3. Write `docs/planner-web-search.md` documenting:
+   - Current state: WebFetch and WebSearch are in scope for both agents.
+   - How to use them: WebSearch for broad queries, WebFetch for reading specific URLs (npm package pages, GitHub releases, documentation).
+   - Maintenance note: future changes to the planner tool list should preserve these two tools.
+4. Produce a PR with the document.
 
 **Acceptance criteria:**
-- `docs/mcp-web-search-evaluation.md` exists and documents all four candidates with pros/cons.
-- A recommendation is clearly stated with rationale.
+- `docs/planner-web-search.md` exists and documents the current tool availability.
+- No code changes — documentation only.
 - PR created via `gh pr create` targeting `dev`.
 
-**Depends on:** (none — can run in parallel with Milestone 3 and 4)
+**Depends on:** (none — can run in parallel from day one)
 
 ---
 
-## Task 6.2: Seed Web Search MCP on Daemon Startup
+## Task 6.2: Seed Default Application-Level MCP Entries on Daemon Startup
 
 **Agent type:** coder
 
 **Description:**
-On daemon startup, if no web-search MCP entry exists in the registry, optionally auto-register a `brave-search` entry (disabled by default, waiting for user to provide API key) and a `mcp-server-fetch` entry (enabled by default, no API key required).
+On daemon startup, seed two useful default MCP entries into the application-level registry if they do not already exist. These are for end-users (not for the planner's own web search, which uses built-in tools). The `fetch-mcp` entry is also required by the E2E test in Task 7.1.
 
 **Subtasks (ordered):**
 
@@ -72,7 +76,7 @@ On daemon startup, if no web-search MCP entry exists in the registry, optionally
    }
    ```
 4. The seed is idempotent — if entries already exist (by name), skip creation.
-5. **Verify package names at implementation time** — `@tokenizin/mcp-npx-fetch` and `@modelcontextprotocol/server-brave-search` are the expected packages as of plan creation but npm package names can change. The implementing agent must verify these packages exist on npm and are still the recommended choices per the Task 6.1 evaluation document before hardcoding them.
+5. **Verify package names at implementation time** — `@tokenizin/mcp-npx-fetch` and `@modelcontextprotocol/server-brave-search` are the expected packages as of plan creation but npm package names can change. The implementing agent must verify these packages exist on npm before hardcoding them.
 6. Write unit tests that verify the seed function is idempotent and creates expected entries on a fresh registry.
 
 **Acceptance criteria:**
@@ -83,34 +87,3 @@ On daemon startup, if no web-search MCP entry exists in the registry, optionally
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
 
 **Depends on:** Task 2.1 (Schema, Types, and Repository), Task 3.1 (AppMcpLifecycleManager)
-
----
-
-## Task 6.3: Wire Web Search MCP into Planner and Plan-Writer Agents
-
-**Agent type:** coder
-
-**Description:**
-Update `planner-agent.ts` so the Planner and its plan-writer sub-agent have access to web-search tools from the registry's enabled web-search MCP servers (e.g., `fetch-mcp`, `brave-search`).
-
-**Subtasks (ordered):**
-
-1. In `packages/daemon/src/lib/room/agents/planner-agent.ts`, update `createPlannerAgentInit()` to accept an optional `webSearchMcpServers?: Record<string, McpServerConfig>` in `PlannerAgentConfig`.
-2. Merge `webSearchMcpServers` into the `mcpServers` map passed to the planner session: `{ 'planner-tools': mcpServer, ...webSearchMcpServers }`.
-3. In the plan-writer sub-agent definition (`buildPlanWriterAgentDef`), add the web-search MCP server names to the agent's allowed tool wildcards (e.g., `'fetch-mcp__*'`, `'brave-search__*'`) so the plan-writer can call those tools.
-4. In `packages/daemon/src/lib/room/runtime/room-runtime.ts`, when constructing `PlannerAgentConfig`, query `appMcpManager.getWebSearchMcpConfigs()` (a new helper on `AppMcpLifecycleManager` that filters registry entries tagged as web-search, or simply returns all enabled entries matching names `fetch-mcp` and `brave-search`).
-5. Add `getWebSearchMcpConfigs(): Record<string, McpServerConfig>` to `AppMcpLifecycleManager` that returns enabled entries with `name` in `['fetch-mcp', 'brave-search']` (or any entry with description containing "search" or "fetch" — make the filter configurable via a `tags` field added to `AppMcpServer` type if preferred).
-6. **Update `restoreMcpServersForGroup()`** in `packages/daemon/src/lib/room/runtime/room-runtime.ts`: This method reconstructs MCP servers for active sessions after a daemon restart. It currently restores the `planner-tools` server. Update it to also call `appMcpManager.getWebSearchMcpConfigs()` and include those servers in the restored MCP map, so web-search tools are available to the planner after daemon restart without requiring a fresh session.
-7. Write unit tests verifying the planner session init includes web-search MCP servers when they are enabled in the registry.
-8. Write an online test that starts a planner session with a mock web-search MCP and verifies the tool appears in the session's available tools.
-9. Write a unit test for `restoreMcpServersForGroup()` that verifies web-search MCP servers are included in the restored session.
-
-**Acceptance criteria:**
-- Planner sessions have `fetch-mcp` tools available (when `fetch-mcp` is enabled in registry).
-- Plan-writer sub-agent can call web-search tools during codebase exploration.
-- After daemon restart, web-search tools are restored to active planner sessions (tested via unit test on `restoreMcpServersForGroup`).
-- No regression in existing planner behavior (create_task, update_task, remove_task tools still work).
-- Unit and online tests pass.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create` targeting `dev`.
-
-**Depends on:** Task 3.1 (AppMcpLifecycleManager), Task 6.2 (Seed Web Search MCP), Task 2.2 (RPC Handlers)
