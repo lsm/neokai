@@ -1054,4 +1054,97 @@ describe('RoomTasks', () => {
 			expect(badge?.getAttribute('title')).toBe('Mission: Specific Goal Name');
 		});
 	});
+
+	describe('Short ID Badge', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
+		it('should show short ID badge when task has shortId', () => {
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-42' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const badge = container.querySelector('[data-testid="short-id-badge-t-42"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('#t-42');
+		});
+
+		it('should NOT show short ID badge when task has no shortId', () => {
+			const tasks = [createTask('uuid-123', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// No badge elements with the short-id-badge prefix
+			const badges = container.querySelectorAll('[data-testid^="short-id-badge-"]');
+			expect(badges).toHaveLength(0);
+		});
+
+		it('should have tooltip "Click to copy short ID" on the badge', () => {
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-7' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const badge = container.querySelector('[data-testid="short-id-badge-t-7"]');
+			expect(badge?.getAttribute('title')).toBe('Click to copy short ID');
+		});
+
+		it('should NOT call onTaskClick when short ID badge is clicked (stopPropagation)', () => {
+			const onTaskClick = vi.fn();
+			// Mock clipboard since jsdom doesn't implement it
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText: vi.fn().mockResolvedValue(undefined) },
+				configurable: true,
+			});
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-5', title: 'My task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const badge = container.querySelector(
+				'[data-testid="short-id-badge-t-5"]'
+			) as HTMLButtonElement;
+			fireEvent.click(badge);
+
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should use shortId when calling onTaskClick (prefers short ID for navigation)', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('uuid-123', 'pending', { shortId: 't-42', title: 'My task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const taskItem = container.querySelector('.cursor-pointer');
+			fireEvent.click(taskItem!);
+
+			expect(onTaskClick).toHaveBeenCalledWith('t-42');
+		});
+
+		it('should fall back to UUID when calling onTaskClick if no shortId', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('uuid-123', 'pending', { title: 'My task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const taskItem = container.querySelector('.cursor-pointer');
+			fireEvent.click(taskItem!);
+
+			expect(onTaskClick).toHaveBeenCalledWith('uuid-123');
+		});
+
+		it('should use shortId when calling onView (prefers short ID for navigation)', () => {
+			selectedTabSignal.value = 'review';
+			const onView = vi.fn();
+			const tasks = [createTask('uuid-r', 'review', { shortId: 't-9', title: 'Review task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View details')
+			) as HTMLButtonElement;
+			fireEvent.click(viewBtn);
+
+			expect(onView).toHaveBeenCalledWith('t-9');
+		});
+	});
 });
