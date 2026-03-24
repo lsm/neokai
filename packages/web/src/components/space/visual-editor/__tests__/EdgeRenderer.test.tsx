@@ -15,6 +15,14 @@
  * - Delete inside input/textarea/contenteditable does not trigger onEdgeDelete
  * - Arrowhead markers are rendered in defs
  * - Multiple instances have non-colliding marker IDs
+ * - Channel edge constants (CHANNEL_EDGE_COLOR, CHANNEL_EDGE_DASH_ARRAY, TASK_AGENT_X)
+ * - computeChannelEdgePoints for regular node-to-node channels
+ * - computeChannelEdgePoints for task-agent to node channels
+ * - Bidirectional channel renders two arrowheads (markerStart + markerEnd)
+ * - One-way channel renders one arrowhead (markerEnd only)
+ * - Channel edges use dashed style (strokeDasharray)
+ * - Channel edges are teal colored (distinct from transition edge colors)
+ * - Channel edges have correct data-testid attribute
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -28,9 +36,14 @@ import {
 	EDGE_COLORS,
 	NORMAL_STROKE_WIDTH,
 	SELECTED_STROKE_WIDTH,
+	CHANNEL_EDGE_COLOR,
+	CHANNEL_EDGE_DASH_ARRAY,
+	TASK_AGENT_X,
+	computeChannelEdgePoints,
 } from '../EdgeRenderer';
 import type { EdgeRendererProps } from '../EdgeRenderer';
 import type { NodePosition } from '../types';
+import type { ResolvedWorkflowChannel } from '../EdgeRenderer';
 
 afterEach(() => cleanup());
 
@@ -186,6 +199,7 @@ describe('EdgeRenderer — rendering', () => {
 		const defs = container.querySelector('defs');
 		expect(defs).not.toBeNull();
 		// Should have 5 markers: always, human, condition, task_result, selected
+		// (channel-end and channel-start are only rendered when channels prop is provided)
 		expect(defs!.querySelectorAll('marker')).toHaveLength(5);
 	});
 
@@ -381,5 +395,253 @@ describe('EdgeRenderer — keyboard delete', () => {
 		div.focus();
 		fireEvent.keyDown(div, { key: 'Delete', target: div });
 		expect(onEdgeDelete).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Channel edge constants
+// ---------------------------------------------------------------------------
+
+describe('Channel edge constants', () => {
+	it('CHANNEL_EDGE_COLOR is teal', () => {
+		expect(CHANNEL_EDGE_COLOR).toBe('#14b8a6');
+	});
+
+	it('CHANNEL_EDGE_DASH_ARRAY is a dashed pattern', () => {
+		expect(CHANNEL_EDGE_DASH_ARRAY).toBe('6 4');
+	});
+
+	it('TASK_AGENT_X is 60', () => {
+		expect(TASK_AGENT_X).toBe(60);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computeChannelEdgePoints
+// ---------------------------------------------------------------------------
+
+describe('computeChannelEdgePoints', () => {
+	it('returns null when from-node is missing', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'missing',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		expect(computeChannelEdgePoints(channel, NODE_POSITIONS)).toBeNull();
+	});
+
+	it('returns null when to-node is missing', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'missing',
+			direction: 'bidirectional',
+		};
+		expect(computeChannelEdgePoints(channel, NODE_POSITIONS)).toBeNull();
+	});
+
+	it('source x is right edge of from-node for regular channel', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		// step-1: x=50, width=160 → right edge = 210
+		expect(pts!.sx).toBe(50 + 160);
+	});
+
+	it('source y is vertical center of from-node', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		// step-1: y=50, height=80 → center = 90
+		expect(pts!.sy).toBe(50 + 80 / 2);
+	});
+
+	it('target x is left edge of to-node', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		// step-2: x=300
+		expect(pts!.tx).toBe(300);
+	});
+
+	it('target y is vertical center of to-node', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'step-1',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		// step-2: y=250, height=80 → center = 290
+		expect(pts!.ty).toBe(250 + 80 / 2);
+	});
+
+	it('task-agent channel uses TASK_AGENT_X as source x', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'task-agent',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		expect(pts!.sx).toBe(TASK_AGENT_X);
+	});
+
+	it('task-agent channel uses top-center of target node', () => {
+		const channel: ResolvedWorkflowChannel = {
+			fromStepId: 'task-agent',
+			toStepId: 'step-2',
+			direction: 'bidirectional',
+		};
+		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
+		expect(pts).not.toBeNull();
+		// step-2: x=300, width=160 → center x = 380, y = 250
+		expect(pts!.tx).toBe(300 + 160 / 2);
+		expect(pts!.ty).toBe(250);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Channel edge rendering
+// ---------------------------------------------------------------------------
+
+function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
+	const onEdgeSelect = vi.fn();
+	const onEdgeDelete = vi.fn();
+	const result = render(
+		<svg>
+			<EdgeRenderer
+				transitions={[T1, T2, T3]}
+				nodePositions={NODE_POSITIONS}
+				onEdgeSelect={onEdgeSelect}
+				onEdgeDelete={onEdgeDelete}
+				{...props}
+			/>
+		</svg>
+	);
+	return { ...result, onEdgeSelect, onEdgeDelete };
+}
+
+describe('EdgeRenderer — channel edge rendering', () => {
+	it('renders channel edges when channels prop is provided', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+			{ fromStepId: 'task-agent', toStepId: 'step-2', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const channelEdgeGroups = container.querySelectorAll('g[data-channel-edge="true"]');
+		expect(channelEdgeGroups).toHaveLength(2);
+	});
+
+	it('channel edges have correct data-testid attribute', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+		const { getByTestId } = renderEdgesWithChannels({ channels });
+		expect(getByTestId('channel-edge-task-agent-step-1')).toBeTruthy();
+	});
+
+	it('channel edges have correct data-channel-direction attribute', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const bidirectional = container.querySelector('g[data-channel-direction="bidirectional"]');
+		const oneWay = container.querySelector('g[data-channel-direction="one-way"]');
+		expect(bidirectional).toBeTruthy();
+		expect(oneWay).toBeTruthy();
+	});
+
+	it('bidirectional channel has both markerStart and markerEnd on visible path', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		const markerStart = visiblePath!.getAttribute('markerStart');
+		const markerEnd = visiblePath!.getAttribute('markerEnd');
+		expect(markerStart).toContain('channel-start');
+		expect(markerEnd).toContain('channel-end');
+	});
+
+	it('one-way channel has only markerEnd on visible path', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		const markerStart = visiblePath!.getAttribute('markerStart');
+		const markerEnd = visiblePath!.getAttribute('markerEnd');
+		expect(markerStart).toBeNull();
+		expect(markerEnd).toContain('channel-end');
+	});
+
+	it('channel edges use dashed stroke style', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('strokeDasharray')).toBe(CHANNEL_EDGE_DASH_ARRAY);
+	});
+
+	it('channel edges use teal color (distinct from transition edge colors)', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const visiblePath = container.querySelector(
+			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
+		);
+		expect(visiblePath).not.toBeNull();
+		expect(visiblePath!.getAttribute('stroke')).toBe(CHANNEL_EDGE_COLOR);
+		// Verify it's different from transition edge colors
+		expect(CHANNEL_EDGE_COLOR).not.toBe(EDGE_COLORS.always);
+		expect(CHANNEL_EDGE_COLOR).not.toBe(EDGE_COLORS.human);
+		expect(CHANNEL_EDGE_COLOR).not.toBe(EDGE_COLORS.condition);
+	});
+
+	it('skips channel edges where target node position is missing', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+			{ fromStepId: 'task-agent', toStepId: 'missing-node', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const channelEdgeGroups = container.querySelectorAll('g[data-channel-edge="true"]');
+		expect(channelEdgeGroups).toHaveLength(1);
+	});
+
+	it('channel edge defs include channel arrowhead markers', () => {
+		const channels: ResolvedWorkflowChannel[] = [
+			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
+		];
+		const { container } = renderEdgesWithChannels({ channels });
+		const defs = container.querySelector('defs');
+		expect(defs).not.toBeNull();
+		const channelEndMarker = defs!.querySelector('marker[id*="channel-end"]');
+		const channelStartMarker = defs!.querySelector('marker[id*="channel-start"]');
+		expect(channelEndMarker).not.toBeNull();
+		expect(channelStartMarker).not.toBeNull();
 	});
 });

@@ -58,7 +58,7 @@ export class SpaceSessionGroupRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_session_groups (id, space_id, name, description, workflow_run_id, current_step_id, task_id, status, created_at, updated_at)
+				`INSERT INTO space_session_groups (id, space_id, name, description, workflow_run_id, current_node_id, task_id, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
@@ -154,7 +154,7 @@ export class SpaceSessionGroupRepository {
 			values.push(params.workflowRunId ?? null);
 		}
 		if (params.currentStepId !== undefined) {
-			fields.push('current_step_id = ?');
+			fields.push('current_node_id = ?');
 			values.push(params.currentStepId ?? null);
 		}
 		if (params.taskId !== undefined) {
@@ -393,7 +393,7 @@ export class SpaceSessionGroupRepository {
 			name: row.name as string,
 			description: (row.description as string | null) ?? undefined,
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
-			currentStepId: (row.current_step_id as string | null) ?? undefined,
+			currentStepId: (row.current_node_id as string | null) ?? undefined,
 			taskId: (row.task_id as string | null) ?? undefined,
 			status: ((row.status as string | null) ?? 'active') as 'active' | 'completed' | 'failed',
 			members,

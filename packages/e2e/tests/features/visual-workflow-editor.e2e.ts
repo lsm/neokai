@@ -15,6 +15,17 @@
  * - All test actions go through the UI (clicks, inputs, navigation)
  * - All assertions check visible DOM state
  * - RPC is only used in beforeEach/afterEach for test infrastructure
+ *
+ * Task Agent Node Tests (SKIPPED - feature not yet implemented):
+ * - Task Agent node is always visible when opening the visual editor
+ * - Task Agent node cannot be deleted via keyboard
+ * - Adding a new node shows Task Agent channel edges on the canvas
+ * - Task Agent node has distinct visual styling (purple border, pinned-node class)
+ * - Channels to Task Agent can be removed via the config panel
+ *
+ * These tests are skipped because the Task Agent visible node feature (Change 3 of
+ * the workflow graph model goal) has not been implemented yet. Once the feature is
+ * implemented (Tasks 4.1, 4.2, 4.3), remove the test.skip() annotations.
  */
 
 import type { Page } from '@playwright/test';
@@ -26,6 +37,7 @@ import {
 	resetEditorModeStorage,
 	openNewWorkflowEditor,
 	switchToVisualMode,
+	getDefaultAgentId,
 } from '../helpers/workflow-editor-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
@@ -38,20 +50,6 @@ async function createTestSpace(page: Page): Promise<string> {
 
 async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
 	return deleteSpace(page, spaceId);
-}
-
-/** Get the default agent ID for the active space (infrastructure only). */
-async function getDefaultAgentId(page: Page, spaceId: string): Promise<string> {
-	return page.evaluate(async (sid) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('Hub not available');
-		const res = (await hub.request('spaceAgent.list', { spaceId: sid })) as {
-			agents: Array<{ id: string; role: string }>;
-		};
-		const agent = res.agents.find((a) => a.role === 'planner') ?? res.agents[0];
-		if (!agent) throw new Error('No agents found in space');
-		return agent.id;
-	}, spaceId);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -78,6 +76,11 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 1: Create workflow with visual editor ──────────────────────────
+
+	// NOTE: When the Task Agent pinned node feature is implemented (Tasks 4.1-4.3), the
+	// toHaveCount assertions in this test will need to add +1 to account for the always-
+	// present Task Agent node. For example, "3" Add-Step clicks will produce 4 nodes
+	// (Task Agent + 3 regular nodes), not 3. Update line ~111 accordingly.
 
 	test('Create workflow with visual editor', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
@@ -165,6 +168,9 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 2: Node positions are restored after save and reopen ──────────
+
+	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
+	// assertion on line ~250 will need to change from 2 to 3 (adds Task Agent node).
 
 	test('Node positions are restored after save and reopen', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
@@ -269,6 +275,12 @@ test.describe('Visual Workflow Editor', () => {
 	});
 
 	// ─── Test 3: Load template in visual editor ──────────────────────────────
+
+	// NOTE: When the Task Agent pinned node feature is implemented:
+	// - The toHaveCount on line ~316 will need to change from 2 to 3 (adds Task Agent node)
+	// - The template-picker-button visibility assertion below will be unreachable because
+	//   the Task Agent node is always present, so the canvas is never truly "empty"
+	//   and the picker is hidden immediately on editor open.
 
 	test('Load template in visual editor', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
@@ -375,6 +387,9 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 5: Visual editor validation — missing name ────────────────────
 
+	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
+	// assertion on line ~412 will need to change from 1 to 2 (adds Task Agent node).
+
 	test('Visual editor shows error when saving without name', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -400,6 +415,9 @@ test.describe('Visual Workflow Editor', () => {
 
 	// ─── Test 6: Visual editor validation — missing agent ───────────────────
 
+	// NOTE: When the Task Agent pinned node feature is implemented, the toHaveCount
+	// assertion on line ~442 will need to change from 1 to 2 (adds Task Agent node).
+
 	test('Visual editor shows error when saving without agent assigned', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
@@ -424,5 +442,530 @@ test.describe('Visual Workflow Editor', () => {
 
 		// Editor should remain open
 		await expect(editor).toBeVisible();
+	});
+
+	// ─── Task Agent Node Tests ───────────────────────────────────────────────
+	// These tests are skipped because the Task Agent visible node feature
+	// (Change 3 of the workflow graph model goal) has not been implemented yet.
+	// They require:
+	// - Task Agent rendered as a pinned node in VisualWorkflowEditor
+	// - data-testid="workflow-node-task-agent" attribute on the node
+	// - data-task-agent-node="true" attribute on the node
+	// - border-purple-500 CSS class for distinct styling
+	// - pinned-node CSS class for the pinned marker
+	// - Task Agent node always present at canvas open (not added via add-step-button)
+	// - ChannelTopologyBadge showing task-agent channels on regular nodes
+	// - channels-section in NodeConfigPanel for multi-agent steps showing task-agent channels
+	//
+	// Once the feature is implemented (Tasks 4.1, 4.2, 4.3), remove the test.skip()
+	// and update selectors if the implementation differs from the assumptions below.
+	// See: https://github.com/lsm/neokai/issues (tracking issue for Task Agent visible node)
+
+	// ─── Test 7: Task Agent node is always visible when opening the visual editor ───
+
+	test.skip('Task Agent node is always visible when opening the visual editor', async ({
+		page,
+	}) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// The Task Agent pinned node should be visible even on an empty canvas
+		// It has a distinct data attribute to identify it
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// The Task Agent node should also have the data-task-agent-node attribute
+		await expect(taskAgentNode).toHaveAttribute('data-task-agent-node', 'true');
+
+		// Task Agent node should display "Task Agent" as its name
+		await expect(taskAgentNode.locator('text=Task Agent')).toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Test 8: Task Agent node cannot be deleted via keyboard ─────────────
+
+	test.skip('Task Agent node cannot be deleted via keyboard', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// First add a regular node so we have something to select and potentially delete
+		await editor.getByTestId('add-step-button').click();
+
+		// Should have 2 nodes: Task Agent pinned node + 1 regular node
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(2, {
+			timeout: 3000,
+		});
+
+		// Select the Task Agent node
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await taskAgentNode.click();
+
+		// Try to delete via Delete key
+		await page.keyboard.press('Delete');
+
+		// Task Agent node should still be visible after Delete key
+		await expect(taskAgentNode).toBeVisible({ timeout: 2000 });
+
+		// Also try Backspace key (graph editors often handle both)
+		await taskAgentNode.click();
+		await page.keyboard.press('Backspace');
+		await expect(taskAgentNode).toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Test 9: Adding a new node shows Task Agent channel edges on the canvas ───
+
+	test.skip('Adding a new node shows Task Agent channel edges on the canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// The Task Agent node should already be visible (1 node)
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// Count nodes before adding (should be 1 - just the Task Agent pinned node)
+		const nodes = editor.locator('[data-testid^="workflow-node-"]');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		// Add a new node via "Add Step" button
+		await editor.getByTestId('add-step-button').click();
+
+		// Wait for the new node to appear - should now be 2 nodes (Task Agent + new node)
+		await expect(nodes).toHaveCount(2, { timeout: 3000 });
+
+		// Click the new node (second one, not the Task Agent) to select it and open the config panel
+		await nodes.nth(1).click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+
+		// The ChannelTopologyBadge on the canvas node should show a channel to/from Task Agent
+		// "task-agent" is 10 chars; the 8-char truncation limit produces "task-age…"
+		// so we look for the truncated form.
+		const nodeCard = nodes.nth(1);
+		await expect(nodeCard.locator('[data-testid="channel-topology-badge"]')).toBeVisible({
+			timeout: 2000,
+		});
+		await expect(nodeCard.locator('text=task-age')).toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Test 10: Task Agent node has distinct visual styling ───────────────
+
+	test.skip('Task Agent node has distinct visual styling', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// The Task Agent node should have a distinct border color (purple)
+		const taskAgentNode = editor.locator('[data-testid="workflow-node-task-agent"]');
+		await expect(taskAgentNode).toBeVisible({ timeout: 5000 });
+
+		// Check for the distinct styling class - Task Agent uses purple border
+		// The Task Agent node should have border-purple-500 class
+		await expect(taskAgentNode).toHaveClass(/border-purple-500/);
+
+		// Also verify it has the pinned-node marker class
+		await expect(taskAgentNode).toHaveClass(/pinned-node/);
+	});
+
+	// ─── Test 11: Channels to Task Agent can be removed via config panel ───
+
+	test.skip('Channels to Task Agent can be removed via config panel', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Task Agent pinned node should already be visible (1 node)
+		const nodes = editor.locator('[data-testid^="workflow-node-"]');
+		await expect(nodes).toHaveCount(1, { timeout: 3000 });
+
+		// Add a node that will have a Task Agent channel
+		await editor.getByTestId('add-step-button').click();
+
+		// Should now have 2 nodes: Task Agent + 1 regular node
+		await expect(nodes).toHaveCount(2, { timeout: 3000 });
+
+		// Configure the first regular node (nth(1), not Task Agent at nth(0)) with an agent
+		await nodes.nth(1).click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+		await editor.getByTestId('close-button').click();
+
+		// Now add a second regular node
+		await editor.getByTestId('add-step-button').click();
+		await expect(nodes).toHaveCount(3, { timeout: 3000 });
+
+		// Select the second regular node (nth(2), Task Agent is nth(0))
+		// NOTE: DOM ordering assumes Task Agent pinned node is always nth(0). This
+		// assumption should be verified when the feature is implemented.
+		await nodes.nth(2).click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+
+		// Put node in multi-agent mode (channels-section only renders with 2+ agents)
+		// seedPresetAgents creates 4 agents (Coder, General, Planner, Reviewer).
+		// add-agent-select index 0 is the blank placeholder; real agents start at index 1.
+		const panel = editor.getByTestId('node-config-panel');
+		await panel.getByTestId('agent-select').selectOption({ index: 1 });
+		await panel.getByTestId('add-agent-button').click();
+		await expect(panel.getByTestId('agents-list')).toBeVisible({ timeout: 3000 });
+		await panel.getByTestId('add-agent-select').selectOption({ index: 1 });
+		await expect(panel.getByTestId('agents-list').getByTestId('agent-entry')).toHaveCount(2, {
+			timeout: 3000,
+		});
+
+		// Verify Task Agent channel exists in the NodeConfigPanel's channels-section
+		// (not the ChannelTopologyBadge which is on the canvas node)
+		const channelsSection = panel.getByTestId('channels-section');
+		await expect(channelsSection).toBeVisible({ timeout: 2000 });
+
+		// Find the channel entry that references task-agent
+		// NodeConfigPanel does NOT truncate (unlike ChannelTopologyBadge); Playwright's
+		// text= does a case-insensitive substring match, so 'task-age' matches 'task-agent'
+		const taskAgentChannelEntry = channelsSection.locator('[data-testid="channel-entry"]').filter({
+			has: page.locator('text=task-agent'),
+		});
+		await expect(taskAgentChannelEntry).toBeVisible({ timeout: 2000 });
+
+		// Click the remove button on that channel entry
+		const removeBtn = taskAgentChannelEntry.locator('[data-testid="remove-channel-button"]');
+		await expect(removeBtn).toBeVisible({ timeout: 2000 });
+		await removeBtn.click();
+
+		// Verify the Task Agent channel is no longer in the channels section
+		await expect(taskAgentChannelEntry).not.toBeVisible({ timeout: 2000 });
+	});
+
+	// ─── Channel Direction Visualization Tests ──────────────────────────────────
+	// These tests verify that channel direction is visually rendered on the canvas.
+	// They require:
+	// - ChannelEdgeRenderer in WorkflowCanvas.tsx to render arrowhead markers based on direction
+	// - ChannelEdge interface to include direction property
+	// - Bidirectional channels: double-headed arrow (↔) via marker-start + marker-end
+	// - Unidirectional channels: single arrowhead (→) via marker-end only
+	// - Channel edges use dashed gray stroke; transition edges use solid colored stroke
+	//
+	// The arrowhead rendering is part of Change 6 (Show Channel Direction in the Visual
+	// Editor) of the workflow graph model goal. Once implemented, remove test.skip().
+
+	// ─── Test 12: Channel edges are visually distinct from transition edges ─────
+
+	test('Channel edges are visually distinct from transition edges', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+
+		// Create a workflow with a transition (edge) via RPC so we have both types.
+		// Include channels in the RPC payload so Task Agent channel edges are rendered.
+		const agentId = await getDefaultAgentId(page, spaceId);
+		const s1 = crypto.randomUUID();
+		const s2 = crypto.randomUUID();
+		const t1 = crypto.randomUUID();
+
+		await page.evaluate(
+			async ({ sid, aId, step1, step2, trans1 }) => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub?.request) throw new Error('Hub not available');
+				await hub.request('spaceWorkflow.create', {
+					spaceId: sid,
+					name: 'Channel vs Transition Test',
+					steps: [
+						{
+							id: step1,
+							name: 'Start',
+							agentId: aId,
+							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+						},
+						{
+							id: step2,
+							name: 'End',
+							agentId: aId,
+							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+						},
+					],
+					transitions: [
+						{ id: trans1, from: step1, to: step2, order: 0, condition: { type: 'always' } },
+					],
+					startStepId: step1,
+					rules: [],
+					tags: [],
+					layout: {
+						[step1]: { x: 100, y: 80 },
+						[step2]: { x: 450, y: 80 },
+					},
+				});
+			},
+			{ sid: spaceId, aId: agentId, step1: s1, step2: s2, trans1: t1 }
+		);
+
+		// Navigate to workflows and open in visual mode
+		await page.locator('text=Workflows').first().click();
+		await expect(page.locator('text=Channel vs Transition Test')).toBeVisible({ timeout: 5000 });
+
+		const workflowCard = page
+			.locator('[class*="group"]')
+			.filter({ has: page.locator('text=Channel vs Transition Test') })
+			.first();
+		await workflowCard.evaluate((el) => {
+			const actions = el.querySelector<HTMLElement>('[data-testid="workflow-card-actions"]');
+			if (actions) actions.style.opacity = '1';
+		});
+		await workflowCard.getByRole('button', { name: 'Edit' }).click();
+		await expect(page.getByTestId('editor-mode-toggle')).toBeVisible({ timeout: 5000 });
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Transition edge should exist and have data attributes
+		const transitionEdge = editor.locator(`[data-testid="edge-${t1}"]`);
+		await expect(transitionEdge).toBeVisible({ timeout: 5000 });
+		await expect(transitionEdge).toHaveAttribute('data-edge-id', t1);
+
+		// Transition edges have solid stroke (not dashed) and colored stroke
+		// They use SVG markers for arrowheads
+		const transitionPath = transitionEdge.locator('path').first();
+		const strokeDasharray = await transitionPath.getAttribute('stroke-dasharray');
+		// Transition edges should NOT be dashed (stroke-dasharray should be null or empty)
+		expect(strokeDasharray === null || strokeDasharray === '').toBe(true);
+
+		// Channel edges should exist because we included channels in the RPC payload.
+		// They have data-channel-edge="true" attribute.
+		const channelEdge = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdge).toBeVisible({ timeout: 5000 });
+
+		// Channel edges should have dashed stroke
+		const channelPath = channelEdge.locator('path').last();
+		const channelStrokeDasharray = await channelPath.getAttribute('stroke-dasharray');
+		// Channel edges ARE dashed (e.g., "6 4")
+		expect(channelStrokeDasharray).toMatch(/^\d+\s+\d+$/);
+	});
+
+	// ─── Test 13: Task Agent channel edges are rendered ───────────────────────
+
+	test('Task Agent channel edges are rendered', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node - Task Agent channel edge should appear automatically
+		await editor.getByTestId('add-step-button').click();
+
+		// Wait for node to appear
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		// Channel edge should be rendered with data-channel-edge attribute
+		const channelEdges = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdges).toHaveCount(1, { timeout: 3000 });
+
+		// Channel edge should be a dashed gray path (verifiable via stroke attributes)
+		const channelPath = channelEdges.locator('path').last();
+		await expect(channelPath).toBeVisible({ timeout: 2000 });
+
+		// Gray color for channel edges (CHANNEL_EDGE_COLOR = '#9ca3af')
+		const stroke = await channelPath.getAttribute('stroke');
+		expect(stroke).toBe('#9ca3af');
+	});
+
+	// ─── Test 14: Bidirectional channels show double-arrowhead edges ────────────
+
+	test.skip('Bidirectional channels show double-arrowhead edges on canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		// Select the node and configure it with an agent
+		const node = editor.locator('[data-testid^="workflow-node-"]').nth(0);
+		await node.click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+		await editor.getByTestId('close-button').click();
+
+		// Verify Task Agent channel is auto-created (bidirectional by default)
+		// The ChannelTopologyBadge on the node should show ↔ for bidirectional
+		await expect(node.locator('text=↔')).toBeVisible({ timeout: 2000 });
+
+		// The channel edge on canvas should have both marker-start and marker-end
+		// (double-headed arrow for bidirectional)
+		const channelEdge = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdge).toBeVisible({ timeout: 3000 });
+
+		// Get the visible path element (not the transparent hitbox)
+		const channelPath = channelEdge.locator('path:not([stroke="transparent"])');
+		await expect(channelPath).toBeVisible({ timeout: 2000 });
+
+		// Bidirectional channels should have both marker-start and marker-end
+		const markerEnd = await channelPath.getAttribute('marker-end');
+		const markerStart = await channelPath.getAttribute('marker-start');
+		expect(markerEnd).not.toBeNull();
+		expect(markerStart).not.toBeNull();
+		// Both should reference arrow markers
+		expect(markerEnd).toMatch(/url\(#.*arrow.*\)/i);
+		expect(markerStart).toMatch(/url\(#.*arrow.*\)/i);
+	});
+
+	// ─── Test 15: One-way channels show single-arrowhead edges ─────────────────
+
+	test.skip('One-way channels show single-arrowhead edges on canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node and configure it with an agent
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		const node = editor.locator('[data-testid^="workflow-node-"]').nth(0);
+		await node.click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+
+		// Open channels section and add a one-way channel
+		// First scroll to channels section or open it if collapsed
+		const panel = editor.getByTestId('node-config-panel');
+
+		// Look for the channels section toggle or add-channel-form
+		const channelsSection = panel.getByTestId('add-channel-form');
+		await expect(channelsSection).toBeVisible({ timeout: 2000 });
+
+		// Set direction to one-way (already default)
+		await panel
+			.locator('[data-testid="channel-from-select"]')
+			.selectOption({ label: 'task-agent' });
+		await panel
+			.locator('[data-testid="channel-to-input"], [data-testid="channel-to-select"]')
+			.fill('coder');
+
+		// Click add channel button
+		await panel.getByTestId('add-channel-button').click();
+
+		// Verify the channel was added as one-way (→ not ↔)
+		const channelEntry = panel
+			.locator('[data-testid="channel-entry"]')
+			.filter({ has: page.locator('text=→') });
+		await expect(channelEntry).toBeVisible({ timeout: 2000 });
+
+		await editor.getByTestId('close-button').click();
+
+		// The channel edge on canvas should have only marker-end (single arrowhead)
+		const channelEdge = editor.locator('[data-channel-edge="true"]');
+		await expect(channelEdge).toBeVisible({ timeout: 3000 });
+
+		const channelPath = channelEdge.locator('path:not([stroke="transparent"])');
+		await expect(channelPath).toBeVisible({ timeout: 2000 });
+
+		// One-way channels should have marker-end but NOT marker-start
+		const markerEnd = await channelPath.getAttribute('marker-end');
+		const markerStart = await channelPath.getAttribute('marker-start');
+		expect(markerEnd).not.toBeNull();
+		expect(markerEnd).toMatch(/url\(#.*arrow.*\)/i);
+		// marker-start should be null or empty for one-way
+		expect(markerStart === null || markerStart === '').toBe(true);
+	});
+
+	// ─── Test 16: Channel direction changes are reflected immediately ───────────
+
+	test.skip('Channel direction changes are reflected immediately in canvas', async ({ page }) => {
+		await navigateToSpace(page, spaceId);
+		await openNewWorkflowEditor(page);
+		await switchToVisualMode(page);
+
+		const editor = page.getByTestId('visual-workflow-editor');
+
+		// Add a node and configure it
+		await editor.getByTestId('add-step-button').click();
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
+			timeout: 3000,
+		});
+
+		const node = editor.locator('[data-testid^="workflow-node-"]').nth(0);
+		await node.click();
+		await expect(editor.getByTestId('node-config-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('agent-select').selectOption({ index: 1 });
+
+		const panel = editor.getByTestId('node-config-panel');
+
+		// Add a channel as one-way first
+		const channelsSection = panel.getByTestId('add-channel-form');
+		await expect(channelsSection).toBeVisible({ timeout: 2000 });
+		await panel
+			.locator('[data-testid="channel-from-select"]')
+			.selectOption({ label: 'task-agent' });
+		await panel
+			.locator('[data-testid="channel-to-input"], [data-testid="channel-to-select"]')
+			.fill('coder');
+		await panel.getByTestId('add-channel-button').click();
+
+		// Verify it's one-way on canvas (only marker-end)
+		const channelPath1 = editor
+			.locator('[data-channel-edge="true"]')
+			.locator('path:not([stroke="transparent"])');
+		await expect(channelPath1).toBeVisible({ timeout: 2000 });
+		const markerEnd1 = await channelPath1.getAttribute('marker-end');
+		const markerStart1 = await channelPath1.getAttribute('marker-start');
+		expect(markerEnd1).not.toBeNull();
+		expect(markerStart1 === null || markerStart1 === '').toBe(true);
+
+		// Now change the channel to bidirectional via the config panel
+		// Find the channel entry and change its direction dropdown
+		const channelEntry = panel.locator('[data-testid="channel-entry"]').first();
+		await expect(channelEntry).toBeVisible({ timeout: 2000 });
+
+		// Look for a direction select within the channel entry
+		const directionSelect = channelEntry.locator('select').first();
+		if (await directionSelect.isVisible()) {
+			await directionSelect.selectOption('bidirectional');
+		} else {
+			// If no select, look for an edit button or use the add form
+			// For now, remove and re-add as bidirectional
+			await channelEntry.locator('[data-testid="remove-channel-button"]').click();
+			await panel.locator('[data-testid="channel-direction-select"]').selectOption('bidirectional');
+			await panel.getByTestId('add-channel-button').click();
+		}
+
+		// Wait for the canvas to update: marker-start should become non-null
+		// once bidirectional arrowhead rendering is implemented
+		await page.waitForFunction(
+			() => {
+				const path = document.querySelector(
+					'[data-channel-edge="true"] path:not([stroke="transparent"])'
+				);
+				if (!path) return false;
+				const markerStart = path.getAttribute('marker-start');
+				return markerStart !== null && markerStart !== '';
+			},
+			{ timeout: 5000 }
+		);
+
+		// Verify the canvas now shows double-arrowhead (both marker-start and marker-end)
+		const channelPath2 = editor
+			.locator('[data-channel-edge="true"]')
+			.locator('path:not([stroke="transparent"])');
+		await expect(channelPath2).toBeVisible({ timeout: 2000 });
+		const markerEnd2 = await channelPath2.getAttribute('marker-end');
+		const markerStart2 = await channelPath2.getAttribute('marker-start');
+		expect(markerEnd2).not.toBeNull();
+		expect(markerStart2).not.toBeNull();
 	});
 });

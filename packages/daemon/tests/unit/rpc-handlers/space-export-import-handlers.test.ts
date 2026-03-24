@@ -74,7 +74,7 @@ function createSchema(db: Database): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			start_step_id TEXT,
+			start_node_id TEXT,
 			config TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
@@ -85,7 +85,7 @@ function createSchema(db: Database): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE space_workflow_steps (
+		CREATE TABLE space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -103,16 +103,16 @@ function createSchema(db: Database): void {
 		CREATE TABLE space_workflow_transitions (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
-			from_step_id TEXT NOT NULL,
-			to_step_id TEXT NOT NULL,
+			from_node_id TEXT NOT NULL,
+			to_node_id TEXT NOT NULL,
 			condition TEXT,
 			order_index INTEGER NOT NULL DEFAULT 0,
 			is_cyclic INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+			FOREIGN KEY (from_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
 }
