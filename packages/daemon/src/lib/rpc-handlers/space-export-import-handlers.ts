@@ -154,8 +154,11 @@ function buildAgentCreateParams(
  *
  * @returns params ready for the manager, the node-name→UUID map (for rule
  *          appliesTo remapping), and any warnings about unresolved agent refs.
+ *
+ * @internal Exported for unit testing. Callers outside tests should use the
+ *   `spaceImport.execute` RPC handler which wraps this in a transaction.
  */
-function buildWorkflowCreateParams(
+export function buildWorkflowCreateParams(
 	spaceId: string,
 	name: string,
 	exported: ExportedSpaceWorkflow,

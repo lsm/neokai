@@ -1499,6 +1499,128 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
 	});
+
+	test('accepts agents array entry with model override', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'My Coder', role: 'coder', model: 'claude-haiku-4-5' }],
+					name: 'Step',
+				},
+			],
+			transitions: [],
+			startNode: 'Step',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents![0].model).toBe('claude-haiku-4-5');
+		}
+	});
+
+	test('accepts agents array entry with systemPrompt override', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{
+							agentRef: 'My Coder',
+							role: 'coder',
+							systemPrompt: 'You are a strict code reviewer.',
+						},
+					],
+					name: 'Step',
+				},
+			],
+			transitions: [],
+			startNode: 'Step',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents![0].systemPrompt).toBe('You are a strict code reviewer.');
+		}
+	});
+
+	test('backward compat: accepts agents array entries without model/systemPrompt (old export format)', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{ agentRef: 'My Coder', role: 'coder' },
+						{ agentRef: 'Reviewer', role: 'reviewer' },
+					],
+					name: 'Step',
+				},
+			],
+			transitions: [],
+			startNode: 'Step',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			const agents = result.value.nodes[0].agents!;
+			expect(agents[0].model).toBeUndefined();
+			expect(agents[0].systemPrompt).toBeUndefined();
+			expect(agents[1].model).toBeUndefined();
+			expect(agents[1].systemPrompt).toBeUndefined();
+		}
+	});
+
+	test('accepts agents with both model and systemPrompt overrides', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{
+							agentRef: 'My Coder',
+							role: 'coder',
+							model: 'claude-opus-4-6',
+							systemPrompt: 'Write minimal code.',
+						},
+						{
+							agentRef: 'Reviewer',
+							role: 'reviewer',
+							model: 'claude-haiku-4-5',
+							systemPrompt: 'Review briefly.',
+						},
+					],
+					name: 'Step',
+				},
+			],
+			transitions: [],
+			startNode: 'Step',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			const agents = result.value.nodes[0].agents!;
+			expect(agents[0].model).toBe('claude-opus-4-6');
+			expect(agents[0].systemPrompt).toBe('Write minimal code.');
+			expect(agents[1].model).toBe('claude-haiku-4-5');
+			expect(agents[1].systemPrompt).toBe('Review briefly.');
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1628,6 +1750,149 @@ describe('round-trip: multi-agent + channels', () => {
 		}
 	});
 
+	test('exports per-slot model override (model field present in agents[])', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: 'space-1',
+			name: 'Override Export',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							model: 'claude-haiku-4-5',
+						},
+						{
+							agentId: 'agent-uuid-3',
+							role: 'reviewer',
+							// no model override
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		const agentEntry0 = exported.nodes[0].agents![0];
+		const agentEntry1 = exported.nodes[0].agents![1];
+		expect(agentEntry0.model).toBe('claude-haiku-4-5');
+		expect(agentEntry0.systemPrompt).toBeUndefined();
+		expect(agentEntry1.model).toBeUndefined();
+		expect(agentEntry1.systemPrompt).toBeUndefined();
+	});
+
+	test('exports per-slot systemPrompt override', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: 'space-1',
+			name: 'Prompt Override',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							systemPrompt: 'Always write tests first.',
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		expect(exported.nodes[0].agents![0].systemPrompt).toBe('Always write tests first.');
+	});
+
+	test('exports per-slot instructions override', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: 'space-1',
+			name: 'Instructions Override',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							instructions: 'Focus on the auth module only.',
+						},
+						{
+							agentId: 'agent-uuid-3',
+							role: 'reviewer',
+							// no instructions
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		expect(exported.nodes[0].agents![0].instructions).toBe('Focus on the auth module only.');
+		expect(exported.nodes[0].agents![1].instructions).toBeUndefined();
+	});
+
+	test('omits model and systemPrompt when not set (backward compat export)', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: 'space-1',
+			name: 'Basic Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{ agentId: 'agent-uuid-1', role: 'coder' },
+						{ agentId: 'agent-uuid-3', role: 'reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+
+		const entry0 = exported.nodes[0].agents![0] as Record<string, unknown>;
+		const entry1 = exported.nodes[0].agents![1] as Record<string, unknown>;
+		// model and systemPrompt must be absent (not just undefined) for clean JSON
+		expect('model' in entry0).toBe(false);
+		expect('systemPrompt' in entry0).toBe(false);
+		expect('model' in entry1).toBe(false);
+		expect('systemPrompt' in entry1).toBe(false);
+	});
+
 	test('model and systemPrompt slot overrides survive export → JSON → validate round-trip', () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-overrides',
@@ -1685,6 +1950,49 @@ describe('round-trip: multi-agent + channels', () => {
 			expect(node.agents![1].role).toBe('reviewer');
 			expect(node.agents![1].model).toBeUndefined();
 			expect(node.agents![1].systemPrompt).toBeUndefined();
+		}
+	});
+
+	test('instructions slot override survives export → JSON → validate round-trip', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-instructions',
+			spaceId: 'space-1',
+			name: 'Instructions Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Step',
+					agents: [
+						{
+							agentId: 'agent-uuid-1',
+							role: 'coder',
+							instructions: 'Focus on the auth module only.',
+						},
+						{
+							agentId: 'agent-uuid-3',
+							role: 'reviewer',
+							// no instructions override
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.nodes[0].agents![0].instructions).toBe('Focus on the auth module only.');
+			expect(result.value.nodes[0].agents![1].instructions).toBeUndefined();
 		}
 	});
 });
