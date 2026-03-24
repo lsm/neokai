@@ -142,9 +142,9 @@ CREATE TABLE memory_vectors (
 -- One-time setup: register the column for vector search
 SELECT vector_init('memory_vectors', 'embedding', 'type=FLOAT32,dimension=384');
 
--- Insert: convert float array to BLOB via vector_to_blob()
+-- Insert: convert JSON float array to FLOAT32 blob via vector_as_f32()
 INSERT INTO memory_vectors(rowid, embedding)
-VALUES (42, vector_to_blob('[0.12, -0.07, ...]', 'FLOAT32'));
+VALUES (42, vector_as_f32('[0.12, -0.07, ...]'));
 
 -- ANN search: JOIN against vector_quantize_scan() table-valued function.
 -- The ? placeholder receives the query embedding as a BLOB.
