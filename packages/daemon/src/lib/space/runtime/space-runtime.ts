@@ -484,7 +484,7 @@ export class SpaceRuntime {
 	 * then rehydrates Task Agent sessions if a TaskAgentManager is configured.
 	 *
 	 * Called once at the start of the first executeTick(). Reconstructs
-	 * executors with the run's persisted currentStepId so the tick loop can
+	 * executors with the run's persisted currentNodeId so the tick loop can
 	 * resume advancement from where it left off.
 	 *
 	 * Executor rehydration runs first so that SpaceRuntimeService executors are
@@ -596,7 +596,7 @@ export class SpaceRuntime {
 
 		const currentStep = freshExecutor.getCurrentStep();
 		if (!currentStep) {
-			// Run is in_progress but currentStepId references a step that doesn't exist in
+			// Run is in_progress but currentNodeId references a node that doesn't exist in
 			// the workflow. This is a data inconsistency — cancel the run and clean up maps
 			// so it is not rehydrated on every subsequent restart into the same throw loop.
 			this.executors.delete(runId);

@@ -263,9 +263,8 @@ export function exportWorkflow(
 		return exported;
 	});
 
-	// Export startNodeId UUID → node name (support both new startNodeId and legacy startStepId)
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const startId = workflow.startNodeId ?? (workflow as any).startStepId;
+	// Export startNodeId UUID → node name
+	const startId = workflow.startNodeId;
 	const startNode = nodeIdToName.get(startId) ?? startId;
 
 	// Export rules — strip `id`, remap appliesTo node UUIDs → node names
