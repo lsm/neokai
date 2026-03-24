@@ -60,7 +60,7 @@ describe('ShortIdAllocator', () => {
 		expect(allocator.allocate('task', 'room-B')).toBe('t-2');
 	});
 
-	test('concurrent allocations produce unique IDs', () => {
+	test('rapid sequential allocations produce unique IDs', () => {
 		const results = Array.from({ length: 50 }, () => allocator.allocate('task', 'room-concurrent'));
 		const unique = new Set(results);
 		expect(unique.size).toBe(50);
