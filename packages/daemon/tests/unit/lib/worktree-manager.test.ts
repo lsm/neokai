@@ -161,7 +161,7 @@ describe('WorktreeManager', () => {
 			).rejects.toThrow('already exists');
 		});
 
-		it('should fallback to UUID branch if custom branch exists', async () => {
+		it('should delete stale custom branch and reuse original name', async () => {
 			existsSyncResults.set('/test/repo/.git', true);
 			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
 			existsSyncResults.set(
@@ -170,8 +170,8 @@ describe('WorktreeManager', () => {
 			);
 			mockGitRevparse.mockResolvedValue('.git');
 			mockGitRaw
-				.mockResolvedValueOnce('  custom-branch\n') // Branch exists
-				.mockResolvedValue(''); // git worktree add
+				.mockResolvedValueOnce('  custom-branch\n') // checkBranchExists — stale branch found
+				.mockResolvedValue(''); // branch -D + git worktree add
 
 			const result = await manager.createWorktree({
 				sessionId: 'session-123',
@@ -179,7 +179,57 @@ describe('WorktreeManager', () => {
 				branchName: 'custom-branch',
 			});
 
+			// Should reuse the original branch name, not fall back to UUID
+			expect(result?.branch).toBe('custom-branch');
+			// Should have called branch -D to remove the stale branch
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'custom-branch']);
+		});
+
+		it('should delete stale auto-generated branch and reuse original name', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				false
+			);
+			mockGitRevparse.mockResolvedValue('.git');
+			mockGitRaw
+				.mockResolvedValueOnce('  session/session-123\n') // checkBranchExists — stale auto branch
+				.mockResolvedValue(''); // branch -D + git worktree add
+
+			const result = await manager.createWorktree({
+				sessionId: 'session-123',
+				repoPath: '/test/repo',
+				// No custom branch name — uses auto-generated session/session-123
+			});
+
+			// Should reuse the auto-generated branch name
 			expect(result?.branch).toBe('session/session-123');
+			// Should have called branch -D to remove the stale branch
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+		});
+
+		it('should delete stale task branch and reuse task branch name', async () => {
+			existsSyncResults.set('/test/repo/.git', true);
+			existsSyncResults.set('/home/testuser/.neokai/projects/-test-repo/worktrees', true);
+			existsSyncResults.set(
+				'/home/testuser/.neokai/projects/-test-repo/worktrees/session-123',
+				false
+			);
+			mockGitRevparse.mockResolvedValue('.git');
+			mockGitRaw
+				.mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — stale task branch
+				.mockResolvedValue(''); // branch -D + git worktree add
+
+			const result = await manager.createWorktree({
+				sessionId: 'session-123',
+				repoPath: '/test/repo',
+				branchName: 'task/task-42-implement-feature',
+			});
+
+			// Should reuse the task branch name, not fall back to opaque UUID
+			expect(result?.branch).toBe('task/task-42-implement-feature');
+			expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
 		});
 
 		it('should return WorktreeMetadata on success', async () => {
