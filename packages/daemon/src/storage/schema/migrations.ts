@@ -209,6 +209,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
 	runMigration52(db);
 
+
 	// Migration 53: Add channels column to space_workflows for unified channel topology storage.
 	// Channels move from the config JSON blob to a dedicated TEXT column (JSON-serialized
 	// WorkflowChannel[]). Existing rows that have channels embedded in config are migrated
@@ -219,6 +220,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// agent_name) to enforce at-most-one task per agent slot per workflow node per run.
 	// Prevents duplicate tasks from concurrent ChannelRouter.activateNode() calls.
 	runMigration54(db);
+
+	// Migration 55: Rename slot_role → agent_name on space_tasks.
+	// Aligns with "no role" naming convention from the agent-centric refactor.
+	// Uses a table rebuild pattern (SQLite does not support DROP COLUMN in all versions).
+	// Idempotent: checks for agent_name column before rebuilding.
+	runMigration55(db);
 }
 
 /**
@@ -3347,6 +3354,7 @@ export function runMigration50(db: BunDatabase): void {
   `);
 }
 
+
 /**
  * Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
  *
@@ -3366,6 +3374,7 @@ export function runMigration52(db: BunDatabase): void {
 }
 
 /**
+
  * Migration 53: Add channels column to space_workflows.
  *
  * Channels move out of the config JSON blob into a dedicated TEXT column that stores a
@@ -3444,6 +3453,136 @@ export function runMigration54(db: BunDatabase): void {
 	) {
 		return;
 	}
+	db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_space_tasks_run_node_agent
+    ON space_tasks (workflow_run_id, workflow_node_id, agent_name)
+    WHERE workflow_run_id IS NOT NULL
+      AND workflow_node_id IS NOT NULL
+      AND agent_name IS NOT NULL
+      AND status IN ('pending', 'in_progress', 'review', 'rate_limited', 'usage_limited')
+  `);
+}
+
+/**
+ * Migration 55: Rename slot_role → agent_name on space_tasks.
+ *
+ * Aligns with the "no role" naming convention from the agent-centric refactor.
+ * completion_summary was already added by Migration 51.
+ *
+ * Uses a table rebuild pattern because SQLite does not support DROP COLUMN on all versions.
+ * The new table schema drops slot_role and preserves all other columns including completion_summary.
+ * Idempotent: checks for agent_name column before rebuilding.
+ */
+export function runMigration55(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) {
+		return;
+	}
+
+	// Idempotency check: if agent_name already exists, migration is done
+	try {
+		db.prepare(`SELECT agent_name FROM space_tasks LIMIT 1`).all();
+		return; // already migrated
+	} catch {
+		// agent_name doesn't exist — proceed with migration
+	}
+
+	// Issue PRAGMA before BEGIN so it takes effect (SQLite ignores PRAGMA inside a transaction)
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	db.exec(`BEGIN`);
+	try {
+		// Crash-recovery guard: drop leftover temp table if a previous run crashed mid-migration
+		db.exec(`DROP TABLE IF EXISTS space_tasks_new`);
+
+		// Rebuild the table with agent_name instead of slot_role.
+		// completion_summary already exists (added by M51) and is preserved via SELECT.
+		db.exec(`
+			CREATE TABLE space_tasks_new (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				task_type TEXT
+					CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
+				assigned_agent TEXT
+					CHECK(assigned_agent IN ('coder', 'general')),
+				custom_agent_id TEXT,
+				agent_name TEXT,
+				completion_summary TEXT,
+				workflow_run_id TEXT,
+				workflow_node_id TEXT,
+				created_by_task_id TEXT,
+				goal_id TEXT,
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				input_draft TEXT,
+				active_session TEXT
+					CHECK(active_session IN ('worker', 'leader')),
+				task_agent_session_id TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+				FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
+			)
+		`);
+
+		db.exec(`
+			INSERT INTO space_tasks_new (
+				id, space_id, title, description, status, priority, task_type, assigned_agent,
+				custom_agent_id, agent_name, completion_summary, workflow_run_id, workflow_node_id,
+				created_by_task_id, goal_id, progress, current_step, result, error, depends_on,
+				input_draft, active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+				archived_at, created_at, started_at, completed_at, updated_at
+			)
+			SELECT
+				id, space_id, title, description, status, priority, task_type, assigned_agent,
+				custom_agent_id, slot_role, completion_summary, workflow_run_id, workflow_node_id,
+				created_by_task_id, goal_id, progress, current_step, result, error, depends_on,
+				input_draft, active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+				archived_at, created_at, started_at, completed_at, updated_at
+			FROM space_tasks
+		`);
+
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_new RENAME TO space_tasks`);
+		db.exec(`COMMIT`);
+	} catch (err) {
+		db.exec(`ROLLBACK`);
+		throw err;
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+
+	// Recreate all indexes that existed on space_tasks (dropped by DROP TABLE above)
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+	);
+	// Recreate the unique index from M54, now on agent_name instead of slot_role.
 	db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_space_tasks_run_node_agent
     ON space_tasks (workflow_run_id, workflow_node_id, agent_name)

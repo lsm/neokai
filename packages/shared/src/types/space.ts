@@ -273,6 +273,11 @@ export interface UpdateSpaceTaskParams {
 	progress?: number | null;
 	currentStep?: string | null;
 	result?: string | null;
+	/**
+	 * Human-readable summary written by the agent when it marks the task as done.
+	 * Set alongside `status: 'completed'`; null to clear.
+	 */
+	completionSummary?: string | null;
 	error?: string | null;
 	dependsOn?: string[];
 	activeSession?: 'worker' | 'leader' | null;

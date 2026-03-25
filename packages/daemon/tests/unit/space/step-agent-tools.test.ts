@@ -53,6 +53,40 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
 }
 
+function seedSpaceTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	workflowNodeId: string,
+	agentName: string,
+	status: string = 'pending',
+	completionSummary: string | null = null
+): string {
+	const id = `task-${Math.random().toString(36).slice(2)}`;
+	const now = Date.now();
+	// Disable FK for seeding test data — workflow_node_id points to an arbitrary test node ID
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.prepare(
+		`INSERT INTO space_tasks
+         (id, space_id, title, description, status, priority, agent_name, completion_summary,
+          workflow_run_id, workflow_node_id, depends_on, created_at, updated_at)
+         VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, ?, '[]', ?, ?)`
+	).run(
+		id,
+		spaceId,
+		`Task for ${agentName}`,
+		status,
+		agentName,
+		completionSummary,
+		workflowRunId,
+		workflowNodeId,
+		now,
+		now
+	);
+	db.exec('PRAGMA foreign_keys = ON');
+	return id;
+}
+
 // ---------------------------------------------------------------------------
 // Workflow run helper
 // ---------------------------------------------------------------------------
@@ -123,6 +157,7 @@ interface TestCtx {
 	sessionGroupRepo: SpaceSessionGroupRepository;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
+	spaceTaskRepo: SpaceTaskRepository;
 	groupId: string;
 	coderSessionId: string;
 	reviewerSessionId: string;
@@ -142,6 +177,7 @@ function makeCtx(): TestCtx {
 
 	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const spaceTaskRepo = taskRepo;
 	const taskManager = new SpaceTaskManager(db, spaceId);
 
 	// Seed a parent task and a step task in the DB
@@ -197,6 +233,7 @@ function makeCtx(): TestCtx {
 		sessionGroupRepo,
 		taskRepo,
 		taskManager,
+		spaceTaskRepo,
 		groupId: group.id,
 		coderSessionId,
 		reviewerSessionId,
@@ -220,7 +257,9 @@ function makeConfig(
 		stepTaskId: ctx.stepTaskId,
 		spaceId: ctx.spaceId,
 		workflowRunId: '',
+		workflowNodeId: '',
 		sessionGroupRepo: ctx.sessionGroupRepo,
+		spaceTaskRepo: ctx.spaceTaskRepo,
 		getGroupId: () => ctx.groupId,
 		workflowRunRepo: ctx.workflowRunRepo,
 		messageInjector: async (sessionId, message) => {
@@ -1109,5 +1148,120 @@ describe('step-agent-tools: system prompt includes peer communication section', 
 		expect(prompt).toContain('send_message');
 		expect(prompt).toContain('list_peers');
 		expect(prompt).toContain('channel-validated');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_peers — completion state
+// ---------------------------------------------------------------------------
+
+describe('list_peers — completion state', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('list_peers includes completionState for each peer based on space_tasks', async () => {
+		const workflowNodeId = 'node-abc';
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+
+		// Seed a completed task for the reviewer peer
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			workflowNodeId,
+			'reviewer',
+			'completed',
+			'All looks good!'
+		);
+
+		const config = makeConfig(ctx, {
+			workflowRunId,
+			workflowNodeId,
+			spaceTaskRepo: ctx.spaceTaskRepo,
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
+		expect(reviewerPeer).toBeDefined();
+		expect(reviewerPeer.completionState).not.toBeNull();
+		expect(reviewerPeer.completionState.taskStatus).toBe('completed');
+		expect(reviewerPeer.completionState.completionSummary).toBe('All looks good!');
+		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
+	});
+
+	test('list_peers shows nodeCompletionState for all tasks on the node', async () => {
+		const workflowNodeId = 'node-xyz';
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+
+		// Seed tasks for both coder and reviewer on the same node
+		seedSpaceTask(ctx.db, ctx.spaceId, workflowRunId, workflowNodeId, 'coder', 'in_progress', null);
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			workflowNodeId,
+			'reviewer',
+			'completed',
+			'Review done'
+		);
+
+		const config = makeConfig(ctx, {
+			workflowRunId,
+			workflowNodeId,
+			spaceTaskRepo: ctx.spaceTaskRepo,
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(Array.isArray(data.nodeCompletionState)).toBe(true);
+		expect(data.nodeCompletionState).toHaveLength(2);
+
+		const coderState = data.nodeCompletionState.find(
+			(s: { agentName: string }) => s.agentName === 'coder'
+		);
+		expect(coderState).toBeDefined();
+		expect(coderState.taskStatus).toBe('in_progress');
+
+		const reviewerState = data.nodeCompletionState.find(
+			(s: { agentName: string }) => s.agentName === 'reviewer'
+		);
+		expect(reviewerState).toBeDefined();
+		expect(reviewerState.taskStatus).toBe('completed');
+		expect(reviewerState.completionSummary).toBe('Review done');
+	});
+
+	test('list_peers works without space_tasks (no tasks on node)', async () => {
+		const workflowNodeId = 'node-empty';
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+
+		// No tasks seeded for this node
+		const config = makeConfig(ctx, {
+			workflowRunId,
+			workflowNodeId,
+			spaceTaskRepo: ctx.spaceTaskRepo,
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.nodeCompletionState).toHaveLength(0);
+		// All peers should have null completionState
+		for (const peer of data.peers) {
+			expect(peer.completionState).toBeNull();
+		}
 	});
 });
