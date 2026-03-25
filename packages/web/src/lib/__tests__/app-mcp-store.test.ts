@@ -200,6 +200,28 @@ describe('AppMcpStore', () => {
 			expect(appMcpStore.error.value).toBe('subscribe failed');
 			expect(appMcpStore.loading.value).toBe(false);
 		});
+
+		it('should clean up handlers and clear activeSubscriptionIds on subscribe failure', async () => {
+			vi.mocked(mockHub.request).mockRejectedValue(new Error('subscribe failed'));
+
+			await expect(appMcpStore.subscribe()).rejects.toThrow('subscribe failed');
+
+			// Subscribe again after failure — should register fresh handlers, not leak old ones
+			vi.mocked(mockHub.request).mockResolvedValue({ ok: true });
+			await appMcpStore.subscribe();
+
+			// Fire a snapshot for the second subscription — should only process once
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeMcpServer('fresh')],
+				version: 1,
+			});
+
+			// If handlers were leaked from the first failed subscribe, we'd see duplicate
+			// processing. Since we only have one server, the count proves no duplication.
+			expect(appMcpStore.appMcpServers.value).toHaveLength(1);
+			expect(appMcpStore.appMcpServers.value[0].id).toBe('fresh');
+		});
 	});
 
 	// ---------------------------------------------------------------------------

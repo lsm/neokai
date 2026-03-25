@@ -129,7 +129,7 @@ class AppMcpStore {
 			}
 		} catch (err) {
 			this.subscribed = false;
-			this.loading.value = false;
+			this.teardownCleanly();
 			this.error.value = err instanceof Error ? err.message : 'Failed to subscribe to MCP registry';
 			logger.error('Failed to subscribe AppMcpStore LiveQuery:', err);
 			throw err;
