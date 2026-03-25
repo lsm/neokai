@@ -32,7 +32,7 @@ One type. One resolver. One router (built in Milestone 3). One DB column.
    ```
    interface WorkflowChannel {
      id: string;
-     from: string;           // sender: agent name or node name
+     from: string;           // sender: agent name or node name (no wildcards — must be a specific agent or node)
      to: string;             // recipient: agent name or node name
      direction: 'one-way' | 'bidirectional';
      isCyclic?: boolean;     // when true, each delivery increments the run's iteration counter
@@ -41,6 +41,7 @@ One type. One resolver. One router (built in Milestone 3). One DB column.
    }
    ```
    - Remove `node?: string` field if it exists (no longer needed — `from`/`to` encode the source/target)
+   - Remove any wildcard sender patterns (`from: '*'`) — the sender is always a specific agent or node
    - Clarify `from`/`to`: agent name → DM, node name → fan-out to all agents in that node
 2. Update `WorkflowChannelInput` type (used in create/update params)
 3. Move `channels` from `WorkflowNode.channels?: WorkflowChannel[]` to `SpaceWorkflow.channels?: WorkflowChannel[]` — all channels are now workflow-level

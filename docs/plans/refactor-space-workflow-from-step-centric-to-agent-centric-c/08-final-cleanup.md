@@ -53,7 +53,7 @@ Clean up all remaining step-transition code and types that are no longer needed.
 
 **Description**: Remove `currentNodeId` from `SpaceWorkflowRun` since the agent-centric model doesn't track a single active node.
 
-**Important distinction**: `startNodeId` on `SpaceWorkflow` (the workflow template/definition) **stays unchanged** — it tells the system which node to activate first when a run starts. Only `currentNodeId` on `SpaceWorkflowRun` (the runtime execution state) is removed. In the agent-centric model, `SpaceRuntime.startWorkflowRun()` activates the start node via `activateNode()` (from Task 3.1a) using the workflow's `startNodeId`. After that, nodes are activated lazily by the router — there is no single "current" node to track.
+**Important distinction**: `startNodeId` on `SpaceWorkflow` (the workflow template/definition) **stays unchanged** — it tells the system which node to activate first when a run starts. Only `currentNodeId` on `SpaceWorkflowRun` (the runtime execution state) is removed. In the agent-centric model, `SpaceRuntime.startWorkflowRun()` activates the start node via `activateNode()` (from Task 3.0) using the workflow's `startNodeId`. After that, nodes are activated lazily by the router — there is no single "current" node to track.
 
 **Iteration tracking stays**: The `iteration_count` and `max_iterations` columns on `space_workflow_runs` remain. Iteration counting is now handled by `ChannelRouter.deliverMessage()` when delivering through channels with `isCyclic: true`, replacing the old `advance()` → `followTransition()` path.
 
@@ -67,7 +67,8 @@ Clean up all remaining step-transition code and types that are no longer needed.
    - Drop the `current_node_id` column from `space_workflow_runs` (keep `iteration_count` and `max_iterations`)
    - Drop the `current_node_id` column from `space_session_groups` if it exists
    - Rename `slot_role` column to `agent_name` on `space_tasks` table (aligns with "no role" naming convention — `slotRole` referenced the agent's old `role` field)
-   - Update all code that reads/writes `slotRole` / `slot_role` to use `agentName` / `agent_name`
+   - Rename `role` column to `agent_name` on `space_session_group_members` table (`SpaceSessionGroupMember.role` → `SpaceSessionGroupMember.agentName`)
+   - Update all code that reads/writes `slotRole` / `slot_role` or `SpaceSessionGroupMember.role` to use `agentName` / `agent_name`
 3. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
    - Update `startWorkflowRun()` to activate the start node via `activateNode()` instead of setting `currentNodeId`
    - Verify iteration tracking is now handled by the router (not by `advance()`)
@@ -77,6 +78,7 @@ Clean up all remaining step-transition code and types that are no longer needed.
 **Acceptance Criteria**:
 - `currentNodeId` removed from `SpaceWorkflowRun` and `SpaceSessionGroup` types and DB
 - `slot_role` renamed to `agent_name` on `space_tasks` — no "role" column remains in task management
+- `SpaceSessionGroupMember.role` renamed to `agentName` on `space_session_group_members` — no "role" column remains in session group members
 - `startNodeId` on `SpaceWorkflow` still works correctly
 - Workflow runs activate the start node via `activateNode()`
 - No code references `currentNodeId` or `slotRole`

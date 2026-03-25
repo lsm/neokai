@@ -17,7 +17,36 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
 
 ## Tasks
 
-> **Execution order note**: Task 3.1a (lazy activation) is a prerequisite of Task 3.1 (channel router). Despite the numbering, 3.1a must be completed first — the router depends on the `activateNode()` function defined in 3.1a.
+### Task 3.0: Target-Node Activation (Lazy Activation)
+
+**Description**: Implement lazy activation of target nodes. When `ChannelRouter.deliverMessage()` targets a node that has no active tasks or sessions, the router creates the pending tasks for that node on-demand. This task is a prerequisite of Task 3.1 (the router uses `activateNode()` defined here).
+
+**Subtasks**:
+1. In `ChannelRouter.deliverMessage()`, before resolving the target agent's session:
+   - Query `SpaceTaskRepository` for active tasks on the target node (`workflowRunId` + `nodeId`)
+   - If no active tasks exist, call `SpaceTaskManager.createTasksForNode()` to create pending tasks for the target node's agents
+2. Create a standalone `activateNode(runId: string, nodeId: string): Promise<SpaceTask[]>` function (in a new file or within the router module) that:
+   - Looks up the node definition from the workflow
+   - Creates `SpaceTask` records for each agent on the node
+   - Creates or reuses the `SpaceSessionGroup` for the node
+   - Returns the created tasks
+3. Handle edge cases:
+   - Node already has active tasks → skip activation (no-op)
+   - Node activation fails (e.g., workflow paused/cancelled) → return error in delivery result
+   - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, agentName)` to prevent duplicate tasks (the `agentName` column is renamed from `slotRole` in Task 8.2)
+4. Add idempotency: calling `activateNode()` multiple times for the same node is safe (existing tasks are not duplicated)
+
+**Acceptance Criteria**:
+- `deliverMessage()` automatically activates the target node if no active tasks exist
+- `activateNode()` creates tasks and session groups correctly
+- Duplicate activation attempts are handled idempotently
+- Unit tests cover: first activation, idempotent re-activation, concurrent activation, activation of cancelled run
+
+**Dependencies**: Tasks 1.3, 1.5
+
+**Agent Type**: coder
+
+---
 
 ### Task 3.1: ChannelRouter
 
@@ -50,7 +79,7 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
      // Deliver a message through a channel
      // 1. Resolve target string: agent name → DM, node name → fan-out
      // 2. Find matching WorkflowChannel policy (from + to)
-     // 3. Ensure target node has active tasks/sessions (activate if needed — see Task 3.1a)
+     // 3. Ensure target node has active tasks/sessions (activate if needed — see Task 3.0)
      // 4. Resolve target agent's session (specific agent for DM, all agents for fan-out)
      // 5. Evaluate the gate
      // 6. If allowed, inject the message
@@ -89,38 +118,7 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
 - Iteration cap is checked before delivery (not after)
 - One router handles all message delivery (no separate within-node/cross-node paths)
 
-**Dependencies**: Tasks 1.3, 1.4, 3.1a
-
-**Agent Type**: coder
-
----
-
-### Task 3.1a: Target-Node Activation (Lazy Activation)
-
-**Description**: Implement lazy activation of target nodes. When `ChannelRouter.deliverMessage()` targets a node that has no active tasks or sessions, the router creates the pending tasks for that node on-demand.
-
-**Subtasks**:
-1. In `ChannelRouter.deliverMessage()`, before resolving the target agent's session:
-   - Query `SpaceTaskRepository` for active tasks on the target node (`workflowRunId` + `nodeId`)
-   - If no active tasks exist, call `SpaceTaskManager.createTasksForNode()` to create pending tasks for the target node's agents
-2. Create a standalone `activateNode(runId: string, nodeId: string): Promise<SpaceTask[]>` function (in a new file or within the router module) that:
-   - Looks up the node definition from the workflow
-   - Creates `SpaceTask` records for each agent on the node
-   - Creates or reuses the `SpaceSessionGroup` for the node
-   - Returns the created tasks
-3. Handle edge cases:
-   - Node already has active tasks → skip activation (no-op)
-   - Node activation fails (e.g., workflow paused/cancelled) → return error in delivery result
-   - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, agentName)` to prevent duplicate tasks (the `agentName` column is renamed from `slotRole` in Task 8.2)
-4. Add idempotency: calling `activateNode()` multiple times for the same node is safe (existing tasks are not duplicated)
-
-**Acceptance Criteria**:
-- `deliverMessage()` automatically activates the target node if no active tasks exist
-- `activateNode()` creates tasks and session groups correctly
-- Duplicate activation attempts are handled idempotently
-- Unit tests cover: first activation, idempotent re-activation, concurrent activation, activation of cancelled run
-
-**Dependencies**: Tasks 1.3, 1.5
+**Dependencies**: Tasks 1.3, 1.4, 3.0
 
 **Agent Type**: coder
 
@@ -280,6 +278,6 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
 ## Rollback Strategy
 
 - **ChannelRouter** (Task 3.1): New class, no existing behavior modified. Can be removed entirely.
-- **Target-node activation** (Task 3.1a): New `activateNode()` function. Can be removed without affecting other code.
+- **Target-node activation** (Task 3.0): New `activateNode()` function. Can be removed without affecting other code.
 - **send_message update** (Task 3.2): The new path only activates when `ChannelRouter` is injected.
 - **advance() removal** (Task 3.5): This is a destructive change. The `advance()` code is preserved in git history. If rollback is needed, the method can be restored from the pre-milestone commit.

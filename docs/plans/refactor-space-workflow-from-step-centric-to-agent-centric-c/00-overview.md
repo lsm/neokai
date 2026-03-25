@@ -30,7 +30,7 @@ The messaging model uses only two concepts:
   - No separate "node group" concept — the node IS the group
 - **Agent** = a running instance within a node. Gets the node's template. Has a globally unique name within the workflow.
 
-**No "role" concept exists** anywhere in channels, messaging, or addressing. The existing `WorkflowNodeAgent.role` field is renamed to `name` (Task 1.1), and `SpaceTask.slotRole` is renamed to `agentName` (Task 8.2) to align the internal data model with the conceptual model.
+**No "role" concept exists** anywhere in channels, messaging, or addressing. The existing `WorkflowNodeAgent.role` field is renamed to `name` (Task 1.1), `SpaceTask.slotRole` is renamed to `agentName` (Task 8.2), and `SpaceSessionGroupMember.role` is renamed to `agentName` (Task 8.2) to align the internal data model with the conceptual model.
 
 ### Target Addressing: Plain Strings
 
