@@ -6,6 +6,8 @@
  * in chat inputs using @ref{type:id} syntax.
  */
 
+import type { NeoTask, RoomGoal } from './neo.ts';
+
 /**
  * The type of entity being referenced.
  * Union type (not enum) following existing codebase patterns like `SessionType`.
@@ -24,6 +26,8 @@ export interface ReferenceMention {
 
 /**
  * A single result returned from the reference.search RPC.
+ * Used by the reference.search RPC handler (M1 Task 1.3) and the
+ * useReferenceAutocomplete hook (M2).
  */
 export interface ReferenceSearchResult {
 	type: ReferenceType;
@@ -48,37 +52,50 @@ export interface ResolvedReference {
 
 export interface ResolvedTaskReference extends ResolvedReference {
 	type: 'task';
+	data: NeoTask;
 }
 
 export interface ResolvedGoalReference extends ResolvedReference {
 	type: 'goal';
+	data: RoomGoal;
+}
+
+/**
+ * File content payload returned for a resolved file reference.
+ * Mirrors the return shape of the resolve RPC handler in
+ * packages/daemon/src/lib/rpc-handlers/reference-handlers.ts.
+ */
+export interface ResolvedFileData {
+	path: string;
+	/** UTF-8 text content, or null when the file is binary */
+	content: string | null;
+	/** True when the file contains binary (non-text) data; content will be null */
+	binary: boolean;
+	/** True when file content was truncated to stay within payload limits */
+	truncated: boolean;
+	size: number;
+	mtime: string;
+}
+
+/** A single entry in a resolved folder listing. */
+export interface FolderEntry {
+	path: string;
+	name: string;
+	/** 'directory' matches FileManager.FileInfo and the real filesystem API */
+	type: 'file' | 'directory';
 }
 
 /** Resolved file reference — data includes content (possibly truncated or absent for binary files) */
 export interface ResolvedFileReference extends ResolvedReference {
 	type: 'file';
-	data: {
-		path: string;
-		/** UTF-8 text content, or null when the file is binary */
-		content: string | null;
-		/** True when the file contains binary (non-text) data; content will be null */
-		binary: boolean;
-		/** True when file content was truncated to stay within payload limits */
-		truncated: boolean;
-		size: number;
-		mtime: string;
-	};
+	data: ResolvedFileData;
 }
 
 export interface ResolvedFolderReference extends ResolvedReference {
 	type: 'folder';
 	data: {
 		path: string;
-		entries: Array<{
-			name: string;
-			path: string;
-			type: 'file' | 'directory';
-		}>;
+		entries: FolderEntry[];
 	};
 }
 
