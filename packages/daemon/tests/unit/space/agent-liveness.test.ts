@@ -221,6 +221,40 @@ describe('autoCompleteStuckAgents', () => {
 		expect(taskRepo.getTask('task-fresh')!.status).toBe('in_progress');
 	});
 
+	test('does NOT auto-complete at exact timeout boundary (elapsed === timeoutMs)', async () => {
+		// The guard uses `elapsedMs <= timeoutMs`, so exact-match is excluded.
+		// This test seeds the task with startedAt = now - AGENT_REPORT_DONE_TIMEOUT_MS
+		// so elapsed is essentially exactly at the boundary (may be a few ms over due
+		// to test execution time, but we use a custom timeout far larger to be safe).
+		const customTimeoutMs = 5000; // 5 seconds
+		seedTask(db, 'task-boundary', spaceId, {
+			status: 'in_progress',
+			taskAgentSessionId: 'session-boundary',
+			startedAt: Date.now() - customTimeoutMs, // exactly at the boundary
+		});
+
+		const task = taskRepo.getTask('task-boundary')!;
+		const tam = makeMockTAM(new Set(['task-boundary']));
+		const spy = makeNotifySpy();
+
+		// Patch startedAt to be exactly now - customTimeoutMs so elapsed = customTimeoutMs
+		const patchedTask: SpaceTask = { ...task, startedAt: Date.now() - customTimeoutMs };
+
+		const result = await autoCompleteStuckAgents(
+			[patchedTask],
+			spaceId,
+			taskRepo,
+			tam,
+			spy.notify,
+			customTimeoutMs
+		);
+
+		// elapsed <= timeoutMs → no auto-completion
+		expect(result).toHaveLength(0);
+		expect(spy.events).toHaveLength(0);
+		expect(taskRepo.getTask('task-boundary')!.status).toBe('in_progress');
+	});
+
 	test('auto-completes a stuck agent (alive + timed out)', async () => {
 		const stuckStartedAt = Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 5000;
 		seedTask(db, 'task-stuck', spaceId, {

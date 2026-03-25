@@ -90,6 +90,12 @@ export async function autoCompleteStuckAgents(
 		}
 
 		// Agent is alive but has not called report_done within the timeout window.
+		//
+		// Note: no notifiedTaskSet dedup is needed here because the status transition
+		// to 'completed' means this task will never satisfy the `status === 'in_progress'`
+		// guard again. Contrast with task_timeout, which is a warning-only notification
+		// that does not change task status and thus requires dedup to avoid re-emitting
+		// on every subsequent tick while the task remains in_progress.
 		const timeoutMinutes = Math.round(timeoutMs / 60_000);
 		const result = `Auto-completed: agent did not call report_done within ${timeoutMinutes} minutes`;
 
@@ -98,10 +104,19 @@ export async function autoCompleteStuckAgents(
 				`(elapsed ${Math.round(elapsedMs / 1000)}s, timeout ${timeoutMinutes}m)`
 		);
 
-		taskRepo.updateTask(task.id, {
+		const updated = taskRepo.updateTask(task.id, {
 			status: 'completed',
 			result,
 		});
+
+		// Guard: if the update returned null, the task was deleted concurrently.
+		// Skip the notification to avoid emitting an event for a non-existent task.
+		if (!updated) {
+			log.warn(
+				`agent-liveness: task ${task.id} was deleted before auto-completion could be persisted; skipping notification`
+			);
+			continue;
+		}
 
 		await notify({
 			kind: 'agent_auto_completed',
