@@ -794,6 +794,7 @@ export function WorkflowNodeCard({
 						condition={exitCondition ?? { type: 'always' }}
 						onChange={onUpdateExitCondition}
 						terminalMessage={isLast ? 'Workflow ends here' : undefined}
+						testId="exit-gate-select"
 					/>
 
 					{/* Instructions */}

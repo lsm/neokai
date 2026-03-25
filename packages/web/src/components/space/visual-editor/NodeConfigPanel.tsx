@@ -16,7 +16,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import type { SpaceAgent, WorkflowNodeAgent, WorkflowChannel } from '@neokai/shared';
+import type { SpaceAgent, WorkflowNodeAgent } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode } from '../WorkflowNodeCard';
 import { GateConfig } from './GateConfig';
@@ -82,17 +82,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
-	/**
-	 * Auto-create Task Agent channels for a step that just got agents assigned.
-	 * Called from event handlers (agent dropdown onChange, addAgent) to avoid
-	 * mount-time side effects that corrupt existing workflow data.
-	 */
-	function buildTaskAgentChannels(agentsToChannel: WorkflowNodeAgent[]): WorkflowChannel[] {
-		return agentsToChannel.map((sa) => {
-			return { from: 'task-agent', to: sa.name, direction: 'bidirectional' };
-		});
-	}
-
 	function addAgent(agentId: string) {
 		if (!agentId) return;
 		const agentInfo = agents.find((a) => a.id === agentId);
@@ -106,9 +95,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			role = `${baseRole}-${i}`;
 		}
 		const next = [...stepAgents, { agentId, name: role }];
-		// Merge agents + channels into a single onUpdate call to avoid stale-reference overwrites
-		const newChannels = step.channels === undefined ? buildTaskAgentChannels(next) : step.channels;
-		onUpdate({ ...step, agents: next, agentId: '', channels: newChannels });
+		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function removeAgent(role: string) {
@@ -182,17 +169,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 					value={step.agentId}
 					onChange={(e) => {
 						const newAgentId = (e.currentTarget as HTMLSelectElement).value;
-						const nextStep = { ...step, agentId: newAgentId };
-						// Auto-create task-agent channel when a single agent is assigned
-						if (newAgentId && step.channels === undefined) {
-							const agentInfo = agents.find((a) => a.id === newAgentId);
-							if (agentInfo) {
-								nextStep.channels = [
-									{ from: 'task-agent', to: agentInfo.role, direction: 'bidirectional' },
-								];
-							}
-						}
-						onUpdate(nextStep);
+						onUpdate({ ...step, agentId: newAgentId });
 					}}
 					class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
 				>
@@ -397,172 +374,6 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 }
 
 // ============================================================================
-// ChannelsPanelSection — manages messaging channels in the config panel
-// ============================================================================
-
-interface ChannelsPanelSectionProps {
-	step: NodeDraft;
-	agents: SpaceAgent[];
-	onUpdate: (step: NodeDraft) => void;
-}
-
-function ChannelsPanelSection({ step, onUpdate }: ChannelsPanelSectionProps) {
-	const channels = step.channels ?? [];
-	const stepAgents = step.agents ?? [];
-
-	// Collect known roles from step agents (+ wildcard)
-	const knownRoles = ['*', ...stepAgents.map((sa) => sa.name)];
-
-	const [newFrom, setNewFrom] = useState('');
-	const [newTo, setNewTo] = useState('');
-	const [newDirection, setNewDirection] = useState<'one-way' | 'bidirectional'>('one-way');
-	const [newLabel, setNewLabel] = useState('');
-
-	// Reset add-channel form fields when the selected node changes, so stale values
-	// from one node don't bleed into the form for the next selected node.
-	useEffect(() => {
-		setNewFrom('');
-		setNewTo('');
-		setNewDirection('one-way');
-		setNewLabel('');
-	}, [step.localId]);
-
-	function updateChannels(next: WorkflowChannel[]) {
-		onUpdate({ ...step, channels: next.length > 0 ? next : undefined });
-	}
-
-	function removeChannel(index: number) {
-		updateChannels(channels.filter((_, i) => i !== index));
-	}
-
-	function addChannel() {
-		if (!newFrom || !newTo) return;
-		const toValue: string | string[] = newTo.includes(',')
-			? newTo
-					.split(',')
-					.map((s) => s.trim())
-					.filter(Boolean)
-			: newTo.trim();
-		const ch: WorkflowChannel = {
-			from: newFrom,
-			to: toValue,
-			direction: newDirection,
-			label: newLabel.trim() || undefined,
-		};
-		updateChannels([...channels, ch]);
-		setNewFrom('');
-		setNewTo('');
-		setNewDirection('one-way');
-		setNewLabel('');
-	}
-
-	const formatTo = (to: string | string[]) => (Array.isArray(to) ? `[${to.join(', ')}]` : to);
-
-	return (
-		<div class="space-y-2 pt-3 border-t border-dark-700" data-testid="channels-section">
-			<label class="text-xs font-medium text-gray-400">
-				Channels <span class="text-gray-600 font-normal">(messaging topology)</span>
-			</label>
-
-			{channels.length === 0 && (
-				<p class="text-xs text-gray-600">No channels — agents are isolated.</p>
-			)}
-
-			<div class="space-y-1" data-testid="channels-list">
-				{channels.map((ch, i) => (
-					<div
-						key={i}
-						class="flex items-center gap-2 bg-dark-800 border border-dark-600 rounded px-2 py-1.5"
-						data-testid="channel-entry"
-					>
-						<span class="text-xs text-gray-300 font-mono flex-1">
-							{ch.from} {ch.direction === 'bidirectional' ? '↔' : '→'} {formatTo(ch.to)}
-							{ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
-						</span>
-						<button
-							type="button"
-							data-testid="remove-channel-button"
-							onClick={() => removeChannel(i)}
-							class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
-							title="Remove channel"
-						>
-							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M6 18L18 6M6 6l12 12"
-								/>
-							</svg>
-						</button>
-					</div>
-				))}
-			</div>
-
-			{/* Add channel form */}
-			<div
-				class="space-y-2 bg-dark-800 border border-dark-600 rounded p-2"
-				data-testid="add-channel-form"
-			>
-				<div class="flex gap-2">
-					<select
-						data-testid="channel-from-select"
-						value={newFrom}
-						onChange={(e) => setNewFrom((e.currentTarget as HTMLSelectElement).value)}
-						class="flex-1 text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
-					>
-						<option value="">From…</option>
-						{knownRoles.map((r) => (
-							<option key={r} value={r}>
-								{r}
-							</option>
-						))}
-					</select>
-					<select
-						data-testid="channel-direction-select"
-						value={newDirection}
-						onChange={(e) =>
-							setNewDirection(
-								(e.currentTarget as HTMLSelectElement).value as 'one-way' | 'bidirectional'
-							)
-						}
-						class="text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
-					>
-						<option value="one-way">→ one-way</option>
-						<option value="bidirectional">↔ bidirectional</option>
-					</select>
-				</div>
-				<input
-					data-testid="channel-to-input"
-					type="text"
-					value={newTo}
-					onInput={(e) => setNewTo((e.currentTarget as HTMLInputElement).value)}
-					placeholder="To role(s) — comma-separated, * for all"
-					class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-				/>
-				<input
-					data-testid="channel-label-input"
-					type="text"
-					value={newLabel}
-					onInput={(e) => setNewLabel((e.currentTarget as HTMLInputElement).value)}
-					placeholder="Label (optional)"
-					class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-				/>
-				<button
-					type="button"
-					data-testid="add-channel-button"
-					onClick={addChannel}
-					disabled={!newFrom || !newTo}
-					class="w-full text-xs py-1 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 transition-colors"
-				>
-					Add channel
-				</button>
-			</div>
-		</div>
-	);
-}
-
-// ============================================================================
 // Component
 // ============================================================================
 
@@ -680,11 +491,6 @@ export function NodeConfigPanel({
 
 				{/* Agent(s) */}
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
-
-				{/* Channels (shown when node has agents or has existing channels) */}
-				{(!!step.agentId || isMultiAgentNode(step) || step.channels) && (
-					<ChannelsPanelSection step={step} agents={agents} onUpdate={onUpdate} />
-				)}
 
 				{/* Entry Gate */}
 				<GateConfig

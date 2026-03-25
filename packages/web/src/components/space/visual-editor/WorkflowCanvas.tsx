@@ -76,6 +76,10 @@ export interface WorkflowCanvasProps {
 	onEdgeSelect?: (transitionId: string | null) => void;
 	/** Called when Delete/Backspace is pressed with an edge selected. */
 	onDeleteEdge?: (transitionId: string) => void;
+	/** Called when a channel edge is clicked. Receives the channel's id. */
+	onChannelSelect?: (channelId: string | null) => void;
+	/** Currently selected channel ID for highlighting. */
+	selectedChannelId?: string | null;
 }
 
 // ---- Ghost edge rendering ----
@@ -262,6 +266,8 @@ export function WorkflowCanvas({
 	onCreateTransition,
 	onEdgeSelect,
 	onDeleteEdge,
+	onChannelSelect,
+	selectedChannelId,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -316,8 +322,13 @@ export function WorkflowCanvas({
 	// Compute channel edges from nodes' channel declarations.
 	// Also merges with any explicitly passed channels prop (for backward compatibility).
 	const computedChannelEdges = useMemo(() => computeChannelEdges(nodes), [nodes]);
-	const effectiveChannels =
-		channels.length > 0 ? [...computedChannelEdges, ...channels] : computedChannelEdges;
+	// Merge computed channel edges with explicitly passed channels, deduplicating by fromStepId+toStepId.
+	const effectiveChannels = (() => {
+		if (channels.length === 0) return computedChannelEdges;
+		const seen = new Set(computedChannelEdges.map((c) => `${c.fromStepId}:${c.toStepId}`));
+		const deduped = channels.filter((c) => !seen.has(`${c.fromStepId}:${c.toStepId}`));
+		return [...computedChannelEdges, ...deduped];
+	})();
 
 	// Clear selection if the selected node is removed externally (e.g. parent deletes it
 	// from the nodes array). Without this, a node re-added with the same stepId would
@@ -437,6 +448,8 @@ export function WorkflowCanvas({
 					onEdgeSelect={handleEdgeSelect}
 					onEdgeDelete={handleEdgeDelete}
 					channels={effectiveChannels}
+					selectedChannelId={selectedChannelId}
+					onChannelSelect={onChannelSelect ?? undefined}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
@@ -451,6 +464,8 @@ export function WorkflowCanvas({
 			handleEdgeSelect,
 			handleEdgeDelete,
 			dragState,
+			selectedChannelId,
+			onChannelSelect,
 		]
 	);
 

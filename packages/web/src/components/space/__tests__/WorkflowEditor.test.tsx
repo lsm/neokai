@@ -384,10 +384,10 @@ describe('WorkflowEditor', () => {
 			// Click step 1 header to expand it
 			const stepHeaders = container.querySelectorAll('.cursor-pointer');
 			fireEvent.click(stepHeaders[0]);
-			// Now find the exit gate select (selects[2] = exit gate when entry+agent are visible)
-			const selects = container.querySelectorAll('select');
-			// Find exit gate select — it's labeled 'Exit Gate', the last condition select
-			const exitGateSelect = selects[selects.length - 1] as HTMLSelectElement;
+			// Find exit gate select via testid (more robust than positional select indexing)
+			const exitGateSelect = container.querySelector(
+				'[data-testid="exit-gate-select"]'
+			) as HTMLSelectElement;
 			fireEvent.change(exitGateSelect, { target: { value: 'condition' } });
 			// Leave expression empty and try to save
 			fireEvent.click(getByText('Create Workflow'));

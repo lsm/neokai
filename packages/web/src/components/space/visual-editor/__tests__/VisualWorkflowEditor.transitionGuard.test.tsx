@@ -141,21 +141,21 @@ describe('VisualWorkflowEditor handleCreateTransition Task Agent guard', () => {
 		expect(container.querySelectorAll('[data-edge-id]').length).toBe(edgesBefore);
 	});
 
-	it('does add an edge for two regular node IDs (positive case)', () => {
+	it('does add a transition for two regular node IDs (positive case — transitions stored in state but hidden on canvas)', () => {
 		const { container } = render(
 			<VisualWorkflowEditor workflow={makeWorkflow()} onSave={vi.fn()} onCancel={vi.fn()} />
 		);
 
 		expect(capturedOnCreateTransition).toBeTruthy();
 
-		// makeWorkflow has no transitions, so edges start at 0
+		// Transitions are hidden on the canvas (channels are primary visual connections).
 		expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 
 		act(() => {
 			capturedOnCreateTransition!('step-1', 'step-2');
 		});
 
-		// A real edge should be created
-		expect(container.querySelectorAll('[data-edge-id]').length).toBe(1);
+		// Transition is stored in state but still not rendered as an edge
+		expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 	});
 });

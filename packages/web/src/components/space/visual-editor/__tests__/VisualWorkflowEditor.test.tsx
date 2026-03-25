@@ -352,8 +352,6 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 			const nodesBefore = getAllByTestId(/^workflow-node-/).length;
-			// The workflow has one edge (step-1 → step-2); confirm it renders before deletion
-			expect(container.querySelector('[data-edge-id]')).toBeTruthy();
 
 			// Select step-2 (the non-start regular node).
 			// Skip the Task Agent virtual node (data-testid="workflow-node-__task_agent__")
@@ -372,8 +370,7 @@ describe('VisualWorkflowEditor', () => {
 
 			expect(getAllByTestId(/^workflow-node-/).length).toBe(nodesBefore - 1);
 			expect(queryByTestId('node-config-panel')).toBeNull();
-			// Edges referencing the deleted node must also be removed
-			expect(container.querySelector('[data-edge-id]')).toBeNull();
+			// Transitions are hidden on canvas (channels are primary connections).
 		});
 
 		it('Task Agent never receives the start badge after any node deletion', () => {
@@ -515,100 +512,18 @@ describe('VisualWorkflowEditor', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Edge selection → EdgeConfigPanel
-	// -------------------------------------------------------------------------
-
-	describe('Edge selection — EdgeConfigPanel', () => {
-		it('clicking an edge hitbox opens EdgeConfigPanel', () => {
-			const { container, queryByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			expect(queryByTestId('edge-config-panel')).toBeNull();
-
-			// EdgeRenderer renders a <g data-edge-id="..."> with a hitbox <path> as first child
-			const hitboxPath = container.querySelector('[data-edge-id] > path');
-			expect(hitboxPath).toBeTruthy();
-			fireEvent.click(hitboxPath!);
-
-			expect(queryByTestId('edge-config-panel')).toBeTruthy();
-		});
-
-		it('EdgeConfigPanel close button dismisses the panel', () => {
-			const { container, queryByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			const hitboxPath = container.querySelector('[data-edge-id] > path')!;
-			fireEvent.click(hitboxPath);
-			expect(queryByTestId('edge-config-panel')).toBeTruthy();
-
-			// The close button inside EdgeConfigPanel
-			const closeBtn = queryByTestId('close-button');
-			expect(closeBtn).toBeTruthy();
-			fireEvent.click(closeBtn!);
-			expect(queryByTestId('edge-config-panel')).toBeNull();
-		});
-
-		it('deleting an edge via EdgeConfigPanel removes it and hides the panel', () => {
-			const { container, queryByTestId, getByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			const hitboxBefore = container.querySelector('[data-edge-id] > path')!;
-			fireEvent.click(hitboxBefore);
-
-			fireEvent.click(getByTestId('delete-transition-button'));
-
-			// After deletion the edge element should be gone
-			expect(container.querySelector('[data-edge-id]')).toBeNull();
-			// And the panel should be dismissed
-			expect(queryByTestId('edge-config-panel')).toBeNull();
-		});
-
-		it('changing edge condition type updates the panel', () => {
-			const { container, getByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-			fireEvent.click(container.querySelector('[data-edge-id] > path')!);
-
-			const select = getByTestId('condition-type-select') as HTMLSelectElement;
-			fireEvent.change(select, { target: { value: 'human' } });
-
-			expect(select.value).toBe('human');
-		});
-
-		it('selecting an edge clears the node selection', () => {
-			const { container, getAllByTestId, queryByTestId } = render(
-				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
-			);
-
-			// First select a regular node ([0] is Task Agent, not selectable; use [1])
-			fireEvent.click(getAllByTestId(/^workflow-node-/)[1]);
-			expect(queryByTestId('node-config-panel')).toBeTruthy();
-
-			// Then click an edge
-			const hitbox = container.querySelector('[data-edge-id] > path')!;
-			fireEvent.click(hitbox);
-
-			expect(queryByTestId('node-config-panel')).toBeNull();
-			expect(queryByTestId('edge-config-panel')).toBeTruthy();
-		});
-	});
-
-	// -------------------------------------------------------------------------
 	// handleCreateTransition
 	// -------------------------------------------------------------------------
 
 	describe('handleCreateTransition', () => {
-		it('renders exactly one edge for the single transition in the workflow', () => {
-			// Smoke test: makeWorkflow has one transition (step-1 → step-2); confirm
-			// exactly one edge element is rendered. The port-drag dedup logic in
-			// handleCreateTransition cannot be exercised in JSDOM (requires real
-			// mousemove/mouseup across port elements), so this test only validates
-			// the initial render state.
+		it('renders no visible edges (transitions hidden; channels are primary connections)', () => {
+			// Transitions are stored in state but not passed to EdgeRenderer (channels
+			// replaced them as the primary visual connections in Task 7.1).
 			const { container } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
-			// EdgeRenderer wraps each edge in a <g data-edge-id="..."> element
-			expect(container.querySelectorAll('[data-edge-id]').length).toBe(1);
+			// Transitions are hidden: no [data-edge-id] elements expected
+			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 		});
 	});
 
@@ -898,7 +813,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByTestId(/^workflow-node-/).length).toBe(3);
 		});
 
-		it('selecting a template creates edges between nodes', () => {
+		it('selecting a template creates nodes but no visible edges (transitions hidden)', () => {
 			const { getByTestId, getAllByTestId, container } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
@@ -909,8 +824,8 @@ describe('VisualWorkflowEditor', () => {
 			);
 			fireEvent.click(codingOption!);
 
-			// Should have 1 edge connecting the 2 nodes (EdgeRenderer uses data-edge-id attribute)
-			expect(container.querySelectorAll('[data-edge-id]').length).toBe(1);
+			// Transitions hidden; channels are the primary visual connections.
+			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 		});
 
 		it('selecting a template assigns autoLayout positions (non-zero for at least one node)', () => {
