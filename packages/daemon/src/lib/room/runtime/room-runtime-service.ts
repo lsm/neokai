@@ -248,6 +248,37 @@ export class RoomRuntimeService {
 					ctx.defaultModel
 				);
 				agentSessions.set(init.sessionId, session);
+
+				// Inject merged MCP servers for worker sessions (coder / general).
+				// File-based servers take precedence over registry servers on name collision
+				// because local project config is considered more specific than the global
+				// application-level registry.
+				//
+				// Hot-reload for worker sessions is intentionally skipped: workers are
+				// short-lived (one task per session) so a registry change mid-task would
+				// not be useful. The updated map is applied on the next session creation.
+				if (role === 'coder' || role === 'general') {
+					const fileMcpServers = ctx.settingsManager.getEnabledMcpServersConfig();
+					const registryMcpServers = ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
+
+					// Detect and warn on name collisions (file-based wins)
+					for (const name of Object.keys(fileMcpServers)) {
+						if (Object.prototype.hasOwnProperty.call(registryMcpServers, name)) {
+							log.warn(
+								`Worker session ${init.sessionId}: MCP server name collision on '${name}' — ` +
+									`file-based config takes precedence over registry entry.`
+							);
+						}
+					}
+
+					// Merge: registry first, then file-based overwrites on collision
+					const merged: Record<string, McpServerConfig> = {
+						...registryMcpServers,
+						...fileMcpServers,
+					};
+					session.setRuntimeMcpServers(merged);
+				}
+
 				// Leader sessions are started lazily: injectMessage() calls ensureQueryStarted()
 				// before enqueuing the first message. Starting eagerly here would trigger the
 				// 15s SDK startup timeout because the leader has no queued message yet.
