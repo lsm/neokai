@@ -68,9 +68,11 @@ const exportedWorkflowNodeAgentSchema = z.object({
 });
 
 const workflowChannelSchema = z.object({
+	id: z.string().optional(),
 	from: z.string().min(1),
 	to: z.union([z.string().min(1), z.array(z.string().min(1))]),
 	direction: z.enum(['one-way', 'bidirectional']),
+	isCyclic: z.boolean().optional(),
 	label: z.string().optional(),
 });
 
@@ -141,6 +143,7 @@ const exportedWorkflowBaseSchema = z.object({
 	rules: z.array(exportedWorkflowRuleSchema),
 	tags: z.array(z.string()),
 	config: z.record(z.string(), z.unknown()).optional(),
+	channels: z.array(workflowChannelSchema).optional(),
 });
 
 const exportBundleBaseSchema = z.object({
@@ -304,6 +307,8 @@ export function exportWorkflow(
 	};
 	if (workflow.description !== undefined) result.description = workflow.description;
 	if (workflow.config !== undefined) result.config = workflow.config;
+	// Workflow-level channels use role strings and node names — no UUID remapping needed.
+	if (workflow.channels && workflow.channels.length > 0) result.channels = workflow.channels;
 	return result;
 }
 

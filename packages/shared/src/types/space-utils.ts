@@ -40,8 +40,13 @@ export interface ResolvedChannel {
 	/** Always `'one-way'` after resolution — bidirectional is split into two entries */
 	direction: 'one-way';
 	/**
-	 * True when this channel fans out to all agents in a target node
-	 * (i.e. `to` in the source WorkflowChannel was a node name, not an agent role).
+	 * True when the `to` side of the source WorkflowChannel resolved to a node name
+	 * (fan-out delivery to all agents in that node), not an individual agent role.
+	 *
+	 * Note: `isFanOut` specifically describes **to-side** fan-out. When `from` in the
+	 * source channel is a node name, the resolver creates one `ResolvedChannel` entry
+	 * per agent in that node, each with `isFanOut: false` — the individual entries are
+	 * point-to-point even though they originated from a node-addressed source.
 	 */
 	isFanOut?: boolean;
 	/** Optional label inherited from the source WorkflowChannel */
@@ -540,11 +545,27 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]):
 	];
 
 	for (const { ch, loc } of allChannels) {
-		if (ch.from !== '*' && !knownRoles.has(ch.from) && !knownNodeNames.has(ch.from)) {
+		// Validate direction field
+		if (ch.direction !== 'one-way' && ch.direction !== 'bidirectional') {
 			errors.push(
-				`${loc}.from "${ch.from}" does not match any agent role or node name in the workflow. ` +
-					`Known roles: [${[...knownRoles].join(', ')}]. Known nodes: [${[...knownNodeNames].join(', ')}].`
+				`${loc}.direction "${ch.direction}" is not valid. Must be 'one-way' or 'bidirectional'.`
 			);
+		}
+
+		if (ch.from !== '*') {
+			if (!knownRoles.has(ch.from) && !knownNodeNames.has(ch.from)) {
+				errors.push(
+					`${loc}.from "${ch.from}" does not match any agent role or node name in the workflow. ` +
+						`Known roles: [${[...knownRoles].join(', ')}]. Known nodes: [${[...knownNodeNames].join(', ')}].`
+				);
+			} else if (knownRoles.has(ch.from) && knownNodeNames.has(ch.from)) {
+				// Ambiguous: matches both an agent role and a node name.
+				// The resolver always prefers the role — flag this so the user can rename to avoid confusion.
+				errors.push(
+					`${loc}.from "${ch.from}" is ambiguous: it matches both an agent role and a node name. ` +
+						'Rename the node or the agent role to avoid misrouting.'
+				);
+			}
 		}
 
 		const toList: string[] = Array.isArray(ch.to) ? ch.to : [ch.to];
@@ -557,10 +578,18 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]):
 		}
 
 		for (const toRef of toList) {
-			if (toRef !== '*' && !knownRoles.has(toRef) && !knownNodeNames.has(toRef)) {
+			if (toRef === '*') continue;
+			if (!knownRoles.has(toRef) && !knownNodeNames.has(toRef)) {
 				errors.push(
 					`${loc}.to "${toRef}" does not match any agent role or node name in the workflow. ` +
 						`Known roles: [${[...knownRoles].join(', ')}]. Known nodes: [${[...knownNodeNames].join(', ')}].`
+				);
+			} else if (knownRoles.has(toRef) && knownNodeNames.has(toRef)) {
+				// Ambiguous: matches both an agent role and a node name.
+				// The resolver always prefers the role — flag this so the user can rename to avoid confusion.
+				errors.push(
+					`${loc}.to "${toRef}" is ambiguous: it matches both an agent role and a node name. ` +
+						'Rename the node or the agent role to avoid misrouting.'
 				);
 			}
 		}

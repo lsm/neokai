@@ -433,4 +433,136 @@ describe('validateChannels', () => {
 		const errors = validateChannels(wf, agents);
 		expect(errors).toHaveLength(0);
 	});
+
+	test('node-name/role-name collision: ambiguity error reported for from', () => {
+		// Node named "coder" and an agent with role "coder" in a different node
+		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
+		const nodeA = makeNode('coder', 'coder', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const wf = makeWorkflow(
+			[nodeA, nodeB],
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
+		);
+		const errors = validateChannels(wf, agents);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('ambiguous'))).toBe(true);
+	});
+
+	test('node-name/role-name collision: ambiguity error reported for to', () => {
+		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
+		const nodeA = makeNode('n1', 'reviewer', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
+		const wf = makeWorkflow(
+			[nodeA, nodeB],
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
+		);
+		const errors = validateChannels(wf, agents);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('ambiguous'))).toBe(true);
+	});
+
+	test('invalid direction value: error reported', () => {
+		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
+		const node = makeNode('n1', 'Node1', [
+			{ role: 'coder', agentId: 'agent-coder' },
+			{ role: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow(
+			[node],
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			[{ from: 'coder', to: 'reviewer', direction: 'invalid' as any }]
+		);
+		const errors = validateChannels(wf, agents);
+		expect(errors.length).toBeGreaterThan(0);
+		expect(errors.some((e) => e.includes('direction'))).toBe(true);
+	});
+});
+
+// ============================================================================
+// resolveChannels edge cases
+// ============================================================================
+
+describe('resolveChannels edge cases', () => {
+	test('wildcard from (*): expands to all agents sending to target', () => {
+		const node = makeNode(
+			'n1',
+			'Node1',
+			[
+				{ role: 'coder', agentId: 'agent-coder' },
+				{ role: 'reviewer', agentId: 'agent-reviewer' },
+				{ role: 'tester', agentId: 'agent-tester' },
+			],
+			[{ from: '*', to: 'reviewer', direction: 'one-way' }]
+		);
+		const wf = makeWorkflow([node]);
+		const result = resolveChannels(wf);
+
+		// coder→reviewer and tester→reviewer (self-loop reviewer→reviewer skipped)
+		expect(result).toHaveLength(2);
+		expect(result.every((r) => r.toRole === 'reviewer')).toBe(true);
+		const fromRoles = result.map((r) => r.fromRole).sort();
+		expect(fromRoles).toEqual(['coder', 'tester']);
+	});
+
+	test('from as node name: each agent in node gets a sender entry', () => {
+		const nodeA = makeNode('n1', 'Coders', [
+			{ role: 'coder1', agentId: 'agent-coder1' },
+			{ role: 'coder2', agentId: 'agent-coder2' },
+		]);
+		const nodeB = makeNode('n2', 'NodeB', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
+		// "Coders" node as from — all agents in Coders send to reviewer
+		const wf = makeWorkflow(
+			[nodeA, nodeB],
+			[{ from: 'Coders', to: 'reviewer', direction: 'one-way' }]
+		);
+		const result = resolveChannels(wf);
+
+		// coder1→reviewer + coder2→reviewer
+		expect(result).toHaveLength(2);
+		expect(result.every((r) => r.toRole === 'reviewer')).toBe(true);
+		// isFanOut is false for individual entries even though from was a node name
+		expect(result.every((r) => !r.isFanOut)).toBe(true);
+	});
+
+	test('bidirectional with fan-out to node name: expands with isFanOut on forward entries', () => {
+		const nodeA = makeNode('n1', 'NodeA', [{ role: 'planner', agentId: 'agent-planner' }]);
+		const nodeB = makeNode('n2', 'NodeB', [
+			{ role: 'coder1', agentId: 'agent-coder1' },
+			{ role: 'coder2', agentId: 'agent-coder2' },
+		]);
+		const wf = makeWorkflow(
+			[nodeA, nodeB],
+			[{ from: 'planner', to: 'NodeB', direction: 'bidirectional' }]
+		);
+		const result = resolveChannels(wf);
+
+		// forward: planner→coder1, planner→coder2 (isFanOut: true)
+		// reverse: coder1→planner, coder2→planner (isFanOut: true, same channel)
+		expect(result).toHaveLength(4);
+		const forward = result.filter((r) => r.fromRole === 'planner');
+		const reverse = result.filter((r) => r.toRole === 'planner');
+		expect(forward).toHaveLength(2);
+		expect(reverse).toHaveLength(2);
+		// All are marked isFanOut since to was a node name
+		expect(forward.every((r) => r.isFanOut === true)).toBe(true);
+		// isHubSpoke: true because single from + multiple to + bidirectional
+		expect(result.every((r) => r.isHubSpoke === true)).toBe(true);
+	});
+
+	test('node-name/role-name collision: resolver prefers role over node name for to', () => {
+		// "coder" is both an agent role in nodeB and the name of nodeA
+		const nodeA = makeNode('coder', 'coder', [{ role: 'planner', agentId: 'agent-planner' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const wf = makeWorkflow(
+			[nodeA, nodeB],
+			[{ from: 'planner', to: 'coder', direction: 'one-way' }]
+		);
+		const result = resolveChannels(wf);
+
+		// Resolver prefers role match → single DM to coder agent, NOT fan-out to node "coder"
+		expect(result).toHaveLength(1);
+		expect(result[0].toRole).toBe('coder');
+		expect(result[0].toAgentId).toBe('agent-coder');
+		expect(result[0].isFanOut).toBeFalsy();
+	});
 });

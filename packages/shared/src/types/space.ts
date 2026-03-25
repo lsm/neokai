@@ -1088,6 +1088,11 @@ export interface ExportedSpaceWorkflow {
 	tags: string[];
 	/** Additional runtime configuration */
 	config?: Record<string, unknown>;
+	/**
+	 * Workflow-level messaging channels. Exported as-is — they already use role strings
+	 * and node names, not UUIDs, so no remapping is needed on import.
+	 */
+	channels?: WorkflowChannel[];
 }
 
 /**
