@@ -2,8 +2,7 @@
  * ReferenceResolver — Core service for parsing and resolving @ references
  *
  * Handles extracting @ref{} mentions from text and resolving them to their
- * full entity data. Currently implements file and folder resolvers.
- * Task and goal resolvers are stubbed (see Task 3.1).
+ * full entity data. Implements file, folder, task, and goal resolvers.
  *
  * Path validation enforced for file/folder references:
  *   - Empty paths are rejected
@@ -37,7 +36,11 @@ import type {
 	ResolvedReference,
 	ResolvedFileReference,
 	ResolvedFolderReference,
+	ResolvedTaskReference,
+	ResolvedGoalReference,
 	ReferenceType,
+	NeoTask,
+	RoomGoal,
 } from '@neokai/shared';
 import { REFERENCE_PATTERN } from '@neokai/shared';
 import { Logger } from '../logger.ts';
@@ -51,9 +54,39 @@ const MAX_FILE_SIZE = 50 * 1024;
 const MAX_FOLDER_ENTRIES = 200;
 
 /**
+ * Minimal structural interface for TaskRepository — only the method(s) used here.
+ * Using a structural interface (not importing the class) avoids pulling in SQLite.
+ */
+export interface TaskRepoLike {
+	getTaskByShortId(roomId: string, shortId: string): NeoTask | null;
+}
+
+/**
+ * Minimal structural interface for GoalRepository — only the method(s) used here.
+ */
+export interface GoalRepoLike {
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null;
+}
+
+/**
+ * Minimal structural interface for SpaceTaskRepository — only the method(s) used here.
+ */
+export interface SpaceTaskRepoLike {
+	getTask(id: string): { id: string; spaceId: string; [key: string]: unknown } | null;
+}
+
+/** Optional repository dependencies injected at construction time. */
+export interface ReferenceResolverDeps {
+	taskRepo?: TaskRepoLike;
+	goalRepo?: GoalRepoLike;
+	spaceTaskRepo?: SpaceTaskRepoLike;
+}
+
+/**
  * Context for resolving references — provides session-scoped information.
  * File/folder resolution only requires workspacePath.
- * Task/goal resolution (Task 3.1) will use roomId and spaceId.
+ * Task resolution uses roomId (room tasks) or spaceId (space tasks).
+ * Goal resolution uses roomId.
  */
 export interface ResolutionContext {
 	roomId?: string;
@@ -62,6 +95,15 @@ export interface ResolutionContext {
 }
 
 export class ReferenceResolver {
+	private readonly taskRepo?: TaskRepoLike;
+	private readonly goalRepo?: GoalRepoLike;
+	private readonly spaceTaskRepo?: SpaceTaskRepoLike;
+
+	constructor(deps: ReferenceResolverDeps = {}) {
+		this.taskRepo = deps.taskRepo;
+		this.goalRepo = deps.goalRepo;
+		this.spaceTaskRepo = deps.spaceTaskRepo;
+	}
 	/**
 	 * Extract all @ref{} mentions from a text string.
 	 * Returns deduplicated mentions in order of appearance.
@@ -108,9 +150,9 @@ export class ReferenceResolver {
 			case 'folder':
 				return this.resolveFolder(mention.id, context);
 			case 'task':
+				return this.resolveTask(mention.id, context);
 			case 'goal':
-				// Implemented by Task 3.1 — task/goal resolvers
-				return null;
+				return this.resolveGoal(mention.id, context);
 			default: {
 				const _exhaustive: never = mention.type;
 				log.warn(`Unknown reference type: ${_exhaustive}`);
@@ -381,6 +423,97 @@ export class ReferenceResolver {
 				entries,
 			},
 		};
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Task resolver
+	// ────────────────────────────────────────────────────────────────────────────
+
+	private async resolveTask(
+		id: string,
+		context: ResolutionContext
+	): Promise<ResolvedTaskReference | null> {
+		if (id.startsWith('st-')) {
+			return this.resolveSpaceTask(id, context);
+		}
+		if (id.startsWith('t-')) {
+			return this.resolveRoomTask(id, context);
+		}
+		log.warn(`Unrecognized task reference format: "${id}" (expected t- or st- prefix)`);
+		return null;
+	}
+
+	private resolveRoomTask(
+		shortId: string,
+		context: ResolutionContext
+	): ResolvedTaskReference | null {
+		if (!context.roomId) {
+			log.warn(`Cannot resolve room task "${shortId}": session has no room context`);
+			return null;
+		}
+		if (!this.taskRepo) {
+			log.warn('Cannot resolve room task: TaskRepository not injected');
+			return null;
+		}
+		const task = this.taskRepo.getTaskByShortId(context.roomId, shortId);
+		if (!task) {
+			log.warn(`Room task not found: "${shortId}" in room "${context.roomId}"`);
+			return null;
+		}
+		// Defensive cross-room check in case the repo isn't scoped
+		if (task.roomId !== context.roomId) {
+			log.warn(
+				`Cross-room reference rejected: task "${shortId}" belongs to room "${task.roomId}", not "${context.roomId}"`
+			);
+			return null;
+		}
+		return { type: 'task', id: task.id, data: task };
+	}
+
+	private resolveSpaceTask(id: string, context: ResolutionContext): ResolvedTaskReference | null {
+		if (!context.spaceId) {
+			log.warn(`Cannot resolve space task "${id}": session has no space context`);
+			return null;
+		}
+		if (!this.spaceTaskRepo) {
+			log.warn('Cannot resolve space task: SpaceTaskRepository not injected');
+			return null;
+		}
+		// id is "st-<uuid>"; strip the prefix to get the UUID
+		const uuid = id.slice('st-'.length);
+		const task = this.spaceTaskRepo.getTask(uuid);
+		if (!task) {
+			log.warn(`Space task not found: UUID "${uuid}" (from reference "${id}")`);
+			return null;
+		}
+		if (task.spaceId !== context.spaceId) {
+			log.warn(
+				`Cross-space reference rejected: task "${id}" belongs to space "${task.spaceId}", not "${context.spaceId}"`
+			);
+			return null;
+		}
+		return { type: 'task', id: task.id, data: task as unknown as NeoTask };
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Goal resolver
+	// ────────────────────────────────────────────────────────────────────────────
+
+	private resolveGoal(shortId: string, context: ResolutionContext): ResolvedGoalReference | null {
+		if (!context.roomId) {
+			log.warn(`Cannot resolve goal "${shortId}": session has no room context`);
+			return null;
+		}
+		if (!this.goalRepo) {
+			log.warn('Cannot resolve goal: GoalRepository not injected');
+			return null;
+		}
+		const goal = this.goalRepo.getGoalByShortId(context.roomId, shortId);
+		if (!goal) {
+			log.warn(`Goal not found: "${shortId}" in room "${context.roomId}"`);
+			return null;
+		}
+		return { type: 'goal', id: goal.id, data: goal };
 	}
 
 	// ────────────────────────────────────────────────────────────────────────────

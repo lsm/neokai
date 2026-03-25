@@ -10,12 +10,17 @@
  *   - task/goal references return null (stubs pending Task 3.1)
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, it, test, beforeEach, afterEach, mock } from 'bun:test';
 import { mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ReferenceResolver } from '../../src/lib/agent/reference-resolver';
-import type { ResolutionContext } from '../../src/lib/agent/reference-resolver';
+import type {
+	ResolutionContext,
+	TaskRepoLike,
+	GoalRepoLike,
+	SpaceTaskRepoLike,
+} from '../../src/lib/agent/reference-resolver';
 import type { ResolvedFileReference, ResolvedFolderReference } from '@neokai/shared';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -502,19 +507,19 @@ describe('ReferenceResolver', () => {
 	// Task / goal references (stubs)
 	// ──────────────────────────────────────────────────────────────────────────
 
-	describe('task and goal references', () => {
-		it('returns null for task references (not yet implemented)', async () => {
+	describe('task and goal references without injected repos', () => {
+		it('returns null for task references when no repo injected', async () => {
 			const result = await resolver.resolveReference(
 				{ type: 'task', id: 't-42', displayText: '@ref{task:t-42}' },
-				ctx
+				{ ...ctx, roomId: 'room-1' }
 			);
 			expect(result).toBeNull();
 		});
 
-		it('returns null for goal references (not yet implemented)', async () => {
+		it('returns null for goal references when no repo injected', async () => {
 			const result = await resolver.resolveReference(
 				{ type: 'goal', id: 'g-7', displayText: '@ref{goal:g-7}' },
-				ctx
+				{ ...ctx, roomId: 'room-1' }
 			);
 			expect(result).toBeNull();
 		});
@@ -560,5 +565,310 @@ describe('ReferenceResolver', () => {
 			expect(result['@ref{file:good.txt}']).toBeDefined();
 			expect(result['@ref{file:bad.txt}']).toBeUndefined();
 		});
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Mock helpers for task / goal tests — no SQLite, no repositories
+// ────────────────────────────────────────────────────────────────────────────
+
+const ROOM_ID = 'room-abc';
+const OTHER_ROOM_ID = 'room-xyz';
+const SPACE_ID = 'space-111';
+const OTHER_SPACE_ID = 'space-222';
+const WORKSPACE = '/workspace';
+
+function makeTask(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 'task-uuid-1',
+		shortId: 't-1',
+		roomId: ROOM_ID,
+		title: 'Default Task',
+		description: '',
+		status: 'pending',
+		priority: 'normal',
+		dependsOn: [],
+		createdAt: Date.now(),
+		...overrides,
+	};
+}
+
+function makeSpaceTask(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 'space-task-uuid-1',
+		spaceId: SPACE_ID,
+		title: 'Default Space Task',
+		description: '',
+		status: 'pending',
+		priority: 'normal',
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+function makeGoal(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 'goal-uuid-1',
+		shortId: 'g-1',
+		roomId: ROOM_ID,
+		title: 'Default Goal',
+		description: '',
+		status: 'active',
+		priority: 'normal',
+		progress: 0,
+		linkedTaskIds: [],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+function mockTaskRepo(returnValue?: ReturnType<typeof makeTask>): TaskRepoLike {
+	return { getTaskByShortId: mock(() => returnValue ?? null) };
+}
+
+function mockGoalRepo(returnValue?: ReturnType<typeof makeGoal>): GoalRepoLike {
+	return { getGoalByShortId: mock(() => returnValue ?? null) };
+}
+
+function mockSpaceTaskRepo(returnValue?: ReturnType<typeof makeSpaceTask>): SpaceTaskRepoLike {
+	return { getTask: mock(() => returnValue ?? null) };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Room task resolution
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('ReferenceResolver — room task resolution', () => {
+	test('resolves a room task by shortId', async () => {
+		const task = makeTask({ shortId: 't-1', title: 'Implement auth', priority: 'high' });
+		const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(task) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 't-1', displayText: '@ref{task:t-1}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).not.toBeNull();
+		expect(result!.type).toBe('task');
+		expect(result!.id).toBe(task.id);
+		const data = result!.data as typeof task;
+		expect(data.shortId).toBe('t-1');
+		expect(data.title).toBe('Implement auth');
+		expect(data.roomId).toBe(ROOM_ID);
+	});
+
+	test('returns null when session has no room context', async () => {
+		const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(makeTask()) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 't-1', displayText: '@ref{task:t-1}' },
+			{ workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('returns null for unrecognized task ID format (no t- or st- prefix)', async () => {
+		const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(makeTask()) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 'abc123', displayText: '@ref{task:abc123}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('returns null when task does not exist', async () => {
+		const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo() });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 't-999', displayText: '@ref{task:t-999}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('cross-room check: rejects task whose roomId differs from context', async () => {
+		const task = makeTask({ roomId: OTHER_ROOM_ID });
+		const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(task) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 't-1', displayText: '@ref{task:t-1}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Space task resolution
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('ReferenceResolver — space task resolution', () => {
+	test('resolves a space task by st-<uuid> reference', async () => {
+		const task = makeSpaceTask({ id: 'uuid-aaa', title: 'Deploy service' });
+		const resolver = new ReferenceResolver({ spaceTaskRepo: mockSpaceTaskRepo(task) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: `st-${task.id}`, displayText: `@ref{task:st-${task.id}}` },
+			{ spaceId: SPACE_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).not.toBeNull();
+		expect(result!.type).toBe('task');
+		expect(result!.id).toBe(task.id);
+		expect((result!.data as typeof task).title).toBe('Deploy service');
+	});
+
+	test('returns null when session has no space context', async () => {
+		const task = makeSpaceTask();
+		const resolver = new ReferenceResolver({ spaceTaskRepo: mockSpaceTaskRepo(task) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: `st-${task.id}`, displayText: `@ref{task:st-${task.id}}` },
+			{ workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('returns null when space task UUID does not exist', async () => {
+		const resolver = new ReferenceResolver({ spaceTaskRepo: mockSpaceTaskRepo() });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 'st-nonexistent-uuid', displayText: '@ref{task:st-nonexistent-uuid}' },
+			{ spaceId: SPACE_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('returns null for cross-space reference', async () => {
+		const task = makeSpaceTask({ spaceId: OTHER_SPACE_ID });
+		const resolver = new ReferenceResolver({ spaceTaskRepo: mockSpaceTaskRepo(task) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: `st-${task.id}`, displayText: `@ref{task:st-${task.id}}` },
+			{ spaceId: SPACE_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('returns null gracefully for st-<non-uuid> value', async () => {
+		const resolver = new ReferenceResolver({ spaceTaskRepo: mockSpaceTaskRepo() });
+
+		const result = await resolver.resolveReference(
+			{ type: 'task', id: 'st-not-a-uuid', displayText: '@ref{task:st-not-a-uuid}' },
+			{ spaceId: SPACE_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Goal resolution
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('ReferenceResolver — goal resolution', () => {
+	test('resolves a goal by shortId', async () => {
+		const goal = makeGoal({ shortId: 'g-1', title: 'Q1 Revenue Target', progress: 75 });
+		const resolver = new ReferenceResolver({ goalRepo: mockGoalRepo(goal) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'goal', id: 'g-1', displayText: '@ref{goal:g-1}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).not.toBeNull();
+		expect(result!.type).toBe('goal');
+		expect(result!.id).toBe(goal.id);
+		const data = result!.data as typeof goal;
+		expect(data.shortId).toBe('g-1');
+		expect(data.title).toBe('Q1 Revenue Target');
+		expect(data.progress).toBe(75);
+	});
+
+	test('returns null when session has no room context', async () => {
+		const resolver = new ReferenceResolver({ goalRepo: mockGoalRepo(makeGoal()) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'goal', id: 'g-1', displayText: '@ref{goal:g-1}' },
+			{ workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('returns null when goal does not exist', async () => {
+		const resolver = new ReferenceResolver({ goalRepo: mockGoalRepo() });
+
+		const result = await resolver.resolveReference(
+			{ type: 'goal', id: 'g-999', displayText: '@ref{goal:g-999}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test('resolves goal with missionType and autonomyLevel fields', async () => {
+		const goal = makeGoal({ missionType: 'measurable', autonomyLevel: 'semi_autonomous' });
+		const resolver = new ReferenceResolver({ goalRepo: mockGoalRepo(goal) });
+
+		const result = await resolver.resolveReference(
+			{ type: 'goal', id: 'g-1', displayText: '@ref{goal:g-1}' },
+			{ roomId: ROOM_ID, workspacePath: WORKSPACE }
+		);
+
+		const data = result!.data as typeof goal;
+		expect(data.missionType).toBe('measurable');
+		expect(data.autonomyLevel).toBe('semi_autonomous');
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// resolveAllReferences with task/goal mocks
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('ReferenceResolver.resolveAllReferences — task/goal', () => {
+	test('resolves task and goal references together', async () => {
+		const task = makeTask({ shortId: 't-1' });
+		const goal = makeGoal({ shortId: 'g-1' });
+		const resolver = new ReferenceResolver({
+			taskRepo: mockTaskRepo(task),
+			goalRepo: mockGoalRepo(goal),
+		});
+
+		const text = 'Work on @ref{task:t-1} toward @ref{goal:g-1}';
+		const result = await resolver.resolveAllReferences(text, {
+			roomId: ROOM_ID,
+			workspacePath: WORKSPACE,
+		});
+
+		expect(Object.keys(result)).toHaveLength(2);
+		expect(result['@ref{task:t-1}']).toBeDefined();
+		expect(result['@ref{goal:g-1}']).toBeDefined();
+	});
+
+	test('omits unresolvable task references', async () => {
+		const task = makeTask({ shortId: 't-1' });
+		const tRepo: TaskRepoLike = {
+			getTaskByShortId: mock((_, shortId: string) => (shortId === 't-1' ? task : null)),
+		};
+		const resolver = new ReferenceResolver({ taskRepo: tRepo });
+
+		const result = await resolver.resolveAllReferences('@ref{task:t-1} @ref{task:t-999}', {
+			roomId: ROOM_ID,
+			workspacePath: WORKSPACE,
+		});
+
+		expect(Object.keys(result)).toHaveLength(1);
+		expect(result['@ref{task:t-1}']).toBeDefined();
 	});
 });
