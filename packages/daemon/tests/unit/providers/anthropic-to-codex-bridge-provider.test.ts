@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
 import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
@@ -33,24 +34,34 @@ const fakeCodexFound = () => '/usr/local/bin/codex';
 /** A codexFinder that always returns null — simulates codex not installed. */
 const fakeCodexMissing = () => null;
 
-/** Write a NeoKai auth.json with an openai entry to a temp dir. */
-async function writeNeokaiAuth(dir: string, credentials: Record<string, unknown>): Promise<void> {
-	await fs.mkdir(dir, { recursive: true });
-	await fs.writeFile(path.join(dir, 'auth.json'), JSON.stringify({ openai: credentials }), {
+/**
+ * Write a NeoKai auth.json with an openai entry to a temp dir.
+ *
+ * Uses synchronous I/O to ensure the file is fully written before the
+ * provider reads it — Bun 1.3.10 on Linux may resolve async writes before
+ * data is durable, causing immediate subsequent reads to fail.
+ */
+function writeNeokaiAuth(dir: string, credentials: Record<string, unknown>): void {
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ openai: credentials }), {
 		mode: 0o600,
 	});
 }
 
-/** Write a ~/.codex/auth.json format file to a temp dir. */
-async function writeCodexAuth(
+/**
+ * Write a ~/.codex/auth.json format file to a temp dir.
+ *
+ * Uses synchronous I/O for the same reason as writeNeokaiAuth.
+ */
+function writeCodexAuth(
 	dir: string,
 	data: {
 		OPENAI_API_KEY?: string | null;
 		tokens?: { access_token?: string; refresh_token?: string; account_id?: string };
 	}
-): Promise<void> {
-	await fs.mkdir(dir, { recursive: true });
-	await fs.writeFile(path.join(dir, 'auth.json'), JSON.stringify(data), { mode: 0o600 });
+): void {
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(data), { mode: 0o600 });
 }
 
 // ---------------------------------------------------------------------------
@@ -67,17 +78,17 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	describe('getAuthStatus()', () => {
 		let emptyDir: string;
 
-		beforeEach(async () => {
+		beforeEach(() => {
 			// Use isolated empty dirs so file-based auth doesn't interfere
-			emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-auth-test-'));
+			emptyDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-auth-test-'));
 		});
 
-		afterEach(async () => {
-			await fs.rm(emptyDir, { recursive: true, force: true });
+		afterEach(() => {
+			rmSync(emptyDir, { recursive: true, force: true });
 		});
 
 		it('returns isAuthenticated=false when no credentials', async () => {
-			provider = makeProvider({}, emptyDir, emptyDir);
+			provider = makeProvider({}, emptyDir, emptyDir, fakeCodexMissing);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
@@ -101,7 +112,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		});
 
 		it('returns isAuthenticated=false with descriptive error when env vars are empty', async () => {
-			provider = makeProvider({ OPENAI_API_KEY: '', CODEX_API_KEY: '' }, emptyDir, emptyDir);
+			provider = makeProvider(
+				{ OPENAI_API_KEY: '', CODEX_API_KEY: '' },
+				emptyDir,
+				emptyDir,
+				fakeCodexMissing
+			);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
@@ -110,7 +126,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('returns isAuthenticated=false with binary-not-found error when NeoKai OAuth stored but codex missing', async () => {
 			const neokaiDir = path.join(emptyDir, 'neokai');
 			const codexDir = path.join(emptyDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, {
+			writeNeokaiAuth(neokaiDir, {
 				type: 'oauth',
 				access: 'oauth-access-token',
 				refresh: 'oauth-refresh-token',
@@ -125,7 +141,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('returns isAuthenticated=true when NeoKai OAuth credentials in auth.json and codex found', async () => {
 			const neokaiDir = path.join(emptyDir, 'neokai');
 			const codexDir = path.join(emptyDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, {
+			writeNeokaiAuth(neokaiDir, {
 				type: 'oauth',
 				access: 'oauth-access-token',
 				refresh: 'oauth-refresh-token',
@@ -141,7 +157,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('returns isAuthenticated=false for api_key type in auth.json (not NeoKai OAuth)', async () => {
 			const neokaiDir = path.join(emptyDir, 'neokai');
 			const codexDir = path.join(emptyDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, { type: 'api_key', access: 'sk-imported-key' });
+			writeNeokaiAuth(neokaiDir, { type: 'api_key', access: 'sk-imported-key' });
 			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
@@ -150,7 +166,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('sets needsRefresh when NeoKai OAuth token is expired', async () => {
 			const neokaiDir = path.join(emptyDir, 'neokai');
 			const codexDir = path.join(emptyDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, {
+			writeNeokaiAuth(neokaiDir, {
 				type: 'oauth',
 				access: 'oauth-access-token',
 				refresh: 'oauth-refresh-token',
@@ -171,19 +187,19 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	describe('getApiKey() credential discovery chain', () => {
 		let tmpDir: string;
 
-		beforeEach(async () => {
-			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-codex-test-'));
+		beforeEach(() => {
+			tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-codex-test-'));
 		});
 
-		afterEach(async () => {
-			await fs.rm(tmpDir, { recursive: true, force: true });
+		afterEach(() => {
+			rmSync(tmpDir, { recursive: true, force: true });
 		});
 
 		it('Priority 1: returns OPENAI_API_KEY env var immediately', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-token' });
-			await writeCodexAuth(codexDir, { tokens: { access_token: 'codex-token' } });
+			writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-token' });
+			writeCodexAuth(codexDir, { tokens: { access_token: 'codex-token' } });
 
 			provider = makeProvider({ OPENAI_API_KEY: 'env-api-key' }, neokaiDir, codexDir);
 			expect(await provider.getApiKey()).toBe('env-api-key');
@@ -197,8 +213,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('Priority 3: returns access token from ~/.neokai/auth.json when no env var', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-access-token' });
-			await writeCodexAuth(codexDir, { tokens: { access_token: 'should-not-be-used' } });
+			writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-access-token' });
+			writeCodexAuth(codexDir, { tokens: { access_token: 'should-not-be-used' } });
 
 			provider = makeProvider({}, neokaiDir, codexDir);
 			expect(await provider.getApiKey()).toBe('neokai-access-token');
@@ -207,7 +223,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('Priority 4a: returns OPENAI_API_KEY from ~/.codex/auth.json when no higher source', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai'); // no file written
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeCodexAuth(codexDir, { OPENAI_API_KEY: 'codex-file-api-key' });
+			writeCodexAuth(codexDir, { OPENAI_API_KEY: 'codex-file-api-key' });
 
 			provider = makeProvider({}, neokaiDir, codexDir);
 			expect(await provider.getApiKey()).toBe('codex-file-api-key');
@@ -216,7 +232,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('Priority 4b: returns access_token from ~/.codex/auth.json when OPENAI_API_KEY is null', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai'); // no file written
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeCodexAuth(codexDir, {
+			writeCodexAuth(codexDir, {
 				OPENAI_API_KEY: null,
 				tokens: { access_token: 'codex-oauth-token' },
 			});
@@ -236,7 +252,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('empty-string env var falls through to file-based auth', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-fallback-token' });
+			writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-fallback-token' });
 
 			// OPENAI_API_KEY='' is falsy — should not block file-based lookup
 			provider = makeProvider({ OPENAI_API_KEY: '' }, neokaiDir, codexDir);
@@ -246,8 +262,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('env var takes priority over both auth files', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-token' });
-			await writeCodexAuth(codexDir, {
+			writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-token' });
+			writeCodexAuth(codexDir, {
 				OPENAI_API_KEY: 'codex-api-key',
 				tokens: { access_token: 'codex-bearer' },
 			});
@@ -263,7 +279,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 	describe('buildSdkConfig() workspace isolation', () => {
 		beforeEach(() => {
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-placeholder' });
+			provider = makeProvider(
+				{ OPENAI_API_KEY: 'sk-placeholder' },
+				undefined,
+				undefined,
+				fakeCodexFound
+			);
 		});
 
 		it('starts separate bridge servers for different workspace paths', () => {
@@ -295,11 +316,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 		it('buildSdkConfig() uses cached API key resolved by prior getApiKey() call', async () => {
 			// Set up a provider with only file-based auth (no env var)
-			const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-build-cfg-test-'));
+			const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-test-'));
 			try {
 				const neokaiDir = path.join(tmpDir, 'neokai');
-				await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-based-token' });
-				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+				writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-based-token' });
+				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'), fakeCodexFound);
 				// Warm the cache as isAvailable() / getAuthStatus() would in QueryRunner
 				await p.getApiKey();
 				// buildSdkConfig() is synchronous but should use the cached key
@@ -308,24 +329,29 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 				p.stopAllBridgeServers();
 			} finally {
-				await fs.rm(tmpDir, { recursive: true, force: true });
+				rmSync(tmpDir, { recursive: true, force: true });
 			}
 		});
 
 		it('buildSdkConfig() uses cached key even when OPENAI_API_KEY is empty string', async () => {
 			// Empty-string env var must not block the cached file-based key
-			const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-build-cfg-empty-'));
+			const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-build-cfg-empty-'));
 			try {
 				const neokaiDir = path.join(tmpDir, 'neokai');
-				await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-token-not-empty' });
-				const p = makeProvider({ OPENAI_API_KEY: '' }, neokaiDir, path.join(tmpDir, 'codex'));
+				writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-token-not-empty' });
+				const p = makeProvider(
+					{ OPENAI_API_KEY: '' },
+					neokaiDir,
+					path.join(tmpDir, 'codex'),
+					fakeCodexFound
+				);
 				await p.getApiKey(); // populates cachedApiKey
 				const cfg = p.buildSdkConfig('codex-1', { workspacePath: '/tmp/empty-env-ws' });
 				expect(cfg.isAnthropicCompatible).toBe(true);
 				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 				p.stopAllBridgeServers();
 			} finally {
-				await fs.rm(tmpDir, { recursive: true, force: true });
+				rmSync(tmpDir, { recursive: true, force: true });
 			}
 		});
 
@@ -383,7 +409,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 	describe('ownsModel()', () => {
 		beforeEach(() => {
-			provider = makeProvider({});
+			provider = makeProvider({}, undefined, undefined, fakeCodexFound);
 		});
 
 		it('owns models explicitly listed in the catalogue', () => {
@@ -425,12 +451,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	describe('getModels()', () => {
 		let tmpDir: string;
 
-		beforeEach(async () => {
-			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-models-test-'));
+		beforeEach(() => {
+			tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-models-test-'));
 		});
 
-		afterEach(async () => {
-			await fs.rm(tmpDir, { recursive: true, force: true });
+		afterEach(() => {
+			rmSync(tmpDir, { recursive: true, force: true });
 		});
 
 		it('returns models when OPENAI_API_KEY env var is set (env vars still power API calls)', async () => {
@@ -443,7 +469,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
-			await writeNeokaiAuth(neokaiDir, {
+			writeNeokaiAuth(neokaiDir, {
 				type: 'oauth',
 				access: 'oauth-access-token',
 				refresh: 'oauth-refresh-token',
@@ -468,8 +494,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		let tmpDir: string;
 		let fetchSpy: ReturnType<typeof spyOn>;
 
-		beforeEach(async () => {
-			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-import-test-'));
+		beforeEach(() => {
+			tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-import-test-'));
 			// Spy on global fetch to intercept token refresh calls.
 			// Default: simulate a network error so tests that don't set up a mock fail clearly.
 			fetchSpy = spyOn(globalThis, 'fetch').mockRejectedValue(
@@ -477,15 +503,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			);
 		});
 
-		afterEach(async () => {
+		afterEach(() => {
 			fetchSpy.mockRestore();
-			await fs.rm(tmpDir, { recursive: true, force: true });
+			rmSync(tmpDir, { recursive: true, force: true });
 		});
 
 		it('Test 1: imports API key directly from ~/.codex/auth.json into ~/.neokai/auth.json', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeCodexAuth(codexDir, { OPENAI_API_KEY: 'sk-codex-api-key' });
+			writeCodexAuth(codexDir, { OPENAI_API_KEY: 'sk-codex-api-key' });
 
 			const p = makeProvider({}, neokaiDir, codexDir);
 			const key = await p.getApiKey();
@@ -493,9 +519,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(key).toBe('sk-codex-api-key');
 
 			// Credentials should now be written to ~/.neokai/auth.json
-			const neokaiAuth = JSON.parse(
-				await fs.readFile(path.join(neokaiDir, 'auth.json'), 'utf-8')
-			) as { openai: { type: string; access: string } };
+			const neokaiAuth = JSON.parse(readFileSync(path.join(neokaiDir, 'auth.json'), 'utf-8')) as {
+				openai: { type: string; access: string };
+			};
 			expect(neokaiAuth.openai.type).toBe('api_key');
 			expect(neokaiAuth.openai.access).toBe('sk-codex-api-key');
 
@@ -507,7 +533,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('Test 2: refreshes expired token + imports into ~/.neokai/auth.json', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeCodexAuth(codexDir, {
+			writeCodexAuth(codexDir, {
 				tokens: { access_token: 'old-expired-token', refresh_token: 'valid-refresh-token' },
 			});
 
@@ -531,9 +557,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
 
 			// Verify the refreshed token was written to ~/.neokai/auth.json
-			const neokaiAuth = JSON.parse(
-				await fs.readFile(path.join(neokaiDir, 'auth.json'), 'utf-8')
-			) as { openai: { type: string; access: string; refresh: string } };
+			const neokaiAuth = JSON.parse(readFileSync(path.join(neokaiDir, 'auth.json'), 'utf-8')) as {
+				openai: { type: string; access: string; refresh: string };
+			};
 			expect(neokaiAuth.openai.type).toBe('oauth');
 			expect(neokaiAuth.openai.access).toBe('new-fresh-token');
 			expect(neokaiAuth.openai.refresh).toBe('new-refresh-token');
@@ -543,7 +569,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('Test 3: falls back to importing existing token when refresh fails', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
-			await writeCodexAuth(codexDir, {
+			writeCodexAuth(codexDir, {
 				tokens: { access_token: 'expired-token', refresh_token: 'invalid-refresh' },
 			});
 
@@ -562,9 +588,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(key).toBe('expired-token');
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-			const neokaiAuth = JSON.parse(
-				await fs.readFile(path.join(neokaiDir, 'auth.json'), 'utf-8')
-			) as {
+			const neokaiAuth = JSON.parse(readFileSync(path.join(neokaiDir, 'auth.json'), 'utf-8')) as {
 				openai: { type: string; access: string; refresh?: string };
 			};
 			expect(neokaiAuth.openai.type).toBe('oauth');
@@ -578,7 +602,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const codexDir = path.join(tmpDir, 'codex');
 
 			// Pre-populate ~/.neokai/auth.json (simulates already-imported state)
-			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'already-imported-token' });
+			writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'already-imported-token' });
 
 			const p = makeProvider({}, neokaiDir, codexDir);
 
