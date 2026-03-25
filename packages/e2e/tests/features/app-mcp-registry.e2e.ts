@@ -4,13 +4,7 @@
  * Tests for the Application MCP Registry UI and per-room MCP enable/disable:
  * - Global Application MCP Servers settings show pre-seeded fetch-mcp entry
  * - Per-room MCP toggle in Room Settings allows enable/disable
- * - Toggle changes persist and reflect correctly in UI
- *
- * Note: Verifying MCP tools appear in the session's active tool list is done at
- * the unit/integration level. The ToolsModal shows session-level MCP servers
- * (from settings.local.json), not app-level MCP servers like fetch-mcp.
- * App-level MCP servers are automatically included in room sessions based on
- * the room's MCP settings.
+ * - Toggle changes persist after page navigation (round-trip persistence)
  *
  * Setup: creates a room via RPC (infrastructure), then tests the UI.
  * Cleanup: deletes the room via RPC in afterEach. Does NOT delete fetch-mcp
@@ -25,15 +19,15 @@ import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 const FETCH_MCP_SERVER_NAME = 'fetch-mcp';
 
-type Page = import('@playwright/test').Page;
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Navigate to the Application MCP Servers section in Global Settings.
  * Assumes Global Settings panel is already open.
  */
-async function navigateToAppMcpServersSection(page: Page): Promise<void> {
+async function navigateToAppMcpServersSection(
+	page: import('@playwright/test').Page
+): Promise<void> {
 	// Click on "Application MCP Servers" in the settings section list
 	const appMcpServersButton = page.locator('button:has-text("Application MCP Servers")');
 	await appMcpServersButton.waitFor({ state: 'visible', timeout: 5000 });
@@ -48,16 +42,24 @@ async function navigateToAppMcpServersSection(page: Page): Promise<void> {
 
 /**
  * Navigate to a room's Settings tab and wait for it to load.
+ * Uses a scoped selector within the room's tab bar div to avoid conflict
+ * with the global bottom tab bar's Settings button.
  */
-async function navigateToRoomSettings(page: Page, roomId: string): Promise<void> {
+async function navigateToRoomSettings(
+	page: import('@playwright/test').Page,
+	roomId: string
+): Promise<void> {
 	await page.goto(`/room/${roomId}`);
 	await waitForWebSocketConnected(page);
 
-	// Click the Settings tab
-	const settingsTab = page.locator('button:has-text("Settings")').first();
+	// Scope to the room's tab bar (the div with border-b containing the tabs)
+	// This avoids matching the global Settings button in the bottom nav
+	const roomTabBar = page.locator('.border-b.border-dark-700.bg-dark-850');
+	const settingsTab = roomTabBar.locator('button:has-text("Settings")');
+	await settingsTab.waitFor({ state: 'visible', timeout: 5000 });
 	await settingsTab.click();
 
-	// Wait for MCP Servers section to be visible
+	// Wait for MCP Servers section to be visible in RoomSettings
 	await expect(page.getByText('MCP Servers', { exact: true })).toBeVisible({ timeout: 5000 });
 }
 
@@ -85,8 +87,9 @@ test.describe('App MCP Registry - Global Settings', () => {
 		await expect(fetchMcpEntry).toBeVisible({ timeout: 10000 });
 
 		// Verify the stdio badge is visible (fetch-mcp is a stdio server)
-		// The source type is displayed as uppercase via CSS, so text content is 'stdio'
-		await expect(page.locator('span.uppercase:has-text("stdio")').first()).toBeVisible();
+		// The source type is shown in a span with uppercase text
+		const fetchMcpRow = page.locator('div').filter({ hasText: FETCH_MCP_SERVER_NAME }).first();
+		await expect(fetchMcpRow.locator('span').filter({ hasText: 'stdio' }).first()).toBeVisible();
 	});
 });
 
@@ -122,7 +125,9 @@ test.describe('App MCP Registry - Per-Room Enable/Disable', () => {
 		await expect(checkbox).toBeChecked();
 	});
 
-	test('should toggle fetch-mcp off for the room and update UI state', async ({ page }) => {
+	test('should toggle fetch-mcp off for the room, verify UI, and persist after reload', async ({
+		page,
+	}) => {
 		await navigateToRoomSettings(page, roomId);
 
 		// Find fetch-mcp checkbox
@@ -140,9 +145,28 @@ test.describe('App MCP Registry - Per-Room Enable/Disable', () => {
 
 		// Verify "room override" badge appears (indicates per-room setting differs from global)
 		await expect(page.locator('text=room override')).toBeVisible({ timeout: 5000 });
+
+		// P1-fix: Verify persistence - reload the page and confirm state persists
+		await page.reload();
+		await waitForWebSocketConnected(page);
+
+		// Navigate back to room settings
+		await navigateToRoomSettings(page, roomId);
+
+		// Verify checkbox is still unchecked after reload
+		const persistedCheckbox = page
+			.locator(`label:has-text("${FETCH_MCP_SERVER_NAME}")`)
+			.first()
+			.locator('input[type="checkbox"]');
+		await expect(persistedCheckbox).not.toBeChecked();
+
+		// Verify "room override" badge is still visible (persisted per-room setting)
+		await expect(page.locator('text=room override')).toBeVisible({ timeout: 5000 });
 	});
 
-	test('should toggle fetch-mcp back on for the room and verify UI state', async ({ page }) => {
+	test('should toggle fetch-mcp back on for the room and verify UI state persists', async ({
+		page,
+	}) => {
 		await navigateToRoomSettings(page, roomId);
 
 		// Find fetch-mcp checkbox
@@ -153,6 +177,9 @@ test.describe('App MCP Registry - Per-Room Enable/Disable', () => {
 		await checkbox.click();
 		await expect(checkbox).not.toBeChecked();
 
+		// Verify "room override" badge appears
+		await expect(page.locator('text=room override')).toBeVisible({ timeout: 5000 });
+
 		// Then toggle back on
 		await checkbox.click();
 
@@ -160,34 +187,23 @@ test.describe('App MCP Registry - Per-Room Enable/Disable', () => {
 		await expect(checkbox).toBeChecked();
 
 		// Note: The "room override" badge may still be visible since the per-room override
-		// is still set (it just matches the global default). We verified the toggle works.
+		// is still set (it just matches the global default). The toggle functionality is verified.
 	});
 
-	test('should verify fetch-mcp is not in Tools Modal when room MCP is disabled', async ({
+	test('should show disabled globally badge for brave-search in room settings', async ({
 		page,
 	}) => {
-		// Navigate to room settings and disable fetch-mcp
 		await navigateToRoomSettings(page, roomId);
 
-		const fetchMcpLabel = page.locator(`label:has-text("${FETCH_MCP_SERVER_NAME}")`).first();
-		const checkbox = fetchMcpLabel.locator('input[type="checkbox"]');
+		// Verify brave-search appears in the MCP Servers list
+		const braveSearchEntry = page.locator('label:has-text("brave-search")').first();
+		await expect(braveSearchEntry).toBeVisible({ timeout: 5000 });
 
-		// Disable it if not already
-		if (await checkbox.isChecked()) {
-			await checkbox.click();
-			await expect(checkbox).not.toBeChecked();
-		}
+		// Verify the checkbox is unchecked (disabled globally by default on seed)
+		const checkbox = braveSearchEntry.locator('input[type="checkbox"]');
+		await expect(checkbox).not.toBeChecked();
 
-		// Navigate to room overview to create a session
-		const overviewTab = page.locator('button:has-text("Overview")').first();
-		await overviewTab.click();
-
-		// Wait for the Overview tab content to load
-		await page.waitForTimeout(500);
-
-		// The MCP servers disabled state is verified by the UI toggle above.
-		// App-level MCP servers are included in room sessions based on room settings,
-		// verified through the RoomSettings UI. The ToolsModal shows session-level
-		// MCP servers (settings.local.json), not app-level MCP servers.
+		// Verify "disabled globally" badge appears (indicates globally disabled)
+		await expect(page.locator('text=disabled globally')).toBeVisible({ timeout: 5000 });
 	});
 });
