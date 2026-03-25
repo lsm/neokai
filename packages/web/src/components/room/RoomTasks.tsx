@@ -44,7 +44,6 @@ interface RoomTasksProps {
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
 	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }
 
@@ -109,7 +108,6 @@ export function RoomTasks({
 	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
-	onView,
 	onReactivate,
 }: RoomTasksProps) {
 	let selectedTab = selectedTabSignal.value;
@@ -182,7 +180,6 @@ export function RoomTasks({
 					goalByTaskId={goalByTaskId}
 					onTaskClick={onTaskClick}
 					onGoalClick={onGoalClick}
-					onView={onView}
 					onReactivate={onReactivate}
 				/>
 			)}
@@ -288,7 +285,6 @@ function TaskList({
 	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
-	onView,
 	onReactivate,
 }: {
 	tasks: TaskSummary[];
@@ -297,7 +293,6 @@ function TaskList({
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
 	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }) {
 	// Active tab: group by in_progress, pending, draft
@@ -368,7 +363,6 @@ function TaskList({
 						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
-						onView={onView}
 					/>
 				)}
 				{needsAttention.length > 0 && (
@@ -451,7 +445,6 @@ function TaskGroup({
 	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
-	onView,
 	onReactivate,
 	showAlert = false,
 }: {
@@ -463,7 +456,6 @@ function TaskGroup({
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
 	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
 	onReactivate?: (taskId: string) => void;
 	showAlert?: boolean;
 }) {
@@ -527,7 +519,6 @@ function TaskGroup({
 						goal={goalByTaskId?.get(task.id)}
 						onClick={onTaskClick}
 						onGoalClick={onGoalClick}
-						onView={onView}
 						onReactivate={onReactivate}
 					/>
 				))}
@@ -586,7 +577,6 @@ function TaskItem({
 	goal?: RoomGoal;
 	onClick?: (taskId: string) => void;
 	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
@@ -629,7 +619,7 @@ function TaskItem({
 									e.stopPropagation();
 									onGoalClick?.();
 								}}
-								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0 hover:bg-emerald-900/40 transition-colors"
+								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full hover:bg-emerald-900/40 transition-colors"
 								title={`Mission: ${goal.title}`}
 							>
 								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

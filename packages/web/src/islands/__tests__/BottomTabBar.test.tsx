@@ -326,13 +326,13 @@ describe('BottomTabBar', () => {
 			currentRoomTaskIdSignal.value = null;
 		});
 
-		it('should show room-specific tabs (Overview, Agent, Inbox, Settings) when in room context', () => {
+		it('should show room-specific tabs (Overview, Agent, Missions, /) when in room context', () => {
 			render(<BottomTabBar />);
 
 			expect(screen.getByRole('tab', { name: 'Overview' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Agent' })).toBeTruthy();
-			expect(screen.getByRole('tab', { name: 'Inbox' })).toBeTruthy();
-			expect(screen.getByRole('tab', { name: 'Settings' })).toBeTruthy();
+			expect(screen.getByRole('tab', { name: 'Missions' })).toBeTruthy();
+			expect(screen.getByRole('tab', { name: '/' })).toBeTruthy();
 		});
 
 		it('should hide global Rooms and Chats tabs when in room context', () => {
