@@ -3354,7 +3354,6 @@ export function runMigration50(db: BunDatabase): void {
   `);
 }
 
-
 /**
  * Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
  *
