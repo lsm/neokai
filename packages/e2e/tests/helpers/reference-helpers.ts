@@ -7,6 +7,7 @@
  */
 
 import type { Page, Locator } from '@playwright/test';
+import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
 
 // ─── Selectors ────────────────────────────────────────────────────────────────
 
@@ -22,17 +23,11 @@ const AUTOCOMPLETE_ITEM_SELECTOR = '[role="option"]';
 // ─── Autocomplete Helpers ─────────────────────────────────────────────────────
 
 /**
- * Type text in the chat input field.
- *
- * Uses `pressSequentially` to dispatch individual keydown/input/keyup events,
- * which is necessary for the @ trigger detection in useReferenceAutocomplete.
+ * Get the reference autocomplete dropdown locator.
+ * The dropdown has role="listbox" and aria-label "References" or "Files & Folders".
  */
-export async function typeInChatInput(page: Page, text: string): Promise<void> {
-	const textarea = page.locator(CHAT_INPUT_SELECTOR).first();
-	await textarea.waitFor({ state: 'visible', timeout: 5000 });
-	// pressSequentially dispatches individual keydown/input/keyup events, which is
-	// necessary for the @ trigger detection in useReferenceAutocomplete.
-	await textarea.pressSequentially(text, { delay: 30 });
+export function getReferenceDropdown(page: Page) {
+	return page.locator(AUTOCOMPLETE_SELECTOR).first();
 }
 
 /**
@@ -40,10 +35,35 @@ export async function typeInChatInput(page: Page, text: string): Promise<void> {
  *
  * The dropdown is rendered as a `role="listbox"` element by ReferenceAutocomplete.
  */
-export async function waitForReferenceAutocomplete(page: Page): Promise<Locator> {
-	const dropdown = page.locator(AUTOCOMPLETE_SELECTOR).first();
-	await dropdown.waitFor({ state: 'visible', timeout: 5000 });
+export async function waitForReferenceAutocomplete(page: Page, timeout = 8000): Promise<Locator> {
+	const dropdown = getReferenceDropdown(page);
+	await dropdown.waitFor({ state: 'visible', timeout });
 	return dropdown;
+}
+
+/**
+ * Get the message input textarea.
+ */
+export function getMessageInput(page: Page) {
+	return page.locator(CHAT_INPUT_SELECTOR).first();
+}
+
+/**
+ * Type text in the chat input field.
+ *
+ * Clears existing content first, then uses `pressSequentially` to dispatch
+ * individual keydown/input/keyup events, which is necessary for the
+ * @ trigger detection in useReferenceAutocomplete. Passing an empty string
+ * clears the input without typing anything further.
+ */
+export async function typeInChatInput(page: Page, text: string): Promise<void> {
+	const textarea = getMessageInput(page);
+	await textarea.waitFor({ state: 'visible', timeout: 5000 });
+	// Clear first so subsequent calls replace content instead of appending
+	await textarea.fill('');
+	if (text) {
+		await textarea.pressSequentially(text, { delay: 30 });
+	}
 }
 
 /**
@@ -51,7 +71,7 @@ export async function waitForReferenceAutocomplete(page: Page): Promise<Locator>
  *
  * Returns a Locator pointing to all `role="option"` elements inside the listbox.
  */
-export function getReferenceAutocompleteItems(page: Page): Locator {
+export function getReferenceItems(page: Page): Locator {
 	return page.locator(`${AUTOCOMPLETE_SELECTOR} ${AUTOCOMPLETE_ITEM_SELECTOR}`);
 }
 
@@ -66,8 +86,7 @@ export function getReferenceAutocompleteItems(page: Page): Locator {
  * @param index - 0-based index of the item to select
  */
 export async function selectReferenceByIndex(page: Page, index: number): Promise<void> {
-	const textarea = page.locator(CHAT_INPUT_SELECTOR).first();
-	// Press ArrowDown `index` times — selectedIndex starts at 0, so N presses reaches index N.
+	const textarea = getMessageInput(page);
 	for (let i = 0; i < index; i++) {
 		await textarea.press('ArrowDown');
 	}
@@ -92,13 +111,7 @@ export async function selectReferenceByClick(page: Page, searchText: string): Pr
 // ─── Mention Token Helpers ────────────────────────────────────────────────────
 
 /**
- * Build a CSS/text selector for a `@ref{type:id}` token inside the textarea value.
- *
- * Because the textarea is a plain `<textarea>` element, "tokens" are not rendered
- * as DOM nodes — the raw `@ref{type:id}` syntax is stored in the textarea value.
- * These helpers therefore check the textarea value for the expected token text.
- *
- * @param refId - Full reference token identifier, e.g. "task:t-3" or "goal:g-1"
+ * Build the raw `@ref{type:id}` token string for a given reference identifier.
  */
 function buildRefToken(refId: string): string {
 	return `@ref{${refId}}`;
@@ -123,12 +136,11 @@ export async function waitForMentionToken(page: Page, refId: string): Promise<vo
 }
 
 /**
- * Get the full text content of the chat input textarea.
- * Useful for asserting that a mention token (`@ref{type:id}`) is present after selection.
+ * Get the mention token text from the chat input if present.
+ * Returns the token string if found in the textarea value, otherwise null.
  *
  * @param page - Playwright page
  * @param refId - Reference identifier, e.g. "task:t-3"
- * @returns The portion of the textarea value that contains the token, or null if not found
  */
 export async function getMentionTokenText(page: Page, refId: string): Promise<string | null> {
 	const token = buildRefToken(refId);
@@ -147,16 +159,52 @@ export async function getMentionTokenText(page: Page, refId: string): Promise<st
  * Hover over the chat textarea after verifying a mention token is present.
  *
  * NOTE: This hovers over the entire `<textarea>` element, NOT a specific token
- * position. Plain `<textarea>` elements render text as a single node with no
- * per-token child elements, so per-token hover targeting is not possible here.
- * Once the MentionToken component (M4) renders `@ref` tokens as rich DOM nodes,
- * this helper should be updated to target those nodes instead.
+ * position. Once the MentionToken component (M4) renders `@ref` tokens as rich
+ * DOM nodes, this helper should be updated to target those nodes instead.
  *
  * @param page - Playwright page
  * @param refId - Reference identifier verified to be present before hovering
  */
 export async function hoverMentionToken(page: Page, refId: string): Promise<void> {
 	await waitForMentionToken(page, refId);
-	const textarea = page.locator(CHAT_INPUT_SELECTOR).first();
+	const textarea = getMessageInput(page);
 	await textarea.hover();
+}
+
+// ─── Session Setup Helpers ────────────────────────────────────────────────────
+
+/**
+ * Create a session associated with a specific room, then navigate to it.
+ * For use in test setup (beforeEach) only — uses RPC infrastructure exemption.
+ * Returns the session ID.
+ */
+export async function createRoomSession(page: Page, roomId: string): Promise<string> {
+	await waitForWebSocketConnected(page);
+
+	const workspaceRoot = await getWorkspaceRoot(page);
+
+	const sessionId = await page.evaluate(
+		async ({ workspacePath, rId }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			const response = await hub.request('session.create', {
+				workspacePath,
+				createdBy: 'human',
+				roomId: rId,
+			});
+			return (response as { sessionId: string }).sessionId;
+		},
+		{ workspacePath: workspaceRoot, rId: roomId }
+	);
+
+	if (!sessionId) throw new Error('Failed to create room session');
+
+	await page.goto(`/session/${sessionId}`);
+
+	// Wait for the session to be ready
+	const textarea = getMessageInput(page);
+	await textarea.waitFor({ state: 'visible', timeout: 15000 });
+	await textarea.waitFor({ state: 'enabled', timeout: 5000 });
+
+	return sessionId;
 }
