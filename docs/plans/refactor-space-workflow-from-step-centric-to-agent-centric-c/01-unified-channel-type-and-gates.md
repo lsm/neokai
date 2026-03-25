@@ -17,6 +17,10 @@ One type. One resolver. One router (built in Milestone 3). One DB column.
 - Update export/import for unified channels
 - Tests
 
+## Implementation Notes
+
+- **Incremental boundary**: Tasks 1.1 and 1.2 are type changes that can be done incrementally (add new fields alongside old ones, then remove old fields). Tasks 1.4 (ChannelGateEvaluator) and 1.7 (tests) are additive — no breaking changes. Task 1.3 (resolver rewrite) is the main integration point where old `resolveNodeChannels()` gets replaced by `resolveChannels()`. Task 1.5 (DB migration) is additive (new column). The feature is unreleased so a clean cutover is acceptable, but this ordering allows incremental progress.
+
 ## Tasks
 
 ### Task 1.1: Extend WorkflowChannel Type
@@ -43,12 +47,19 @@ One type. One resolver. One router (built in Milestone 3). One DB column.
 4. Add `channels?: WorkflowChannelInput[]` to `CreateSpaceWorkflowParams` and `UpdateSpaceWorkflowParams`
 5. Remove any `crossNodeChannels` field from `SpaceWorkflow` if it was added in a previous iteration
 6. Create `ExportedWorkflowChannel` type for export/import
+7. Rename `WorkflowNodeAgent.role` → `WorkflowNodeAgent.name` in `packages/shared/src/types/space.ts`
+   - The existing `role` field identified the agent's function (e.g., "coder", "reviewer"). In the new model, agents have globally unique names (e.g., "coder1", "reviewer2") — the field should reflect this.
+   - Update all references to `WorkflowNodeAgent.role` across `shared` and `daemon` packages (grep for `.role` on WorkflowNodeAgent)
+   - Add a DB migration to rename the `role` column to `name` on `space_workflow_node_agents` table
+   - Update the repository and any seed/built-in workflow code that sets agent roles
 
 **Acceptance Criteria**:
 - `WorkflowChannel` supports all messaging patterns (within-node, cross-node, DM, fan-out)
 - Gate and cyclic fields are present
 - `SpaceWorkflow` carries a single `channels` array (no separate cross-node field)
 - `WorkflowNode` no longer has a `channels` field
+- `WorkflowNodeAgent.name` replaces `WorkflowNodeAgent.role` — no "role" field remains
+- DB column renamed, all references updated
 - TypeScript typecheck passes
 
 **Dependencies**: None

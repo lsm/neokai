@@ -111,7 +111,7 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
 3. Handle edge cases:
    - Node already has active tasks → skip activation (no-op)
    - Node activation fails (e.g., workflow paused/cancelled) → return error in delivery result
-   - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, slotRole)` to prevent duplicate tasks
+   - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, agentName)` to prevent duplicate tasks (the `agentName` column is renamed from `slotRole` in Task 8.2)
 4. Add idempotency: calling `activateNode()` multiple times for the same node is safe (existing tasks are not duplicated)
 
 **Acceptance Criteria**:

@@ -47,7 +47,7 @@ Implement all-agents-done completion detection. The workflow run completes when 
    - A run is complete when ALL members across ALL groups have a terminal status (`'done'` | `'completed'` | `'failed'`)
    - Members with status `'active'` mean the run is not complete
    - **Edge case — nodes with no tasks**: If a node in the workflow has no tasks yet (agents not spawned, possibly because no channel has fired to activate it), those nodes are **excluded** from the completion check. Only nodes with at least one task contribute to the agent count.
-   - **Edge case — pending-but-blocked activations**: Before concluding a run is complete, check whether any node that currently has tasks (i.e., has been activated) has outbound channel policies whose target nodes have no tasks yet. If such "pending activation" channels exist, the run is **not complete** — those target nodes may still receive agents if gates open (via retry, human approval, or condition changes). Only when all reachable nodes have been activated (or explicitly skipped) is the run truly complete.
+   - **Edge case — pending-but-blocked activations**: Before concluding a run is complete, check whether any node that currently has tasks (i.e., has been activated) has outbound `WorkflowChannel` entries (the unified channel type) whose `to` field references a node that has no tasks yet. If such "pending activation" channels exist, the run is **not complete** — those target nodes may still receive agents if gates open (via retry, human approval, or condition changes). Only when all reachable nodes have been activated (or explicitly skipped) is the run truly complete. This check uses the unified `WorkflowChannel` type — no separate cross-node channel query needed.
 
 **Acceptance Criteria**:
 - `isComplete()` returns true only when all agents have reached a terminal state
@@ -122,7 +122,7 @@ Implement all-agents-done completion detection. The workflow run completes when 
    - Empty groups → edge case handling
    - Multiple groups in a single run
    - Nodes with no tasks → excluded from completion check
-   - Pending-but-blocked activations: active node has outbound channels to unactivated nodes → NOT complete
+   - Pending-but-blocked activations: active node has outbound `WorkflowChannel` entries targeting unactivated nodes → NOT complete
    - All reachable nodes activated and all agents done → complete
 2. Update `packages/daemon/tests/unit/space/space-runtime.test.ts`:
    - Add test cases for tick loop with completion detection

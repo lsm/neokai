@@ -7,7 +7,8 @@ Clean up all remaining step-transition code and types that are no longer needed.
 ## Scope
 
 - Remove `WorkflowTransition` type and all transition-related code
-- Remove `currentNodeId` from `SpaceWorkflowRun`
+- Remove `currentNodeId` from `SpaceWorkflowRun` and `SpaceSessionGroup`
+- Rename `SpaceTask.slotRole` → `SpaceTask.agentName` to align with "no role" naming
 - Remove transition-related DB tables/columns
 - Clean up any remaining dead code
 - Comprehensive test coverage
@@ -59,20 +60,26 @@ Clean up all remaining step-transition code and types that are no longer needed.
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`:
    - Remove `currentNodeId` field from `SpaceWorkflowRun`
+   - Remove `currentNodeId` field from `SpaceSessionGroup` (if it exists — session groups are per-node and don't track a "current" node in the agent-centric model)
    - Keep `startNodeId` on `SpaceWorkflow` (unchanged — it's a workflow definition property)
    - Keep `iterationCount` and `maxIterations` on `SpaceWorkflowRun` (unchanged — iteration tracking moved to router in M3)
-2. Add a DB migration to drop the `current_node_id` column from `space_workflow_runs` (keep `iteration_count` and `max_iterations`)
+2. Add a DB migration to:
+   - Drop the `current_node_id` column from `space_workflow_runs` (keep `iteration_count` and `max_iterations`)
+   - Drop the `current_node_id` column from `space_session_groups` if it exists
+   - Rename `slot_role` column to `agent_name` on `space_tasks` table (aligns with "no role" naming convention — `slotRole` referenced the agent's old `role` field)
+   - Update all code that reads/writes `slotRole` / `slot_role` to use `agentName` / `agent_name`
 3. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
    - Update `startWorkflowRun()` to activate the start node via `activateNode()` instead of setting `currentNodeId`
    - Verify iteration tracking is now handled by the router (not by `advance()`)
-4. Clean up any code that reads or writes `currentNodeId` (should already be cleaned up by Milestone 3/4, but verify)
+4. Clean up any code that reads or writes `currentNodeId` on `SpaceWorkflowRun` or `SpaceSessionGroup` (should already be cleaned up by Milestone 3/4, but verify)
 5. Run full test suite to verify no regressions
 
 **Acceptance Criteria**:
-- `currentNodeId` removed from `SpaceWorkflowRun` type and DB
+- `currentNodeId` removed from `SpaceWorkflowRun` and `SpaceSessionGroup` types and DB
+- `slot_role` renamed to `agent_name` on `space_tasks` — no "role" column remains in task management
 - `startNodeId` on `SpaceWorkflow` still works correctly
 - Workflow runs activate the start node via `activateNode()`
-- No code references `currentNodeId`
+- No code references `currentNodeId` or `slotRole`
 - All tests pass
 
 **Dependencies**: Tasks 3.5, 4.2
