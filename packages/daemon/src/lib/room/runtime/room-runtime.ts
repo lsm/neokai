@@ -2274,6 +2274,10 @@ export class RoomRuntime {
 		if (!this.daemonHub) return;
 
 		const mirroredUuids = new Set<string>();
+		// Tracks (groupId:sessionId) keys for which a fallback switch has already been attempted
+		// (either succeeded or failed). Prevents duplicate trySwitchToFallbackModel calls when
+		// multiple mirroring callbacks fire for the same usage_limit message.
+		const fallbackAttempted = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
 			return this.daemonHub!.on(
@@ -2288,30 +2292,103 @@ export class RoomRuntime {
 					const messageContent = JSON.stringify(event.message);
 					const msgErrorClass = classifyError(messageContent);
 					if (msgErrorClass?.class === 'rate_limit') {
+						// Use immutable group.id / group.taskId from closure; read fresh state for mutable fields
+						const freshGroup = this.groupRepo.getGroup(group.id);
+						if (!freshGroup) return;
 						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
 						const rateLimitBackoff = createRateLimitBackoff(messageContent, sessionRole);
 						if (rateLimitBackoff) {
-							this.groupRepo.setRateLimit(group.id, rateLimitBackoff);
+							this.groupRepo.setRateLimit(freshGroup.id, rateLimitBackoff);
 							log.info(
-								`Rate limit detected in ${role} message for group ${group.id}. ` +
+								`Rate limit detected in ${role} message for group ${freshGroup.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.appendGroupEvent(group.id, 'rate_limited', {
+							this.appendGroupEvent(freshGroup.id, 'rate_limited', {
 								text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
 								resetsAt: rateLimitBackoff.resetsAt,
 								sessionRole,
 							});
 							this.persistTaskRestriction(
-								group.taskId,
+								freshGroup.taskId,
 								rateLimitBackoff,
 								'rate_limit',
 								`API rate limit (HTTP 429) in ${role}`
 							).catch((err: unknown) => {
 								log.error(
-									`Failed to persist rate limit restriction for task ${group.taskId}: ${String(err)}`
+									`Failed to persist rate limit restriction for task ${freshGroup.taskId}: ${String(err)}`
 								);
 							});
 						}
+					} else if (msgErrorClass?.class === 'usage_limit') {
+						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
+						const fallbackKey = `${group.id}:${sessionId}`;
+
+						// Re-detection guard: if backoff already set, a prior handler is managing this
+						const freshGroup = this.groupRepo.getGroup(group.id);
+						if (!freshGroup) return;
+						if (freshGroup.rateLimit !== null) return;
+
+						// Duplicate fallback guard: only attempt once per session per detection cycle
+						if (fallbackAttempted.has(fallbackKey)) return;
+
+						log.info(
+							`Usage limit detected in ${role} message for group ${group.id} (real-time). ` +
+								`Attempting fallback model switch for ${sessionRole} session ${sessionId}.`
+						);
+
+						this.trySwitchToFallbackModel(group.id, sessionId, sessionRole)
+							.then((switched) => {
+								if (switched) {
+									log.info(
+										`Fallback model switch succeeded for ${sessionRole} session ${sessionId} ` +
+											`in group ${group.id} (mirroring).`
+									);
+									fallbackAttempted.add(fallbackKey);
+									// Clear any stale task restriction so the UI reflects the new model
+									this.clearTaskRestriction(freshGroup.taskId).catch((err: unknown) => {
+										log.error(
+											`Failed to clear task restriction for task ${freshGroup.taskId}: ${String(err)}`
+										);
+									});
+								} else {
+									// No fallback available — apply backoff and restrict the task
+									log.info(
+										`No fallback model available for ${sessionRole} session ${sessionId}. ` +
+											`Applying usage limit backoff for group ${group.id}.`
+									);
+									fallbackAttempted.add(fallbackKey);
+									const rateLimitBackoff = msgErrorClass.resetsAt
+										? createRateLimitBackoff(messageContent, sessionRole)
+										: null;
+									const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+										detectedAt: Date.now(),
+										resetsAt: Date.now() + 60 * 1000,
+										sessionRole,
+									};
+									this.groupRepo.setRateLimit(group.id, backoff);
+									this.appendGroupEvent(group.id, 'rate_limited', {
+										text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+										resetsAt: backoff.resetsAt,
+										sessionRole,
+									});
+									this.persistTaskRestriction(
+										freshGroup.taskId,
+										backoff,
+										'usage_limit',
+										`Daily/weekly usage cap`
+									).catch((err: unknown) => {
+										log.error(
+											`Failed to persist usage limit restriction for task ${freshGroup.taskId}: ${String(err)}`
+										);
+									});
+									this.scheduleTickAfterRateLimitReset(group.id);
+								}
+							})
+							.catch((err: unknown) => {
+								log.error(
+									`Error attempting fallback model switch for session ${sessionId}: ${String(err)}`
+								);
+							});
 					}
 
 					// Canonical timeline rows are persisted by the SDK/session layer into
@@ -2328,6 +2405,7 @@ export class RoomRuntime {
 			unsubWorker();
 			unsubLeader();
 			mirroredUuids.clear();
+			fallbackAttempted.clear();
 		});
 	}
 
