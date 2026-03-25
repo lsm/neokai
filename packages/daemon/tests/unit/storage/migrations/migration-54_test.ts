@@ -2,13 +2,13 @@
  * Migration 54 Tests
  *
  * Covers:
- * - Index is created on a fresh DB (workflow_node_id + slot_role present)
+ * - Index is created on a fresh DB (workflow_node_id + agent_name present)
  * - Index is skipped when workflow_node_id is absent (graceful guard)
- * - Index is skipped when slot_role is absent (graceful guard)
+ * - Index is skipped when agent_name is absent (graceful guard)
  * - Index enforces uniqueness for active-status tuples
  * - Index allows duplicate (run, node, agent) when old row is completed
  * - Index allows duplicate (run, node, agent) when old row is cancelled
- * - Index allows NULL workflow_run_id / workflow_node_id / slot_role (legacy compat)
+ * - Index allows NULL workflow_run_id / workflow_node_id / agent_name (legacy compat)
  * - Idempotent: calling runMigration54 twice does not error
  */
 
@@ -59,7 +59,7 @@ function insertTask(
 		spaceId?: string;
 		runId?: string | null;
 		nodeId?: string | null;
-		slotRole?: string | null;
+		agentName?: string | null;
 		status?: string;
 	}
 ): void {
@@ -70,7 +70,7 @@ function insertTask(
 	try {
 		db.prepare(
 			`INSERT INTO space_tasks
-		 (id, space_id, title, description, status, priority, depends_on, workflow_run_id, workflow_node_id, slot_role, created_at, updated_at)
+		 (id, space_id, title, description, status, priority, depends_on, workflow_run_id, workflow_node_id, agent_name, created_at, updated_at)
 		 VALUES (?, ?, 'Task', '', ?, 'normal', '[]', ?, ?, ?, ?, ?)`
 		).run(
 			opts.id,
@@ -78,7 +78,7 @@ function insertTask(
 			opts.status ?? 'pending',
 			opts.runId ?? null,
 			opts.nodeId ?? null,
-			opts.slotRole ?? null,
+			opts.agentName ?? null,
 			now,
 			now
 		);
@@ -121,7 +121,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'pending',
 		});
 		expect(() =>
@@ -129,7 +129,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'coder',
+				agentName: 'coder',
 				status: 'pending',
 			})
 		).toThrow(/UNIQUE constraint failed/);
@@ -140,7 +140,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'in_progress',
 		});
 		expect(() =>
@@ -148,7 +148,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'coder',
+				agentName: 'coder',
 				status: 'pending',
 			})
 		).toThrow(/UNIQUE constraint failed/);
@@ -159,7 +159,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'completed',
 		});
 		expect(() =>
@@ -167,7 +167,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'coder',
+				agentName: 'coder',
 				status: 'pending',
 			})
 		).not.toThrow();
@@ -178,7 +178,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'cancelled',
 		});
 		expect(() =>
@@ -186,7 +186,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'coder',
+				agentName: 'coder',
 				status: 'pending',
 			})
 		).not.toThrow();
@@ -197,7 +197,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'needs_attention',
 		});
 		expect(() =>
@@ -205,7 +205,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'coder',
+				agentName: 'coder',
 				status: 'pending',
 			})
 		).not.toThrow();
@@ -219,7 +219,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'draft',
 		});
 		expect(() =>
@@ -227,16 +227,16 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'coder',
+				agentName: 'coder',
 				status: 'draft',
 			})
 		).not.toThrow();
 	});
 
 	test('allows multiple legacy tasks with NULL workflow_run_id', () => {
-		insertTask(db, { id: 't-1', runId: null, nodeId: null, slotRole: null, status: 'pending' });
+		insertTask(db, { id: 't-1', runId: null, nodeId: null, agentName: null, status: 'pending' });
 		expect(() =>
-			insertTask(db, { id: 't-2', runId: null, nodeId: null, slotRole: null, status: 'pending' })
+			insertTask(db, { id: 't-2', runId: null, nodeId: null, agentName: null, status: 'pending' })
 		).not.toThrow();
 	});
 
@@ -245,7 +245,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 			id: 't-1',
 			runId: 'run-1',
 			nodeId: 'node-1',
-			slotRole: 'coder',
+			agentName: 'coder',
 			status: 'pending',
 		});
 		expect(() =>
@@ -253,7 +253,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 				id: 't-2',
 				runId: 'run-1',
 				nodeId: 'node-1',
-				slotRole: 'planner',
+				agentName: 'planner',
 				status: 'pending',
 			})
 		).not.toThrow();
@@ -273,7 +273,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 					description TEXT NOT NULL DEFAULT '',
 					status TEXT NOT NULL DEFAULT 'pending',
 					priority TEXT NOT NULL DEFAULT 'normal',
-					slot_role TEXT,
+					agent_name TEXT,
 					workflow_run_id TEXT,
 					depends_on TEXT NOT NULL DEFAULT '[]',
 					created_at INTEGER NOT NULL DEFAULT 0,

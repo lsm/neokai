@@ -209,7 +209,7 @@ describe('ChannelRouter', () => {
 			expect(tasks[0].status).toBe('pending');
 			expect(tasks[0].workflowRunId).toBe(run.id);
 			expect(tasks[0].workflowNodeId).toBe(NODE_A);
-			expect(tasks[0].slotRole).toBe(AGENT_CODER); // resolveNodeAgents uses agentId as name for shorthand
+			expect(tasks[0].agentName).toBe(AGENT_CODER); // resolveNodeAgents uses agentId as name for shorthand
 			expect(tasks[0].taskType).toBe('coding');
 			expect(tasks[0].customAgentId).toBeFalsy();
 		});
@@ -237,12 +237,12 @@ describe('ChannelRouter', () => {
 			const tasks = await router.activateNode(run.id, NODE_A);
 
 			expect(tasks).toHaveLength(2);
-			const slotRoles = tasks.map((t) => t.slotRole).sort();
-			expect(slotRoles).toEqual(['coder-slot', 'planner-slot']);
+			const agentNames = tasks.map((t) => t.agentName).sort();
+			expect(agentNames).toEqual(['coder-slot', 'planner-slot']);
 
 			// task types are resolved per-agent
-			const coderTask = tasks.find((t) => t.slotRole === 'coder-slot')!;
-			const plannerTask = tasks.find((t) => t.slotRole === 'planner-slot')!;
+			const coderTask = tasks.find((t) => t.agentName === 'coder-slot')!;
+			const plannerTask = tasks.find((t) => t.agentName === 'planner-slot')!;
 			expect(coderTask.taskType).toBe('coding');
 			expect(plannerTask.taskType).toBe('planning');
 		});
@@ -351,7 +351,7 @@ describe('ChannelRouter', () => {
 			workflowRunRepo.updateStatus(run.id, 'in_progress');
 
 			// Simulate a concurrent activation by directly inserting a task with the
-			// same (workflow_run_id, workflow_node_id, slot_role) before the router
+			// same (workflow_run_id, workflow_node_id, agent_name) before the router
 			// creates its task — triggering the UNIQUE constraint path.
 			const firstTask = taskRepo.createTask({
 				spaceId: SPACE_ID,
@@ -359,7 +359,7 @@ describe('ChannelRouter', () => {
 				description: '',
 				workflowRunId: run.id,
 				workflowNodeId: NODE_A,
-				slotRole: 'coder-slot',
+				agentName: 'coder-slot',
 				status: 'pending',
 			});
 
@@ -476,7 +476,7 @@ describe('ChannelRouter', () => {
 			expect(result.activatedTasks).toBeDefined();
 			expect(result.activatedTasks).toHaveLength(1);
 			expect(result.activatedTasks![0].workflowNodeId).toBe(NODE_B);
-			expect(result.activatedTasks![0].slotRole).toBe('planner');
+			expect(result.activatedTasks![0].agentName).toBe('planner');
 		});
 
 		test('does not re-activate when target node already has active tasks', async () => {
@@ -508,7 +508,7 @@ describe('ChannelRouter', () => {
 				description: '',
 				workflowRunId: run.id,
 				workflowNodeId: NODE_B,
-				slotRole: 'planner',
+				agentName: 'planner',
 				status: 'in_progress',
 			});
 
