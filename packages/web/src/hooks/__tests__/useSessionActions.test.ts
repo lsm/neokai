@@ -47,11 +47,13 @@ vi.mock('../../lib/toast', () => ({
 const mockDeleteSession = vi.fn();
 const mockListSessions = vi.fn();
 const mockArchiveSession = vi.fn();
+const mockResetSessionQuery = vi.fn();
 
 vi.mock('../../lib/api-helpers', () => ({
 	deleteSession: (sessionId: string) => mockDeleteSession(sessionId),
 	listSessions: () => mockListSessions(),
 	archiveSession: (sessionId: string, force: boolean) => mockArchiveSession(sessionId, force),
+	resetSessionQuery: (sessionId: string) => mockResetSessionQuery(sessionId),
 }));
 
 // Mock signals - use vi.hoisted to ensure they're available before vi.mock hoisting
@@ -85,6 +87,7 @@ describe('useSessionActions', () => {
 		mockDeleteSession.mockResolvedValue({});
 		mockListSessions.mockResolvedValue({ sessions: [] });
 		mockArchiveSession.mockResolvedValue({ success: true });
+		mockResetSessionQuery.mockResolvedValue({ success: true });
 		mockCurrentSessionIdSignal.value = 'session-1';
 		mockSessionsSignal.value = [];
 	});
@@ -428,7 +431,6 @@ describe('useSessionActions', () => {
 	describe('handleResetAgent', () => {
 		it('should reset agent successfully', async () => {
 			const onStateReset = vi.fn();
-			mockRequest.mockResolvedValue({ success: true });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -443,17 +445,14 @@ describe('useSessionActions', () => {
 				await result.current.handleResetAgent();
 			});
 
-			expect(mockRequest).toHaveBeenCalledWith('session.resetQuery', {
-				sessionId: 'session-1',
-				restartQuery: true,
-			});
+			expect(mockResetSessionQuery).toHaveBeenCalledWith('session-1');
 			expect(mockToastSuccess).toHaveBeenCalledWith('Agent reset successfully.');
 			expect(onStateReset).toHaveBeenCalled();
 			expect(result.current.resettingAgent).toBe(false);
 		});
 
 		it('should handle reset agent failure', async () => {
-			mockRequest.mockResolvedValue({ success: false, error: 'Reset failed' });
+			mockResetSessionQuery.mockResolvedValue({ success: false, error: 'Reset failed' });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -472,7 +471,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent failure without error message', async () => {
-			mockRequest.mockResolvedValue({ success: false });
+			mockResetSessionQuery.mockResolvedValue({ success: false });
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -507,11 +506,12 @@ describe('useSessionActions', () => {
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
-			expect(mockRequest).not.toHaveBeenCalled();
+			expect(mockResetSessionQuery).not.toHaveBeenCalled();
 		});
 
-		it('should handle no hub connection', async () => {
-			mockGetHubIfConnected.mockReturnValue(null);
+		it('should handle no hub connection (resetSessionQuery throws)', async () => {
+			// resetSessionQuery calls getHubOrThrow() internally; when hub is null it throws
+			mockResetSessionQuery.mockRejectedValue(new Error('Not connected to server'));
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -530,7 +530,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent exception with Error instance', async () => {
-			mockRequest.mockRejectedValue(new Error('Network error'));
+			mockResetSessionQuery.mockRejectedValue(new Error('Network error'));
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -550,7 +550,7 @@ describe('useSessionActions', () => {
 		});
 
 		it('should handle reset agent exception with non-Error', async () => {
-			mockRequest.mockRejectedValue('Unknown error');
+			mockResetSessionQuery.mockRejectedValue('Unknown error');
 
 			const { result } = renderHook(() =>
 				useSessionActions({
@@ -573,7 +573,7 @@ describe('useSessionActions', () => {
 			const callPromise = new Promise((resolve) => {
 				resolveCall = resolve;
 			});
-			mockRequest.mockImplementation(() => callPromise);
+			mockResetSessionQuery.mockImplementation(() => callPromise);
 
 			const { result } = renderHook(() =>
 				useSessionActions({
