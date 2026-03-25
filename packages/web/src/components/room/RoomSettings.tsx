@@ -11,6 +11,9 @@ import { useSignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import type { Room, WorkspacePath } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
+import { appMcpStore } from '../../lib/app-mcp-store';
+import { roomMcpStore } from '../../lib/room-mcp-store';
+import { setRoomMcpEnabled, resetRoomMcpToGlobal } from '../../lib/api-helpers';
 import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -97,6 +100,31 @@ export function RoomSettings({
 			typeof cfg['maxPlanningRetries'] === 'number' ? (cfg['maxPlanningRetries'] as number) : 0;
 	}, [room]);
 
+	// Subscribe to appMcpStore (global registry) and roomMcpStore (per-room overrides)
+	useEffect(() => {
+		let mounted = true;
+
+		const subscribe = async () => {
+			try {
+				// Subscribe to global MCP server registry
+				await appMcpStore.subscribe();
+				// Subscribe to per-room MCP enablement for this room
+				await roomMcpStore.subscribe(room.id);
+			} catch {
+				if (mounted) {
+					toast.error('Failed to load MCP servers');
+				}
+			}
+		};
+
+		subscribe();
+
+		return () => {
+			mounted = false;
+			roomMcpStore.unsubscribe();
+		};
+	}, [room.id]);
+
 	// Models visible in the default model dropdown (only allowed ones, or all if no restriction)
 	const selectableModels = () => {
 		const allowed = allowedModels.value;
@@ -108,6 +136,19 @@ export function RoomSettings({
 		const allowed = allowedModels.value;
 		if (!allowed) return true; // all allowed
 		return allowed.includes(modelId);
+	};
+
+	const sourceTypeLabel = (sourceType: string): string => {
+		switch (sourceType) {
+			case 'stdio':
+				return 'stdio';
+			case 'sse':
+				return 'SSE';
+			case 'http':
+				return 'HTTP';
+			default:
+				return sourceType;
+		}
 	};
 
 	const handleToggleModel = (modelId: string) => {
@@ -475,6 +516,109 @@ export function RoomSettings({
 							Add Path
 						</Button>
 					</div>
+				</div>
+
+				{/* MCP Servers */}
+				<div>
+					<div class="flex items-center justify-between mb-1.5">
+						<label class="block text-sm font-medium text-gray-300">MCP Servers</label>
+						{appMcpStore.appMcpServers.value.length > 0 && !roomMcpStore.loading.value && (
+							<button
+								type="button"
+								onClick={async () => {
+									try {
+										await resetRoomMcpToGlobal(room.id);
+										toast.success('Reset to global defaults');
+									} catch {
+										toast.error('Failed to reset to global defaults');
+									}
+								}}
+								class="text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40"
+								disabled={disabled}
+							>
+								Reset to Global Defaults
+							</button>
+						)}
+					</div>
+					<p class="text-xs text-gray-500 mb-3">
+						Enable or disable MCP servers for this room. Changes override global settings.
+					</p>
+
+					{roomMcpStore.loading.value || appMcpStore.loading.value ? (
+						<div class="flex items-center gap-2 py-2">
+							<Spinner size="sm" />
+							<span class="text-xs text-gray-500">Loading MCP servers...</span>
+						</div>
+					) : appMcpStore.appMcpServers.value.length === 0 ? (
+						<div class="text-sm text-gray-500">
+							No MCP servers configured.{' '}
+							<a
+								href="#"
+								onClick={(e) => {
+									e.preventDefault();
+									// TODO: Navigate to global MCP settings - this would require router integration
+								}}
+								class="text-blue-400 hover:text-blue-300"
+							>
+								Add MCP servers in global settings
+							</a>
+						</div>
+					) : (
+						<div class="space-y-2">
+							{appMcpStore.appMcpServers.value.map((server) => {
+								const effectiveEnabled = roomMcpStore.getEffectiveEnabled(
+									server.id,
+									server.enabled
+								);
+								const hasOverride = roomMcpStore.overrides.value.has(server.id);
+
+								return (
+									<label
+										key={server.id}
+										class="flex items-start gap-3 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2.5 cursor-pointer hover:border-dark-500 transition-colors"
+									>
+										<input
+											type="checkbox"
+											checked={effectiveEnabled}
+											onChange={async () => {
+												try {
+													await setRoomMcpEnabled(room.id, server.id, !effectiveEnabled);
+												} catch {
+													toast.error(
+														`Failed to ${effectiveEnabled ? 'disable' : 'enable'} ${server.name}`
+													);
+												}
+											}}
+											disabled={disabled}
+											class="w-4 h-4 mt-0.5 rounded border-dark-500 bg-dark-700 text-blue-500
+												focus:ring-blue-500 focus:ring-offset-dark-900 cursor-pointer"
+										/>
+										<div class="flex-1 min-w-0">
+											<div class="flex items-center gap-2">
+												<span class="text-sm font-medium text-gray-200">{server.name}</span>
+												{hasOverride && (
+													<span class="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400">
+														room override
+													</span>
+												)}
+												{!hasOverride && !server.enabled && (
+													<span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-500">
+														disabled globally
+													</span>
+												)}
+											</div>
+											{server.description && (
+												<p class="text-xs text-gray-500 mt-0.5 truncate">{server.description}</p>
+											)}
+											<p class="text-xs text-gray-600 mt-0.5 font-mono">
+												{sourceTypeLabel(server.sourceType)}
+											</p>
+										</div>
+									</label>
+								);
+							})}
+						</div>
+					)}
 				</div>
 
 				{/* Danger Zone */}
