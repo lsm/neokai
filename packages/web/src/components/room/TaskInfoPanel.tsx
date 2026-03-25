@@ -59,6 +59,8 @@ function formatTimestamp(ms: number): string {
 
 export interface TaskInfoPanelProps {
 	isOpen: boolean;
+	/** Room ID for routing task session model switches through RoomRuntimeService */
+	roomId?: string;
 	/** Full task ID */
 	taskId?: string;
 	/** Full session group ID */
@@ -108,6 +110,7 @@ export interface TaskInfoPanelProps {
 
 export function TaskInfoPanel({
 	isOpen,
+	roomId,
 	taskId,
 	groupId,
 	feedbackIteration,
@@ -265,6 +268,7 @@ export function TaskInfoPanel({
 									<span class="text-xs text-gray-400">Model:</span>
 									<TaskViewModelSelector
 										sessionId={workerSession.id}
+										roomId={roomId}
 										currentModel={workerSession.config.model ?? ''}
 										currentProvider={workerSession.config.provider}
 									/>
@@ -278,6 +282,7 @@ export function TaskInfoPanel({
 									<span class="text-xs text-gray-400">Model:</span>
 									<TaskViewModelSelector
 										sessionId={leaderSession.id}
+										roomId={roomId}
 										currentModel={leaderSession.config.model ?? ''}
 										currentProvider={leaderSession.config.provider}
 									/>

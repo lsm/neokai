@@ -299,6 +299,7 @@ export function TaskViewV2({ roomId, taskId }: TaskViewV2Props) {
 			{/* Info panel */}
 			<TaskInfoPanel
 				isOpen={isInfoPanelOpen}
+				roomId={roomId}
 				taskId={task.id}
 				groupId={group?.id}
 				feedbackIteration={group?.feedbackIteration}
