@@ -7,16 +7,13 @@
  * - mcp.room RPC handlers (setEnabled, getEnabled, resetToGlobal)
  *
  * These tests use the full daemon server with real database and RPC handlers.
- *
- * REQUIREMENTS:
- * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
- * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (no skip)
+ * They use dev proxy (mock_sdk: true) so no real AI API calls are made.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
+import { createRoom } from './room-test-helpers';
 
 describe('Room MCP Enablement — Online', () => {
 	let daemon: DaemonServerContext;
@@ -65,121 +62,157 @@ describe('Room MCP Enablement — Online', () => {
 		return result.serverIds;
 	}
 
+	/**
+	 * Helper to delete a room via RPC.
+	 */
+	async function deleteRoom(roomId: string): Promise<void> {
+		await daemon.messageHub.request('room.delete', { roomId });
+	}
+
 	describe('mcp.room.setEnabled', () => {
 		test('enabling a server for a room adds it to the room enablement list', async () => {
+			// Create a real room so room_mcp_enablement FK constraint is satisfied
+			const roomId = await createRoom(daemon, 'test-enable');
 			const { id: serverId } = await createRegistryServer('test-server-enable');
 
-			// Initially not enabled for any room
-			const initial = await getEnabledForRoom('room-enable-test');
-			expect(initial).not.toContain(serverId);
+			try {
+				// Initially not enabled for any room
+				const initial = await getEnabledForRoom(roomId);
+				expect(initial).not.toContain(serverId);
 
-			// Enable for room
-			await enableForRoom('room-enable-test', serverId, true);
+				// Enable for room
+				await enableForRoom(roomId, serverId, true);
 
-			// Now enabled
-			const after = await getEnabledForRoom('room-enable-test');
-			expect(after).toContain(serverId);
+				// Now enabled
+				const after = await getEnabledForRoom(roomId);
+				expect(after).toContain(serverId);
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 
 		test('disabling a server for a room removes it from the room enablement list', async () => {
+			const roomId = await createRoom(daemon, 'test-disable');
 			const { id: serverId } = await createRegistryServer('test-server-disable');
 
-			// Enable first
-			await enableForRoom('room-disable-test', serverId, true);
-			let enabled = await getEnabledForRoom('room-disable-test');
-			expect(enabled).toContain(serverId);
+			try {
+				// Enable first
+				await enableForRoom(roomId, serverId, true);
+				let enabled = await getEnabledForRoom(roomId);
+				expect(enabled).toContain(serverId);
 
-			// Disable
-			await enableForRoom('room-disable-test', serverId, false);
-			enabled = await getEnabledForRoom('room-disable-test');
-			expect(enabled).not.toContain(serverId);
+				// Disable
+				await enableForRoom(roomId, serverId, false);
+				enabled = await getEnabledForRoom(roomId);
+				expect(enabled).not.toContain(serverId);
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 
 		test('server must exist in registry before it can be enabled for a room', async () => {
-			// Try to enable a non-existent server
-			await expect(
-				daemon.messageHub.request('mcp.room.setEnabled', {
-					roomId: 'room-missing-server',
-					serverId: 'non-existent-server-id',
-					enabled: true,
-				})
-			).rejects.toThrow();
+			const roomId = await createRoom(daemon, 'test-missing-server');
+
+			try {
+				// Try to enable a non-existent server — should throw
+				await expect(
+					daemon.messageHub.request('mcp.room.setEnabled', {
+						roomId,
+						serverId: 'non-existent-server-id',
+						enabled: true,
+					})
+				).rejects.toThrow();
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 	});
 
 	describe('mcp.room.resetToGlobal', () => {
 		test('resetToGlobal removes all per-room overrides', async () => {
+			const roomId = await createRoom(daemon, 'test-reset');
 			const server1 = await createRegistryServer('reset-server-1');
 			const server2 = await createRegistryServer('reset-server-2');
 
-			// Enable both for a room
-			await enableForRoom('room-reset-global', server1.id, true);
-			await enableForRoom('room-reset-global', server2.id, true);
+			try {
+				// Enable both for the room
+				await enableForRoom(roomId, server1.id, true);
+				await enableForRoom(roomId, server2.id, true);
 
-			let enabled = await getEnabledForRoom('room-reset-global');
-			expect(enabled).toContain(server1.id);
-			expect(enabled).toContain(server2.id);
+				let enabled = await getEnabledForRoom(roomId);
+				expect(enabled).toContain(server1.id);
+				expect(enabled).toContain(server2.id);
 
-			// Reset to global
-			await daemon.messageHub.request('mcp.room.resetToGlobal', {
-				roomId: 'room-reset-global',
-			});
+				// Reset to global
+				await daemon.messageHub.request('mcp.room.resetToGlobal', {
+					roomId,
+				});
 
-			// After reset, getEnabled returns empty (no explicit overrides)
-			enabled = await getEnabledForRoom('room-reset-global');
-			expect(enabled).toHaveLength(0);
+				// After reset, getEnabled returns empty (no explicit overrides)
+				enabled = await getEnabledForRoom(roomId);
+				expect(enabled).toHaveLength(0);
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 	});
 
 	describe('mcp.registry.changed event', () => {
 		test('changing registry emits mcp.registry.changed event', async () => {
+			const roomId = await createRoom(daemon, 'test-changed-event');
 			const server = await createRegistryServer('changed-event-server');
 
-			// Enable for room
-			await enableForRoom('room-changed-event', server.id, true);
-			let enabled = await getEnabledForRoom('room-changed-event');
-			expect(enabled).toContain(server.id);
+			try {
+				// Enable for room
+				await enableForRoom(roomId, server.id, true);
+				let enabled = await getEnabledForRoom(roomId);
+				expect(enabled).toContain(server.id);
 
-			// The enableForRoom handler emits mcp.registry.changed,
-			// which triggers hot-reload in RoomRuntimeService.
-			// We verify the state change persisted correctly.
+				// The enableForRoom handler emits mcp.registry.changed,
+				// which triggers hot-reload in RoomRuntimeService.
+				// We verify the state change persisted correctly.
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 	});
 
 	describe('global fallback behavior', () => {
 		test('rooms with no overrides fall back to globally enabled servers', async () => {
-			// Create servers
-			const serverA = await createRegistryServer('global-alpha');
-			const serverB = await createRegistryServer('global-beta');
+			const roomId = await createRoom(daemon, 'test-global-fallback');
 
-			// Enable globally (all servers start enabled by default from seed)
-			// No per-room overrides set
-
-			// A room with no overrides should not appear in getEnabledForRoom
-			// (getEnabledForRoom only returns explicit overrides)
-			const noOverrideRoom = await getEnabledForRoom('room-no-override');
-			expect(noOverrideRoom).not.toContain(serverA.id);
-			expect(noOverrideRoom).not.toContain(serverB.id);
+			try {
+				// A room with no overrides should not appear in getEnabledForRoom
+				// (getEnabledForRoom only returns explicit overrides)
+				const enabled = await getEnabledForRoom(roomId);
+				expect(enabled).toHaveLength(0);
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 	});
 
 	describe('integration with registry CRUD', () => {
 		test('creating and deleting a server updates room enablement state', async () => {
-			// Create a server
+			const roomId = await createRoom(daemon, 'test-crud');
 			const { id: serverId } = await createRegistryServer('crud-integration-server');
 
-			// Enable for room
-			await enableForRoom('room-crud-test', serverId, true);
-			let enabled = await getEnabledForRoom('room-crud-test');
-			expect(enabled).toContain(serverId);
+			try {
+				// Enable for room
+				await enableForRoom(roomId, serverId, true);
+				let enabled = await getEnabledForRoom(roomId);
+				expect(enabled).toContain(serverId);
 
-			// Delete the server
-			await daemon.messageHub.request('mcp.registry.delete', { id: serverId });
+				// Delete the server
+				await daemon.messageHub.request('mcp.registry.delete', { id: serverId });
 
-			// The override for the deleted server remains in room_mcp_enablement
-			// but the server no longer exists in app_mcp_servers.
-			// getEnabledServers joins with app_mcp_servers, so it won't return the deleted server.
-			// This is expected behavior - orphaned overrides are cleaned up on next access.
+				// The override for the deleted server remains in room_mcp_enablement
+				// but the server no longer exists in app_mcp_servers.
+				// getEnabledServers joins with app_mcp_servers, so it won't return the deleted server.
+				// This is expected behavior - orphaned overrides are cleaned up on next access.
+			} finally {
+				await deleteRoom(roomId);
+			}
 		});
 	});
 });
