@@ -197,6 +197,19 @@ export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
 			`- All communication is scoped to this group — you cannot message agents in other tasks`
 	);
 
+	// Completion signalling
+	sections.push(`\n## Signalling Completion\n`);
+	sections.push(`\n### \`report_done\` (signal task completion)\n`);
+	sections.push(
+		`When you have finished all assigned work, call \`report_done\` to mark your step as complete. ` +
+			`Provide an optional \`summary\` describing what was accomplished.`
+	);
+	sections.push(
+		`- After calling \`report_done\`, stop — do not perform further actions\n` +
+			`- This is the correct way to close your task lifecycle\n` +
+			`- Do not rely on the session ending naturally; always call \`report_done\` explicitly`
+	);
+
 	// Review feedback handling
 	sections.push(`\n## Addressing Review Feedback\n`);
 	sections.push(

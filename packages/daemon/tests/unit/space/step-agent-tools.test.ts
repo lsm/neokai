@@ -15,8 +15,10 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
 	createStepAgentToolHandlers,
 	createStepAgentMcpServer,
@@ -116,11 +118,17 @@ interface TestCtx {
 	dir: string;
 	spaceId: string;
 	sessionGroupRepo: SpaceSessionGroupRepository;
+	taskRepo: SpaceTaskRepository;
+	taskManager: SpaceTaskManager;
 	groupId: string;
 	coderSessionId: string;
 	reviewerSessionId: string;
 	taskAgentSessionId: string;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** ID of the parent (main) task seeded in the DB. */
+	parentTaskId: string;
+	/** ID of the step task seeded in the DB. */
+	stepTaskId: string;
 }
 
 function makeCtx(): TestCtx {
@@ -130,12 +138,28 @@ function makeCtx(): TestCtx {
 	seedSpaceRow(db, spaceId);
 
 	const sessionGroupRepo = new SpaceSessionGroupRepository(db);
+	const taskRepo = new SpaceTaskRepository(db);
+	const taskManager = new SpaceTaskManager(db, spaceId);
+
+	// Seed a parent task and a step task in the DB
+	const parentTask = taskRepo.createTask({
+		spaceId,
+		title: 'Parent Task',
+		description: '',
+		status: 'in_progress',
+	});
+	const stepTask = taskRepo.createTask({
+		spaceId,
+		title: 'Step Task',
+		description: '',
+		status: 'in_progress',
+	});
 
 	// Create a session group for the task
 	const group = sessionGroupRepo.createGroup({
 		spaceId,
 		name: 'task:test-task-1',
-		taskId: 'test-task-1',
+		taskId: parentTask.id,
 	});
 
 	// Add members: task-agent, coder, reviewer
@@ -168,11 +192,15 @@ function makeCtx(): TestCtx {
 		dir,
 		spaceId,
 		sessionGroupRepo,
+		taskRepo,
+		taskManager,
 		groupId: group.id,
 		coderSessionId,
 		reviewerSessionId,
 		taskAgentSessionId,
 		workflowRunRepo,
+		parentTaskId: parentTask.id,
+		stepTaskId: stepTask.id,
 	};
 }
 
@@ -185,7 +213,9 @@ function makeConfig(
 	return {
 		mySessionId: ctx.coderSessionId,
 		myRole: 'coder',
-		taskId: 'test-task-1',
+		taskId: ctx.parentTaskId,
+		stepTaskId: ctx.stepTaskId,
+		spaceId: ctx.spaceId,
 		workflowRunId: '',
 		sessionGroupRepo: ctx.sessionGroupRepo,
 		getGroupId: () => ctx.groupId,
@@ -193,6 +223,7 @@ function makeConfig(
 		messageInjector: async (sessionId, message) => {
 			injectedMessages.push({ sessionId, message });
 		},
+		taskManager: ctx.taskManager,
 		...overrides,
 	};
 }
@@ -662,6 +693,108 @@ describe('step-agent-tools: send_message', () => {
 		expect(data.success).toBe(false);
 		expect(data.delivered).toHaveLength(0);
 		expect(data.failed).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: report_done
+// ---------------------------------------------------------------------------
+
+describe('step-agent-tools: report_done', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('marks step task as completed without summary', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.report_done({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.stepTaskId).toBe(ctx.stepTaskId);
+		expect(data.message).toContain('completed');
+
+		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
+		expect(updated?.status).toBe('completed');
+		expect(updated?.completedAt).toBeDefined();
+	});
+
+	test('persists summary as result field', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.report_done({ summary: 'PR #42 merged successfully.' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.summary).toBe('PR #42 merged successfully.');
+
+		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
+		expect(updated?.result).toBe('PR #42 merged successfully.');
+	});
+
+	test('emits space.task.updated event via daemonHub', async () => {
+		const emitted: Array<{ name: string; payload: unknown }> = [];
+		const fakeDaemonHub = {
+			emit: async (name: string, payload: unknown) => {
+				emitted.push({ name, payload });
+			},
+		};
+
+		const config = makeConfig(ctx, {
+			daemonHub: fakeDaemonHub as unknown as StepAgentToolsConfig['daemonHub'],
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		await handlers.report_done({ summary: 'done' });
+
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0].name).toBe('space.task.updated');
+		const payload = emitted[0].payload as Record<string, unknown>;
+		expect(payload.taskId).toBe(ctx.stepTaskId);
+		expect(payload.spaceId).toBe(ctx.spaceId);
+		expect(payload.sessionId).toBe('global');
+		const task = payload.task as Record<string, unknown>;
+		expect(task.status).toBe('completed');
+	});
+
+	test('does not emit event when daemonHub is absent', async () => {
+		const config = makeConfig(ctx); // no daemonHub
+		const handlers = createStepAgentToolHandlers(config);
+		// Should not throw
+		const result = await handlers.report_done({});
+		const data = JSON.parse(result.content[0].text);
+		expect(data.success).toBe(true);
+	});
+
+	test('returns error when step task not found', async () => {
+		const config = makeConfig(ctx, { stepTaskId: 'nonexistent-step-task' });
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.report_done({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not found');
+	});
+
+	test('returns error on invalid status transition', async () => {
+		// Move step task to completed first
+		await ctx.taskManager.setTaskStatus(ctx.stepTaskId, 'completed');
+
+		const config = makeConfig(ctx);
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.report_done({ summary: 'already done' });
+		const data = JSON.parse(result.content[0].text);
+
+		// completed → completed is invalid
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('Invalid status transition');
 	});
 });
 

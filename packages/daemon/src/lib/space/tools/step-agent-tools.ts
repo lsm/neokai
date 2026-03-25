@@ -25,16 +25,21 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { DaemonHub } from '../../daemon-hub';
+import { Logger } from '../../logger';
+import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
-import { ListPeersSchema, SendMessageSchema } from './step-agent-tool-schemas';
-import type { ListPeersInput, SendMessageInput } from './step-agent-tool-schemas';
+import { ListPeersSchema, SendMessageSchema, ReportDoneSchema } from './step-agent-tool-schemas';
+import type { ListPeersInput, SendMessageInput, ReportDoneInput } from './step-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
+
+const log = new Logger('step-agent-tools');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -42,7 +47,7 @@ export type { ToolResult };
 
 /**
  * Dependencies injected into createStepAgentToolHandlers().
- * All fields are required — the caller (TaskAgentManager) wires them up.
+ * All fields are required unless noted — the caller (TaskAgentManager) wires them up.
  */
 export interface StepAgentToolsConfig {
 	/** Session ID of this step agent (used to exclude self from list_peers). */
@@ -51,6 +56,10 @@ export interface StepAgentToolsConfig {
 	myRole: string;
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
+	/** ID of the step-level SpaceTask this agent is executing. Used by report_done. */
+	stepTaskId: string;
+	/** Space ID — used for event emission in report_done. */
+	spaceId: string;
 	/** Workflow run ID — used to load channel topology from run config. */
 	workflowRunId: string;
 	/** Session group repository for looking up group members. */
@@ -64,6 +73,13 @@ export interface StepAgentToolsConfig {
 	 * Used by `send_message` to deliver messages to target sessions.
 	 */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
+	/** Task manager for validated status transitions. Used by report_done. */
+	taskManager: SpaceTaskManager;
+	/**
+	 * DaemonHub instance for emitting task update events.
+	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
+	 */
+	daemonHub?: DaemonHub;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,11 +95,15 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		mySessionId,
 		myRole,
 		taskId,
+		stepTaskId,
+		spaceId,
 		workflowRunId,
 		sessionGroupRepo,
 		getGroupId,
 		workflowRunRepo,
 		messageInjector,
+		taskManager,
+		daemonHub,
 	} = config;
 
 	type GroupLoaded = {
@@ -309,6 +329,54 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 					'.',
 			});
 		},
+
+		/**
+		 * Signal that this step agent has completed its work.
+		 *
+		 * Marks the step's SpaceTask as 'completed', persists the optional summary
+		 * as the task result, and emits a `space.task.updated` event for real-time UI.
+		 *
+		 * After calling this tool, the step agent should stop and not perform
+		 * further work — the task lifecycle is closed.
+		 */
+		async report_done(args: ReportDoneInput): Promise<ToolResult> {
+			const { summary } = args;
+
+			try {
+				const updatedTask = await taskManager.setTaskStatus(stepTaskId, 'completed', {
+					result: summary,
+				});
+
+				// Emit DaemonHub event so the UI is notified of the step task completion.
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.updated', {
+							sessionId: 'global',
+							spaceId,
+							taskId: stepTaskId,
+							task: updatedTask,
+						})
+						.catch((err) => {
+							log.warn(
+								`Failed to emit space.task.updated for step task ${stepTaskId} (parent ${taskId}): ` +
+									`${err instanceof Error ? err.message : String(err)}`
+							);
+						});
+				}
+
+				return jsonResult({
+					success: true,
+					stepTaskId,
+					summary,
+					message:
+						'Step task has been marked as completed. ' +
+						'Your work is done — stop here and do not continue.',
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -339,6 +407,15 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 				'Validates against declared channels — returns an error with available channels if unauthorized.',
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
+		),
+		tool(
+			'report_done',
+			'Signal that this step agent has completed its work. ' +
+				'Marks the step task as completed and persists an optional summary as the result. ' +
+				'Call this when you have finished all assigned work. ' +
+				'After calling this tool, stop — do not continue with further actions.',
+			ReportDoneSchema.shape,
+			(args) => handlers.report_done(args)
 		),
 	];
 

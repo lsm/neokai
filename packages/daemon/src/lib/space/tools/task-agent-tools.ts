@@ -188,8 +188,16 @@ export interface TaskAgentToolsConfig {
 	 * Called in `spawn_step_agent` after resolving the session ID and agent role.
 	 * Returns a McpServerConfig to attach to the sub-session's init.mcpServers.
 	 * Optional — if omitted, no step agent MCP server is attached (e.g. in unit tests).
+	 *
+	 * @param sessionId   - The sub-session ID being started.
+	 * @param role        - The slot role for the agent (used for channel routing).
+	 * @param stepTaskId  - The SpaceTask ID for this step (used by report_done).
 	 */
-	buildStepAgentMcpServer?: (sessionId: string, role: string) => McpServerConfig;
+	buildStepAgentMcpServer?: (
+		sessionId: string,
+		role: string,
+		stepTaskId: string
+	) => McpServerConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,8 +373,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Attach step agent peer communication MCP server if a factory is provided.
 			// The server is built with the slot role so it can validate channels using the
 			// same role that was registered in the session group.
+			// Pass stepTask.id so report_done can mark the correct step task as completed.
 			if (buildStepAgentMcpServer) {
-				const stepMcpServer = buildStepAgentMcpServer(subSessionId, memberRole);
+				const stepMcpServer = buildStepAgentMcpServer(subSessionId, memberRole, stepTask.id);
 				init = {
 					...init,
 					mcpServers: { ...init.mcpServers, 'step-agent': stepMcpServer },
