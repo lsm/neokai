@@ -19,7 +19,7 @@ Design and implement a comprehensive @ referencing system that allows users to r
 1. **M1: Core Types and RPC Infrastructure** - Define shared types for references, create backend RPC handlers, add workspace file index with caching.
 2. **M2: Frontend Autocomplete Menu** - Implement `useReferenceAutocomplete` hook and `ReferenceAutocomplete` component, extending the slash command pattern.
 3. **M3: Backend Reference Resolution** - Implement entity resolvers, message preprocessing in MessagePersistence, and agent context injection.
-4. **M4: Reference Token Rendering** - Implement styled mention tokens in rendered messages; keep raw text in native textarea with a visual preview indicator.
+4. **M4: Reference Token Rendering** - Implement styled mention tokens in rendered messages; keep raw text in native textarea with a reference count indicator badge.
 5. **M5: E2E Testing** - Comprehensive Playwright tests covering all entity types and edge cases, with UI/E2E helpers for room entity setup.
 
 ## Cross-Milestone Dependencies
@@ -42,12 +42,12 @@ M1 (Types/RPC) ──┬──> M2 (Frontend Menu) ──> M4 (Token Rendering)
 
 ## Total Estimated Task Count
 
-~22 tasks across 5 milestones:
+~21 tasks across 5 milestones:
 - M1: 5 tasks (types, RPC handlers, reference resolution service, file index/caching)
 - M2: 5 tasks (hook, component, integration with InputTextarea, keyboard navigation, mobile UX)
 - M3: 4 tasks (entity resolvers, message preprocessing, agent context injection, standalone session handling)
 - M4: 3 tasks (mention token component, message rendering integration, persistence format)
-- M5: 5 tasks (E2E helpers, basic autocomplete E2E, entity resolution E2E, edge cases E2E)
+- M5: 4 tasks (E2E helpers, basic autocomplete E2E, entity resolution E2E, edge cases E2E)
 
 ## Reference Syntax Design
 
@@ -73,9 +73,10 @@ The `@ref{}` syntax was chosen over markdown-style links (`[@:type:id](text)`) b
 - It remains human-readable in raw message content
 - It avoids false-positive matching of any standard markdown constructs
 
-**Reference metadata** is stored alongside the message in the `sdk_message` JSON blob (no schema migration needed):
+**Reference metadata** is stored alongside the message in the `sdk_message` JSON blob as a NeoKai-specific extension field (no schema migration needed — the `sdk_message` column is plain TEXT, so extra fields are preserved by SQLite):
 ```json
 {
+  "role": "user",
   "content": "Fix @ref{task:t-42} and update @ref{file:src/lib.ts}",
   "referenceMetadata": {
     "task:t-42": { "type": "task", "id": "...", "displayText": "t-42: Fix auth bug", "status": "in_progress" },
@@ -83,16 +84,17 @@ The `@ref{}` syntax was chosen over markdown-style links (`[@:type:id](text)`) b
   }
 }
 ```
+Note: `referenceMetadata` is intentionally not part of the SDK's `SDKUserMessage` type — it's a NeoKai extension stored at the top level of the JSON blob.
 
 ## Key Technical Decisions
 
 1. **Short IDs for entities** - Use existing `shortId` fields on tasks and goals for human-readable references (e.g., `t-42`, `g-7`).
-2. **Fuzzy search with workspace file index** - Implement a cached workspace file tree that is updated on file-watcher events, enabling fast fuzzy matching without recursive directory listing on every query.
+2. **Fuzzy search with workspace file index** - Implement a cached workspace file tree with polling-based refresh (10s default) for cache invalidation, enabling fast fuzzy matching without recursive directory listing on every query. Files matching `.gitignore` patterns are filtered out.
 3. **Context-aware resolution with graceful fallback** - Backend resolves references based on current session context (room ID, space ID, workspace path). Standalone sessions without room/space context only support file/folder references.
 4. **Resolution in MessagePersistence layer** - Reference resolution happens in `MessagePersistence.persist()` (or a preprocessing step before it), not in the thin `message.send` RPC handler. This integrates with the existing persistence and event flow without adding RPC latency.
 5. **Composability with slash commands** - @ references work anywhere in the message, including after slash commands (e.g., `/agent @task-t-42 fix the bug`).
 6. **Agent context injection** - Resolved reference data is injected as structured context before the user message in the SDK message payload.
-7. **Native textarea with raw text** - The input field remains a native `<textarea>` (preserving cursor/IME stability). @ references are stored as raw `@ref{}` text in the input, and rendered as styled tokens only in sent messages. A subtle visual indicator (blue-tinted text or icon) in the textarea hints at active references.
+7. **Native textarea with raw text** - The input field remains a native `<textarea>` (preserving cursor/IME stability). @ references are stored as raw `@ref{}` text in the input, and rendered as styled tokens only in sent messages. A reference count indicator badge below/beside the textarea shows how many references are active.
 8. **Access control** - File/folder references are restricted to the workspace root path. Path traversal (`..`, absolute paths, paths outside workspace) is rejected. Task/goal references are scoped to the session's room/space context — cross-room references are not supported.
 9. **ReferenceType as union type** - Uses `'task' | 'goal' | 'file' | 'folder'` (TypeScript union), consistent with existing codebase patterns (e.g., `SessionType`).
 
@@ -127,7 +129,7 @@ Sessions without room/space context are supported with graceful degradation:
 
 ### Shared (packages/shared)
 - `src/types/reference.ts` (new)
-- `src/types/index.ts` (export new types)
+- `src/mod.ts` (add `export * from './types/reference.ts'`)
 
 ### E2E Tests (packages/e2e)
 - `tests/features/reference-autocomplete.e2e.ts` (new)

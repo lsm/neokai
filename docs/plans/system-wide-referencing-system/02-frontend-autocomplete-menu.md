@@ -23,8 +23,9 @@ Implement the frontend autocomplete menu that appears when a user types @ in the
 
 **Subtasks:**
 1. Create `packages/web/src/hooks/useReferenceAutocomplete.ts`:
-   - Interface `UseReferenceAutocompleteOptions`: `{ content: string; sessionId: string; onSelect: (reference: ReferenceMention) => void }`
+   - Interface `UseReferenceAutocompleteOptions`: `{ content: string; onSelect: (reference: ReferenceMention) => void }`
    - Interface `UseReferenceAutocompleteResult`: `{ showAutocomplete: boolean; results: ReferenceSearchResult[]; selectedIndex: number; handleKeyDown: (e: KeyboardEvent) => boolean; handleSelect: (result: ReferenceSearchResult) => void; close: () => void }`
+   - Read `sessionId` internally from `sessionStore` (consistent with `useCommandAutocomplete` pattern — no need to pass as prop)
    - State: `showAutocomplete`, `results`, `selectedIndex`, `searchQuery`
    - Debounced search via RPC (`reference.search`) with 300ms debounce
    - Detection logic: trigger when cursor is immediately after @ (not just at start of text)
@@ -99,7 +100,12 @@ Implement the frontend autocomplete menu that appears when a user types @ in the
 3. Position menu above cursor (calculate position based on textarea cursor position using the mirror-div technique)
 4. Ensure only one autocomplete menu is visible at a time (close slash command if @ is typed, close reference if / is typed)
 5. Handle the insertion: when reference is selected, replace `@query` with `@ref{type:id}` formatted text
-6. Add visual hint: when cursor is inside an `@ref{}` token, apply a subtle CSS class to indicate it's a reference (e.g., via a `<span>` overlay or by annotating the textarea wrapper)
+6. Add visual hint — use an **indicator badge** approach (simplest, most reliable):
+   - Add a small indicator element (e.g., a chip/tag with reference count) below or beside the textarea when `@ref{}` tokens are detected in the content
+   - Count active references by scanning content for `@ref{}` pattern matches
+   - Badge shows: "📎 2 references" (or similar icon + count)
+   - Badge is purely informational — the raw `@ref{}` text remains visible in the textarea as-is
+   - This avoids the complexity of overlay/span positioning inside a native textarea
 
 **Acceptance Criteria:**
 - @ triggers reference autocomplete in `InputTextarea`
@@ -184,4 +190,4 @@ Implement the frontend autocomplete menu that appears when a user types @ in the
 - Debounce search to avoid excessive RPC calls during typing
 - The native `<textarea>` is preserved — no contenteditable conversion (see P1-1 decision in overview)
 - Insertion format is `@ref{type:id}` which is the raw text stored in the textarea
-- Visual hint in textarea: a subtle indicator (e.g., text color change or background) when cursor is inside an @ref token
+- Visual hint: a reference count indicator badge below/beside the textarea (not text overlay inside textarea)

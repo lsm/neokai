@@ -13,7 +13,7 @@ Implement styled mention tokens that render @ references as visually distinct, i
 - Deleted/moved entity handling
 
 **Key design decision (P1-1):** The input field (`InputTextarea`) uses a native `<textarea>` element with an explicit "uncontrolled with sync" pattern designed to preserve cursor position. Converting to `contenteditable` would introduce significant cursor/IME complexity. Therefore:
-- **In the input field**: References appear as raw `@ref{type:id}` text. A subtle visual indicator (e.g., the text within `@ref{}` tokens gets a distinct color via a `<span>` overlay or the textarea wrapper gets an annotation) hints that the reference is active.
+- **In the input field**: References appear as raw `@ref{type:id}` text. A reference count indicator badge below/beside the textarea shows how many `@ref{}` tokens are present (e.g., "📎 2 references").
 - **In sent messages**: References are rendered as styled `MentionToken` components.
 
 ---
@@ -114,6 +114,7 @@ Implement styled mention tokens that render @ references as visually distinct, i
        }
      }
      ```
+   - The `referenceMetadata` field is a **NeoKai-specific extension** at the top level of the JSON blob. The `sdk_message` column is a plain TEXT column, so extra fields are technically safe. The SDK's `SDKUserMessage` type does not include this field — it's intentionally an extension, not part of the SDK schema.
    - This approach avoids any schema migration to `sdk_messages` table
 2. Update message loading in frontend:
    - When rendering historical messages, extract `referenceMetadata` from the `sdk_message` JSON blob
