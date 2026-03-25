@@ -109,6 +109,8 @@ export function formatEventMessage(
 			return formatTaskTimeout(event, autonomyLevel);
 		case 'workflow_run_completed':
 			return formatWorkflowRunCompleted(event, autonomyLevel);
+		case 'agent_auto_completed':
+			return formatAgentAutoCompleted(event, autonomyLevel);
 	}
 }
 
@@ -210,6 +212,30 @@ function formatWorkflowRunCompleted(
 		payload['summary'] = event.summary;
 	}
 	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatAgentAutoCompleted(
+	event: {
+		kind: 'agent_auto_completed';
+		spaceId: string;
+		taskId: string;
+		elapsedMs: number;
+		timestamp: string;
+	},
+	autonomyLevel: AutonomyLevel
+): string {
+	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} was auto-completed after ${elapsedMinutes} minute(s) ` +
+		`because the agent did not call report_done within the configured timeout.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		elapsedMs: event.elapsedMs,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
 }
 
 function buildMessage(

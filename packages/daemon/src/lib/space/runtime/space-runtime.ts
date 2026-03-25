@@ -39,6 +39,7 @@ import { WorkflowExecutor, WorkflowTransitionError } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import { autoCompleteStuckAgents } from './agent-liveness';
 
 const log = new Logger('space-runtime');
 
@@ -727,6 +728,25 @@ export class SpaceRuntime {
 					taskAgentSessionId: null,
 					status: 'pending',
 				});
+			}
+
+			// Step 1.5: Auto-complete stuck agents — alive but never called report_done.
+			// Must run after dead-agent resets (Step 1) so we only process truly alive agents.
+			// Re-reads tasks from DB to pick up any status resets from Step 1.
+			const freshStepTasksForLiveness = this.config.taskRepo
+				.listByWorkflowRun(runId)
+				.filter((t) => t.workflowNodeId === currentStep.id);
+			const autoCompleted = await autoCompleteStuckAgents(
+				freshStepTasksForLiveness,
+				meta.spaceId,
+				this.config.taskRepo,
+				tam,
+				this.safeNotify.bind(this)
+			);
+			if (autoCompleted.length > 0) {
+				log.warn(
+					`SpaceRuntime: auto-completed ${autoCompleted.length} stuck agent(s) for run ${runId}`
+				);
 			}
 
 			// Step 2: Spawn Task Agents for pending tasks without an agent session.
