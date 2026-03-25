@@ -69,6 +69,8 @@ const taskStatusColors: Record<string, string> = {
 	needs_attention: 'bg-orange-500',
 	completed: 'bg-green-500',
 	cancelled: 'bg-gray-600',
+	rate_limited: 'bg-orange-500',
+	usage_limited: 'bg-orange-600',
 };
 
 function TaskStatusDot({ status }: { status: string }) {

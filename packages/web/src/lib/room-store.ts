@@ -192,10 +192,15 @@ class RoomStore {
 		return this.tasks.value.filter((t) => !linkedIds.has(t.id));
 	});
 
-	/** Orphan tasks that are active (draft, pending, or in_progress) */
+	/** Orphan tasks that are active (draft, pending, in_progress, rate_limited, or usage_limited) */
 	readonly orphanTasksActive = computed(() =>
 		this.orphanTasks.value.filter(
-			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
+			(t) =>
+				t.status === 'draft' ||
+				t.status === 'pending' ||
+				t.status === 'in_progress' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
 		)
 	);
 

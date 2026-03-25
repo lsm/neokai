@@ -7,7 +7,13 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { NeoTask, TaskFilter, CreateTaskParams, UpdateTaskParams } from '@neokai/shared';
+import type {
+	NeoTask,
+	TaskFilter,
+	CreateTaskParams,
+	UpdateTaskParams,
+	TaskRestriction,
+} from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { ShortIdAllocator } from '../../lib/short-id-allocator';
@@ -241,6 +247,10 @@ export class TaskRepository {
 			fields.push('input_draft = ?');
 			values.push(params.inputDraft ?? null);
 		}
+		if (params.restrictions !== undefined) {
+			fields.push('restrictions = ?');
+			values.push(params.restrictions !== null ? JSON.stringify(params.restrictions) : null);
+		}
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
 			values.push(Date.now());
@@ -341,6 +351,8 @@ export class TaskRepository {
 	}
 
 	private rowToTask(row: Record<string, unknown>): NeoTask {
+		const restrictionsRaw = row.restrictions;
+		const restrictionsJson = typeof restrictionsRaw === 'string' ? restrictionsRaw : null;
 		return {
 			id: row.id as string,
 			roomId: row.room_id as string,
@@ -366,6 +378,7 @@ export class TaskRepository {
 			prUrl: (row.pr_url as string | null) ?? undefined,
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
+			restrictions: restrictionsJson ? (JSON.parse(restrictionsJson) as TaskRestriction) : null,
 			updatedAt: (row.updated_at as number | null) ?? (row.created_at as number),
 		};
 	}

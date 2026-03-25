@@ -29,6 +29,8 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
 	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
 	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
+	rate_limited: ['in_progress', 'needs_attention', 'cancelled'],
+	usage_limited: ['in_progress', 'needs_attention', 'cancelled'],
 };
 
 /**

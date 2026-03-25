@@ -24,7 +24,7 @@ import { JobQueueRepository } from './storage/repositories/job-queue-repository'
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
-import { AppMcpLifecycleManager } from './lib/mcp';
+import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -265,6 +265,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Instantiate application-level MCP lifecycle manager
 	const appMcpManager = new AppMcpLifecycleManager(db);
+
+	// Seed default MCP entries (idempotent — skips entries that already exist)
+	seedDefaultMcpEntries(db);
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {

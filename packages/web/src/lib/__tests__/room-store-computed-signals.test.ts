@@ -215,7 +215,7 @@ describe('RoomStore — computed goal/task signals', () => {
 		});
 	});
 
-	describe('all 8 TaskStatus values are covered', () => {
+	describe('all 10 TaskStatus values are covered', () => {
 		it('every status falls into exactly one bucket', () => {
 			roomStore.tasks.value = [
 				makeTask('draft', 'draft'),
@@ -226,6 +226,8 @@ describe('RoomStore — computed goal/task signals', () => {
 				makeTask('completed', 'completed'),
 				makeTask('cancelled', 'cancelled'),
 				makeTask('archived', 'archived'),
+				makeTask('rate_limited', 'rate_limited'),
+				makeTask('usage_limited', 'usage_limited'),
 			];
 			roomStore.goals.value = [];
 
@@ -244,8 +246,10 @@ describe('RoomStore — computed goal/task signals', () => {
 				}
 			}
 
-			// All covered
-			expect(active.size + review.size + done.size + archived.size).toBe(8);
+			// All covered — rate_limited and usage_limited fall into the active bucket
+			expect(active.size + review.size + done.size + archived.size).toBe(10);
+			expect(active.has('rate_limited')).toBe(true);
+			expect(active.has('usage_limited')).toBe(true);
 		});
 	});
 

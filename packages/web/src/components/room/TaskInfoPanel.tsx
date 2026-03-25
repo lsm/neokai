@@ -141,8 +141,9 @@ export function TaskInfoPanel({
 		visibleActions.archive ||
 		visibleActions.setStatus;
 
-	// Model switcher: use worker session as primary, fall back to leader
-	const modelSession = workerSession ?? leaderSession;
+	// Model switchers: show separate selectors for worker and leader
+	const hasWorkerModel = workerSession?.config.model != null;
+	const hasLeaderModel = leaderSession?.config.model != null;
 
 	return (
 		<div
@@ -249,14 +250,28 @@ export function TaskInfoPanel({
 								</div>
 							)}
 
-							{/* Model switcher */}
-							{modelSession?.config.model && (
+							{/* Worker model switcher */}
+							{hasWorkerModel && workerSession && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-14">Model:</span>
+									<span class="text-gray-500 flex-shrink-0 w-14">Worker:</span>
+									<span class="text-xs text-gray-400">Model:</span>
 									<TaskViewModelSelector
-										sessionId={modelSession.id}
-										currentModel={modelSession.config.model}
-										currentProvider={modelSession.config.provider}
+										sessionId={workerSession.id}
+										currentModel={workerSession.config.model ?? ''}
+										currentProvider={workerSession.config.provider}
+									/>
+								</div>
+							)}
+
+							{/* Leader model switcher */}
+							{hasLeaderModel && leaderSession && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">Leader:</span>
+									<span class="text-xs text-gray-400">Model:</span>
+									<TaskViewModelSelector
+										sessionId={leaderSession.id}
+										currentModel={leaderSession.config.model ?? ''}
+										currentProvider={leaderSession.config.provider}
 									/>
 								</div>
 							)}

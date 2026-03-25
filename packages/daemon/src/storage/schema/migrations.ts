@@ -190,8 +190,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Short IDs are scoped to their parent room, so uniqueness must be (room_id, short_id).
 	runMigration48(db);
 
-	// Migration 49: Create app_mcp_servers table for application-level MCP server registry.
+	// Migration 49: Add restrictions column to tasks and expand status CHECK constraint
+	// to include 'rate_limited' and 'usage_limited'. These new statuses let the runtime
+	// surface API limit state in the UI and enable auto-resume on tick.
 	runMigration49(db);
+
+	// Migration 50: Create app_mcp_servers table for application-level MCP server registry.
+	// This table stores MCP server configurations that are available globally.
+	// Idempotent via CREATE TABLE IF NOT EXISTS.
+	runMigration50(db);
 }
 
 /**
@@ -3014,12 +3021,136 @@ export function runMigration48(db: BunDatabase): void {
 }
 
 /**
- * Migration 49: Create app_mcp_servers table for application-level MCP server registry.
+ * Migration 49: Add restrictions column to tasks; expand status CHECK constraint.
  *
- * This table stores MCP server configurations registered at the application level,
- * available to any room or session. Idempotent via CREATE TABLE IF NOT EXISTS.
+ * - `tasks.restrictions TEXT` — nullable JSON blob storing TaskRestriction data when a
+ *   task is paused due to an API rate or usage limit. Cleared when the task resumes.
+ *
+ * - Status CHECK constraint gains two new values:
+ *   - `rate_limited`  — task paused because of an HTTP 429 rate limit
+ *   - `usage_limited` — task paused because of a daily/weekly usage cap with no fallback
+ *
+ * SQLite does not support ALTER TABLE to modify a CHECK constraint, so the new values
+ * are added by recreating the tasks table with DROP/INSERT SELECT/RENAME. This is
+ * idempotent: if the column or the new status values already exist the migration is a no-op.
  */
-function runMigration49(db: BunDatabase): void {
+export function runMigration49(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) return;
+
+	// Add the restrictions column if absent (new databases already have it via createTables).
+	if (!tableHasColumn(db, 'tasks', 'restrictions')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN restrictions TEXT`);
+	}
+
+	// Expand the status CHECK constraint to include the two new values.
+	// SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
+	// Guard: if the constraint already includes 'rate_limited' (detectable via sqlite_master),
+	// skip the rebuild to avoid unnecessary work on already-migrated databases.
+	const schemaSql = (
+		db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`).get() as
+			| { sql: string }
+			| undefined
+	)?.sql;
+
+	if (schemaSql && schemaSql.includes('rate_limited')) {
+		// Already migrated — constraint already contains new statuses.
+		return;
+	}
+
+	// Recreate with expanded CHECK constraint.
+	db.exec(`DROP TABLE IF EXISTS tasks_migration49_new`);
+	db.exec(`
+		CREATE TABLE tasks_migration49_new (
+			id TEXT PRIMARY KEY,
+			room_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('draft','pending','in_progress','review','completed','needs_attention','cancelled','archived','rate_limited','usage_limited')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low','normal','high','urgent')),
+			progress INTEGER,
+			current_step TEXT,
+			result TEXT,
+			error TEXT,
+			depends_on TEXT DEFAULT '[]',
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			task_type TEXT DEFAULT 'coding'
+				CHECK(task_type IN ('planning','coding','research','design','goal_review')),
+			assigned_agent TEXT DEFAULT 'coder',
+			created_by_task_id TEXT,
+			archived_at INTEGER,
+			active_session TEXT,
+			pr_url TEXT,
+			pr_number INTEGER,
+			pr_created_at INTEGER,
+			input_draft TEXT,
+			updated_at INTEGER,
+			short_id TEXT,
+			restrictions TEXT,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+		)
+	`);
+	// Build INSERT SELECT dynamically: only select columns that exist in the old table,
+	// falling back to NULL for optional columns that may be absent in old-schema DBs.
+	// This makes the migration safe against DBs created by migrations 16–48 that lacked
+	// optional columns (e.g. created_by_task_id, archived_at, pr_url, short_id, etc.).
+	const oldColumns = new Set(
+		(db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((r) => r.name)
+	);
+	// All columns present in tasks_migration49_new, in order.
+	const allNewColumns = [
+		'id',
+		'room_id',
+		'title',
+		'description',
+		'status',
+		'priority',
+		'progress',
+		'current_step',
+		'result',
+		'error',
+		'depends_on',
+		'created_at',
+		'started_at',
+		'completed_at',
+		'task_type',
+		'assigned_agent',
+		'created_by_task_id',
+		'archived_at',
+		'active_session',
+		'pr_url',
+		'pr_number',
+		'pr_created_at',
+		'input_draft',
+		'updated_at',
+		'short_id',
+		'restrictions',
+	];
+	const selectExpr = allNewColumns
+		.map((col) => (oldColumns.has(col) ? col : `NULL AS ${col}`))
+		.join(', ');
+	db.exec(`INSERT INTO tasks_migration49_new SELECT ${selectExpr} FROM tasks`);
+	db.exec(`DROP TABLE tasks`);
+	db.exec(`ALTER TABLE tasks_migration49_new RENAME TO tasks`);
+
+	// Restore indexes (IF NOT EXISTS is idempotent).
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
+	);
+}
+
+/**
+ * Migration 50: Create app_mcp_servers table for application-level MCP server registry.
+ * This table stores MCP server configurations that are available globally to any room or session.
+ * Idempotent via CREATE TABLE IF NOT EXISTS.
+ */
+export function runMigration50(db: BunDatabase): void {
 	db.exec(`
     CREATE TABLE IF NOT EXISTS app_mcp_servers (
       id TEXT PRIMARY KEY,
