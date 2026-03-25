@@ -369,6 +369,34 @@ export interface RemoveMcpServerResponse {
 	message?: string;
 }
 
+// --- Per-Room MCP Enablement ---
+
+export interface McpRoomGetEnabledRequest {
+	roomId: string;
+}
+
+export interface McpRoomGetEnabledResponse {
+	serverIds: string[];
+}
+
+export interface McpRoomSetEnabledRequest {
+	roomId: string;
+	serverId: string;
+	enabled: boolean;
+}
+
+export interface McpRoomSetEnabledResponse {
+	ok: boolean;
+}
+
+export interface McpRoomResetToGlobalRequest {
+	roomId: string;
+}
+
+export interface McpRoomResetToGlobalResponse {
+	ok: boolean;
+}
+
 // --- Output Format ---
 
 export interface GetOutputFormatRequest {

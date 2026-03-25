@@ -254,6 +254,26 @@ function mapMcpServerRow(row: Record<string, unknown>): Record<string, unknown> 
 	};
 }
 
+const MCP_ENABLEMENT_BY_ROOM_SQL = `
+SELECT
+  rme.server_id   AS serverId,
+  rme.enabled,
+  ams.name,
+  ams.source_type AS sourceType,
+  ams.description
+FROM room_mcp_enablement rme
+JOIN app_mcp_servers ams ON ams.id = rme.server_id
+WHERE rme.room_id = ?
+ORDER BY ams.id ASC
+`.trim();
+
+function mapMcpEnablementRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		enabled: row.enabled === 1,
+	};
+}
+
 /**
  * Canonical task timeline query (no projection table):
  * - SDK messages are read directly from sdk_messages joined through session_group_members.
@@ -361,6 +381,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			mapRow: mapMcpServerRow,
 		},
 	],
+	[
+		'mcpEnablement.byRoom',
+		{
+			sql: MCP_ENABLEMENT_BY_ROOM_SQL,
+			paramCount: 1,
+			mapRow: mapMcpEnablementRow,
+		},
+	],
 ]);
 
 // ============================================================================
@@ -421,7 +449,11 @@ export function setupLiveQueryHandlers(
 		}
 
 		// 4. Authorization checks
-		if (queryName === 'tasks.byRoom' || queryName === 'goals.byRoom') {
+		if (
+			queryName === 'tasks.byRoom' ||
+			queryName === 'goals.byRoom' ||
+			queryName === 'mcpEnablement.byRoom'
+		) {
 			const roomId = params[0] as string;
 			if (!stmtRoom.get(roomId)) {
 				throw new Error(`Unauthorized: room "${roomId}" not found`);

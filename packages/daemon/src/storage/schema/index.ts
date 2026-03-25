@@ -23,6 +23,8 @@ export { runMigration48 } from './migrations';
 export { runMigration49 } from './migrations';
 // knip-ignore-next-line
 export { runMigration50 } from './migrations';
+// knip-ignore-next-line
+export { runMigration51 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -347,6 +349,16 @@ export function createTables(db: BunDatabase): void {
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER,
         updated_at INTEGER
+      )
+    `);
+
+	// Per-room MCP enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_mcp_enablement (
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (room_id, server_id)
       )
     `);
 
