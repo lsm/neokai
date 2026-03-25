@@ -645,6 +645,8 @@ export const TASK_AGENT_NODE_ID = '__task_agent__';
  * No channels = no messaging constraints (agents are fully isolated).
  */
 export interface WorkflowChannel {
+	/** Optional stable identifier for this channel */
+	id?: string;
 	/**
 	 * Source role string (matches `WorkflowNodeAgent.role`) or `'*'` for all agents in the node.
 	 */
@@ -663,6 +665,11 @@ export interface WorkflowChannel {
 	 *   spoke may reply to hub only (no spoke-to-spoke messaging).
 	 */
 	direction: 'one-way' | 'bidirectional';
+	/**
+	 * When true, each delivery on this channel increments the run's iteration counter.
+	 * Used for cyclic workflows — channel-level analogue of WorkflowTransition.isCyclic.
+	 */
+	isCyclic?: boolean;
 	/** Optional human-readable label for display in the visual editor */
 	label?: string;
 }
@@ -790,6 +797,14 @@ export interface SpaceWorkflow {
 	/** Rules that govern agent behavior during this workflow */
 	rules: WorkflowRule[];
 	/**
+	 * Workflow-level directed messaging channels between agents.
+	 * Use `from`/`to` to reference `WorkflowNodeAgent.role` values (globally unique across
+	 * the workflow) or node names (for fan-out to all agents in a node).
+	 * Channels defined here take precedence over node-level channels.
+	 * No channels = no messaging constraints (agents are fully isolated).
+	 */
+	channels?: WorkflowChannel[];
+	/**
 	 * @deprecated isDefault is no longer used for workflow selection.
 	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
 	 * This field is retained for backward compatibility but has no runtime effect.
@@ -836,6 +851,10 @@ export interface CreateSpaceWorkflowParams {
 	 */
 	rules?: WorkflowRuleInput[];
 	/**
+	 * Workflow-level messaging channels. `id` is optional — backend generates one when omitted.
+	 */
+	channels?: WorkflowChannel[];
+	/**
 	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
 	 */
 	isDefault?: boolean;
@@ -876,6 +895,10 @@ export interface UpdateSpaceWorkflowParams {
 	 * Replaces the entire rule list. Pass `[]` or `null` to clear all rules.
 	 */
 	rules?: WorkflowRule[] | null;
+	/**
+	 * Replaces the entire channel list. Pass `[]` or `null` to clear all channels.
+	 */
+	channels?: WorkflowChannel[] | null;
 	/**
 	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
 	 */
@@ -1079,6 +1102,11 @@ export interface ExportedSpaceWorkflow {
 	tags: string[];
 	/** Additional runtime configuration */
 	config?: Record<string, unknown>;
+	/**
+	 * Workflow-level messaging channels. Exported as-is — they already use role strings
+	 * and node names, not UUIDs, so no remapping is needed on import.
+	 */
+	channels?: WorkflowChannel[];
 }
 
 /**
