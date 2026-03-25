@@ -48,19 +48,30 @@ Clean up all remaining step-transition code and types that are no longer needed.
 
 ---
 
-### Task 9.2: Remove currentNodeId and Terminal-Node Detection
+### Task 9.2: Remove currentNodeId from Workflow Run
 
 **Description**: Remove `currentNodeId` from `SpaceWorkflowRun` since the agent-centric model doesn't track a single active node.
+
+**Important distinction**: `startNodeId` on `SpaceWorkflow` (the workflow template/definition) **stays unchanged** — it tells the system which node to activate first when a run starts. Only `currentNodeId` on `SpaceWorkflowRun` (the runtime execution state) is removed. In the agent-centric model, `SpaceRuntime.startWorkflowRun()` activates the start node via `activateNode()` (from Task 4.1a) using the workflow's `startNodeId`. After that, nodes are activated lazily by the router — there is no single "current" node to track.
+
+**Iteration tracking stays**: The `iteration_count` and `max_iterations` columns on `space_workflow_runs` remain. Iteration counting is now handled by `CrossNodeChannelRouter.deliverMessage()` when delivering through channels with `isCyclic: true`, replacing the old `advance()` → `followTransition()` path.
 
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`:
    - Remove `currentNodeId` field from `SpaceWorkflowRun`
-2. Add a DB migration to drop the `current_node_id` column from `space_workflow_runs`
-3. Clean up any code that reads or writes `currentNodeId` (should already be cleaned up by Milestone 4/5, but verify)
-4. Run full test suite to verify no regressions
+   - Keep `startNodeId` on `SpaceWorkflow` (unchanged — it's a workflow definition property)
+   - Keep `iterationCount` and `maxIterations` on `SpaceWorkflowRun` (unchanged — iteration tracking moved to router in M4)
+2. Add a DB migration to drop the `current_node_id` column from `space_workflow_runs` (keep `iteration_count` and `max_iterations`)
+3. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
+   - Update `startWorkflowRun()` to activate the start node via `activateNode()` instead of setting `currentNodeId`
+   - Verify iteration tracking is now handled by the router (not by `advance()`)
+4. Clean up any code that reads or writes `currentNodeId` (should already be cleaned up by Milestone 4/5, but verify)
+5. Run full test suite to verify no regressions
 
 **Acceptance Criteria**:
-- `currentNodeId` removed from type and DB
+- `currentNodeId` removed from `SpaceWorkflowRun` type and DB
+- `startNodeId` on `SpaceWorkflow` still works correctly
+- Workflow runs activate the start node via `activateNode()`
 - No code references `currentNodeId`
 - All tests pass
 

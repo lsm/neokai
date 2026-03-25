@@ -56,6 +56,7 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
      // 3. Evaluate the gate
      // 4. If allowed, inject the message
      // 5. If gate blocked, return the reason (agent can retry or escalate)
+     // 6. If the matching channel is cyclic (isCyclic=true), increment the run's iteration counter
      async deliverMessage(params: {
        workflowRunId: string;
        fromRole: string;
@@ -77,12 +78,20 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    }
    ```
 3. Gate evaluation uses `ChannelGateEvaluator` from Milestone 1
+4. **Iteration tracking**: When `deliverMessage()` matches a `CrossNodeChannel` with `isCyclic: true`:
+   - Increment the run's `iterationCount` via `workflowRunRepo.updateRun()`
+   - Check against `run.maxIterations` — if `iterationCount >= maxIterations`, deny delivery with reason: "Iteration cap reached (N/M): cyclic channel from X to Y would exceed maximum iterations"
+   - This replaces the old `advance()` behavior where `followTransition()` checked `isCyclic` on `WorkflowTransition`
+5. For human gates: return `{ allowed: false, reason: 'Waiting for human approval' }` -- the agent can use `request_human_input` (existing tool) and retry
+3. Gate evaluation uses `ChannelGateEvaluator` from Milestone 1
 4. For human gates: return `{ allowed: false, reason: 'Waiting for human approval' }` -- the agent can use `request_human_input` (existing tool) and retry
 
 **Acceptance Criteria**:
 - `canDeliver()` correctly evaluates gate conditions
 - `deliverMessage()` routes messages across nodes after gate evaluation
 - Gate-blocked messages return clear reasons
+- Cyclic channels (`isCyclic: true`) increment `iterationCount` and enforce `maxIterations`
+- Iteration cap is checked before delivery (not after) — prevents message delivery if cap would be exceeded
 - The router is unit-testable with mock dependencies
 
 **Dependencies**: Tasks 1.3, 2.2, 4.1a
@@ -127,6 +136,8 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
 ### Task 4.2: Extend send_message for Cross-Node Delivery
 
 **Description**: Update the `send_message` tool in step-agent-tools.ts to support cross-node delivery via gated channels, using a Slack-like addressing model. There is only one addressing mechanism (`target`) — whether the message is "group chat" or "DM" depends on how many recipients match.
+
+**Within-node broadcast semantics (unchanged)**: The existing within-node `target: 'coder'` retains its current broadcast behavior — it sends the message to **all** agents with role 'coder' on the same node. This is not a DM; it's the node's group chat. The DM semantics (`{ node, agent }`) only apply to cross-node targeting.
 
 **Subtasks**:
 1. Add `CrossNodeChannelRouter` as an optional dependency to `StepAgentToolsConfig`
@@ -267,10 +278,13 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    - Wildcard channel routes to all agents in target node
    - Invalid channel reference returns error
    - Lazy activation of target node on first delivery
+   - Cyclic channel delivery increments iteration count
+   - Iteration cap blocks delivery when reached
+   - Non-cyclic channel delivery does NOT increment iteration count
    - Idempotent activation on subsequent deliveries
 3. Create `packages/daemon/tests/unit/space/step-agent-cross-node-messaging.test.ts`
 4. Test cases for `send_message` cross-node extension:
-   - Within-node delivery still works
+   - Within-node delivery still works (broadcast to all agents matching role)
    - Cross-node delivery with `{ node }` target (all agents in node)
    - Cross-node delivery with `{ node, role }` target (specific role)
    - Cross-node delivery with `{ node, agent }` target (specific agent DM)

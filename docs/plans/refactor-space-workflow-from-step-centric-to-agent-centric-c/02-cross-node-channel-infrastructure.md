@@ -32,6 +32,7 @@ Think of `CrossNodeChannel` as channel configuration (like Slack channel setting
      toAgent?: number;                    // target specific agent by 1-based index (for DM addressing)
      direction: 'one-way' | 'bidirectional';
      gate?: WorkflowCondition;            // policy enforcement
+     isCyclic?: boolean;                  // when true, each delivery through this channel increments the run's iteration counter
      label?: string;                      // human-readable label
    }
    ```
