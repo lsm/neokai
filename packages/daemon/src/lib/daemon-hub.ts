@@ -549,9 +549,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		workflowId: string;
 	};
 
-	// MCP registry events (global events - use 'global' as sessionId)
-	'mcp.registry.changed': { sessionId: string };
-
 	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)
 	'featureFlag.updated': {
 		sessionId: string;
