@@ -71,18 +71,47 @@ describe('ResolvedReference variants', () => {
 		const ref: ResolvedFileReference = {
 			type: 'file',
 			id: 'src/app.ts',
-			data: { path: 'src/app.ts', content: 'export {}' },
+			data: {
+				path: 'src/app.ts',
+				content: 'export {}',
+				binary: false,
+				truncated: false,
+				size: 9,
+				mtime: new Date().toISOString(),
+			},
 		};
 		expect(ref.type).toBe('file');
+		expect(ref.data.binary).toBe(false);
+	});
+
+	it('ResolvedFileReference supports binary files with null content', () => {
+		const ref: ResolvedFileReference = {
+			type: 'file',
+			id: 'image.png',
+			data: {
+				path: 'image.png',
+				content: null,
+				binary: true,
+				truncated: false,
+				size: 1024,
+				mtime: new Date().toISOString(),
+			},
+		};
+		expect(ref.data.binary).toBe(true);
+		expect(ref.data.content).toBeNull();
 	});
 
 	it('ResolvedFolderReference has type folder', () => {
 		const ref: ResolvedFolderReference = {
 			type: 'folder',
 			id: 'src/',
-			data: { path: 'src/', entries: [{ name: 'app.ts', type: 'file' }] },
+			data: {
+				path: 'src/',
+				entries: [{ name: 'app.ts', path: 'src/app.ts', type: 'file' }],
+			},
 		};
 		expect(ref.type).toBe('folder');
+		expect(ref.data.entries).toHaveLength(1);
 	});
 
 	it('ResolvedReference accepts unknown data', () => {

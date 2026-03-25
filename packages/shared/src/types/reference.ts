@@ -54,11 +54,19 @@ export interface ResolvedGoalReference extends ResolvedReference {
 	type: 'goal';
 }
 
+/** Resolved file reference — data includes content (possibly truncated or absent for binary files) */
 export interface ResolvedFileReference extends ResolvedReference {
 	type: 'file';
 	data: {
 		path: string;
-		content: string;
+		/** UTF-8 text content, or null when the file is binary */
+		content: string | null;
+		/** True when the file contains binary (non-text) data; content will be null */
+		binary: boolean;
+		/** True when file content was truncated to stay within payload limits */
+		truncated: boolean;
+		size: number;
+		mtime: string;
 	};
 }
 
@@ -66,7 +74,11 @@ export interface ResolvedFolderReference extends ResolvedReference {
 	type: 'folder';
 	data: {
 		path: string;
-		entries: Array<{ name: string; type: 'file' | 'folder' }>;
+		entries: Array<{
+			name: string;
+			path: string;
+			type: 'file' | 'directory';
+		}>;
 	};
 }
 
