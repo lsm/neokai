@@ -478,7 +478,7 @@ export class WorkflowExecutor {
 					workflowNodeId: nextStep.id,
 					taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
 					customAgentId: resolved !== undefined ? resolved.customAgentId : agentEntry.agentId,
-					slotRole: agentEntry.name,
+					agentName: agentEntry.name,
 					status: 'pending',
 					goalId: this.run.goalId,
 				});
@@ -489,7 +489,7 @@ export class WorkflowExecutor {
 					const existingTasks = (await this.taskManager.listTasksByWorkflowRun(this.run.id)).filter(
 						(t) =>
 							t.workflowNodeId === nextStep.id &&
-							t.slotRole === agentEntry.name &&
+							t.agentName === agentEntry.name &&
 							ACTIVE_STATUSES.has(t.status)
 					);
 					if (existingTasks.length > 0) {
