@@ -1068,6 +1068,15 @@ export function setupTaskHandlers(
 			}
 		}
 
+		// rate_limited/usage_limited tasks: clear the group's rate limit so the message can be
+		// routed normally. clearGroupRateLimit() also restores the task status to in_progress
+		// and clears any task restrictions. Falls through to the generic
+		// routeHumanMessageToGroup() call below. If clearGroupRateLimit returns false (no
+		// group found), we continue anyway — routeHumanMessageToGroup will surface the error.
+		if (task.status === 'rate_limited' || task.status === 'usage_limited') {
+			await runtime.clearGroupRateLimit(taskId);
+		}
+
 		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,

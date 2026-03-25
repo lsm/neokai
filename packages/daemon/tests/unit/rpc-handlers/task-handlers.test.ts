@@ -144,7 +144,12 @@ function makeDb(groupRow: Record<string, unknown> | null): Database {
 }
 
 /** Build a mock RoomRuntimeService with a runtime that can resume/inject. */
-function makeRuntimeService(resumeResult = true, injectResult = true, reviveResult = true) {
+function makeRuntimeService(
+	resumeResult = true,
+	injectResult = true,
+	reviveResult = true,
+	clearGroupRateLimitResult = true
+) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
@@ -156,6 +161,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true, reviveResu
 	const terminateTaskGroup = mock(async () => injectResult);
 	const interruptTaskSession = mock(async () => ({ success: injectResult }));
 	const archiveTaskGroup = mock(async () => true);
+	const clearGroupRateLimit = mock(async () => clearGroupRateLimitResult);
 	const runtime = {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
@@ -165,6 +171,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true, reviveResu
 		terminateTaskGroup,
 		interruptTaskSession,
 		archiveTaskGroup,
+		clearGroupRateLimit,
 	};
 	const service = {
 		getRuntime: mock(() => runtime),
@@ -659,6 +666,73 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				'hello default',
 				'worker'
 			);
+		});
+	});
+
+	describe('rate_limited / usage_limited task — clears group rate limit before routing', () => {
+		function setupWithLimitedTask(status: 'rate_limited' | 'usage_limited', clearResult = true) {
+			const limitedTask = { ...mockTask, status };
+			const { service, runtime } = makeRuntimeService(true, true, true, clearResult);
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				makeTaskManagerFactory(limitedTask),
+				service
+			);
+			return { runtime };
+		}
+
+		it('calls clearGroupRateLimit for a rate_limited task', async () => {
+			const { runtime } = setupWithLimitedTask('rate_limited');
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'resume please' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('calls clearGroupRateLimit for a usage_limited task', async () => {
+			const { runtime } = setupWithLimitedTask('usage_limited');
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'continue after limit reset' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('continues routing even when clearGroupRateLimit returns false (no group found)', async () => {
+			const { runtime } = setupWithLimitedTask('rate_limited', false);
+
+			// The handler should continue to routeHumanMessageToGroup which will succeed
+			// (the mock group row exists, so routing will work).
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'retry' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('does not call clearGroupRateLimit for an in_progress task', async () => {
+			const { service, runtime } = makeRuntimeService(true, true, true, true);
+			setup({ task: mockTask, runtimeService: service });
+
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {});
+
+			expect(runtime.clearGroupRateLimit).not.toHaveBeenCalled();
 		});
 	});
 
