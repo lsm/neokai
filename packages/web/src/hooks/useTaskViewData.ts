@@ -96,10 +96,15 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		let cancelled = false;
 		let fetchGroupSeq = 0;
 
+		// Track current session IDs for session.updated event subscriptions
+		const currentSessionIds = { worker: '', leader: '' };
+
 		const fetchSessionInfo = async (grp: TaskGroupInfo | null) => {
 			if (!grp) {
 				setWorkerSession(null);
 				setLeaderSession(null);
+				currentSessionIds.worker = '';
+				currentSessionIds.leader = '';
 				return;
 			}
 			try {
@@ -114,6 +119,8 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 				if (!cancelled) {
 					setWorkerSession(workerRes?.session ?? null);
 					setLeaderSession(leaderRes?.session ?? null);
+					currentSessionIds.worker = workerRes?.session?.id ?? '';
+					currentSessionIds.leader = leaderRes?.session?.id ?? '';
 				}
 			} catch {
 				// Session fetch failure is non-fatal
@@ -178,16 +185,39 @@ export function useTaskViewData(roomId: string, taskId: string): UseTaskViewData
 		load();
 
 		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
-		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
-			if (event.task.id === taskId && !cancelled) {
-				setTask(event.task);
-				void fetchGroup();
+		const unsubTaskUpdate = onEvent<{ roomId: string; task: NeoTask }>(
+			'room.task.update',
+			(event) => {
+				if (event.task.id === taskId && !cancelled) {
+					setTask(event.task);
+					void fetchGroup();
+				}
 			}
-		});
+		);
+
+		// Update session model when session.updated event is received for worker or leader.
+		// This ensures the model label in TaskInfoPanel updates immediately after a model switch.
+		const unsubSessionUpdate = onEvent<{ sessionId: string; model?: string }>(
+			'session.updated',
+			(event) => {
+				if (cancelled) return;
+				if (event.sessionId === currentSessionIds.worker && event.model) {
+					setWorkerSession((prev) =>
+						prev ? { ...prev, config: { ...prev.config, model: event.model! } } : null
+					);
+				}
+				if (event.sessionId === currentSessionIds.leader && event.model) {
+					setLeaderSession((prev) =>
+						prev ? { ...prev, config: { ...prev.config, model: event.model! } } : null
+					);
+				}
+			}
+		);
 
 		return () => {
 			cancelled = true;
-			unsub();
+			unsubTaskUpdate();
+			unsubSessionUpdate();
 			leaveRoom(channel);
 		};
 	}, [roomId, taskId, isConnected]);

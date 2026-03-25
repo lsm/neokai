@@ -39,7 +39,6 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
-import type { ModelSwitchResult } from '../../agent/model-switch-handler';
 import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
 import type {
@@ -395,11 +394,11 @@ export class RoomRuntime {
 		}
 
 		try {
-			const result = (await this.messageHub?.request('session.model.switch', {
+			const result = await this.sessionFactory.switchModel(
 				sessionId,
-				model: fallback.model,
-				provider: fallback.provider,
-			})) as ModelSwitchResult | undefined;
+				fallback.model,
+				fallback.provider
+			);
 
 			if (result?.success) {
 				log.info(

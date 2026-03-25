@@ -114,6 +114,16 @@ export interface SessionFactory {
 	 * Returns true if worktree was removed, false if it didn't exist or was main repo.
 	 */
 	removeWorktree(workspacePath: string): Promise<boolean>;
+	/**
+	 * Switch the model for a session directly without going through RPC.
+	 * This avoids creating duplicate AgentSession instances via SessionManager.
+	 * Returns the result of the model switch operation.
+	 */
+	switchModel(
+		sessionId: string,
+		model: string,
+		provider: string
+	): Promise<{ success: boolean; model: string; error?: string }>;
 }
 
 /**

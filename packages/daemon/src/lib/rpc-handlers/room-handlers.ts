@@ -306,6 +306,39 @@ export function setupRoomRuntimeHandlers(
 		return { leaderModel, workerModel };
 	});
 
+	// room.runtime.model.get - Get current model for a task session
+	messageHub.onRequest('room.runtime.model.get', async (data) => {
+		const params = data as { sessionId: string };
+		if (!params.sessionId) throw new Error('Session ID is required');
+		const result = await roomRuntimeService.modelGet(params.sessionId);
+		if (!result) throw new Error('Session not found in runtime');
+		return result;
+	});
+
+	// room.runtime.model.switch - Switch model for a task session
+	messageHub.onRequest('room.runtime.model.switch', async (data) => {
+		const params = data as { sessionId: string; model: string; provider: string };
+		if (!params.sessionId) throw new Error('Session ID is required');
+		if (!params.model) throw new Error('Model is required');
+		if (!params.provider) throw new Error('Provider is required');
+		const result = await roomRuntimeService.modelSwitch(
+			params.sessionId,
+			params.model,
+			params.provider
+		);
+		if (!result.success) {
+			throw new Error(result.error ?? 'Model switch failed');
+		}
+		// Emit session.updated event for parity with session.model.switch handler.
+		// This allows listeners to react to model changes on task sessions.
+		messageHub.event(
+			'session.updated',
+			{ sessionId: params.sessionId, model: result.model },
+			{ channel: `session:${params.sessionId}` }
+		);
+		return result;
+	});
+
 	// room.runtime.pause - Pause runtime
 	messageHub.onRequest('room.runtime.pause', async (data) => {
 		const params = data as { roomId: string };

@@ -140,6 +140,37 @@ export class RoomRuntimeService {
 		return this.agentSessions.get(sessionId);
 	}
 
+	/**
+	 * Get the current model for a task session.
+	 * Returns the model info or null if the session is not found.
+	 */
+	async modelGet(sessionId: string): Promise<{ currentModel: string; provider: string } | null> {
+		const session = this.agentSessions.get(sessionId);
+		if (!session) return null;
+		const sessionData = session.getSessionData();
+		return {
+			currentModel: sessionData.config.model,
+			provider: sessionData.config.provider ?? '',
+		};
+	}
+
+	/**
+	 * Switch the model for a task session.
+	 * This operates on the runtime's own AgentSession instances to avoid
+	 * creating duplicate sessions via SessionManager.
+	 */
+	async modelSwitch(
+		sessionId: string,
+		model: string,
+		provider: string
+	): Promise<{ success: boolean; model: string; error?: string }> {
+		const session = this.agentSessions.get(sessionId);
+		if (!session) {
+			return { success: false, model: '', error: 'Session not found in runtime' };
+		}
+		return session.handleModelSwitch(model, provider);
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
@@ -473,6 +504,13 @@ export class RoomRuntimeService {
 					log.warn(`Failed to remove worktree ${workspacePath}:`, error);
 					return false;
 				}
+			},
+			switchModel: async (sessionId, model, provider) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) {
+					return { success: false, model: '', error: 'Session not found in runtime' };
+				}
+				return session.handleModelSwitch(model, provider);
 			},
 		};
 	}

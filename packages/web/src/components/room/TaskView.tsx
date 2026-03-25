@@ -283,6 +283,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			{/* Info panel — expands below header when gear is clicked */}
 			<TaskInfoPanel
 				isOpen={isInfoPanelOpen}
+				roomId={roomId}
 				taskId={task.id}
 				groupId={group?.id}
 				feedbackIteration={group?.feedbackIteration}
