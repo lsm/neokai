@@ -336,6 +336,16 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		inboxItemId: string;
 	};
 
+	// App-level MCP registry events
+	/**
+	 * Emitted by app-mcp-handlers on create/update/delete/setEnabled.
+	 * Used by RoomRuntimeService (Task 3.2) for hot-reload of MCP server lists.
+	 * This is separate from LiveQuery — both are emitted on every write.
+	 */
+	'mcp.registry.changed': {
+		sessionId: string;
+	};
+
 	// Goal events
 	'goal.created': {
 		sessionId: string;

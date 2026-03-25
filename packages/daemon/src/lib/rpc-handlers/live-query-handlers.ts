@@ -206,6 +206,54 @@ WHERE room_id = ?
 ORDER BY priority DESC, created_at ASC, id ASC
 `.trim();
 
+const MCP_SERVERS_GLOBAL_SQL = `
+SELECT
+  id,
+  name,
+  description,
+  source_type  AS sourceType,
+  command,
+  args,
+  env,
+  url,
+  headers,
+  enabled,
+  created_at   AS createdAt,
+  updated_at   AS updatedAt
+FROM app_mcp_servers
+ORDER BY name, id ASC
+`.trim();
+
+/**
+ * Map a raw SQLite row from the `app_mcp_servers` table to the AppMcpServer
+ * shape expected by the frontend.
+ *
+ * JSON blob columns: `args`, `env`, `headers`.
+ * Boolean coercion: `enabled` — SQLite stores 0/1; convert to JS boolean.
+ * snake_case mapping: `source_type` → `sourceType` (handled via AS alias in SQL).
+ */
+function mapMcpServerRow(row: Record<string, unknown>): Record<string, unknown> {
+	// Mirror the repository's rowToServer logic: omit optional fields entirely when the
+	// SQLite column is NULL rather than spreading null into the AppMcpServer object.
+	// This keeps the LiveQuery path type-consistent with the RPC handler path.
+	return {
+		id: row.id,
+		name: row.name,
+		sourceType: row.sourceType,
+		enabled: row.enabled === 1,
+		...(row.description != null ? { description: row.description } : {}),
+		...(row.command != null ? { command: row.command } : {}),
+		...(row.url != null ? { url: row.url } : {}),
+		...(row.args != null ? { args: JSON.parse(row.args as string) as string[] } : {}),
+		...(row.env != null ? { env: JSON.parse(row.env as string) as Record<string, string> } : {}),
+		...(row.headers != null
+			? { headers: JSON.parse(row.headers as string) as Record<string, string> }
+			: {}),
+		...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
+		...(row.updatedAt != null ? { updatedAt: row.updatedAt } : {}),
+	};
+}
+
 /**
  * Canonical task timeline query (no projection table):
  * - SDK messages are read directly from sdk_messages joined through session_group_members.
@@ -303,6 +351,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
 			paramCount: 1,
 			mapRow: mapSessionGroupMessageRow,
+		},
+	],
+	[
+		'mcpServers.global',
+		{
+			sql: MCP_SERVERS_GLOBAL_SQL,
+			paramCount: 0,
+			mapRow: mapMcpServerRow,
 		},
 	],
 ]);
