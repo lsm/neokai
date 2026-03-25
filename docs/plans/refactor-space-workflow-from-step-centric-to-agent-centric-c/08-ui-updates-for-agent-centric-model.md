@@ -2,11 +2,11 @@
 
 ## Goal
 
-Update the frontend visual editor and components to support the agent-centric model: cross-node channels, gate configuration, and agent completion state display. This milestone runs in parallel with Milestone 7 (backend workflow migration).
+Update the frontend visual editor and components to support the agent-centric model: cross-node channels, gate configuration, and agent completion state display. This milestone runs in parallel with Milestone 7 (backend workflow replacement).
 
 ## Scope
 
-- Update visual workflow editor to display cross-node channels
+- Update visual workflow editor to display cross-node channels (replacing transition arrows)
 - Add gate configuration UI
 - Update node cards for agent completion state
 - Web tests and e2e tests
@@ -19,7 +19,7 @@ Update the frontend visual editor and components to support the agent-centric mo
 
 **Subtasks**:
 1. In `packages/web/src/components/space/visual-editor/WorkflowCanvas.tsx`:
-   - Render cross-node channels as arrows between nodes (similar to existing transition arrows)
+   - Replace transition arrows with cross-node channel arrows
    - Add visual distinction for gated channels (e.g., different color or gate icon)
    - Allow clicking on a cross-node channel to edit its gate configuration
 2. In `packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx`:
@@ -27,16 +27,15 @@ Update the frontend visual editor and components to support the agent-centric mo
    - Support all 4 condition types: always, human, condition, task_result
    - Allow configuring gate expression, description, retries, timeout
 3. In `packages/web/src/components/space/WorkflowEditor.tsx`:
-   - Add a "Cross-Node Channels" section in the non-visual workflow editor
+   - Replace the "Transitions" section with a "Cross-Node Channels" section
    - CRUD interface for cross-node channels
 4. Create new component `CrossNodeChannelEditor.tsx` for gate configuration
 
 **Acceptance Criteria**:
-- Cross-node channels are visible in the visual editor
+- Cross-node channels are visible in the visual editor (no transition arrows)
 - Users can add/edit/delete cross-node channels
 - Gate configuration UI supports all condition types
 - Visual distinction between gated and ungated channels
-- Existing transition editing still works
 
 **Dependencies**: Tasks 2.1, 7.1
 
@@ -75,12 +74,14 @@ Update the frontend visual editor and components to support the agent-centric mo
 **Subtasks**:
 1. Update `packages/web/src/components/space/__tests__/WorkflowEditor.test.tsx`:
    - Test cross-node channel CRUD operations
+   - Remove any transition-related tests
 2. Create `packages/web/src/components/space/visual-editor/__tests__/CrossNodeChannelEditor.test.tsx`:
    - Test gate configuration for each condition type
 3. Update `packages/web/src/components/space/__tests__/WorkflowNodeCard.test.tsx`:
    - Test agent completion state display
 4. Update `packages/web/src/components/space/visual-editor/__tests__/WorkflowCanvas.test.tsx`:
    - Test cross-node channel rendering
+   - Remove any transition rendering tests
 
 **Acceptance Criteria**:
 - All web tests pass (`cd packages/web && bunx vitest run`)
@@ -118,6 +119,4 @@ Update the frontend visual editor and components to support the agent-centric mo
 
 ## Rollback Strategy
 
-- UI changes are purely additive (new components, new sections) — no existing UI behavior is removed
-- If issues arise, the new UI components can be hidden behind a feature flag or simply not rendered for workflows without cross-node channels
-- The visual editor already conditionally renders based on workflow properties, so workflows without cross-node channels will show the old UI naturally
+- UI changes can be reverted by restoring the pre-milestone commit. Since the feature is unreleased, there is no production UI to worry about.

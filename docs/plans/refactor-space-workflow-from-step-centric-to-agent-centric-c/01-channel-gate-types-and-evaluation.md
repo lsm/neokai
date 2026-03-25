@@ -9,7 +9,6 @@ Add gate/condition support to `WorkflowChannel`, enabling channels to enforce po
 - Extend `WorkflowChannel` type to include an optional `gate` field
 - Create `ChannelGateEvaluator` class to evaluate channel gates
 - Add unit tests for gate evaluation
-- Ensure backward compatibility (channels without gates work identically to current behavior)
 
 ## Tasks
 
@@ -20,14 +19,16 @@ Add gate/condition support to `WorkflowChannel`, enabling channels to enforce po
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`, add `gate?: WorkflowCondition` to the `WorkflowChannel` interface
 2. Update the JSDoc comment on `WorkflowChannel` to document the gate field
-3. Add a `WorkflowChannelInput` type (analogous to `WorkflowTransitionInput`) that omits the `id` field (channels don't have IDs currently, but preparing for future use)
+3. Add a `WorkflowChannelInput` type (analogous to `WorkflowTransitionInput`) that omits the `id` field
 4. Export the new types from `packages/shared/src/types/space.ts`
 
 **Acceptance Criteria**:
 - `WorkflowChannel` has an optional `gate?: WorkflowCondition` field
-- Existing code that creates `WorkflowChannel` objects without a gate still compiles and works
+- Code that creates `WorkflowChannel` objects without a gate still compiles and works
 - TypeScript typecheck passes (`bun run typecheck`)
 - `resolveNodeChannels()` in `packages/shared/src/types/space-utils.ts` passes through gate field unchanged to `ResolvedChannel`
+- `bun run lint` passes
+- `bun run format:check` passes
 
 **Dependencies**: None
 
@@ -111,22 +112,8 @@ Add gate/condition support to `WorkflowChannel`, enabling channels to enforce po
 
 **Agent Type**: coder
 
----
-
-### Task 1.5: Verify Shared Module Exports and Typecheck (folded into Tasks 1.1 and 1.2)
-
-> **Note**: This task has been folded into the acceptance criteria of Tasks 1.1 and 1.2. The following verification steps are required as part of those tasks:
->
-> - Verify `packages/shared/src/mod.ts` re-exports everything needed
-> - Run `bun run typecheck` to verify no import errors
-> - Run `bun run lint` to verify no lint errors
-> - Ensure new types are accessible from `@neokai/shared`
->
-> This is not a standalone task — it is a verification checklist completed as part of Tasks 1.1 and 1.2.
-
 ## Rollback Strategy
 
 - This milestone is purely additive (new optional `gate` field on `WorkflowChannel`). No existing behavior is changed.
 - No DB schema changes in this milestone.
-- If issues arise, the `gate` field can be ignored by downstream code — channels without gates work identically to current behavior.
 - The `ChannelGateEvaluator` class is new code with no impact on existing paths unless explicitly called.

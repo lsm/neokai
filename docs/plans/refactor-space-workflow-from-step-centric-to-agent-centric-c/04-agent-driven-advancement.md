@@ -2,14 +2,16 @@
 
 ## Goal
 
-Enable agents to drive workflow progression through gated cross-node channels, replacing `advance()` as the primary workflow driver. When an agent sends a message through a gated cross-node channel, the gate is evaluated and if it passes, the message is delivered to the target agent in the next node, effectively advancing the workflow.
+Enable agents to drive workflow progression through gated cross-node channels. When an agent sends a message through a gated cross-node channel, the gate is evaluated and if it passes, the message is delivered to the target agent in the next node. This replaces `advance()` as the workflow driver.
 
 ## Scope
 
 - Implement gated message delivery for cross-node channels
-- Create the channel-routing + gate-enforcement layer in the executor
+- Create the channel-routing + gate-enforcement layer
+- Implement lazy target-node activation
 - Update `send_message` to support cross-node delivery
 - Add `check_cross_node_channels` tool to step agents
+- Remove `advance()` and replace with agent-driven progression
 - Wire gate evaluation into the message delivery path
 
 ## Tasks
@@ -83,41 +85,32 @@ Enable agents to drive workflow progression through gated cross-node channels, r
 
 ---
 
-### Task 4.1a: Target-Node Activation Strategy (Lazy Activation)
+### Task 4.1a: Target-Node Activation (Lazy Activation)
 
-**Description**: Define and implement the strategy for activating target nodes when a cross-node channel fires but the target node's agents have not yet been spawned. In the current architecture, `advance()` creates pending `SpaceTask` records which are prerequisites for `spawn_step_agent`. Without `advance()`, something else must materialize those tasks/sessions.
+**Description**: Implement the strategy for activating target nodes when a cross-node channel fires but the target node's agents have not yet been spawned.
 
-**Chosen approach: Lazy activation by the router.** When `CrossNodeChannelRouter.deliverMessage()` targets a node that has no active tasks or sessions, the router itself creates the pending tasks for that node by calling `SpaceTaskManager` (or an equivalent path). This ensures agents are materialized on-demand when cross-node channels fire, without requiring pre-spawning or Task Agent orchestration.
-
-**Why lazy activation over alternatives:**
-- **Pre-spawning all nodes** at workflow start wastes resources and can confuse agents that receive messages before they have context.
-- **Requiring the Task Agent to explicitly activate** adds coordination complexity and reintroduces a central controller pattern we're trying to move away from.
-- **Lazy activation** is the most agent-centric: the system reacts to agent initiative, not the other way around.
+**Chosen approach: Lazy activation by the router.** When `CrossNodeChannelRouter.deliverMessage()` targets a node that has no active tasks or sessions, the router itself creates the pending tasks for that node. This ensures agents are materialized on-demand when cross-node channels fire.
 
 **Subtasks**:
 1. In `CrossNodeChannelRouter.deliverMessage()`, before resolving the target agent's session:
    - Query `SpaceTaskRepository` for active tasks on the target node (`workflowRunId` + `nodeId`)
    - If no active tasks exist, call `SpaceTaskManager.createTasksForNode()` to create pending tasks for the target node's agents
-   - The task creation follows the same logic as `WorkflowExecutor.advance()` but is scoped to a specific target node (no transition evaluation needed)
-2. Extract node activation logic from `WorkflowExecutor.advance()` into a reusable `activateNode(runId: string, nodeId: string): Promise<SpaceTask[]>` method (or a standalone function) that:
+2. Create a standalone `activateNode(runId: string, nodeId: string): Promise<SpaceTask[]>` function (in a new file or within the router module) that:
    - Looks up the node definition from the workflow
    - Creates `SpaceTask` records for each agent role on the node
    - Creates or reuses the `SpaceSessionGroup` for the node
    - Returns the created tasks
-3. Reuse this `activateNode()` in both `CrossNodeChannelRouter` and `WorkflowExecutor.advance()` to avoid duplication
-4. Handle edge cases:
+3. Handle edge cases:
    - Node already has active tasks → skip activation (no-op)
    - Node activation fails (e.g., workflow paused/cancelled) → return error in delivery result
    - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, slotRole)` to prevent duplicate tasks
-5. Add idempotency: calling `activateNode()` multiple times for the same node is safe (existing tasks are not duplicated)
+4. Add idempotency: calling `activateNode()` multiple times for the same node is safe (existing tasks are not duplicated)
 
 **Acceptance Criteria**:
 - `deliverMessage()` automatically activates the target node if no active tasks exist
 - `activateNode()` creates tasks and session groups correctly
 - Duplicate activation attempts are handled idempotently
-- `WorkflowExecutor.advance()` uses the same `activateNode()` internally (no duplication)
 - Unit tests cover: first activation, idempotent re-activation, concurrent activation, activation of cancelled run
-- The existing `advance()` path is not broken by the refactoring
 
 **Dependencies**: Tasks 2.2, 2.3
 
@@ -138,9 +131,8 @@ Enable agents to drive workflow progression through gated cross-node channels, r
 3. The `target` parameter in `SendMessageSchema` uses a **structured object** for cross-node targets (no `role@node` string syntax):
    - Current behavior: `target: 'coder'` (within-node only, plain string)
    - New cross-node behavior: `target: { role: 'reviewer', node: 'verify' }` (structured object)
-   - **No `role@node` string syntax is supported** — the structured form is unambiguous and avoids parsing edge cases with `@` in role/node names
-   - Backward compatible: plain string still means within-node delivery
-4. Update `SendMessageSchema` in `step-agent-tool-schemas.ts` to accept the new target format:
+   - **No `role@node` string syntax is supported** — the structured form is unambiguous
+4. Update `SendMessageSchema` in `step-agent-tool-schemas.ts`:
    ```
    target: z.union([
      z.string(),                          // within-node: 'coder'
@@ -151,8 +143,8 @@ Enable agents to drive workflow progression through gated cross-node channels, r
 **Acceptance Criteria**:
 - `send_message` can deliver messages within a node (existing behavior) and across nodes (new)
 - Cross-node delivery is gated -- blocked if gate condition fails
-- Plain role strings still work for within-node delivery (backward compatible)
-- Cross-node targets must use `{ role, node }` object syntax (no `role@node` string form)
+- Plain role strings still work for within-node delivery
+- Cross-node targets must use `{ role, node }` object syntax
 - Clear error messages when cross-node delivery is blocked by a gate
 
 **Dependencies**: Tasks 4.1
@@ -190,7 +182,6 @@ Enable agents to drive workflow progression through gated cross-node channels, r
 2. Add `check_cross_node_channels` handler in `step-agent-tools.ts`:
    - Lists outbound cross-node channels from the current node for the agent's role
    - For each channel, shows: target node, target role, gate type, gate status (open/closed), gate description
-   - Useful for agents to understand what transitions are available and which gates they need to satisfy
 3. Add the tool to `createStepAgentMcpServer()`
 
 **Acceptance Criteria**:
@@ -204,7 +195,42 @@ Enable agents to drive workflow progression through gated cross-node channels, r
 
 ---
 
-### Task 4.5: Unit and Integration Tests for Agent-Driven Advancement
+### Task 4.5: Remove advance() and Replace with Agent-Driven Progression
+
+**Description**: Remove `advance()` from `WorkflowExecutor` and `SpaceRuntime`. Agent-driven cross-node messaging is now the sole advancement mechanism.
+
+**Subtasks**:
+1. In `packages/daemon/src/lib/space/runtime/workflow-executor.ts`:
+   - Remove `advance()` method entirely
+   - Remove any condition evaluation logic that was only used by `advance()` (now moved to `ChannelGateEvaluator`)
+   - Clean up unused imports and types related to transition-based advancement
+2. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
+   - Remove all `advance()` calls from `processRunTick()` and `executeTick()`
+   - Remove the "all tasks completed on current step → advance" detection logic
+   - The tick loop now only handles: liveness checks, agent completion (milestone 3/5), and stuck-member auto-completion
+3. Remove `advance_workflow` tool from `packages/daemon/src/lib/space/tools/task-agent-tools.ts`:
+   - Remove the tool handler
+   - Remove the tool from `createTaskAgentMcpServer()`
+   - Remove the schema from `task-agent-tool-schemas.ts`
+4. Update the Task Agent system prompt to remove any references to `advance_workflow`
+5. Run existing tests and fix any that depended on `advance()` behavior:
+   - Update or remove tests in `workflow-executor.test.ts` that test `advance()`
+   - Update `space-runtime.test.ts` tests that test the old tick loop advancement
+
+**Acceptance Criteria**:
+- `advance()` is removed from `WorkflowExecutor`
+- `advance_workflow` tool is removed from Task Agent
+- The tick loop no longer calls `advance()`
+- All existing tests pass (updated as needed)
+- No dead code referencing the old advancement model remains
+
+**Dependencies**: Tasks 4.3
+
+**Agent Type**: coder
+
+---
+
+### Task 4.6: Unit and Integration Tests for Agent-Driven Advancement
 
 **Description**: Write comprehensive tests for the agent-driven advancement system.
 
@@ -218,9 +244,11 @@ Enable agents to drive workflow progression through gated cross-node channels, r
    - Task result gate evaluates correctly
    - Wildcard channel routes to all agents in target node
    - Invalid channel reference returns error
+   - Lazy activation of target node on first delivery
+   - Idempotent activation on subsequent deliveries
 3. Create `packages/daemon/tests/unit/space/step-agent-cross-node-messaging.test.ts`
 4. Test cases for `send_message` cross-node extension:
-   - Within-node delivery still works (backward compat)
+   - Within-node delivery still works
    - Cross-node delivery with open gate succeeds
    - Cross-node delivery with closed gate returns reason
    - Mixed within-node and cross-node routing
@@ -231,13 +259,13 @@ Enable agents to drive workflow progression through gated cross-node channels, r
 - Gate evaluation is correctly applied to cross-node messages
 - No regressions in within-node messaging
 
-**Dependencies**: Tasks 4.2, 4.4
+**Dependencies**: Tasks 4.2, 4.4, 4.5
 
 **Agent Type**: coder
 
 ## Rollback Strategy
 
-- **CrossNodeChannelRouter** (Task 4.1): New class, no existing behavior modified. Can be removed entirely without affecting step-centric workflows.
-- **Target-node activation** (Task 4.1a): The `activateNode()` extraction from `advance()` is a refactoring. If it introduces bugs, `advance()` can temporarily call its original inline logic while the extraction is fixed.
-- **send_message extension** (Task 4.2): The cross-node path only activates when `CrossNodeChannelRouter` is injected (which only happens when cross-node channels exist). Within-node delivery is unchanged.
-- **Lazy activation side effect**: If a cross-node message auto-activates a node and this causes issues, the activation can be made opt-in via a workflow setting.
+- **CrossNodeChannelRouter** (Task 4.1): New class, no existing behavior modified. Can be removed entirely.
+- **Target-node activation** (Task 4.1a): New `activateNode()` function. Can be removed without affecting other code.
+- **send_message extension** (Task 4.2): The cross-node path only activates when `CrossNodeChannelRouter` is injected. Within-node delivery is unchanged.
+- **advance() removal** (Task 4.5): This is a destructive change. The `advance()` code should be preserved in git history. If rollback is needed, the method can be restored from the pre-milestone commit.

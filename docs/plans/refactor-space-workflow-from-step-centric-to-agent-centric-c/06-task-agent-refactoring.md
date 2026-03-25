@@ -7,10 +7,9 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 ## Scope
 
 - Update Task Agent system prompt to emphasize collaboration management
-- Update MCP tools for the agent-centric model
-- Introduce `report_workflow_done` tool for workflow-level completion
-- Update the Task Agent's initial message builder
-- Deprecate `advance_workflow` (keep for backward compat but mark as legacy)
+- Add `report_workflow_done` tool for workflow-level completion
+- Wire new dependencies (CrossNodeChannelRouter, CompletionDetector) into Task Agent
+- Tests
 
 ## Tasks
 
@@ -27,17 +26,16 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
      - Handling gate-blocked cross-node messages (agents report back, Task Agent escalates)
      - When to use `request_human_input` for human gates
      - When the workflow is complete (all agents report done)
-   - Keep backward-compatible sections for workflows that still use the old model
+     - Using `send_message` with cross-node targets `{ role, node }`
 2. In `buildTaskAgentInitialMessage()`:
-   - If the workflow has cross-node channels, include channel information in the initial message
+   - Include channel information in the initial message (cross-node channels from the workflow)
    - Include a "collaboration map" showing agent roles, their nodes, and available channels
-   - Adjust the start instruction based on whether the workflow uses agent-centric or step-centric model
+   - Provide start instructions that direct the Task Agent to begin work
 
 **Acceptance Criteria**:
 - System prompt clearly describes the collaboration manager role
-- Prompt includes guidance for both agent-centric and step-centric workflows
-- Initial message provides useful collaboration context when cross-node channels exist
-- Backward compatible with existing workflows (old model still works)
+- Initial message provides useful collaboration context including channel map
+- Prompt includes guidance for using cross-node messaging and monitoring completion
 
 **Dependencies**: Tasks 4.4, 5.2
 
@@ -75,25 +73,21 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 
 ---
 
-### Task 6.3: Deprecate advance_workflow Tool
+### Task 6.3: Wire New Dependencies into Task Agent
 
-**Description**: Mark `advance_workflow` as legacy/optional and update its documentation. It remains available for step-centric workflows but is not the primary advancement mechanism.
+**Description**: Wire the `CrossNodeChannelRouter` and `CompletionDetector` into the Task Agent's MCP server configuration.
 
 **Subtasks**:
-1. Update the `advance_workflow` tool description to note it is legacy for step-centric workflows
-2. In the Task Agent system prompt, note that `advance_workflow` is for step-centric workflows only
-3. Add a deprecation warning in the `advance_workflow` handler when the workflow has cross-node channels configured
-   - The warning should be returned as part of the tool result, not thrown
-   - Suggest using `send_message` with cross-node channels instead
-4. Keep the tool fully functional for backward compatibility
+1. In `TaskAgentManager`, pass `CrossNodeChannelRouter` and `CompletionDetector` to `createTaskAgentMcpServer()`
+2. Update `TaskAgentToolsConfig` to accept the new dependencies
+3. Update `report_workflow_done` to use `CompletionDetector` for validation
 
 **Acceptance Criteria**:
-- `advance_workflow` still works for step-centric workflows
-- A deprecation warning is returned when used with agent-centric workflows
-- No breaking changes to existing workflows
-- Task Agent prompt provides clear guidance on when to use which tool
+- Task Agent MCP server has access to cross-node channel routing
+- Task Agent can query completion status
+- No circular dependencies
 
-**Dependencies**: Tasks 6.1, 6.2
+**Dependencies**: Tasks 6.2, 4.3
 
 **Agent Type**: coder
 
@@ -101,19 +95,19 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 
 ### Task 6.4: Update Task Agent MCP Server Configuration
 
-**Description**: Wire the new dependencies (CrossNodeChannelRouter, CompletionDetector) into the Task Agent's MCP server configuration.
+**Description**: Clean up the Task Agent's MCP server to reflect the new agent-centric tool set.
 
 **Subtasks**:
-1. In `TaskAgentManager`, pass `CrossNodeChannelRouter` and `CompletionDetector` to `createTaskAgentMcpServer()`
-2. Update `TaskAgentToolsConfig` to accept the new dependencies
-3. Update `report_workflow_done` and `advance_workflow` to use `CompletionDetector`
+1. Remove any remaining references to `advance_workflow` in `TaskAgentToolsConfig` and `createTaskAgentMcpServer()`
+2. Verify the tool list includes: `spawn_step_agent`, `list_group_members`, `report_result`, `report_workflow_done`, `request_human_input`
+3. Verify no references to the old step-advancement model remain
 
 **Acceptance Criteria**:
-- Task Agent MCP server has access to cross-node channel routing
-- Task Agent can query completion status
-- No circular dependencies
+- Task Agent MCP server only exposes agent-centric tools
+- No references to `advance_workflow` or the old model remain
+- Tool list is clean and consistent
 
-**Dependencies**: Tasks 6.2, 6.3, 4.3
+**Dependencies**: Tasks 6.1, 6.2, 6.3
 
 **Agent Type**: coder
 
@@ -126,11 +120,11 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 **Subtasks**:
 1. Update `packages/daemon/tests/unit/space/task-agent-tools.test.ts`:
    - Add tests for `report_workflow_done`
-   - Add tests for `advance_workflow` deprecation warning with cross-node channels
-   - Verify backward compatibility with step-centric workflows
+   - Remove tests for `advance_workflow`
+   - Verify tool set is correct
 2. Update `packages/daemon/tests/unit/space/task-agent.test.ts`:
    - Verify new system prompt content includes collaboration management guidance
-   - Verify initial message includes channel map for agent-centric workflows
+   - Verify initial message includes channel map
 3. Create `packages/daemon/tests/unit/space/task-agent-collaboration.test.ts`:
    - Test the full collaboration flow: spawn agents, agents communicate via channels, agents report done, Task Agent reports workflow done
    - Test gate-blocked flow: agent tries cross-node message, gate blocks, Task Agent escalates
@@ -138,8 +132,7 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 **Acceptance Criteria**:
 - All tests pass
 - New collaboration tools work correctly
-- Old step-centric tools still work
-- No regressions in existing Task Agent tests
+- No references to old step-centric tools in tests
 
 **Dependencies**: Tasks 6.2, 6.3, 6.4
 
@@ -147,7 +140,6 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 
 ## Rollback Strategy
 
-- **System prompt changes** (Task 6.1): Prompt changes take effect on the next Task Agent session creation. Reverting the prompt is instant — no persisted state depends on it.
-- **report_workflow_done** (Task 6.2): New tool. If reverted, it's removed from the tool list. Workflows that already called it would have their run marked as complete (this is correct behavior, not a problem to roll back).
-- **advance_workflow deprecation** (Task 6.3): Deprecation warnings are log-only. Removing them restores the original tool behavior.
-- **MCP wiring** (Task 6.4): New dependencies injected into MCP server config. Reverting removes the injections — step agent tools work without them (cross-node features become unavailable but within-node features remain).
+- **System prompt changes** (Task 6.1): Prompt changes take effect on the next Task Agent session creation. Reverting is instant — no persisted state depends on it.
+- **report_workflow_done** (Task 6.2): New tool. Can be removed from the tool list without side effects.
+- **MCP wiring** (Task 6.3): New dependencies injected into MCP server config. Reverting removes the injections — step agent tools work without them.
