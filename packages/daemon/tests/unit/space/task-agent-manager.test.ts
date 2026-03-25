@@ -21,12 +21,13 @@ import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
+import { GoalRepository } from '../../../src/storage/repositories/goal-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
@@ -36,6 +37,7 @@ import { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-mana
 import { AgentSession } from '../../../src/lib/agent/agent-session.ts';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
 import type { AgentProcessingState } from '@neokai/shared';
+import { noOpReactiveDb } from '../../helpers/reactive-database';
 
 // ---------------------------------------------------------------------------
 // Minimal in-process DaemonHub for tests
@@ -162,6 +164,7 @@ function makeDb(): { db: BunDatabase; dir: string } {
 	mkdirSync(dir, { recursive: true });
 	const db = new BunDatabase(join(dir, 'test.db'));
 	db.exec('PRAGMA foreign_keys = ON');
+	createTables(db);
 	runMigrations(db, () => {});
 	return { db, dir };
 }
@@ -232,6 +235,7 @@ interface TestCtx {
 		saveUserMessage: () => string;
 		updateSession: () => void;
 		getDatabase: () => BunDatabase;
+		getGoalRepo: () => GoalRepository;
 	};
 	sessionGroupRepo: SpaceSessionGroupRepository;
 	manager: TaskAgentManager;
@@ -276,6 +280,9 @@ function makeCtx(): TestCtx {
 	// Track DB sessions created (to simulate fromInit check)
 	const dbSessions = new Map<string, unknown>();
 
+	// GoalRepository for goal progress integration tests
+	const goalRepo = new GoalRepository(bunDb, noOpReactiveDb);
+
 	const mockDb = {
 		getSession: (id: string) => (dbSessions.has(id) ? dbSessions.get(id) : null),
 		createSession: (session: unknown) => {
@@ -287,6 +294,7 @@ function makeCtx(): TestCtx {
 		saveUserMessage: (_sessionId: string, _msg: unknown, _status: string) => 'msg-id',
 		updateSession: () => {},
 		getDatabase: () => bunDb,
+		getGoalRepo: () => goalRepo,
 	};
 
 	const mockSpaceRuntimeService = {
@@ -1032,6 +1040,89 @@ describe('TaskAgentManager', () => {
 			await expect(
 				callHandleSubSessionComplete(ctx.manager, parentTask.id, 'nonexistent-step', 'session-xyz')
 			).resolves.toBeUndefined();
+		});
+
+		test('recalculates goal progress when step task with goalId completes', async () => {
+			const goalId = 'test-goal-progress';
+			const stepId = 'step-goal-test';
+
+			// Seed a goal (FK to rooms disabled via PRAGMA in tests)
+			ctx.bunDb.exec('PRAGMA foreign_keys = OFF');
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO goals (id, room_id, title, description, status, priority, progress,
+           linked_task_ids, metrics, created_at, updated_at, mission_type, autonomy_level,
+           schedule, schedule_paused, next_run_at, structured_metrics, max_consecutive_failures,
+           max_planning_attempts, consecutive_failures, replan_count, short_id)
+           VALUES (?, ?, ?, '', 'active', 'normal', 0, '[]', '{}', ?, ?, 'one_shot', 'supervised',
+           NULL, 0, NULL, NULL, 3, 0, 0, 0, NULL)`
+				)
+				.run(goalId, 'room-test', 'Test Goal', Date.now(), Date.now());
+			ctx.bunDb.exec('PRAGMA foreign_keys = ON');
+
+			// Create workflow and step to satisfy FK constraints
+			const wfId = 'wf-goal-test';
+			const wfRunId = 'wf-run-goal-test';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'Test WF', now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, order_index, created_at, updated_at)
+           VALUES (?, ?, ?, '', 0, ?, ?)`
+				)
+				.run(stepId, wfId, 'Step 1', now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_node_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			// Create parent task with workflow run
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Parent task',
+				description: 'Orchestrator task',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+
+			// Create step task with goalId
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`;
+			const stepTask = await ctx.taskManager.createTask({
+				title: 'Step task with goal',
+				description: 'A step task linked to a goal',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				workflowNodeId: stepId,
+				taskAgentSessionId: subSessionId,
+				goalId: goalId,
+			});
+
+			// Spawn Task Agent so internal state is ready
+			await ctx.manager.spawnTaskAgent(
+				{ ...parentTask, workflowRunId: wfRunId },
+				ctx.space,
+				null,
+				null
+			);
+
+			// Verify initial goal progress is 0
+			const goalBefore = ctx.mockDb.getGoalRepo().getGoal(goalId);
+			expect(goalBefore?.progress).toBe(0);
+
+			// Call handleSubSessionComplete to complete the step
+			await callHandleSubSessionComplete(ctx.manager, parentTask.id, stepId, subSessionId);
+
+			// Goal progress should now be 100 (completed task contributes 100%)
+			const goalAfter = ctx.mockDb.getGoalRepo().getGoal(goalId);
+			expect(goalAfter?.progress).toBe(100);
 		});
 	});
 

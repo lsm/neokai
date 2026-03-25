@@ -680,11 +680,6 @@ export class GoalRepository {
 			taskCount++;
 		}
 
-		if (taskCount === 0) {
-			this.updateGoal(goalId, { progress: 0 });
-			return 0;
-		}
-
 		const progress = Math.round(totalProgress / taskCount);
 		this.updateGoal(goalId, { progress });
 		return progress;

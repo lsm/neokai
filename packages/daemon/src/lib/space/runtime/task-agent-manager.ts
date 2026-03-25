@@ -70,8 +70,6 @@ import { createStepAgentMcpServer } from '../tools/step-agent-tools';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import { GoalRepository } from '../../../storage/repositories/goal-repository';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
 
 const log = new Logger('task-agent-manager');
 
@@ -911,10 +909,7 @@ export class TaskAgentManager {
 					// Recalculate goal progress if this task is linked to a goal
 					if (stepTask.goalId) {
 						try {
-							const goalRepo = new GoalRepository(
-								this.config.db.getDatabase(),
-								this.config.db as unknown as ReactiveDatabase
-							);
+							const goalRepo = this.config.db.getGoalRepo();
 							goalRepo.recalculateProgressFromSpaceTasks(stepTask.goalId, this.config.taskRepo);
 						} catch (err) {
 							log.warn(
