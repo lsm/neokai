@@ -110,29 +110,24 @@ vi.mock('../../lib/router.ts', () => ({
 
 vi.mock('../../lib/signals.ts', () => ({
 	currentRoomTabSignal: { value: 'chat' },
+	currentSessionIdSignal: { value: null },
+	slashCommandsSignal: { value: [] },
 }));
 
 vi.mock('../../lib/toast.ts', () => ({
 	toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-// TurnSummaryBlock — renders agent label + click handler
-vi.mock('./TurnSummaryBlock.tsx', () => ({
-	TurnSummaryBlock: ({
+// AgentTurnBlock — renders agent label + click handler
+vi.mock('./AgentTurnBlock', () => ({
+	AgentTurnBlock: ({
 		turn,
-		onClick,
-		isSelected,
+		onHeaderClick,
 	}: {
 		turn: TurnBlock;
-		onClick: (t: TurnBlock) => void;
-		isSelected: boolean;
+		onHeaderClick?: (t: TurnBlock) => void;
 	}) => (
-		<div
-			data-testid="turn-block"
-			data-turn-id={turn.id}
-			data-selected={String(isSelected)}
-			onClick={() => onClick(turn)}
-		>
+		<div data-testid="turn-block" data-turn-id={turn.id} onClick={() => onHeaderClick?.(turn)}>
 			{turn.agentLabel}
 		</div>
 	),
@@ -535,7 +530,7 @@ describe('TaskViewV2', () => {
 	it('shows empty state when group is null', () => {
 		mockTaskViewData = makeDefaultTaskViewData(makeTask({ status: 'pending' }), null);
 		const { container } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
-		expect(container.textContent).toContain('No active agent group');
+		expect(container.textContent).toContain('Waiting for the runtime to pick up this task');
 	});
 
 	// --- Slide-out panel ---
@@ -610,15 +605,15 @@ describe('TaskViewV2', () => {
 
 	// --- Selected state ---
 
-	it('passes isSelected=true to the active turn block', async () => {
-		const turn = makeTurn({ id: 'turn-1' });
+	it('opens slide-out panel when active turn block is clicked', async () => {
+		const turn = makeTurn({ id: 'turn-1', sessionId: 'session-worker' });
 		mockTurnBlockItems = [{ type: 'turn', turn }];
 		const { getByTestId } = render(<TaskViewV2 roomId="room-1" taskId="task-1" />);
 
 		fireEvent.click(getByTestId('turn-block'));
-		await waitFor(() =>
-			expect(getByTestId('turn-block').getAttribute('data-selected')).toBe('true')
-		);
+		await waitFor(() => {
+			expect(getByTestId('slide-out-panel')).toBeTruthy();
+		});
 	});
 
 	// --- HumanInputArea ---

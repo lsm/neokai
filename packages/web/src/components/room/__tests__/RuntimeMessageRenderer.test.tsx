@@ -323,11 +323,11 @@ describe('RuntimeMessageRenderer', () => {
 				/>
 			);
 			const card = container.querySelector('[data-testid="runtime-message"]');
-			expect(card?.className).toContain('border-purple-800/40');
-			expect(card?.className).toContain('bg-purple-950/20');
+			expect(card?.className).toContain('border-purple-700/50');
+			expect(card?.className).toContain('bg-purple-950/30');
 		});
 
-		it('passes "text-sm text-gray-300" class to MarkdownRenderer', () => {
+		it('passes "text-sm text-gray-200" class to MarkdownRenderer', () => {
 			const { getByTestId } = render(
 				<RuntimeMessageRenderer
 					message={makeRuntimeMessage({ type: 'leader_summary', text: 'Done.' })}
@@ -335,7 +335,7 @@ describe('RuntimeMessageRenderer', () => {
 			);
 			const md = getByTestId('markdown-renderer');
 			expect(md.className).toContain('text-sm');
-			expect(md.className).toContain('text-gray-300');
+			expect(md.className).toContain('text-gray-200');
 		});
 
 		it('renders without crash when text field is missing (empty string fallback)', () => {
