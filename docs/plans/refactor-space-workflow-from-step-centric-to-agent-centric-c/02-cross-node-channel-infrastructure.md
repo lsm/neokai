@@ -25,17 +25,16 @@ Think of `CrossNodeChannel` as channel configuration (like Slack channel setting
    ```
    interface CrossNodeChannel {
      id: string;                          // unique identifier
-     fromNode: string;                    // source node ID
-     fromRole: string | '*';              // source role in the from-node
-     toNode: string;                      // target node ID
-     toRole: string | string[] | '*';     // target role(s) in the to-node
-     toAgent?: number;                    // target specific agent by 1-based index (for DM addressing)
+     fromNode: string;                    // source node name
+     toNode?: string;                     // target node name (fan-out to all agents in that node)
+     toAgent?: string;                    // target agent name (DM to specific agent — used instead of toNode)
      direction: 'one-way' | 'bidirectional';
      gate?: WorkflowCondition;            // policy enforcement
      isCyclic?: boolean;                  // when true, each delivery through this channel increments the run's iteration counter
      label?: string;                      // human-readable label
    }
    ```
+   Note: either `toNode` or `toAgent` is provided, not both. `toNode` fans out to all agents in the target node. `toAgent` delivers to a specific agent by name.
 2. Create `CrossNodeChannelInput` type (omits `id`)
 3. Add `crossNodeChannels?: CrossNodeChannel[]` to `SpaceWorkflow` interface
 4. Add `crossNodeChannels?: CrossNodeChannelInput[]` to `CreateSpaceWorkflowParams` and `UpdateSpaceWorkflowParams`
@@ -65,32 +64,34 @@ Think of `CrossNodeChannel` as channel configuration (like Slack channel setting
    interface ResolvedCrossNodeChannel {
      channelId: string;
      fromNode: string;
-     fromRole: string;
-     fromAgentId: string;
      toNode: string;
-     toRole: string;
-     toAgentId: string;
+     toAgentName?: string;          // set when CrossNodeChannel.toAgent is provided (DM)
      direction: 'one-way';
      gate?: WorkflowCondition;
      gateLabel?: string;
      label?: string;
-     isHubSpoke: boolean;
+     isFanOut: boolean;             // true when toNode is set (fan-out to all agents), false for DM
    }
    ```
 3. Resolution algorithm:
-   - For each `CrossNodeChannel`, look up the source and target nodes
-   - Resolve `fromRole` / `toRole` against the agents in those nodes (via `resolveNodeAgents`)
-   - Expand wildcards and bidirectional/hub-spoke patterns (same logic as `expandChannel`)
-   - Skip self-loops and unresolvable roles
-4. Create `validateCrossNodeChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]): string[]` for validation
+   - For each `CrossNodeChannel`, look up the source and target nodes by name
+   - If `toAgent` is provided: resolve to a specific agent by name within `toNode`, set `isFanOut: false`
+   - If `toNode` is provided (no `toAgent`): set `isFanOut: true` (all agents in target node receive)
+   - Expand bidirectional channels to two one-way entries
+   - Skip self-loops (fromNode === toNode) and unresolvable node/agent references
+4. Create `validateCrossNodeChannels(workflow: SpaceWorkflow): string[]` for validation:
+   - Verify `fromNode` references a valid node in the workflow
+   - Verify `toNode` (if provided) references a valid node
+   - Verify `toAgent` (if provided) references a valid agent name in the target node
+   - Verify either `toNode` or `toAgent` is provided (not both, not neither)
 5. Create `resolveAllChannels(workflow: SpaceWorkflow): { nodeChannels: Map<string, ResolvedChannel[]>, crossNodeChannels: ResolvedCrossNodeChannel[] }` that resolves both types
 
 **Acceptance Criteria**:
-- Cross-node channels resolve to concrete per-agent-pair routing rules
-- Wildcards (`*`) expand to all agents in the respective node
+- Cross-node channels resolve to concrete routing rules (fan-out or DM)
 - Bidirectional channels expand to two one-way entries
-- Hub-spoke patterns work across nodes
-- Validation catches invalid role references and ambiguous configurations
+- Fan-out channels (`toNode`) correctly target all agents in the destination node
+- DM channels (`toAgent`) correctly target a specific agent by name
+- Validation catches invalid node references and unknown agent names
 - `resolveAllChannels()` provides a unified resolution API
 
 **Dependencies**: Tasks 1.2, 2.1
@@ -153,12 +154,12 @@ Think of `CrossNodeChannel` as channel configuration (like Slack channel setting
 **Subtasks**:
 1. Create `packages/daemon/tests/unit/space/cross-node-channel-resolution.test.ts`
 2. Test cases:
-   - Simple cross-node channel resolution (coder in node A -> reviewer in node B)
-   - Wildcard expansion across nodes
+   - Simple cross-node channel resolution (node A -> node B fan-out)
+   - DM resolution (node A -> specific agent in node B)
    - Bidirectional cross-node channels
-   - Hub-spoke across nodes (coordinator -> multiple workers)
    - Mixed within-node and cross-node channels resolve correctly together
-   - Validation catches invalid cross-node channel references
+   - Validation catches invalid node references
+   - Validation catches unknown agent names in cross-node channels
 3. Use existing test helpers from `packages/daemon/tests/unit/helpers/space-test-db.ts`
 
 **Acceptance Criteria**:

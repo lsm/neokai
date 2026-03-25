@@ -26,11 +26,11 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
      - Handling gate-blocked cross-node messages (agents report back, Task Agent escalates)
      - When to use `request_human_input` for human gates
      - When the workflow is complete (all agents report done)
-     - Using `send_message` with Slack-like target addressing: string for within-node, `{ node }` for all agents in a node, `{ node, role }` for a specific role, `{ node, agent }` for a specific agent DM
+     - Using `send_message` with string-based target addressing: agent name for DM, node name for fan-out to all agents in that node
      - Using `list_reachable_agents` to discover who agents can communicate with
 2. In `buildTaskAgentInitialMessage()`:
    - Include channel information in the initial message (cross-node channels from the workflow)
-   - Include a "collaboration map" showing agent roles, their nodes, and who they can reach
+   - Include a "collaboration map" showing agents, their nodes, and who they can reach
    - Provide start instructions that direct the Task Agent to begin work
 
 **Acceptance Criteria**:

@@ -13,49 +13,46 @@ The current system treats workflows as directed graphs of sequential steps:
 - **`WorkflowNode`** -- a step in the graph, assigned one or more agents
 - **`WorkflowTransition`** -- directed edges between steps with optional `WorkflowCondition` guards (always, human, condition, task_result)
 - **`SpaceWorkflowRun`** -- tracks execution with a single `currentNodeId` (one active step at a time)
-- **`WorkflowExecutor.advance()`** -- step-by-step progression: evaluates transitions from the current step, follows the first matching transition, creates pending tasks for the target step *(to be deleted in Milestone 4)*
+- **`WorkflowExecutor.advance()`** -- step-by-step progression *(to be deleted in Milestone 4)*, condition evaluation
 - **`SpaceRuntime.executeTick()`** -- polls for completed step tasks, calls `advance()` to move forward *(to be rewritten in Milestones 4-5)*
 - **`TaskAgentManager`** -- manages Task Agent sessions (orchestrator per task) that use MCP tools (`spawn_step_agent`, `check_step_status`, `advance_workflow` *(to be deleted)*, `report_result`) to drive workflows
 - **`WorkflowChannel`** -- currently node-scoped messaging topology for inter-agent communication within a step (no gates, just topology)
-- **`ChannelResolver`** -- validates `canSend(fromRole, toRole)` based on declared topology
-
-Key files:
-- `packages/shared/src/types/space.ts` -- all workflow types (WorkflowNode, WorkflowTransition, WorkflowCondition, WorkflowChannel, etc.)
-- `packages/shared/src/types/space-utils.ts` -- ResolvedChannel, resolveNodeAgents, resolveNodeChannels, validateNodeChannels
-- `packages/daemon/src/lib/space/runtime/workflow-executor.ts` -- WorkflowExecutor with advance() *(to be deleted in Milestone 4)*, condition evaluation
-- `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- SpaceRuntime tick loop, task processing
-- `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- Task Agent lifecycle, sub-session management
-- `packages/daemon/src/lib/space/agents/task-agent.ts` -- Task Agent system prompt builder
-- `packages/daemon/src/lib/space/tools/task-agent-tools.ts` -- 7 MCP tools for Task Agent
-- `packages/daemon/src/lib/space/tools/step-agent-tools.ts` -- peer communication tools (list_peers, send_message)
-- `packages/daemon/src/lib/space/runtime/channel-resolver.ts` -- channel topology validation
-- `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` -- 3 built-in workflow templates
-- DB tables: `space_workflows`, `space_workflow_nodes`, `space_workflow_transitions`, `space_workflow_runs`, `space_tasks`, `space_session_groups`, `space_session_group_members`
 
 ## Target Architecture (Agent-Centric Collaboration)
 
-The target system treats workflows as collaboration graphs of agents:
+### Addressing Model: Node + Agent, String-Based
+
+The addressing model uses **two concepts** with a **single string-based target**:
+
+- **Node** — an entity in the workflow graph. Has a prompt, tools, and model. Can spawn 1 or more agents. Nodes are the structural unit — they define what kind of work happens (e.g., "planning", "coding", "reviewing"). Node names are globally unique within a workflow.
+- **Agent** — a running instance within a node. Each agent gets the node's prompt/tools/model plus a unique name (e.g., `coder1`, `reviewer2`). Agent names are globally unique within a workflow.
+
+**Target resolution** — the `target` parameter in `send_message` is a plain string. The router resolves it at delivery time:
+- `target: 'reviewers'` → resolves to a **node** → fan-out message to all agents in that node (like a Slack group chat)
+- `target: 'auditor1'` → resolves to an **agent** → DM to that specific agent
+- `target: 'coder'` → if it's a single-agent node, resolves to the one agent; if multi-agent, resolves to the node (fan-out)
+
+**No "role" concept** — there are only nodes (which define the template) and agents (which are the runtime instances). This keeps the mental model simple and maps cleanly to Slack: node = channel, agent = person, target = type a name and hit enter.
+
+**Channel configuration** (`CrossNodeChannel`) defines the **policy layer** — which agents/nodes can communicate and under what conditions. The `target` in `send_message` is the **addressing layer**. The router matches them at delivery time.
+
+**Non-agent nodes** — a node doesn't have to contain LLM agents. A "human" node or "external-service" node could exist as a routing target without spawning an agent. This enables future extensibility (e.g., "wait for human input" as a node).
+
+### Key Architectural Principles
 
 1. **Workflow = collaboration graph of agents with gated communication channels**
-   - Nodes become "agent pools" — groups of agents that collaborate (like a Slack channel)
-   - Transitions are replaced by cross-node channels that carry gates (policies on who can talk to whom)
-   - The **channel configuration** (`CrossNodeChannel`) defines the policy; the **target addressing** (`send_message` parameter) defines who the agent wants to reach
-   - The router matches addressing to policy at delivery time and evaluates gates
-
-   **Policy-to-target matching**: When an agent calls `send_message({ node: 'review', role: 'senior_reviewer' })`, the router scans all `CrossNodeChannel` policies where `fromNode` matches the sender's node and `toNode` matches the target node. It then checks whether the policy's `toRole` includes the requested role (or `'*'`). If a matching policy exists and its gate evaluates to allowed, the message is delivered. If multiple policies match, the most specific one wins (agent-index > role > wildcard). If no policy matches, delivery is denied with a "no channel policy" error.
-
-   **Note on earlier iterations**: Previous plan iterations used a simpler `{ role, node }` two-field target syntax. This was superseded by the Slack-like model which supports four target forms (`string`, `{ node }`, `{ node, role }`, `{ node, agent }`) and treats policy and addressing as separate layers.
+   - Nodes are the structural units (prompt, tools, model templates)
+   - Agents are the runtime instances (unique names, individual sessions)
+   - Cross-node channels carry gates (policies on who can talk to whom)
 
 2. **Agents are primary execution units**
    - Each agent has its own session and decides what to do based on intelligence
    - The system provides guardrails (rules = behavioral prompts) and enforcement (gates = policy checks)
-   - Multiple agents can fill the same role (e.g., 3 coders working in parallel)
+   - Multiple agents can run on the same node (e.g., `coder1`, `coder2` on a "coding" node)
 
 3. **Gates on WorkflowChannel replace WorkflowTransition guards**
-   - Channel-level gates are **policies** that enforce when messages can flow (e.g., "coder can't send to reviewer until PR exists and CI passes")
-   - Within-node channels: agents share a node "group chat" — all agents on the same node see each other
-   - Cross-node channels: agents address specific nodes/roles — the router checks policy and evaluates gates before delivery
-   - There is only one addressing mechanism (`target`); whether it's "group chat" or "DM" depends on how many recipients match
+   - Channel-level gates are **policies** that enforce when messages can flow
+   - Gates enforce rules like "can't send to reviewers until PR exists and CI passes"
 
 4. **advance() is fully removed**
    - Agents drive themselves by sending messages through gated channels
@@ -67,33 +64,35 @@ The target system treats workflows as collaboration graphs of agents:
 
 ## Key Architectural Decisions
 
-1. **No backward compatibility needed**: The Space workflow feature is unreleased. We do a clean replacement — no dual-model coexistence, no deprecation warnings, no migration scripts.
+1. **No backward compatibility needed**: The Space workflow feature is unreleased. Clean replacement.
 
-2. **Incremental delivery**: The change is still too large for a single PR. The plan uses 9 milestones, each independently testable and deployable.
+2. **Incremental delivery**: 9 milestones, each independently testable and deployable.
 
-3. **Channel gates are optional**: Not all channels need gates. Unconditional channels work like current `always` transitions.
+3. **Channel gates are optional**: Not all channels need gates. Unconditional channels work like `always` transitions.
 
-4. **Agent completion signaling**: Agents explicitly report done (via tool call), replacing the implicit "all tasks completed on a node" detection model. A timeout-based liveness guard auto-completes stuck agents (alive but forgot to call `report_done`).
+4. **Agent completion signaling**: Agents explicitly report done (via tool call). A timeout-based liveness guard auto-completes stuck agents.
 
-5. **Gate evaluation reuses existing infrastructure**: The `WorkflowCondition` type and `evaluateCondition()` logic move to channels rather than being rewritten.
+5. **Gate evaluation reuses existing infrastructure**: `WorkflowCondition` type and `evaluateCondition()` logic move to channels.
 
-6. **Lazy target-node activation**: When a cross-node channel fires but the target node has no active agents, the router lazily creates tasks/sessions for that node on demand. No pre-spawning or Task Agent orchestration needed.
+6. **Lazy target-node activation**: Router lazily creates tasks/sessions when cross-node channels fire.
 
-7. **Slack-like target addressing**: Cross-node `send_message` uses a flexible target syntax — string for within-node, `{ node }` for all agents in a node, `{ node, role }` for a specific role, `{ node, agent }` for a specific agent by index. The router matches targets against channel policies at delivery time.
+7. **String-based target addressing**: `send_message` target is a plain string. Resolved as: agent name → DM, node name → fan-out. No structured objects, no role references.
 
-8. **Dynamic migration numbers**: DB migration numbers are not hardcoded in the plan (they drift over time). Implementation must use the next available migration number at implementation time.
+8. **Dynamic migration numbers**: Use next available at implementation time.
+
+9. **Milestones 1 & 3 parallel**, Milestones 7 & 8 parallel.
 
 ## Milestones
 
-1. **Channel Gate Types** -- Add gate/condition support to `WorkflowChannel`, create `ChannelGateEvaluator`, unit tests (4 tasks)
-2. **Cross-Node Channel Infrastructure** -- Extend channels to span nodes, DB migration, resolution (5 tasks)
-3. **Agent Completion Signaling** -- New `report_done` tool, liveness guard with timeout, completion state tracking (6 tasks)
-4. **Agent-Driven Advancement** -- Channel routing layer, lazy target-node activation, gated cross-node messaging, remove `advance()` (7 tasks)
-5. **Completion Detection** -- All-agents-done detector, update SpaceRuntime tick, status lifecycle (4 tasks)
-6. **Task Agent Refactoring** -- Collaboration manager prompt, `report_workflow_done`, remove `advance_workflow` (5 tasks)
-7. **Built-in Workflow Replacement** -- Replace 3 built-in workflows with agent-centric model, backend tests (2 tasks)
-8. **UI Updates** -- Visual editor for cross-node channels, gate config UI, agent completion state, web/e2e tests (4 tasks)
-9. **Final Cleanup** -- Remove old step-transition code paths, comprehensive tests, online tests (3 tasks)
+1. **Channel Gate Types** -- Add gate/condition support to `WorkflowChannel`, create `ChannelGateEvaluator` (4 tasks)
+2. **Cross-Node Channel Infrastructure** -- `CrossNodeChannel` types (policy layer), DB schema, resolution (5 tasks)
+3. **Agent Completion Signaling** -- `report_done` tool, liveness guard, completion state (6 tasks)
+4. **Agent-Driven Advancement** -- Channel routing, lazy activation, string-based addressing, remove `advance()` (7 tasks)
+5. **Completion Detection** -- All-agents-done detector, tick loop, status lifecycle (4 tasks)
+6. **Task Agent Refactoring** -- Collaboration manager prompt, `report_workflow_done` (5 tasks)
+7. **Built-in Workflow Replacement** -- Replace 3 built-in workflows (2 tasks)
+8. **UI Updates** -- Visual editor, gate config UI, agent completion state (4 tasks)
+9. **Final Cleanup** -- Remove old code, comprehensive tests (3 tasks)
 
 ## Cross-Milestone Dependencies
 
@@ -109,7 +108,7 @@ The target system treats workflows as collaboration graphs of agents:
 
 Key sequencing decisions:
 - **Milestones 1 and 3 can be developed in parallel** (no dependencies between them)
-- **Milestones 7 and 8 can be developed in parallel** (backend replacement vs UI updates are independent workstreams)
+- **Milestones 7 and 8 can be developed in parallel** (backend replacement vs UI updates)
 - Milestone 2 can start after Milestone 1
 - Milestones 4-6 are sequential
 - Milestone 9 is the final milestone

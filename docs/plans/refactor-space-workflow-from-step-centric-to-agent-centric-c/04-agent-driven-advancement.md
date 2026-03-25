@@ -42,29 +42,30 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
      // Check if a cross-node channel exists and its gate allows delivery
      async canDeliver(params: {
        workflowRunId: string;
-       fromRole: string;
-       toRole?: string;
-       toAgent?: number;
        fromNode: string;
-       toNode: string;
+       fromAgentName: string;
+       toNode?: string;             // for fan-out delivery
+       toAgentName?: string;        // for DM delivery (alternative to toNode)
        context: ChannelGateContext;
      }): Promise<{ allowed: boolean; reason?: string; channelId?: string }>
 
      // Deliver a message through a cross-node channel
-     // 1. Ensure target node has active tasks/sessions (activate if needed — see Task 4.1a)
-     // 2. Resolve the target agent's session
-     // 3. Evaluate the gate
-     // 4. If allowed, inject the message
-     // 5. If gate blocked, return the reason (agent can retry or escalate)
-     // 6. If the matching channel is cyclic (isCyclic=true), increment the run's iteration counter
+     // 1. Match the target string against CrossNodeChannel policies:
+     //    - If toAgentName provided: find policy with matching fromNode + toAgent
+     //    - If toNode provided: find policy with matching fromNode + toNode
+     // 2. Ensure target node has active tasks/sessions (activate if needed — see Task 4.1a)
+     // 3. Resolve the target agent's session (specific agent for DM, all agents for fan-out)
+     // 4. Evaluate the gate
+     // 5. If allowed, inject the message
+     // 6. If gate blocked, return the reason (agent can retry or escalate)
+     // 7. If the matching channel is cyclic (isCyclic=true), increment the run's iteration counter
      async deliverMessage(params: {
        workflowRunId: string;
-       fromRole: string;
-       fromSessionId: string;
-       toRole?: string;
-       toAgent?: number;
        fromNode: string;
-       toNode: string;
+       fromAgentName: string;
+       fromSessionId: string;
+       toNode?: string;
+       toAgentName?: string;
        message: string;
        context: ChannelGateContext;
      }): Promise<{ delivered: boolean; reason?: string; targetSessions: string[] }>
@@ -73,7 +74,7 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
      listOutboundChannels(params: {
        workflowRunId: string;
        fromNode: string;
-       fromRole: string;
+       fromAgentName: string;
      }): ResolvedCrossNodeChannel[]
    }
    ```
@@ -83,8 +84,6 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    - Check against `run.maxIterations` — if `iterationCount >= maxIterations`, deny delivery with reason: "Iteration cap reached (N/M): cyclic channel from X to Y would exceed maximum iterations"
    - This replaces the old `advance()` behavior where `followTransition()` checked `isCyclic` on `WorkflowTransition`
 5. For human gates: return `{ allowed: false, reason: 'Waiting for human approval' }` -- the agent can use `request_human_input` (existing tool) and retry
-3. Gate evaluation uses `ChannelGateEvaluator` from Milestone 1
-4. For human gates: return `{ allowed: false, reason: 'Waiting for human approval' }` -- the agent can use `request_human_input` (existing tool) and retry
 
 **Acceptance Criteria**:
 - `canDeliver()` correctly evaluates gate conditions
@@ -112,7 +111,7 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    - If no active tasks exist, call `SpaceTaskManager.createTasksForNode()` to create pending tasks for the target node's agents
 2. Create a standalone `activateNode(runId: string, nodeId: string): Promise<SpaceTask[]>` function (in a new file or within the router module) that:
    - Looks up the node definition from the workflow
-   - Creates `SpaceTask` records for each agent role on the node
+   - Creates `SpaceTask` records for each agent on the node
    - Creates or reuses the `SpaceSessionGroup` for the node
    - Returns the created tasks
 3. Handle edge cases:
@@ -135,48 +134,34 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
 
 ### Task 4.2: Extend send_message for Cross-Node Delivery
 
-**Description**: Update the `send_message` tool in step-agent-tools.ts to support cross-node delivery via gated channels, using a Slack-like addressing model. There is only one addressing mechanism (`target`) — whether the message is "group chat" or "DM" depends on how many recipients match.
-
-**Within-node broadcast semantics (unchanged)**: The existing within-node `target: 'coder'` retains its current broadcast behavior — it sends the message to **all** agents with role 'coder' on the same node. This is not a DM; it's the node's group chat. The DM semantics (`{ node, agent }`) only apply to cross-node targeting.
+**Description**: Update the `send_message` tool in step-agent-tools.ts to support cross-node delivery via gated channels, using a simple string-based addressing model. The `target` parameter is a plain string — the router resolves it at delivery time: if it matches an agent name, it's a DM; if it matches a node name, it's a fan-out to all agents in that node.
 
 **Subtasks**:
 1. Add `CrossNodeChannelRouter` as an optional dependency to `StepAgentToolsConfig`
-2. In the `send_message` handler, after checking within-node channels:
-   - If no within-node match is found, check cross-node channels
-   - If a cross-node channel matches, use `CrossNodeChannelRouter.deliverMessage()`
+2. In the `send_message` handler:
+   - First, try within-node delivery (existing behavior): if `target` matches an agent name on the same node, deliver as DM to that agent. If `target` matches the current node name, broadcast to all agents on the node.
+   - If no within-node match is found, try cross-node delivery via the router:
+     - Resolve `target` as a node name (fan-out) or agent name (DM)
+     - Call `CrossNodeChannelRouter.deliverMessage()` with the resolved target
    - Return appropriate results for both within-node and cross-node delivery
-3. The `target` parameter in `SendMessageSchema` supports multiple addressing forms:
-   - Within-node (group chat — posting to own node): `target: 'coder'` (plain string, existing behavior)
-   - Cross-node to all agents in a node: `target: { node: 'review' }` (like posting to another node's group chat)
-   - Cross-node to specific role in a node: `target: { node: 'review', role: 'senior_reviewer' }` (like posting to a role within another node)
-   - Cross-node DM to a specific agent: `target: { node: 'review', agent: 2 }` (like a DM; agent index is 1-based, matching the order agents were spawned)
-4. Update `SendMessageSchema` in `step-agent-tool-schemas.ts`:
+3. Update `SendMessageSchema` in `step-agent-tool-schemas.ts`:
    ```
-   target: z.union([
-     z.string(),                                              // within-node: 'coder'
-     z.object({ node: z.string() }),                         // cross-node to all agents in node
-     z.object({ node: z.string(), role: z.string() }),       // cross-node to specific role
-     z.object({ node: z.string(), agent: z.number().int().min(1) }),  // cross-node DM by 1-based index
-   ])
+   target: z.string()    // agent name (DM) or node name (fan-out)
    ```
-5. **Policy-to-target matching algorithm**: When `send_message` receives a cross-node target, the router resolves it to a delivery as follows:
-   1. **Find matching policies**: Scan all `CrossNodeChannel` entries where `fromNode` = sender's node and `toNode` = target's `node`
-   2. **Filter by specificity**:
-      - If target has `agent` index: only match policies with the same `toAgent` (most specific)
-      - Else if target has `role`: match policies where `toRole` includes that role or `toRole` is `'*'`
-      - Else (target is `{ node }` only): match any policy for that node (wildcard)
-   3. **Pick most specific policy**: agent-index > role > wildcard. If multiple policies match at the same specificity level, all are candidates
-   4. **Evaluate gate**: For each candidate policy, evaluate its `gate`. If allowed, deliver. If blocked, collect the reason
-   5. **Resolve recipients**: Based on the matching policy and target, resolve to concrete agent sessions. Wildcard targets expand to all agents on the target node that match the policy's `toRole`
-   6. **No match = denied**: If no policy matches the target, return `{ delivered: false, reason: 'No channel policy found for this target' }`
+4. **Target resolution algorithm**: When `send_message` receives a target string, the router resolves it as follows:
+   1. **Agent match**: Check if `target` matches any agent name (globally unique within the workflow). If so, deliver as a DM to that agent. The router finds a `CrossNodeChannel` with matching `fromNode` (sender's node) and `toAgent` (target agent name).
+   2. **Node match**: Check if `target` matches any node name. If so, deliver as fan-out to all agents on that node. The router finds a `CrossNodeChannel` with matching `fromNode` (sender's node) and `toNode` (target node name).
+   3. **No match**: Return `{ delivered: false, reason: 'Unknown target: no agent or node found with this name' }`
+   4. **Gate evaluation**: For the matching policy, evaluate its `gate`. If allowed, deliver. If blocked, return the reason.
+5. **Within-node precedence**: If the target matches both a within-node peer and a cross-node agent/node, within-node delivery takes precedence (avoids unnecessary cross-node routing).
 
 **Acceptance Criteria**:
 - `send_message` can deliver messages within a node (existing behavior) and across nodes (new)
+- `target` is a plain string — no structured objects
+- Target resolves as: agent name → DM, node name → fan-out to all agents in that node
 - Cross-node delivery is gated — blocked if gate condition fails
-- All four target forms work correctly
-- Agent index in `{ node, agent }` is 1-based (matching spawn order)
-- Plain role strings still work for within-node delivery
-- Clear error messages when cross-node delivery is blocked by a gate
+- Within-node delivery takes precedence over cross-node for ambiguous names
+- Clear error messages when target is unknown or gate blocks delivery
 
 **Dependencies**: Tasks 4.1
 
@@ -211,8 +196,8 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
 **Subtasks**:
 1. Create schema `ListReachableAgentsSchema` in `step-agent-tool-schemas.ts`
 2. Add `list_reachable_agents` handler in `step-agent-tools.ts`:
-   - Lists all agents the calling agent can reach (within-node peers + cross-node targets)
-   - For each reachable agent/target, shows: node, role, agent index (if applicable), gate status (open/closed)
+   - Lists all targets the calling agent can reach (within-node peers + cross-node agents and nodes)
+   - For each reachable target, shows: name (agent name or node name), type (agent or node), gate status (open/closed)
    - Returns a flat list — no channel internals exposed
 3. Add the tool to `createStepAgentMcpServer()`
 
@@ -284,16 +269,15 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    - Idempotent activation on subsequent deliveries
 3. Create `packages/daemon/tests/unit/space/step-agent-cross-node-messaging.test.ts`
 4. Test cases for `send_message` cross-node extension:
-   - Within-node delivery still works (broadcast to all agents matching role)
-   - Cross-node delivery with `{ node }` target (all agents in node)
-   - Cross-node delivery with `{ node, role }` target (specific role)
-   - Cross-node delivery with `{ node, agent }` target (specific agent DM)
+   - Within-node delivery still works (agent name resolves to within-node peer)
+   - Cross-node delivery with agent name target (DM to specific agent on another node)
+   - Cross-node delivery with node name target (fan-out to all agents on another node)
    - Cross-node delivery with open gate succeeds
    - Cross-node delivery with closed gate returns reason
    - Mixed within-node and cross-node routing
-   - Policy-to-target matching: most-specific policy wins (agent > role > wildcard)
-   - No matching policy returns "no channel policy found" error
-   - Multiple policies at same specificity: all evaluated, message delivered to all matching recipients
+   - Target string matching: agent name → DM, node name → fan-out
+   - Unknown target returns "no agent or node found" error
+   - Within-node precedence: ambiguous name resolves within-node first
 
 **Acceptance Criteria**:
 - All tests pass
