@@ -2,9 +2,11 @@
 
 ## Goal and Scope
 
-When a user manually changes a task status from `usage_limited` or `rate_limited` to `in_progress` via `task.setStatus`, the `task.restrictions` field IS cleared by `TaskManager.setTaskStatus()`, but `group.rateLimit` in `SessionGroupRepository` is NOT cleared. This means the next time `onWorkerTerminalState` fires, `classifyError` re-detects the old "You've hit your limit" text and re-applies the backoff, preventing the worker output from being forwarded to the leader.
+When a user manually changes a task status from `usage_limited` or `rate_limited` to `in_progress` via `task.setStatus`, the `task.restrictions` field IS cleared by `TaskManager.setTaskStatus()` (line 256-261), but `group.rateLimit` in `SessionGroupRepository` is NOT cleared. This means the next time `onWorkerTerminalState` fires, `classifyError` re-detects the old "You've hit your limit" text and re-applies the backoff, preventing the worker output from being forwarded to the leader.
 
-The fix adds a public `clearGroupRateLimit(taskId)` method to `RoomRuntime` and calls it from the `task.setStatus` RPC handler when the task was in a limited state and the new status is `in_progress`.
+**Additional gap discovered during verification**: `task.sendHumanMessage` (line 963) has NO special handling for `rate_limited`/`usage_limited` tasks at all. The handler only has special cases for `needs_attention`, `completed`, `cancelled`, and `review` statuses (lines 1025-1069). When a user sends a message to a rate-limited task, it falls through to generic `routeHumanMessageToGroup()` — but the group still has `rateLimit` set, so `onWorkerTerminalState` will hit the `isRateLimited(groupId)` guard at line 634 and return early, preventing the worker output (including the new human message) from being routed to the leader.
+
+The fix adds a public `clearGroupRateLimit(taskId)` method to `RoomRuntime` and calls it from both `task.setStatus` and `task.sendHumanMessage` handlers when the task is in a limited state.
 
 ## Tasks
 
@@ -53,7 +55,30 @@ The fix adds a public `clearGroupRateLimit(taskId)` method to `RoomRuntime` and 
 
 ---
 
-### Task 2.3: Unit tests for clearGroupRateLimit integration
+### Task 2.3: Clear group rate limit in `task.sendHumanMessage` handler
+
+**Title**: Clear group rate limit when sending a message to a rate-limited task
+
+**Description**: In `packages/daemon/src/lib/rpc-handlers/task-handlers.ts`, the `task.sendHumanMessage` handler (line 963) has no special handling for `rate_limited`/`usage_limited` tasks. When a user sends a message to such a task, it falls through to `routeHumanMessageToGroup()` but the group still has `rateLimit` set. Add handling that clears the group rate limit before routing the message, similar to the `needs_attention`/`completed` revive flow.
+
+**Subtasks**:
+1. In the `task.sendHumanMessage` handler, after the existing special-case blocks (after line 1069, before the generic routing at line 1071), add a block that checks if `task.status === 'rate_limited' || task.status === 'usage_limited'`.
+2. If so, call `runtime.clearGroupRateLimit(taskId)` to clear the group's `rateLimit` and restore the task to `in_progress`.
+3. The handler can then fall through to the generic `routeHumanMessageToGroup()` call, which will work correctly now that `group.rateLimit` is cleared.
+
+**Acceptance Criteria**:
+- When a user sends a human message to a `rate_limited`/`usage_limited` task, `group.rateLimit` is cleared.
+- Task status is restored to `in_progress`.
+- The message is routed normally via `routeHumanMessageToGroup()`.
+- If `clearGroupRateLimit` returns `false` (no group found), the handler continues normally.
+
+**Dependencies**: Task 2.1
+
+**Agent Type**: coder
+
+---
+
+### Task 2.4: Unit tests for clearGroupRateLimit integration
 
 **Title**: Add tests for `clearGroupRateLimit()` and its integration with `task.setStatus`
 
@@ -69,6 +94,6 @@ The fix adds a public `clearGroupRateLimit(taskId)` method to `RoomRuntime` and 
 - Test "after manual status change, worker output routes to leader normally" passes.
 - Existing rate-limit-persistence tests continue to pass.
 
-**Dependencies**: Task 2.1, Task 2.2
+**Dependencies**: Task 2.1, Task 2.2, Task 2.3
 
 **Agent Type**: coder

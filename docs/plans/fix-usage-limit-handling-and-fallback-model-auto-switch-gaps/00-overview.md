@@ -13,7 +13,7 @@ All fixes follow the existing patterns in the codebase -- the re-detection guard
 ## Milestones
 
 1. **Bug A: Usage limit re-detection guard** -- Add `!group.rateLimit` guard to `usage_limit` handler in both worker and leader paths to prevent infinite backoff loops after limit reset.
-2. **Bug B: Clear group rate limit on manual status change** -- Add `clearGroupRateLimit(taskId)` method to `RoomRuntime` and call it from `task.setStatus` handler when transitioning from `usage_limited`/`rate_limited` to `in_progress`.
+2. **Bug B: Clear group rate limit on manual status change** -- Add `clearGroupRateLimit(taskId)` method to `RoomRuntime` and call it from `task.setStatus` handler AND `task.sendHumanMessage` handler when the task is in `rate_limited`/`usage_limited` status. The `sendHumanMessage` handler currently has NO special handling for rate-limited tasks at all — it falls through to generic routing while the group still has `rateLimit` set.
 3. **Bug D: Skip stale envelope routing after fallback switch** -- After a successful `trySwitchToFallbackModel()`, return early from `onWorkerTerminalState`/`onLeaderTerminalState` to avoid sending stale error text to the leader.
 4. **Gap H: Clear task restriction after successful fallback switch** -- After a successful fallback switch in the `usage_limit` handler, call `clearTaskRestriction()` to restore task to `in_progress`.
 5. **Gap E: Real-time usage_limit detection in mirroring** -- Add `usage_limit` handling to the `setupMirroring()` callback alongside the existing `rate_limit` handling.
@@ -31,4 +31,16 @@ All fixes follow the existing patterns in the codebase -- the re-detection guard
 
 ## Total Estimated Task Count
 
-14 tasks across 7 milestones.
+15 tasks across 7 milestones.
+
+## Verification Notes
+
+All bugs and gaps were verified against the actual codebase before planning. Key findings:
+
+- **Bug A**: ✅ Confirmed at worker line 729 and leader line 1094 — no `!group.rateLimit` guard. The `rate_limit` path at line 687 correctly has this guard. The deadlock loop via `recoverStuckWorkers` → `onWorkerTerminalState` → re-apply backoff is real.
+- **Bug B**: ✅ Confirmed — `TaskManager.setTaskStatus()` (line 256-261) clears `task.restrictions` but `group.rateLimit` is untouched. **Additional gap found**: `task.sendHumanMessage` has NO handling for `rate_limited`/`usage_limited` tasks — falls through to generic routing while group still has `rateLimit` set.
+- **Bug D**: ✅ Confirmed at line 766 — falls through to routing with stale error text. Returning early is correct.
+- **Gap E**: ✅ Confirmed at line 2242 — mirroring only checks `rate_limit`.
+- **Gap F**: ✅ Confirmed — `recoverStuckWorkers()` exists at line 2548 but no leader equivalent. Comment at line 1059-1064 acknowledges this.
+- **Gap G**: ✅ Confirmed — `trySwitchToFallbackModel()` at line 333-427 doesn't check provider availability.
+- **Gap H**: ✅ Confirmed — no `clearTaskRestriction()` call after successful fallback switch.
