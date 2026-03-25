@@ -771,8 +771,12 @@ export class RoomRuntime {
 						this.scheduleTickAfterRateLimitReset(groupId);
 						return;
 					}
-					// Fall through to normal routing — fallback model switch event was already appended
-					// in trySwitchToFallbackModel so the UI shows the switch clearly.
+					// Fallback switch succeeded: clear stale restriction/rate-limit so the UI shows the
+					// task as in_progress with the new model, then return. When the new query finishes,
+					// onWorkerTerminalState fires again with clean output and routes normally.
+					await this.clearTaskRestriction(group.taskId);
+					this.groupRepo.clearRateLimit(groupId);
+					return;
 				}
 				// group.rateLimit already set (even if expired): re-trigger after expiry.
 				// Fall through to the worktree check so the worker can attempt cleanup/retry.
