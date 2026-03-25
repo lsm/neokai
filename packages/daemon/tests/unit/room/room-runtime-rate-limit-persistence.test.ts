@@ -288,6 +288,92 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 		});
 	});
 
+	describe('leader usage_limit re-detection guard (!group.rateLimit)', () => {
+		it('skips usage_limit handler when group.rateLimit is already set (active)', async () => {
+			// Scenario: usage_limit was already detected (group.rateLimit set).
+			// Re-triggering onLeaderTerminalState with the same usage-limit output must NOT
+			// re-apply the backoff or return early — it must fall through to normal completion.
+			let leaderSessionId: string | null = null;
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return makeWorkerMessages(USAGE_LIMIT_MSG);
+					}
+					return [];
+				},
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionId = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Simulate a rateLimit that is already set (first detection already occurred)
+			const existingBackoff = {
+				detectedAt: Date.now() - 10_000,
+				resetsAt: Date.now() + 60_000, // still active
+				sessionRole: 'leader' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, existingBackoff);
+
+			// Re-trigger onLeaderTerminalState — the guard must prevent re-applying backoff
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// group.rateLimit must remain unchanged (not re-applied)
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toEqual(existingBackoff);
+
+			// Task should still be in_progress (no new restriction persisted)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
+		it('skips usage_limit handler when group.rateLimit is expired (re-trigger after reset)', async () => {
+			// Scenario: usage_limit was detected, rateLimit set, then the reset timer fired.
+			// group.rateLimit is expired but still non-null.
+			// onLeaderTerminalState must NOT re-apply backoff — fall through to completion.
+			let leaderSessionId: string | null = null;
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return makeWorkerMessages(USAGE_LIMIT_MSG);
+					}
+					return [];
+				},
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionId = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Expired rate limit — simulates the reset timer having fired
+			const expiredBackoff = {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 10_000, // expired 10s ago
+				sessionRole: 'leader' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, expiredBackoff);
+
+			// Re-trigger onLeaderTerminalState
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// group.rateLimit must remain the expired backoff — not overwritten with a new one
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toEqual(expiredBackoff);
+
+			// Task must not transition to usage_limited again
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+	});
+
 	// ─── clearGroupRateLimit ────────────────────────────────────────────────────────────────
 
 	describe('clearGroupRateLimit(taskId)', () => {

@@ -1103,42 +1103,51 @@ export class RoomRuntime {
 					return;
 				}
 				if (errorClass?.class === 'usage_limit') {
-					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-					// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
-					log.info(
-						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
-					);
-					const switched = await this.trySwitchToFallbackModel(
-						groupId,
-						group.leaderSessionId,
-						'leader'
-					);
-					if (!switched) {
-						// No fallback available — fall through to rate_limit behavior (backoff + pause)
-						const rateLimitBackoff = errorClass.resetsAt
-							? createRateLimitBackoff(leaderOutputText, 'leader')
-							: null;
-						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
-							detectedAt: Date.now(),
-							resetsAt: Date.now() + 60 * 1000,
-							sessionRole: 'leader',
-						};
-						this.groupRepo.setRateLimit(groupId, backoff);
-						this.appendGroupEvent(groupId, 'rate_limited', {
-							text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
-							resetsAt: backoff.resetsAt,
-							sessionRole: 'leader',
-						});
-						await this.persistTaskRestriction(
-							group.taskId,
-							backoff,
-							'usage_limit',
-							`Daily/weekly usage cap in leader`
+					// Only act on first detection. If group.rateLimit is already set (even if expired),
+					// the limit was already handled — skip re-detection and fall through to normal
+					// completion. This prevents an infinite loop when recoverStuckLeaders re-triggers
+					// onLeaderTerminalState after the limit has reset but the old output still contains
+					// the usage-limit text.
+					if (!group.rateLimit) {
+						// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+						// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
+						log.info(
+							`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
 						);
-						this.scheduleTickAfterRateLimitReset(groupId);
-						return;
+						const switched = await this.trySwitchToFallbackModel(
+							groupId,
+							group.leaderSessionId,
+							'leader'
+						);
+						if (!switched) {
+							// No fallback available — fall through to rate_limit behavior (backoff + pause)
+							const rateLimitBackoff = errorClass.resetsAt
+								? createRateLimitBackoff(leaderOutputText, 'leader')
+								: null;
+							const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+								detectedAt: Date.now(),
+								resetsAt: Date.now() + 60 * 1000,
+								sessionRole: 'leader',
+							};
+							this.groupRepo.setRateLimit(groupId, backoff);
+							this.appendGroupEvent(groupId, 'rate_limited', {
+								text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+								resetsAt: backoff.resetsAt,
+								sessionRole: 'leader',
+							});
+							await this.persistTaskRestriction(
+								group.taskId,
+								backoff,
+								'usage_limit',
+								`Daily/weekly usage cap in leader`
+							);
+							this.scheduleTickAfterRateLimitReset(groupId);
+							return;
+						}
+						// Fall through to normal completion — fallback model switch event was already appended
 					}
-					// Fall through to normal completion — fallback model switch event was already appended
+					// group.rateLimit already set (even if expired): re-trigger after expiry.
+					// Fall through to normal completion so the leader can finish cleanly.
 				}
 			}
 		}
