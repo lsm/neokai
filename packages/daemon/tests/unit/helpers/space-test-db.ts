@@ -64,6 +64,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			description TEXT NOT NULL DEFAULT '',
 			start_node_id TEXT,
 			config TEXT,
+			channels TEXT,
 			layout TEXT,
 			max_iterations INTEGER,
 			created_at INTEGER NOT NULL,

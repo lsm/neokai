@@ -208,6 +208,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
 	runMigration52(db);
+
+	// Migration 53: Add channels column to space_workflows for unified channel topology storage.
+	// Channels move from the config JSON blob to a dedicated TEXT column (JSON-serialized
+	// WorkflowChannel[]). Existing rows that have channels embedded in config are migrated
+	// in-place so no data is lost.
+	runMigration53(db);
 }
 
 /**
@@ -3214,4 +3220,47 @@ export function runMigration52(db: BunDatabase): void {
       PRIMARY KEY (room_id, server_id)
     )
   `);
+}
+
+/**
+ * Migration 53: Add channels column to space_workflows.
+ *
+ * Channels move out of the config JSON blob into a dedicated TEXT column that stores a
+ * JSON-serialized WorkflowChannel[] array. This makes the channel topology a first-class
+ * column rather than a nested JSON field, simplifying repository reads/writes.
+ *
+ * For existing rows, channels are extracted from the config JSON and written to the new
+ * column so that no data is lost. The config JSON is updated in-place with channels removed.
+ *
+ * Idempotent via tableHasColumn guard.
+ */
+export function runMigration53(db: BunDatabase): void {
+	if (!tableHasColumn(db, 'space_workflows', 'channels')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN channels TEXT`);
+
+		// Migrate existing rows: pull channels out of config JSON into the new column.
+		const rows = db
+			.prepare(`SELECT id, config FROM space_workflows WHERE config IS NOT NULL`)
+			.all() as Array<{ id: string; config: string }>;
+
+		for (const row of rows) {
+			let cfg: Record<string, unknown>;
+			try {
+				cfg = JSON.parse(row.config) as Record<string, unknown>;
+			} catch {
+				continue;
+			}
+			if (!cfg.channels) continue;
+
+			const channelsJson = JSON.stringify(cfg.channels);
+			delete cfg.channels;
+			const updatedConfig = JSON.stringify(cfg);
+
+			db.prepare(`UPDATE space_workflows SET channels = ?, config = ? WHERE id = ?`).run(
+				channelsJson,
+				updatedConfig,
+				row.id
+			);
+		}
+	}
 }
