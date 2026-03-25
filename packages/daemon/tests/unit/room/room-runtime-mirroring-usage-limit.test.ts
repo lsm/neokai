@@ -382,6 +382,104 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 		});
 	});
 
+	describe('rate_limit mirroring (existing behavior unchanged)', () => {
+		// A 429 message that also contains the parseable reset-time text.
+		// classifyError → rate_limit (API Error: 429 wins step 1); createRateLimitBackoff →
+		// parses reset time from the "You've hit your limit" portion → returns a backoff.
+		const RATE_LIMIT_WITH_RESET =
+			"API Error: 429 You've hit your limit · resets 11pm (America/New_York)";
+
+		// A bare 429 with no parseable reset time.
+		// classifyError → rate_limit; createRateLimitBackoff → null → mirroring skips setRateLimit.
+		const RATE_LIMIT_BARE = 'API Error: 429 Too Many Requests';
+
+		it('applies backoff when 429 message contains a parseable reset time (worker)', async () => {
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: () => ({}) as GlobalSettings,
+			});
+
+			const { group } = await spawnGroup();
+
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.workerSessionId,
+				message: { uuid: 'rl-msg-1', type: 'text', text: RATE_LIMIT_WITH_RESET },
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(true);
+		});
+
+		it('appends rate_limited event when 429 with parseable reset detected in worker message', async () => {
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: () => ({}) as GlobalSettings,
+			});
+
+			const { group } = await spawnGroup();
+
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.workerSessionId,
+				message: { uuid: 'rl-msg-2', type: 'text', text: RATE_LIMIT_WITH_RESET },
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			const events = ctx.db
+				.prepare(
+					`SELECT kind, payload_json FROM task_group_events WHERE group_id = ? AND kind = 'rate_limited'`
+				)
+				.all(group.id) as Array<{ kind: string; payload_json: string }>;
+			expect(events).toHaveLength(1);
+			const payload = JSON.parse(events[0].payload_json);
+			expect(payload.sessionRole).toBe('worker');
+		});
+
+		it('applies backoff when 429 with parseable reset detected in leader message', async () => {
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: () => ({}) as GlobalSettings,
+			});
+
+			const { group } = await spawnGroup();
+
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.leaderSessionId,
+				message: { uuid: 'rl-leader-1', type: 'text', text: RATE_LIMIT_WITH_RESET },
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(true);
+
+			const events = ctx.db
+				.prepare(
+					`SELECT kind, payload_json FROM task_group_events WHERE group_id = ? AND kind = 'rate_limited'`
+				)
+				.all(group.id) as Array<{ kind: string; payload_json: string }>;
+			expect(events).toHaveLength(1);
+			const payload = JSON.parse(events[0].payload_json);
+			expect(payload.sessionRole).toBe('leader');
+		});
+
+		it('does NOT set backoff for bare API Error 429 with no parseable reset time', async () => {
+			// The terminal-state handler applies the minimum backoff; mirroring intentionally skips
+			// setRateLimit when createRateLimitBackoff returns null (no parseable reset time).
+			ctx = createRuntimeTestContext({
+				getGlobalSettings: () => ({}) as GlobalSettings,
+			});
+
+			const { group } = await spawnGroup();
+
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.workerSessionId,
+				message: { uuid: 'rl-bare-1', type: 'text', text: RATE_LIMIT_BARE },
+			});
+
+			await new Promise((r) => setTimeout(r, 10));
+
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(false);
+		});
+	});
+
 	describe('cleanup', () => {
 		it('resetting mirroring clears fallbackAttempted so a new setup can attempt fallback again', async () => {
 			ctx = createRuntimeTestContext({
