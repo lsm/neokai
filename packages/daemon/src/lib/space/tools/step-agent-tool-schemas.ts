@@ -64,6 +64,28 @@ export const SendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
 // ---------------------------------------------------------------------------
+// report_done
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `report_done` input.
+ *
+ * Signals that this step agent has completed its work. Marks the step's SpaceTask
+ * as 'completed' and persists an optional summary as the task result.
+ */
+export const ReportDoneSchema = z.object({
+	/** Optional summary of what was accomplished. Persisted as the task result. */
+	summary: z
+		.string()
+		.describe(
+			'Optional summary of what was accomplished. Will be persisted as the task completion result.'
+		)
+		.optional(),
+});
+
+export type ReportDoneInput = z.infer<typeof ReportDoneSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -73,6 +95,7 @@ export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 export const STEP_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
+	report_done: ReportDoneSchema,
 } as const;
 
 export type StepAgentToolName = keyof typeof STEP_AGENT_TOOL_SCHEMAS;
