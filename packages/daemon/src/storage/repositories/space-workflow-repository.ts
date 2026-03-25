@@ -4,11 +4,12 @@
  * Data access layer for SpaceWorkflow, SpaceWorkflowNode, and SpaceWorkflowTransition records.
  *
  * Storage layout:
- *   space_workflows             — id, space_id, name, description, start_node_id, config (JSON), layout (JSON), created_at, updated_at
+ *   space_workflows             — id, space_id, name, description, start_node_id, config (JSON), channels (JSON), layout (JSON), created_at, updated_at
  *   space_workflow_nodes        — id, workflow_id, name, agent_id, order_index, config (JSON), created_at, updated_at
  *   space_workflow_transitions  — id, workflow_id, from_node_id, to_node_id, condition (JSON), order_index, is_cyclic, created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
+ * The `channels` column on space_workflows stores: WorkflowChannel[] JSON (unified channel topology)
  * The `config` column on space_workflow_nodes stores: { instructions? }
  * The `condition` column on space_workflow_transitions stores: WorkflowCondition JSON or null
  */
@@ -41,6 +42,7 @@ interface WorkflowRow {
 	description: string;
 	start_node_id: string | null;
 	config: string | null;
+	channels: string | null;
 	layout: string | null;
 	max_iterations: number | null;
 	created_at: number;
@@ -74,8 +76,6 @@ interface TransitionRow {
 interface WorkflowConfigJson {
 	tags?: string[];
 	rules?: WorkflowRule[];
-	/** Workflow-level channel topology declarations */
-	channels?: WorkflowChannel[];
 	extra?: Record<string, unknown>;
 }
 
@@ -144,6 +144,8 @@ function rowToWorkflow(
 	// Derive startNodeId: use explicit column, fall back to first node
 	const startNodeId = row.start_node_id ?? nodes[0]?.id ?? '';
 	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
+	// Read channels from the dedicated column (Migration 53+).
+	const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
 	return {
 		id: row.id,
 		spaceId: row.space_id,
@@ -154,7 +156,7 @@ function rowToWorkflow(
 		startNodeId,
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
-		channels: cfg.channels && cfg.channels.length > 0 ? cfg.channels : undefined,
+		channels: channels && channels.length > 0 ? channels : undefined,
 		config: cfg.extra,
 		maxIterations: row.max_iterations ?? undefined,
 		layout: layout ?? undefined,
@@ -193,16 +195,17 @@ export class SpaceWorkflowRepository {
 		const cfg: WorkflowConfigJson = {
 			tags: params.tags ?? [],
 			rules: this.assignRuleIds(params.rules ?? []),
-			channels: params.channels && params.channels.length > 0 ? params.channels : undefined,
 			extra: params.config,
 		};
 
+		const channelsJson =
+			params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
 		const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, max_iterations, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, channels, layout, max_iterations, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -211,6 +214,7 @@ export class SpaceWorkflowRepository {
 				params.description ?? '',
 				startNodeId,
 				JSON.stringify(cfg),
+				channelsJson,
 				layoutJson,
 				params.maxIterations ?? null,
 				now,
@@ -293,10 +297,6 @@ export class SpaceWorkflowRepository {
 			newCfg.rules = params.rules ?? [];
 			cfgChanged = true;
 		}
-		if (params.channels !== undefined) {
-			newCfg.channels = params.channels && params.channels.length > 0 ? params.channels : undefined;
-			cfgChanged = true;
-		}
 		if (params.config !== undefined) {
 			newCfg.extra = params.config ?? undefined;
 			cfgChanged = true;
@@ -305,6 +305,13 @@ export class SpaceWorkflowRepository {
 		if (cfgChanged) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(newCfg));
+		}
+
+		if (params.channels !== undefined) {
+			fields.push('channels = ?');
+			values.push(
+				params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
+			);
 		}
 
 		if (params.maxIterations !== undefined) {
