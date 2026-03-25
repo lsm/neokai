@@ -3870,6 +3870,9 @@ export class RoomRuntime {
 			goal?.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
 		const isRecurringExecution = activeExecution != null;
 
+		// reviewContext determines the leader's review guidelines — planner gets plan_review, others get code_review.
+		const reviewContext = (agentType === 'planner' ? 'plan_review' : 'code_review') as ReviewContext;
+
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
 		const leaderContextConfig = {
 			task,
@@ -3916,6 +3919,8 @@ export class RoomRuntime {
 			const plannerModel = workerModel;
 			const plannerProvider = workerProvider;
 
+			// workerModel/workerProvider are already the planner's model/provider
+			// (workerRole === 'planner' when agentType === 'planner').
 			// Build create_draft_task callback — mirrors spawnPlanningGroup pattern
 			const createDraftTask = async (
 				params: PlannerCreateTaskParams
@@ -3970,8 +3975,8 @@ export class RoomRuntime {
 				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: plannerModel,
-				provider: plannerProvider,
+				model: workerModel,
+				provider: workerProvider,
 				createDraftTask,
 				updateDraftTask,
 				removeDraftTask,
@@ -4007,8 +4012,6 @@ export class RoomRuntime {
 		}
 
 		let group;
-		// Determine reviewContext based on agent type — planner uses plan_review guidelines.
-		const reviewContext = agentType === 'planner' ? 'plan_review' : 'code_review';
 		try {
 			group = await this.taskGroupManager.spawn(
 				currentRoom,
