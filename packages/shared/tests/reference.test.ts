@@ -73,10 +73,10 @@ describe('ResolvedReference variants', () => {
 			id: 'src/app.ts',
 			data: {
 				path: 'src/app.ts',
-				content: 'export {}',
+				content: 'console.log("hello");',
 				binary: false,
 				truncated: false,
-				size: 9,
+				size: 21,
 				mtime: new Date().toISOString(),
 			},
 		};
@@ -107,11 +107,14 @@ describe('ResolvedReference variants', () => {
 			id: 'src/',
 			data: {
 				path: 'src/',
-				entries: [{ name: 'app.ts', path: 'src/app.ts', type: 'file' }],
+				entries: [
+					{ name: 'app.ts', path: 'src/app.ts', type: 'file' },
+					{ name: 'index.ts', path: 'src/index.ts', type: 'file' },
+				],
 			},
 		};
 		expect(ref.type).toBe('folder');
-		expect(ref.data.entries).toHaveLength(1);
+		expect(ref.data.entries).toHaveLength(2);
 	});
 
 	it('ResolvedReference accepts unknown data', () => {

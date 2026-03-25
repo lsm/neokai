@@ -15,6 +15,7 @@ import type {
 import type { SessionManager } from '../session-manager';
 import { FileManager } from '../file-manager';
 import { Logger } from '../logger';
+import { join, normalize, relative } from 'node:path';
 
 const log = new Logger('reference-handlers');
 
@@ -23,6 +24,12 @@ const log = new Logger('reference-handlers');
  * Files larger than this will be truncated to prevent oversized responses.
  */
 const MAX_FILE_CONTENT_BYTES = 50_000;
+
+/**
+ * Number of bytes to sample when detecting binary files.
+ * Checking the first 8 KB is sufficient for reliable binary detection.
+ */
+const BINARY_DETECTION_SAMPLE_BYTES = 8_192;
 
 // ============================================================================
 // Repository interfaces (minimal — only what this handler needs)
@@ -165,6 +172,11 @@ async function resolveTask(
 		return null;
 	}
 
+	// Confirm the task belongs to the session's room (prevent cross-room access via UUID)
+	if (task.roomId !== roomId) {
+		return null;
+	}
+
 	return {
 		type: 'task',
 		id,
@@ -206,7 +218,67 @@ function resolveGoal(
 async function resolveFile(id: string, workspacePath: string): Promise<ResolvedReference | null> {
 	const fileManager = new FileManager(workspacePath);
 
-	// validatePath is called internally by readFile; throws on traversal
+	// Validate path (throws on traversal — we catch below to return null)
+	let absolutePath: string;
+	try {
+		// Replicate FileManager path validation without reading the file yet
+		const normalized = normalize(workspacePath);
+		const resolved = normalize(join(workspacePath, id));
+		const rel = relative(normalized, resolved);
+		if (rel.startsWith('..') || rel === '..') {
+			return null;
+		}
+		absolutePath = resolved;
+	} catch {
+		return null;
+	}
+
+	// Check for binary content before attempting text decode
+	let isBinary = false;
+	let fileSize = 0;
+	let fileMtime = '';
+	try {
+		const { stat } = await import('node:fs/promises');
+		const stats = await stat(absolutePath);
+		fileSize = stats.size;
+		fileMtime = stats.mtime.toISOString();
+
+		// Sample the first BINARY_DETECTION_SAMPLE_BYTES bytes and check for null bytes,
+		// which are the most reliable indicator of binary content.
+		const sampleSize = Math.min(fileSize, BINARY_DETECTION_SAMPLE_BYTES);
+		if (sampleSize > 0) {
+			const buf = Buffer.allocUnsafe(sampleSize);
+			const { open } = await import('node:fs/promises');
+			const fd = await open(absolutePath, 'r');
+			try {
+				await fd.read(buf, 0, sampleSize, 0);
+			} finally {
+				await fd.close();
+			}
+			isBinary = buf.includes(0x00);
+		}
+	} catch {
+		// File not found or unreadable
+		return null;
+	}
+
+	if (isBinary) {
+		// Return metadata only — content would be garbled and oversized
+		return {
+			type: 'file',
+			id,
+			data: {
+				path: id,
+				content: null,
+				binary: true,
+				truncated: false,
+				size: fileSize,
+				mtime: fileMtime,
+			},
+		};
+	}
+
+	// Read text content via FileManager (handles path validation internally)
 	let fileData: {
 		path: string;
 		content: string;
@@ -218,7 +290,6 @@ async function resolveFile(id: string, workspacePath: string): Promise<ResolvedR
 	try {
 		fileData = await fileManager.readFile(id, 'utf-8');
 	} catch {
-		// File not found or path traversal detected — return null
 		return null;
 	}
 
@@ -232,6 +303,7 @@ async function resolveFile(id: string, workspacePath: string): Promise<ResolvedR
 		data: {
 			path: fileData.path,
 			content,
+			binary: false,
 			truncated,
 			size: fileData.size,
 			mtime: fileData.mtime,

@@ -310,6 +310,30 @@ describe('reference.resolve handler', () => {
 			// Session not found → no roomId → null
 			expect(result.resolved).toBeNull();
 		});
+
+		it('returns null when task belongs to a different room (cross-room isolation)', async () => {
+			const taskInOtherRoom = { ...SAMPLE_TASK, roomId: 'other-room' };
+			const { hub, handlers } = createMockMessageHub();
+			const deps: ReferenceHandlerDeps = {
+				sessionManager: makeSessionManager({
+					workspacePath: testWorkspace,
+					roomId: 'room-1',
+				}) as never,
+				taskRepo: makeTaskRepo(taskInOtherRoom),
+				goalRepo: makeGoalRepo(),
+				workspaceRoot: testWorkspace,
+			};
+			setupReferenceHandlers(hub, deps);
+			const handler = handlers.get('reference.resolve')!;
+
+			const result = (await handler({
+				sessionId: 'session-1',
+				type: 'task',
+				id: 'task-uuid-1',
+			})) as { resolved: unknown };
+
+			expect(result.resolved).toBeNull();
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -467,7 +491,7 @@ describe('reference.resolve handler', () => {
 				resolved: {
 					type: string;
 					id: string;
-					data: { content: string; truncated: boolean; size: number };
+					data: { content: string; binary: boolean; truncated: boolean; size: number };
 				};
 			};
 
@@ -475,6 +499,7 @@ describe('reference.resolve handler', () => {
 			expect(result.resolved!.type).toBe('file');
 			expect(result.resolved!.id).toBe('hello.txt');
 			expect(result.resolved!.data.content).toBe('Hello world');
+			expect(result.resolved!.data.binary).toBe(false);
 			expect(result.resolved!.data.truncated).toBe(false);
 			expect(result.resolved!.data.size).toBeGreaterThan(0);
 		});
@@ -507,6 +532,35 @@ describe('reference.resolve handler', () => {
 			expect(result.resolved).not.toBeNull();
 			expect(result.resolved!.data.truncated).toBe(true);
 			expect(result.resolved!.data.content.length).toBe(50_000);
+		});
+
+		it('returns binary metadata (no content) for binary files', async () => {
+			// Write a buffer with null bytes — clear binary indicator
+			const binaryData = Buffer.from([0x00, 0x01, 0x02, 0x89, 0x50, 0x4e, 0x47, 0x00]);
+			await writeFile(join(testWorkspace, 'image.png'), binaryData);
+
+			const { hub, handlers } = createMockMessageHub();
+			const deps: ReferenceHandlerDeps = {
+				sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
+				taskRepo: makeTaskRepo(),
+				goalRepo: makeGoalRepo(),
+				workspaceRoot: testWorkspace,
+			};
+			setupReferenceHandlers(hub, deps);
+			const handler = handlers.get('reference.resolve')!;
+
+			const result = (await handler({
+				sessionId: 'session-1',
+				type: 'file',
+				id: 'image.png',
+			})) as {
+				resolved: { data: { content: null; binary: boolean; size: number } } | null;
+			};
+
+			expect(result.resolved).not.toBeNull();
+			expect(result.resolved!.data.binary).toBe(true);
+			expect(result.resolved!.data.content).toBeNull();
+			expect(result.resolved!.data.size).toBeGreaterThan(0);
 		});
 
 		it('returns null for a missing file', async () => {
