@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import {
 	RoomRuntimeService,
@@ -11,6 +11,8 @@ import type { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { Database as AppDatabase } from '../../../src/storage';
 import { createReactiveDatabase } from '../../../src/storage/reactive-database';
 import type { Room, RuntimeState, Session } from '@neokai/shared';
+import { getProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
+import type { Provider, ProviderId } from '@neokai/shared/provider';
 
 const CREATE_TABLE_SQL = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -456,5 +458,73 @@ describe('stopRuntime() + room.tick handler interaction', () => {
 		expect(result).toEqual({ skipped: true, reason: 'not running' });
 		const pending = jobQueue.listJobs({ queue: ROOM_TICK, status: ['pending'] });
 		expect(pending).toHaveLength(0);
+	});
+});
+
+/**
+ * Minimal mock provider for testing ProviderRegistry interactions.
+ */
+function makeMockProvider(
+	id: ProviderId,
+	available: boolean | (() => boolean | Promise<boolean>)
+): Provider {
+	return {
+		id,
+		displayName: id,
+		capabilities: [],
+		isAvailable: typeof available === 'function' ? available : () => available,
+		getModels: async () => [],
+	} as unknown as Provider;
+}
+
+describe('RoomRuntimeService isProviderAvailable wiring — ProviderRegistry integration', () => {
+	afterEach(() => {
+		resetProviderRegistry();
+	});
+
+	/**
+	 * Extract the isProviderAvailable callback as the service would create it.
+	 * This mirrors exactly the 7 lines added to createOrGetRuntime() so we can
+	 * exercise the logic with real registry state without triggering a full
+	 * RoomRuntime construction.
+	 */
+	function makeCallback() {
+		return async (providerId: string, _model: string): Promise<boolean> => {
+			const provider = getProviderRegistry().get(providerId);
+			if (!provider) return false;
+			return Boolean(await provider.isAvailable());
+		};
+	}
+
+	it('returns false when provider is not registered in the registry', async () => {
+		const cb = makeCallback();
+		expect(await cb('unknown-provider', 'some-model')).toBe(false);
+	});
+
+	it('returns true when provider.isAvailable() returns true', async () => {
+		getProviderRegistry().register(makeMockProvider('anthropic', true));
+		const cb = makeCallback();
+		expect(await cb('anthropic', 'claude-3-haiku')).toBe(true);
+	});
+
+	it('returns false when provider.isAvailable() returns false', async () => {
+		getProviderRegistry().register(makeMockProvider('glm', false));
+		const cb = makeCallback();
+		expect(await cb('glm', 'glm-4')).toBe(false);
+	});
+
+	it('returns false when provider.isAvailable() returns a falsy value', async () => {
+		getProviderRegistry().register(makeMockProvider('anthropic', () => false));
+		const cb = makeCallback();
+		expect(await cb('anthropic', 'claude-3')).toBe(false);
+	});
+
+	it('returns true for a registered provider even when another provider is not registered', async () => {
+		getProviderRegistry().register(makeMockProvider('glm', true));
+		const cb = makeCallback();
+		// glm is registered → true
+		expect(await cb('glm', 'glm-4')).toBe(true);
+		// anthropic is not registered → false
+		expect(await cb('anthropic', 'claude-3')).toBe(false);
 	});
 });

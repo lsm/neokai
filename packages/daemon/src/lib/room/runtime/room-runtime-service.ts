@@ -36,7 +36,7 @@ import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from '../managers/room-manager';
 import { WorktreeManager } from '../../worktree-manager';
-import { inferProviderForModel } from '../../providers/registry';
+import { inferProviderForModel, getProviderRegistry } from '../../providers/registry';
 import { Logger } from '../../logger';
 
 const log = new Logger('room-runtime-service');
@@ -571,6 +571,11 @@ export class RoomRuntimeService {
 			getGoal: (goalId) => goalManager.getGoal(goalId),
 			getGlobalSettings: this.ctx.getGlobalSettings,
 			jobQueue: this.ctx.jobQueue,
+			isProviderAvailable: async (providerId: string, _model: string) => {
+				const provider = getProviderRegistry().get(providerId);
+				if (!provider) return false;
+				return Boolean(await provider.isAvailable());
+			},
 		});
 
 		this.runtimes.set(room.id, runtime);
