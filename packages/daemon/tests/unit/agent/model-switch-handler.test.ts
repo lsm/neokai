@@ -321,10 +321,10 @@ describe('ModelSwitchHandler', () => {
 				expect(restartSpy).toHaveBeenCalled();
 			});
 
-			it('should clear sdkSessionId before restart when query not started', async () => {
+			it('should clear sdkSessionId when query not started', async () => {
 				// FIX: sdkSessionId must be cleared before restart so the new query starts fresh
-				// with the new model. The old SDK session file was created with the old model,
-				// and the SDK may use the session-file model over the options model.
+				// with the new model. The old SDK session file was created with the old model, and
+				// the SDK may use the session-file model over the options model.
 				handler = createHandler({ queryObject: null });
 				await handler.switchModel(VALID_MODEL, 'anthropic');
 
@@ -457,10 +457,10 @@ describe('ModelSwitchHandler', () => {
 				);
 			});
 
-			it('should clear sdkSessionId before restart when query is running', async () => {
+			it('should clear sdkSessionId when query is running', async () => {
 				// FIX: sdkSessionId must be cleared before restart so the new query starts fresh
-				// with the new model. The old SDK session file was created with the old model,
-				// and the SDK may use the session-file model over the options model.
+				// with the new model. The old SDK session file was created with the old model, and
+				// the SDK may use the session-file model over the options model.
 				handler = createHandler();
 				await handler.switchModel(VALID_MODEL, 'anthropic');
 

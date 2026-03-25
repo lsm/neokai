@@ -184,9 +184,10 @@ export class ModelSwitchHandler {
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
 
-				// FIX: Clear sdkSessionId before restart to ensure the new query starts fresh.
-				// The old SDK session file was created with the old model. The SDK may use the
-				// session-file model over the options model, so the model switch wouldn't take effect.
+				// FIX: Clear sdkSessionId before restart so the new query starts fresh with the
+				// new model. The old SDK session file was created with the old model. The SDK may
+				// use the session-file model over the options model, so the model switch wouldn't
+				// take effect without this.
 				session.sdkSessionId = undefined;
 
 				// Only pass serializable fields — session.config may contain runtime-only
@@ -229,9 +230,10 @@ export class ModelSwitchHandler {
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
 
-				// FIX: Clear sdkSessionId before restart to ensure the new query starts fresh.
-				// The old SDK session file was created with the old model. The SDK may use the
-				// session-file model over the options model, so the model switch wouldn't take effect.
+				// FIX: Clear sdkSessionId before restart so the new query starts fresh with the
+				// new model. The old SDK session file was created with the old model. The SDK may
+				// use the session-file model over the options model, so the model switch wouldn't
+				// take effect without this.
 				session.sdkSessionId = undefined;
 
 				// Only pass serializable fields — session.config may contain runtime-only
