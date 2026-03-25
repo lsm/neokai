@@ -28,12 +28,12 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
 2. Create a standalone `activateNode(runId: string, nodeId: string): Promise<SpaceTask[]>` function (in a new file or within the router module) that:
    - Looks up the node definition from the workflow
    - Creates `SpaceTask` records for each agent on the node
-   - Creates or reuses the `SpaceSessionGroup` for the node
    - Returns the created tasks
+   - Note: No session group creation — agent state is tracked on `space_tasks` directly (see overview "Agent State on space_tasks")
 3. Handle edge cases:
    - Node already has active tasks → skip activation (no-op)
    - Node activation fails (e.g., workflow paused/cancelled) → return error in delivery result
-   - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, agentName)` to prevent duplicate tasks (the `agentName` column is renamed from `slotRole` in Task 8.2)
+   - Concurrent activation attempts → use DB-level uniqueness constraint on `(workflowRunId, nodeId, agentName)` to prevent duplicate tasks (the `agentName` column is renamed from `slotRole` in Task 2.2)
 4. Add idempotency: calling `activateNode()` multiple times for the same node is safe (existing tasks are not duplicated)
 
 **Acceptance Criteria**:
@@ -63,7 +63,6 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
        taskRepo: SpaceTaskRepository;
        taskManager: SpaceTaskManager;
        gateEvaluator: ChannelGateEvaluator;
-       sessionGroupRepo: SpaceSessionGroupRepository;
        workspacePath: string;
      })
 
@@ -82,7 +81,7 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
      // 3. Ensure target node has active tasks/sessions (activate if needed — see Task 3.0)
      // 4. Resolve target agent's session (specific agent for DM, all agents for fan-out)
      // 5. Evaluate the gate
-     // 6. If allowed, inject the message
+     // 6. If allowed, inject the message into the target agent's session (resolved via space_tasks)
      // 7. If gate blocked, return the reason (agent can retry or escalate)
      // 8. If matching channel is cyclic (isCyclic=true), increment iteration counter
      async deliverMessage(params: {

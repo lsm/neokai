@@ -7,8 +7,9 @@ Clean up all remaining step-transition code and types that are no longer needed.
 ## Scope
 
 - Remove `WorkflowTransition` type and all transition-related code
-- Remove `currentNodeId` from `SpaceWorkflowRun` and `SpaceSessionGroup`
-- Rename `SpaceTask.slotRole` → `SpaceTask.agentName` to align with "no role" naming
+- Drop `space_session_groups` and `space_session_group_members` tables
+- Remove `SpaceSessionGroupRepository` and all session group references
+- Remove `currentNodeId` from `SpaceWorkflowRun`
 - Remove transition-related DB tables/columns
 - Clean up any remaining dead code
 - Comprehensive test coverage
@@ -49,9 +50,9 @@ Clean up all remaining step-transition code and types that are no longer needed.
 
 ---
 
-### Task 8.2: Remove currentNodeId from Workflow Run
+### Task 8.2: Drop Session Group Tables and Remove currentNodeId
 
-**Description**: Remove `currentNodeId` from `SpaceWorkflowRun` since the agent-centric model doesn't track a single active node.
+**Description**: Drop the `space_session_groups` and `space_session_group_members` tables entirely, remove `SpaceSessionGroupRepository`, remove `currentNodeId` from `SpaceWorkflowRun`, and clean up all related code. Agent state is now tracked exclusively on `space_tasks` (see overview "Agent State on space_tasks").
 
 **Important distinction**: `startNodeId` on `SpaceWorkflow` (the workflow template/definition) **stays unchanged** — it tells the system which node to activate first when a run starts. Only `currentNodeId` on `SpaceWorkflowRun` (the runtime execution state) is removed. In the agent-centric model, `SpaceRuntime.startWorkflowRun()` activates the start node via `activateNode()` (from Task 3.0) using the workflow's `startNodeId`. After that, nodes are activated lazily by the router — there is no single "current" node to track.
 
@@ -60,28 +61,37 @@ Clean up all remaining step-transition code and types that are no longer needed.
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`:
    - Remove `currentNodeId` field from `SpaceWorkflowRun`
-   - Remove `currentNodeId` field from `SpaceSessionGroup` (if it exists — session groups are per-node and don't track a "current" node in the agent-centric model)
+   - Remove `SpaceSessionGroup` interface entirely (table being dropped)
+   - Remove `SpaceSessionGroupMember` interface entirely (table being dropped)
    - Keep `startNodeId` on `SpaceWorkflow` (unchanged — it's a workflow definition property)
    - Keep `iterationCount` and `maxIterations` on `SpaceWorkflowRun` (unchanged — iteration tracking moved to router in M3)
 2. Add a DB migration to:
    - Drop the `current_node_id` column from `space_workflow_runs` (keep `iteration_count` and `max_iterations`)
-   - Drop the `current_node_id` column from `space_session_groups` if it exists
-   - Rename `slot_role` column to `agent_name` on `space_tasks` table (aligns with "no role" naming convention — `slotRole` referenced the agent's old `role` field)
-   - Rename `role` column to `agent_name` on `space_session_group_members` table (`SpaceSessionGroupMember.role` → `SpaceSessionGroupMember.agentName`)
-   - Update all code that reads/writes `slotRole` / `slot_role` or `SpaceSessionGroupMember.role` to use `agentName` / `agent_name`
-3. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
+   - Drop `space_session_groups` table (no longer needed — agent state tracked on `space_tasks`)
+   - Drop `space_session_group_members` table (no longer needed — agent state tracked on `space_tasks`)
+   - Note: `slot_role` → `agent_name` rename on `space_tasks` was already done in Task 2.2
+3. Remove `SpaceSessionGroupRepository`:
+   - Delete `packages/daemon/src/storage/repositories/space-session-group-repository.ts`
+   - Remove all imports and references to `SpaceSessionGroupRepository` across the codebase
+4. Remove session group-related handlers and exports:
+   - Remove any RPC handlers that operate on session groups
+   - Remove session group creation/lookup from task and workflow managers
+   - Remove session group references from `SpaceRuntime` and `WorkflowExecutor`
+5. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
    - Update `startWorkflowRun()` to activate the start node via `activateNode()` instead of setting `currentNodeId`
    - Verify iteration tracking is now handled by the router (not by `advance()`)
-4. Clean up any code that reads or writes `currentNodeId` on `SpaceWorkflowRun` or `SpaceSessionGroup` (should already be cleaned up by Milestone 3/4, but verify)
-5. Run full test suite to verify no regressions
+6. Clean up any code that reads or writes `currentNodeId` on `SpaceWorkflowRun` (should already be cleaned up by Milestone 3/4, but verify)
+7. Run full test suite to verify no regressions
 
 **Acceptance Criteria**:
-- `currentNodeId` removed from `SpaceWorkflowRun` and `SpaceSessionGroup` types and DB
-- `slot_role` renamed to `agent_name` on `space_tasks` — no "role" column remains in task management
-- `SpaceSessionGroupMember.role` renamed to `agentName` on `space_session_group_members` — no "role" column remains in session group members
+- `currentNodeId` removed from `SpaceWorkflowRun` type and DB
+- `SpaceSessionGroup` and `SpaceSessionGroupMember` interfaces removed
+- `space_session_groups` and `space_session_group_members` tables dropped
+- `SpaceSessionGroupRepository` deleted — no imports or references remain
+- No session group-related handlers or exports remain
 - `startNodeId` on `SpaceWorkflow` still works correctly
 - Workflow runs activate the start node via `activateNode()`
-- No code references `currentNodeId` or `slotRole`
+- No code references `currentNodeId`, `SpaceSessionGroup`, `SpaceSessionGroupMember`, or `SpaceSessionGroupRepository`
 - All tests pass
 
 **Dependencies**: Tasks 3.5, 4.2
@@ -132,5 +142,5 @@ Clean up all remaining step-transition code and types that are no longer needed.
 
 ## Rollback Strategy
 
-- This milestone removes code that is no longer used (transitions, currentNodeId). If rollback is needed, all removed code is preserved in git history and can be restored from the pre-milestone commit.
-- DB migrations to drop tables/columns are destructive but reversible (re-create the table/column and restore data from a backup if needed — though since the feature is unreleased, there should be no production data to worry about).
+- This milestone removes code that is no longer used (transitions, currentNodeId, session groups). If rollback is needed, all removed code is preserved in git history and can be restored from the pre-milestone commit.
+- DB migrations to drop `space_session_groups`, `space_session_group_members`, and `current_node_id` are destructive but reversible from git history (no production data since feature is unreleased).

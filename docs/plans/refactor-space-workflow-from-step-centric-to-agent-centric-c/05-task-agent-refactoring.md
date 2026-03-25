@@ -22,7 +22,7 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
    - Update the role description: from "workflow orchestrator that advances steps" to "collaboration manager that coordinates agents"
    - Update the tool descriptions to emphasize channel-based communication
    - Add guidance on:
-     - Monitoring agent completion state via `list_group_members`
+     - Monitoring agent completion state via `list_peers` (queries space_tasks)
      - Handling gate-blocked messages (agents report back, Task Agent escalates)
      - When to use `request_human_input` for human gates
      - When the workflow is complete (all agents report done)
@@ -80,7 +80,7 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 
 **Subtasks**:
 1. In `TaskAgentManager`, pass `ChannelRouter` and `CompletionDetector` to `createTaskAgentMcpServer()`
-2. Update `TaskAgentToolsConfig` to accept the new dependencies
+2. Update `TaskAgentToolsConfig` to accept the new dependencies (no `SpaceSessionGroupRepository` — session groups are removed)
 3. Update `report_workflow_done` to use `CompletionDetector` for validation
 
 **Acceptance Criteria**:
@@ -100,7 +100,7 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 
 **Subtasks**:
 1. Verify no remaining references to `advance_workflow` in `TaskAgentToolsConfig` and `createTaskAgentMcpServer()` (should already be clean from Task 3.5)
-2. Verify the tool list includes: `spawn_step_agent`, `list_group_members`, `report_result`, `report_workflow_done`, `request_human_input`
+2. Verify the tool list includes: `spawn_step_agent`, `list_peers`, `report_result`, `report_workflow_done`, `request_human_input`
 3. Verify no references to the old step-advancement model remain
 
 **Acceptance Criteria**:

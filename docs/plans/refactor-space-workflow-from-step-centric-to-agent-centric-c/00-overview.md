@@ -30,7 +30,7 @@ The messaging model uses only two concepts:
   - No separate "node group" concept — the node IS the group
 - **Agent** = a running instance within a node. Gets the node's template. Has a globally unique name within the workflow.
 
-**No "role" concept exists** anywhere in channels, messaging, or addressing. The existing `WorkflowNodeAgent.role` field is renamed to `name` (Task 1.1), `SpaceTask.slotRole` is renamed to `agentName` (Task 8.2), and `SpaceSessionGroupMember.role` is renamed to `agentName` (Task 8.2) to align the internal data model with the conceptual model.
+**No "role" concept exists** anywhere in channels, messaging, or addressing. The existing `WorkflowNodeAgent.role` field is renamed to `name` (Task 1.1), and `SpaceTask.slotRole` is renamed to `agentName` (Task 2.2) to align the internal data model with the conceptual model. The `SpaceSessionGroupMember` table is dropped entirely (Task 8.2).
 
 ### Target Addressing: Plain Strings
 
@@ -60,9 +60,15 @@ interface WorkflowChannel {
 
 One resolver. One router. One DB column. One set of tests.
 
-### Session Group Semantics
+### Agent State on space_tasks
 
-Each node gets exactly one `SpaceSessionGroup`. All agents spawned on that node are members of that group. Agents from different nodes never share a session group — the `ChannelRouter` delivers cross-node messages by injecting them into the target's session group. This keeps the session group model simple: one group per node, one message stream per group.
+Agent state is tracked on `space_tasks` — no session group tables are used. The `space_session_groups` and `space_session_group_members` tables are dropped entirely (Task 8.2).
+
+- **Task status**: `space_tasks.status` tracks agent lifecycle (`in_progress`, `completed`, `needs_attention`, `cancelled`)
+- **Completion reporting**: Agents call `report_done` which updates `space_tasks.status` to `'completed'` and sets `completion_summary` (Task 2.3)
+- **Peer discovery**: `list_peers` queries `space_tasks` directly (Task 2.4)
+- **Completion detection**: `CompletionDetector` counts `space_tasks` rows with non-terminal status (Task 4.1)
+- **Message delivery**: `ChannelRouter` resolves target agents by querying `space_tasks` for active sessions on target nodes (Task 3.1)
 
 ### Key Architectural Principles
 

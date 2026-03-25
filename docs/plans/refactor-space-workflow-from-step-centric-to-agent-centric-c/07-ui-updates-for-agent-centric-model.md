@@ -51,7 +51,7 @@ Update the frontend visual editor and components to support the agent-centric mo
 
 **Subtasks**:
 1. In `packages/web/src/components/space/WorkflowNodeCard.tsx`:
-   - Show per-agent completion status (active/done/failed) when session group data is available
+   - Show per-agent completion status (active/done/failed) from space_tasks data
    - Use visual indicators (checkmark, spinner, x-icon) for agent status
    - Show the completion summary when an agent reports done
 2. In `packages/web/src/components/space/visual-editor/WorkflowNode.tsx`:

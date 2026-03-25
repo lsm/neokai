@@ -23,7 +23,6 @@ Implement all-agents-done completion detection. The workflow run completes when 
    ```
    class CompletionDetector {
      constructor(config: {
-       sessionGroupRepo: SpaceSessionGroupRepository;
        taskRepo: SpaceTaskRepository;
      })
 
@@ -41,11 +40,9 @@ Implement all-agents-done completion detection. The workflow run completes when 
    }
    ```
 3. Completion logic:
-   - Query path: `workflowRunId` → `space_tasks` (filtered by `workflowRunId`) → `sessionGroupId` → `space_session_group_members`
-   - Specifically: query `space_tasks` WHERE `workflow_run_id = ?` to get all task IDs, then for each task with a non-null `session_group_id`, query `space_session_group_members` WHERE `session_group_id IN (?)`
-   - Count members with status `'done'`, `'completed'`, or `'failed'`
-   - A run is complete when ALL members across ALL groups have a terminal status (`'done'` | `'completed'` | `'failed'`)
-   - Members with status `'active'` mean the run is not complete
+   - Query path: `space_tasks` WHERE `workflow_run_id = ?` — single direct query, no session group traversal
+   - Count tasks with status `'completed'`, `'needs_attention'`, or `'cancelled'` (terminal states)
+   - A run is complete when ALL tasks have reached a terminal status — i.e., zero tasks with status `'in_progress'` or `'pending'`
    - **Edge case — nodes with no tasks**: If a node in the workflow has no tasks yet (agents not spawned, possibly because no channel has fired to activate it), those nodes are **excluded** from the completion check. Only nodes with at least one task contribute to the agent count.
    - **Edge case — pending-but-blocked activations**: Before concluding a run is complete, check whether any node that currently has tasks (i.e., has been activated) has outbound `WorkflowChannel` entries (the unified channel type) whose `to` field references a node that has no tasks yet. If such "pending activation" channels exist, the run is **not complete** — those target nodes may still receive agents if gates open (via retry, human approval, or condition changes). Only when all reachable nodes have been activated (or explicitly skipped) is the run truly complete. This check uses the unified `WorkflowChannel` type — no separate cross-node channel query needed.
 
@@ -53,7 +50,7 @@ Implement all-agents-done completion detection. The workflow run completes when 
 - `isComplete()` returns true only when all agents have reached a terminal state
 - Works correctly for single-node and multi-node workflows
 - Works correctly for single-agent and multi-agent nodes
-- Handles edge cases (no groups, empty groups, nodes with no tasks)
+- Handles edge cases (no tasks, nodes with no tasks)
 
 **Dependencies**: Task 2.2
 
@@ -119,8 +116,8 @@ Implement all-agents-done completion detection. The workflow run completes when 
    - All agents done → complete
    - Some agents still active → not complete
    - Mixed done/failed agents → complete
-   - Empty groups → edge case handling
-   - Multiple groups in a single run
+   - No tasks at all → edge case handling (run with no activated nodes)
+   - Multiple nodes in a single run
    - Nodes with no tasks → excluded from completion check
    - Pending-but-blocked activations: active node has outbound `WorkflowChannel` entries targeting unactivated nodes → NOT complete
    - All reachable nodes activated and all agents done → complete
