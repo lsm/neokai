@@ -1148,7 +1148,12 @@ export class RoomRuntime {
 							this.scheduleTickAfterRateLimitReset(groupId);
 							return;
 						}
-						// Fall through to normal completion — fallback model switch event was already appended
+						// Fallback switch succeeded — clear stale restriction/rate-limit so the task
+						// shows the correct status, then return. The observer will fire again when the
+						// new-model query finishes, delivering clean output (no stale error text).
+						this.groupRepo.clearRateLimit(groupId);
+						await this.clearTaskRestriction(group.taskId);
+						return;
 					}
 					// group.rateLimit already set (even if expired): re-trigger after expiry.
 					// Fall through to normal completion so the leader can finish cleanly.
