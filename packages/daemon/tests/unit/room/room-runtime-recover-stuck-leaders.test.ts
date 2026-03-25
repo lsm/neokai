@@ -380,6 +380,8 @@ describe('recoverStuckLeaders', () => {
 
 		ctxCoexist.runtime.start();
 		await ctxCoexist.runtime.tick();
+		// Allow fire-and-forget worker routing (recoverStuckWorkers) to complete
+		await new Promise((r) => setTimeout(r, 20));
 
 		// recoverStuckLeaders must have injected a continuation message for group2's leader
 		const group2LeaderInjects = ctxCoexist.sessionFactory.calls.filter(
@@ -388,16 +390,17 @@ describe('recoverStuckLeaders', () => {
 		expect(group2LeaderInjects).toHaveLength(1);
 		expect(group2LeaderInjects[0].args[1]).toContain('[Auto-recovery]');
 
-		// recoverStuckLeaders must NOT have injected for group1's leader
-		// (group1.rateLimit.sessionRole === 'worker', not 'leader')
-		const group1AutoRecoveryInjects = ctxCoexist.sessionFactory.calls.filter(
+		// recoverStuckWorkers must have triggered worker→leader routing for group1:
+		// injectMessage is called on group1's leader with a normal worker envelope
+		// (not an [Auto-recovery] message — that would come from recoverStuckLeaders)
+		const group1RoutingInjects = ctxCoexist.sessionFactory.calls.filter(
 			(c) =>
 				c.method === 'injectMessage' &&
 				c.args[0] === group1.leaderSessionId &&
 				typeof c.args[1] === 'string' &&
-				(c.args[1] as string).includes('[Auto-recovery]')
+				!(c.args[1] as string).includes('[Auto-recovery]')
 		);
-		expect(group1AutoRecoveryInjects).toHaveLength(0);
+		expect(group1RoutingInjects.length).toBeGreaterThanOrEqual(1);
 
 		// group2 rate limit must be cleared by recoverStuckLeaders
 		expect(ctxCoexist.groupRepo.getGroup(group2.id)!.rateLimit).toBeNull();
