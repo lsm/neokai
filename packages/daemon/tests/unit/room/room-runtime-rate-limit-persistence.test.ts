@@ -424,6 +424,90 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			expect(taskAfter!.restrictions).toBeNull();
 			expect(taskAfter!.status).toBe('in_progress');
 		});
+
+		it('clears group rateLimit and task restriction after usage_limit detection, returns true', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
+				// No fallback models — usage_limit triggers pause behavior
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Confirm usage_limited state
+			const restricted = await ctx.taskManager.getTask(task.id);
+			expect(restricted!.status).toBe('usage_limited');
+			expect(restricted!.restrictions).toBeDefined();
+			expect(restricted!.restrictions!.type).toBe('usage_limit');
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeDefined();
+
+			// Clear via the public method
+			const result = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(result).toBe(true);
+
+			// Group rateLimit should be gone
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			// Task restriction should be cleared and status restored to in_progress
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.restrictions).toBeNull();
+			expect(taskAfter!.status).toBe('in_progress');
+		});
+	});
+
+	// ─── integration: manual status change clears backoff, allows normal routing ──────────
+
+	describe('integration: manual status change to in_progress allows normal worker routing', () => {
+		it('after manual status change, worker output with clean messages routes to leader normally', async () => {
+			// Use a mutable ref so we can switch from error messages to clean messages mid-test
+			const msgRef = { msgs: makeWorkerMessages(USAGE_LIMIT_MSG) };
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => msgRef.msgs,
+				// No fallback models — ensures usage_limit triggers pause, not fallback switch
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			// Phase 1: usage_limit detected → backoff set, task = usage_limited
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('usage_limited');
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeDefined();
+
+			// Phase 2: manual status change → clearGroupRateLimit clears backoff
+			const cleared = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(cleared).toBe(true);
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
+
+			// Phase 3: new worker message (without error text)
+			msgRef.msgs = [{ id: 'msg-2', text: 'Work completed successfully.', toolCallNames: [] }];
+
+			// Both worker and leader sessions are created by tick(); routing uses injectMessage.
+			const leaderSessionId = group.leaderSessionId;
+			const injectCallsBefore = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
+			).length;
+
+			// Phase 4: onWorkerTerminalState with clean messages → should route to leader
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Verify: no new backoff applied (group.rateLimit still null)
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			// Verify: task was NOT paused again
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.status).not.toBe('usage_limited');
+
+			// Verify: worker output was injected into the leader (routing happened)
+			const injectCallsAfter = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
+			).length;
+			expect(injectCallsAfter).toBeGreaterThan(injectCallsBefore);
+		});
 	});
 
 	// ─── leader fallback early return ──────────────────────────────────────────────────────
