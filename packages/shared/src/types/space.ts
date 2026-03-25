@@ -689,12 +689,6 @@ export interface WorkflowChannel {
 	 * Absent means the channel is always open (no gate).
 	 */
 	gate?: WorkflowCondition;
-	/**
-	 * When `true`, message routing on this channel increments `iterationCount` on the run.
-	 * Used for cycle detection in iterative workflows — mark back-edges (channels that
-	 * route output back to an earlier agent) to avoid false cycle detection on merge paths.
-	 */
-	isCyclic?: boolean;
 }
 
 /**
@@ -875,11 +869,6 @@ export interface CreateSpaceWorkflowParams {
 	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
-	/**
-	 * Directed messaging channels for this workflow.
-	 * See `SpaceWorkflow.channels` for full semantics.
-	 */
-	channels?: WorkflowChannel[];
 }
 
 /**
@@ -928,10 +917,6 @@ export interface UpdateSpaceWorkflowParams {
 	maxIterations?: number | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
-	/**
-	 * Replaces the entire channel list. Pass `[]` or `null` to clear all channels.
-	 */
-	channels?: WorkflowChannel[] | null;
 }
 
 // ============================================================================

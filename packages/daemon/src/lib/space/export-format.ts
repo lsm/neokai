@@ -83,7 +83,6 @@ const workflowChannelSchema = z.object({
 			timeoutMs: z.number().int().nonnegative().optional(),
 		})
 		.optional(),
-	isCyclic: z.boolean().optional(),
 });
 
 const exportedWorkflowNodeSchema = z
