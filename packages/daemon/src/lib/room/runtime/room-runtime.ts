@@ -202,6 +202,13 @@ export class RoomRuntime {
 	private stuckWorkerRecoveryInFlight = new Set<string>();
 
 	/**
+	 * Group IDs whose stuck-leader recovery is currently in-flight.
+	 * Guards against duplicate message injections across successive ticks
+	 * while the leader is being re-activated after a rate/usage limit expiry.
+	 */
+	private stuckLeaderRecoveryInFlight = new Set<string>();
+
+	/**
 	 * Task IDs whose group spawn is currently in-flight (async).
 	 * Guards against concurrent ticks re-attempting spawn for the same task while
 	 * `spawnGroupForTask` is awaiting worktree creation or DB insert — the window
@@ -750,44 +757,59 @@ export class RoomRuntime {
 				// Fall through to the worktree check so the worker can attempt cleanup/retry.
 			}
 			if (errorClass?.class === 'usage_limit') {
-				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-				// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
-				log.info(
-					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
-				);
-				const switched = await this.trySwitchToFallbackModel(
-					groupId,
-					group.workerSessionId,
-					'worker'
-				);
-				if (!switched) {
-					// No fallback available — fall through to rate_limit behavior (backoff + pause)
-					// Parse reset time from the usage limit message, or use 1-minute default
-					const rateLimitBackoff = errorClass.resetsAt
-						? createRateLimitBackoff(workerOutputText, 'worker')
-						: null;
-					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
-						detectedAt: Date.now(),
-						resetsAt: Date.now() + 60 * 1000,
-						sessionRole: 'worker',
-					};
-					this.groupRepo.setRateLimit(groupId, backoff);
-					this.appendGroupEvent(groupId, 'rate_limited', {
-						text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
-						resetsAt: backoff.resetsAt,
-						sessionRole: 'worker',
-					});
-					await this.persistTaskRestriction(
-						group.taskId,
-						backoff,
-						'usage_limit',
-						`Daily/weekly usage cap`
+				// Only attempt fallback / backoff on first detection (group.rateLimit is null).
+				// After the initial backoff expires, recoverStuckWorkers re-triggers this handler
+				// with the same old "You've hit your limit" text still in the worker output.
+				// Skipping re-detection here lets the worker fall through to the worktree check
+				// and attempt cleanup/retry instead of re-applying a stale backoff indefinitely.
+				// (group.rateLimit is intentionally NOT cleared by the timer — it acts as a
+				// sentinel so that re-triggers caused by recoverStuckWorkers never loop.)
+				if (!group.rateLimit) {
+					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
+					log.info(
+						`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
 					);
-					this.scheduleTickAfterRateLimitReset(groupId);
+					const switched = await this.trySwitchToFallbackModel(
+						groupId,
+						group.workerSessionId,
+						'worker'
+					);
+					if (!switched) {
+						// No fallback available — fall through to rate_limit behavior (backoff + pause)
+						// Parse reset time from the usage limit message, or use 1-minute default
+						const rateLimitBackoff = errorClass.resetsAt
+							? createRateLimitBackoff(workerOutputText, 'worker')
+							: null;
+						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+							detectedAt: Date.now(),
+							resetsAt: Date.now() + 60 * 1000,
+							sessionRole: 'worker',
+						};
+						this.groupRepo.setRateLimit(groupId, backoff);
+						this.appendGroupEvent(groupId, 'rate_limited', {
+							text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+							resetsAt: backoff.resetsAt,
+							sessionRole: 'worker',
+						});
+						await this.persistTaskRestriction(
+							group.taskId,
+							backoff,
+							'usage_limit',
+							`Daily/weekly usage cap`
+						);
+						this.scheduleTickAfterRateLimitReset(groupId);
+						return;
+					}
+					// Fallback switch succeeded: clear stale restriction/rate-limit so the UI shows the
+					// task as in_progress with the new model, then return. When the new query finishes,
+					// onWorkerTerminalState fires again with clean output and routes normally.
+					await this.clearTaskRestriction(group.taskId);
+					this.groupRepo.clearRateLimit(groupId);
 					return;
 				}
-				// Fall through to normal routing — fallback model switch event was already appended
-				// in trySwitchToFallbackModel so the UI shows the switch clearly.
+				// group.rateLimit already set (even if expired): re-trigger after expiry.
+				// Fall through to the worktree check so the worker can attempt cleanup/retry.
 			}
 		}
 
@@ -1079,12 +1101,9 @@ export class RoomRuntime {
 					return;
 				}
 				// Only apply backoff on first detection.
-				// Unlike the worker path (where recoverStuckWorkers re-triggers onWorkerTerminalState
-				// after expiry), there is no recoverStuckLeaders mechanism that re-calls this handler.
-				// The !group.rateLimit guard is a defensive check: it prevents the backoff from being
-				// reset if this handler is somehow called again while a rate limit is already recorded.
-				// A full leader retry after 429 would require re-injecting the worker message into the
-				// leader session — tracked as a future improvement (out of scope for this fix).
+				// recoverStuckLeaders re-injects the worker message into the leader session after
+				// expiry, which causes onLeaderTerminalState to fire again. The !group.rateLimit guard
+				// prevents the backoff from being reset on those re-triggers.
 				if (errorClass?.class === 'rate_limit' && !group.rateLimit) {
 					const rateLimitBackoff = errorClass.resetsAt
 						? createRateLimitBackoff(leaderOutputText, 'leader')
@@ -1115,42 +1134,56 @@ export class RoomRuntime {
 					return;
 				}
 				if (errorClass?.class === 'usage_limit') {
-					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-					// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
-					log.info(
-						`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
-					);
-					const switched = await this.trySwitchToFallbackModel(
-						groupId,
-						group.leaderSessionId,
-						'leader'
-					);
-					if (!switched) {
-						// No fallback available — fall through to rate_limit behavior (backoff + pause)
-						const rateLimitBackoff = errorClass.resetsAt
-							? createRateLimitBackoff(leaderOutputText, 'leader')
-							: null;
-						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
-							detectedAt: Date.now(),
-							resetsAt: Date.now() + 60 * 1000,
-							sessionRole: 'leader',
-						};
-						this.groupRepo.setRateLimit(groupId, backoff);
-						this.appendGroupEvent(groupId, 'rate_limited', {
-							text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
-							resetsAt: backoff.resetsAt,
-							sessionRole: 'leader',
-						});
-						await this.persistTaskRestriction(
-							group.taskId,
-							backoff,
-							'usage_limit',
-							`Daily/weekly usage cap in leader`
+					// Only act on first detection. If group.rateLimit is already set (even if expired),
+					// the limit was already handled — skip re-detection and fall through to normal
+					// completion. This prevents an infinite loop when recoverStuckLeaders re-triggers
+					// onLeaderTerminalState after the limit has reset but the old output still contains
+					// the usage-limit text.
+					if (!group.rateLimit) {
+						// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+						// If no fallback is configured, fall through to rate_limit behavior (backoff + pause).
+						log.info(
+							`Usage limit detected in leader output for group ${groupId}: ${errorClass.reason}`
 						);
-						this.scheduleTickAfterRateLimitReset(groupId);
+						const switched = await this.trySwitchToFallbackModel(
+							groupId,
+							group.leaderSessionId,
+							'leader'
+						);
+						if (!switched) {
+							// No fallback available — fall through to rate_limit behavior (backoff + pause)
+							const rateLimitBackoff = errorClass.resetsAt
+								? createRateLimitBackoff(leaderOutputText, 'leader')
+								: null;
+							const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+								detectedAt: Date.now(),
+								resetsAt: Date.now() + 60 * 1000,
+								sessionRole: 'leader',
+							};
+							this.groupRepo.setRateLimit(groupId, backoff);
+							this.appendGroupEvent(groupId, 'rate_limited', {
+								text: `Usage limit reached in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+								resetsAt: backoff.resetsAt,
+								sessionRole: 'leader',
+							});
+							await this.persistTaskRestriction(
+								group.taskId,
+								backoff,
+								'usage_limit',
+								`Daily/weekly usage cap in leader`
+							);
+							this.scheduleTickAfterRateLimitReset(groupId);
+							return;
+						}
+						// Fallback switch succeeded — clear stale restriction/rate-limit so the task
+						// shows the correct status, then return. The observer will fire again when the
+						// new-model query finishes, delivering clean output (no stale error text).
+						this.groupRepo.clearRateLimit(groupId);
+						await this.clearTaskRestriction(group.taskId);
 						return;
 					}
-					// Fall through to normal completion — fallback model switch event was already appended
+					// group.rateLimit already set (even if expired): re-trigger after expiry.
+					// Fall through to normal completion so the leader can finish cleanly.
 				}
 			}
 		}
@@ -1831,6 +1864,25 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Clear the rate limit backoff for the group associated with a task.
+	 *
+	 * Called when a user manually transitions a task from `usage_limited`/`rate_limited`
+	 * back to `in_progress` so that stale rate-limit state doesn't block the next worker
+	 * iteration from forwarding its output to the leader.
+	 *
+	 * Returns `true` if an active group was found and cleared, `false` otherwise.
+	 */
+	async clearGroupRateLimit(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.completedAt !== null) return false;
+
+		this.groupRepo.clearRateLimit(group.id);
+		await this.clearTaskRestriction(taskId);
+		log.info(`Cleared rate limit for group ${group.id} (task ${taskId})`);
+		return true;
+	}
+
+	/**
 	 * Archive a task group - terminate active sessions, cleanup worktree, and set archived status.
 	 *
 	 * Called when user archives a task via UI. This:
@@ -2249,6 +2301,10 @@ export class RoomRuntime {
 		if (!this.daemonHub) return;
 
 		const mirroredUuids = new Set<string>();
+		// Tracks (groupId:sessionId) keys for which a fallback switch has already been attempted
+		// (either succeeded or failed). Prevents duplicate trySwitchToFallbackModel calls when
+		// multiple mirroring callbacks fire for the same usage_limit message.
+		const fallbackAttempted = new Set<string>();
 
 		const mirrorSession = (sessionId: string, role: string) => {
 			return this.daemonHub!.on(
@@ -2263,30 +2319,107 @@ export class RoomRuntime {
 					const messageContent = JSON.stringify(event.message);
 					const msgErrorClass = classifyError(messageContent);
 					if (msgErrorClass?.class === 'rate_limit') {
+						// Use immutable group.id / group.taskId from closure; read fresh state for mutable fields
+						const freshGroup = this.groupRepo.getGroup(group.id);
+						if (!freshGroup) return;
 						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
 						const rateLimitBackoff = createRateLimitBackoff(messageContent, sessionRole);
 						if (rateLimitBackoff) {
-							this.groupRepo.setRateLimit(group.id, rateLimitBackoff);
+							this.groupRepo.setRateLimit(freshGroup.id, rateLimitBackoff);
 							log.info(
-								`Rate limit detected in ${role} message for group ${group.id}. ` +
+								`Rate limit detected in ${role} message for group ${freshGroup.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.appendGroupEvent(group.id, 'rate_limited', {
+							this.appendGroupEvent(freshGroup.id, 'rate_limited', {
 								text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
 								resetsAt: rateLimitBackoff.resetsAt,
 								sessionRole,
 							});
 							this.persistTaskRestriction(
-								group.taskId,
+								freshGroup.taskId,
 								rateLimitBackoff,
 								'rate_limit',
 								`API rate limit (HTTP 429) in ${role}`
 							).catch((err: unknown) => {
 								log.error(
-									`Failed to persist rate limit restriction for task ${group.taskId}: ${String(err)}`
+									`Failed to persist rate limit restriction for task ${freshGroup.taskId}: ${String(err)}`
 								);
 							});
 						}
+					} else if (msgErrorClass?.class === 'usage_limit') {
+						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
+						const fallbackKey = `${group.id}:${sessionId}`;
+
+						// Re-detection guard: if backoff already set, a prior handler is managing this
+						const freshGroup = this.groupRepo.getGroup(group.id);
+						if (!freshGroup) return;
+						if (freshGroup.rateLimit !== null) return;
+
+						// Duplicate fallback guard: added synchronously BEFORE the async call so
+						// that two distinct messages arriving before the first .then() resolves
+						// cannot both pass the guard and trigger duplicate trySwitchToFallbackModel
+						// calls.
+						if (fallbackAttempted.has(fallbackKey)) return;
+						fallbackAttempted.add(fallbackKey);
+
+						log.info(
+							`Usage limit detected in ${role} message for group ${group.id} (real-time). ` +
+								`Attempting fallback model switch for ${sessionRole} session ${sessionId}.`
+						);
+
+						this.trySwitchToFallbackModel(group.id, sessionId, sessionRole)
+							.then((switched) => {
+								if (switched) {
+									log.info(
+										`Fallback model switch succeeded for ${sessionRole} session ${sessionId} ` +
+											`in group ${group.id} (mirroring).`
+									);
+									// Clear any stale task restriction so the UI reflects the new model
+									this.clearTaskRestriction(freshGroup.taskId).catch((err: unknown) => {
+										log.error(
+											`Failed to clear task restriction for task ${freshGroup.taskId}: ${String(err)}`
+										);
+									});
+								} else {
+									// No fallback available — apply backoff and restrict the task
+									log.info(
+										`No fallback model available for ${sessionRole} session ${sessionId}. ` +
+											`Applying usage limit backoff for group ${freshGroup.id}.`
+									);
+									const rateLimitBackoff = msgErrorClass.resetsAt
+										? createRateLimitBackoff(messageContent, sessionRole)
+										: null;
+									const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+										detectedAt: Date.now(),
+										resetsAt: Date.now() + 60 * 1000,
+										sessionRole,
+									};
+									this.groupRepo.setRateLimit(freshGroup.id, backoff);
+									this.appendGroupEvent(freshGroup.id, 'rate_limited', {
+										text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+										resetsAt: backoff.resetsAt,
+										sessionRole,
+									});
+									this.persistTaskRestriction(
+										freshGroup.taskId,
+										backoff,
+										'usage_limit',
+										`Daily/weekly usage cap`
+									).catch((err: unknown) => {
+										log.error(
+											`Failed to persist usage limit restriction for task ${freshGroup.taskId}: ${String(err)}`
+										);
+									});
+									this.scheduleTickAfterRateLimitReset(freshGroup.id);
+								}
+							})
+							.catch((err: unknown) => {
+								// fallbackAttempted was already set synchronously above, so even
+								// unexpected throws won't leave the guard open for retry loops.
+								log.error(
+									`Error attempting fallback model switch for session ${sessionId}: ${String(err)}`
+								);
+							});
 					}
 
 					// Canonical timeline rows are persisted by the SDK/session layer into
@@ -2303,6 +2436,7 @@ export class RoomRuntime {
 			unsubWorker();
 			unsubLeader();
 			mirroredUuids.clear();
+			fallbackAttempted.clear();
 		});
 	}
 
@@ -2655,6 +2789,101 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Detect and recover leader sessions stuck after a rate/usage limit has expired.
+	 *
+	 * Pre-conditions for recovery:
+	 * - Leader session exists in the session factory
+	 * - Leader session is idle or interrupted (not actively processing)
+	 * - Group has an expired rate limit scoped to the leader role
+	 * - Group is NOT awaiting human review
+	 * - Group is NOT paused waiting for a question answer
+	 * - A recovery for this group is NOT already in-flight from a previous tick
+	 */
+	private recoverStuckLeaders(): void {
+		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
+
+		const now = Date.now();
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		for (const group of activeGroups) {
+			// Only recover when the leader has an expired rate limit scoped to the leader role
+			const hasExpiredLeaderRateLimit =
+				group.rateLimit !== null &&
+				now >= group.rateLimit.resetsAt &&
+				group.rateLimit.sessionRole === 'leader';
+
+			if (!hasExpiredLeaderRateLimit) continue;
+			// Skip groups awaiting human review
+			if (group.submittedForReview) continue;
+			// Skip groups paused waiting for a question answer
+			if (group.waitingForQuestion) continue;
+
+			// Leader must be in the session factory (not a zombie)
+			if (!this.sessionFactory.hasSession(group.leaderSessionId)) continue;
+
+			// Leader must be in a terminal state (idle or interrupted)
+			const leaderState = this.sessionFactory.getProcessingState(group.leaderSessionId);
+			if (leaderState !== 'idle' && leaderState !== 'interrupted') continue;
+
+			// Guard against duplicate in-flight recovery: if a previous tick already
+			// injected a message for this group and the leader hasn't started processing yet,
+			// skip it to avoid sending duplicate messages.
+			if (this.stuckLeaderRecoveryInFlight.has(group.id)) {
+				log.debug(`[StuckLeader] Group ${group.id}: recovery already in-flight, skipping`);
+				continue;
+			}
+
+			// Construct a continuation message summarising the last worker output.
+			// Note: in the normal case lastForwardedMessageId is already updated by
+			// routeWorkerToLeader (~line 933), so getWorkerMessages returns an empty array
+			// here. That is fine — the leader's conversation context already contains the
+			// full worker envelope; the generic message alone is sufficient to resume review.
+			let continuationMessage = `[Auto-recovery] Resuming leader review after rate limit expired (iteration ${group.feedbackIteration}).`;
+			if (this.getWorkerMessages) {
+				const workerMessages = this.getWorkerMessages(
+					group.workerSessionId,
+					group.lastForwardedMessageId
+				);
+				if (workerMessages.length > 0) {
+					const excerpt = workerMessages
+						.map((m) => m.text)
+						.join('\n')
+						.slice(0, 500);
+					continuationMessage += ` Last worker output:\n${excerpt}`;
+				}
+			}
+
+			log.warn(
+				`[StuckLeader] Group ${group.id}: leader is '${leaderState}' with expired rate limit. ` +
+					`Re-injecting worker message to resume review.`
+			);
+
+			// Clear the expired rate limit and any task restriction
+			this.groupRepo.clearRateLimit(group.id);
+			void this.clearTaskRestriction(group.taskId).catch((err) => {
+				log.error(`[StuckLeader] Group ${group.id}: clearTaskRestriction threw:`, err);
+			});
+
+			this.appendGroupEvent(group.id, 'status', {
+				text: 'Leader recovered from expired rate limit. Re-injecting worker message.',
+			});
+
+			// Mark as in-flight before firing, clear when injection completes
+			this.stuckLeaderRecoveryInFlight.add(group.id);
+			void this.sessionFactory
+				.injectMessage(group.leaderSessionId, continuationMessage)
+				.catch((err) => {
+					log.error(`[StuckLeader] Group ${group.id}: re-inject threw:`, err);
+				})
+				.finally(() => {
+					this.stuckLeaderRecoveryInFlight.delete(group.id);
+				});
+
+			// Schedule a follow-up tick to pick up the leader's fresh output
+			this.scheduleTick();
+		}
+	}
+
+	/**
 	 * Auto-clean stale session groups whose tasks have reached a terminal state.
 	 *
 	 * Groups become stale when a task transitions to completed/cancelled/archived
@@ -2781,6 +3010,11 @@ export class RoomRuntime {
 		// This recovers cases where the observer callback fired but the routing failed silently.
 		// Note: synchronous scan, only fires async work as fire-and-forget if stuck workers are found.
 		this.recoverStuckWorkers();
+
+		// Safety net: detect leader sessions stuck after a rate/usage limit has expired.
+		// Re-injects the last worker message so the leader can resume reviewing.
+		// Note: synchronous scan, only fires async work as fire-and-forget if stuck leaders are found.
+		this.recoverStuckLeaders();
 
 		// Recurring mission scheduler: check for due missions and trigger new executions.
 		// Also checks for completed executions to advance next_run_at.

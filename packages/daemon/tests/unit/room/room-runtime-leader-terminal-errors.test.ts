@@ -177,4 +177,60 @@ describe('RoomRuntime - leader terminal error detection', () => {
 			expect(updatedGroup!.rateLimit!.sessionRole).toBe('leader');
 		});
 	});
+
+	describe('usage_limit handling', () => {
+		it('pauses task when usage_limit detected in leader output and no fallback model configured', async () => {
+			// First detection: leader outputs usage limit text → should set rate limit backoff
+			const { task, group } = await spawnAndSimulateLeaderOutput(
+				"You've hit your limit · resets 1pm (America/New_York)"
+			);
+
+			// Task should NOT be failed — it should pause (usage_limited)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('needs_attention');
+
+			// Group should have a rate limit backoff set with future reset time
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).not.toBeNull();
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			expect(updatedGroup!.rateLimit!.sessionRole).toBe('leader');
+		});
+
+		it('does NOT re-set usage limit when group already has rate limit (leader re-trigger after expiry)', async () => {
+			// Production flow:
+			//   1. Initial usage_limit → setRateLimit(resetsAt) → scheduleTickAfterRateLimitReset
+			//   2. Timer fires after reset time → does NOT clear rateLimit (sentinel remains)
+			//   3. recoverStuckLeaders → onLeaderTerminalState called again with same usage_limit text
+			//   4. group.rateLimit is non-null (expired but present) → guard skips re-detection
+			//   5. Falls through to normal completion — no infinite loop
+
+			// Step 1: trigger first detection
+			const { group } = await spawnAndSimulateLeaderOutput(
+				"You've hit your limit · resets 1pm (America/New_York)"
+			);
+
+			// Confirm first detection set a rate limit
+			const groupAfterFirst = ctx.groupRepo.getGroup(group.id);
+			expect(groupAfterFirst!.rateLimit).not.toBeNull();
+
+			// Step 2: simulate the limit having expired (resetsAt now in past, sentinel still present)
+			const expiredRateLimit = {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1, // already expired
+				sessionRole: 'leader' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, expiredRateLimit);
+
+			// Step 3: re-trigger as recoverStuckLeaders would
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Rate limit must NOT have been pushed to a new future timestamp —
+			// the re-detection guard should have skipped the usage_limit block.
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+		});
+	});
 });

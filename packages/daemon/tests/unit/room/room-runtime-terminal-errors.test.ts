@@ -309,5 +309,162 @@ describe('RoomRuntime - terminal error detection', () => {
 			const payload = JSON.parse(rateLimitedEvents[0].payloadJson ?? '{}');
 			expect(payload.text).toContain('Usage limit');
 		});
+
+		it('does NOT re-set rate limit when group.rateLimit is already set (usage_limit re-trigger after expiry)', async () => {
+			// Production flow:
+			//   1. Initial usage_limit → setRateLimit(resetsAt) → scheduleTickAfterRateLimitReset
+			//   2. Timer fires after reset time → does NOT clear rateLimit (sentinel remains)
+			//   3. recoverStuckWorkers → onWorkerTerminalState called again with same usage_limit text
+			//   4. group.rateLimit is non-null (expired but present) → guard skips re-detection
+			//   5. Falls through to worktree check → routes to leader — no infinite loop
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Simulate the limit having already expired (timer fired, resetsAt now in past,
+			// but rateLimit is still non-null because the sentinel is never cleared by the timer).
+			const expiredRateLimit = {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1, // already expired
+				sessionRole: 'worker' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, expiredRateLimit);
+
+			// Re-trigger as recoverStuckWorkers would
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Rate limit must NOT have been pushed to a new future timestamp —
+			// the guard should have skipped re-detection.
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+
+			// Worker should have been routed to leader (worktree is clean in tests).
+			// Routing is confirmed by feedbackIteration incrementing.
+			expect(updatedGroup!.feedbackIteration).toBeGreaterThan(0);
+		});
+
+		it('does NOT route worker when group.rateLimit is still active (usage_limit not yet expired)', async () => {
+			// Production flow (rate limit still active):
+			//   1. Initial usage_limit → setRateLimit(resetsAt in future)
+			//   2. Something triggers onWorkerTerminalState again while limit is still active
+			//   3. isRateLimited() returns true (resetsAt > now) → handler returns early at the
+			//      rate-limit guard (line ~634) before any usage_limit detection runs
+			//   4. feedbackIteration stays at 0 — worker output is NOT forwarded to leader
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Confirm first detection set an active (future) rate limit
+			const groupAfterFirst = ctx.groupRepo.getGroup(group.id);
+			expect(groupAfterFirst!.rateLimit).not.toBeNull();
+			expect(groupAfterFirst!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			const originalResetsAt = groupAfterFirst!.rateLimit!.resetsAt;
+
+			// Re-trigger while the limit is still in the future (not yet expired)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// isRateLimited() was true → returned early → rateLimit is unchanged
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBe(originalResetsAt);
+
+			// feedbackIteration must NOT have incremented — no routing happened
+			expect(updatedGroup!.feedbackIteration).toBe(0);
+		});
+
+		it('returns early without routing to leader after successful fallback switch', async () => {
+			// Configure a fallback model and a mock messageHub that provides the current model
+			const mockMessageHub = {
+				request: async (method: string) => {
+					if (method === 'session.model.get') {
+						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
+					}
+					return undefined;
+				},
+			};
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: mockMessageHub,
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should NOT be paused — fallback switch succeeded, task stays in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit must NOT be set
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// Leader must NOT have been injected with stale error output
+			const leaderInjectCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
+			);
+			expect(leaderInjectCalls).toHaveLength(0);
+
+			// switchModel should have been called on the session factory
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+			expect(switchModelCalls[0].args[1]).toBe('claude-haiku-4-5');
+		});
+
+		it('clears stale task restriction after successful fallback switch', async () => {
+			const mockMessageHub = {
+				request: async (method: string) => {
+					if (method === 'session.model.get') {
+						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
+					}
+					return undefined;
+				},
+			};
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: mockMessageHub,
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Trigger once more to simulate a re-trigger while restrictions might be stale
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Task restrictions should remain clear
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit should remain cleared
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+		});
 	});
 });

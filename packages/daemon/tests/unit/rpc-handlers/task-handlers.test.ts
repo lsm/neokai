@@ -144,7 +144,12 @@ function makeDb(groupRow: Record<string, unknown> | null): Database {
 }
 
 /** Build a mock RoomRuntimeService with a runtime that can resume/inject. */
-function makeRuntimeService(resumeResult = true, injectResult = true, reviveResult = true) {
+function makeRuntimeService(
+	resumeResult = true,
+	injectResult = true,
+	reviveResult = true,
+	clearGroupRateLimitResult = true
+) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
@@ -156,6 +161,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true, reviveResu
 	const terminateTaskGroup = mock(async () => injectResult);
 	const interruptTaskSession = mock(async () => ({ success: injectResult }));
 	const archiveTaskGroup = mock(async () => true);
+	const clearGroupRateLimit = mock(async () => clearGroupRateLimitResult);
 	const runtime = {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
@@ -165,6 +171,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true, reviveResu
 		terminateTaskGroup,
 		interruptTaskSession,
 		archiveTaskGroup,
+		clearGroupRateLimit,
 	};
 	const service = {
 		getRuntime: mock(() => runtime),
@@ -659,6 +666,73 @@ describe('task.sendHumanMessage RPC Handler', () => {
 				'hello default',
 				'worker'
 			);
+		});
+	});
+
+	describe('rate_limited / usage_limited task — clears group rate limit before routing', () => {
+		function setupWithLimitedTask(status: 'rate_limited' | 'usage_limited', clearResult = true) {
+			const limitedTask = { ...mockTask, status };
+			const { service, runtime } = makeRuntimeService(true, true, true, clearResult);
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				makeTaskManagerFactory(limitedTask),
+				service
+			);
+			return { runtime };
+		}
+
+		it('calls clearGroupRateLimit for a rate_limited task', async () => {
+			const { runtime } = setupWithLimitedTask('rate_limited');
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'resume please' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('calls clearGroupRateLimit for a usage_limited task', async () => {
+			const { runtime } = setupWithLimitedTask('usage_limited');
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'continue after limit reset' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('continues routing even when clearGroupRateLimit returns false (no group found)', async () => {
+			const { runtime } = setupWithLimitedTask('rate_limited', false);
+
+			// The handler should continue to routeHumanMessageToGroup which will succeed
+			// (the mock group row exists, so routing will work).
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'retry' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			expect(runtime.clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('does not call clearGroupRateLimit for an in_progress task', async () => {
+			const { service, runtime } = makeRuntimeService(true, true, true, true);
+			setup({ task: mockTask, runtimeService: service });
+
+			await getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {});
+
+			expect(runtime.clearGroupRateLimit).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1414,6 +1488,168 @@ describe('task.setStatus RPC Handler', () => {
 				'completed',
 				expect.objectContaining({ mode: 'manual' })
 			);
+		});
+	});
+
+	describe('clearGroupRateLimit on resume from rate/usage limited', () => {
+		/** Build a runtime service that also exposes clearGroupRateLimit. */
+		function makeRuntimeServiceWithClearRateLimit(clearResult = true) {
+			const clearGroupRateLimit = mock(async () => clearResult);
+			const cancelTask = mock(async () => ({
+				success: true,
+				cancelledTaskIds: [TASK_UUID],
+			}));
+			const terminateTaskGroup = mock(async () => true);
+			const runtime = { clearGroupRateLimit, cancelTask, terminateTaskGroup };
+			const service = {
+				getRuntime: mock(() => runtime),
+			} as unknown as RoomRuntimeService;
+			return { service, runtime, clearGroupRateLimit };
+		}
+
+		it('calls clearGroupRateLimit when transitioning usage_limited → in_progress', async () => {
+			const usageLimitedTask = { ...mockTask, status: 'usage_limited' as const };
+			const { service, clearGroupRateLimit } = makeRuntimeServiceWithClearRateLimit();
+			const factory = makeSetStatusTaskManagerFactory(usageLimitedTask);
+			setup({ task: usageLimitedTask, runtimeService: service, taskManagerFactory: factory });
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'in_progress', mode: 'manual' },
+				{}
+			);
+
+			expect(clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('calls clearGroupRateLimit when transitioning usage_limited → pending', async () => {
+			const usageLimitedTask = { ...mockTask, status: 'usage_limited' as const };
+			const { service, clearGroupRateLimit } = makeRuntimeServiceWithClearRateLimit();
+			const factory = makeSetStatusTaskManagerFactory(usageLimitedTask);
+			setup({ task: usageLimitedTask, runtimeService: service, taskManagerFactory: factory });
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'pending', mode: 'manual' },
+				{}
+			);
+
+			expect(clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('calls clearGroupRateLimit when transitioning rate_limited → in_progress', async () => {
+			const rateLimitedTask = { ...mockTask, status: 'rate_limited' as const };
+			const { service, clearGroupRateLimit } = makeRuntimeServiceWithClearRateLimit();
+			const factory = makeSetStatusTaskManagerFactory(rateLimitedTask);
+			setup({ task: rateLimitedTask, runtimeService: service, taskManagerFactory: factory });
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'in_progress', mode: 'manual' },
+				{}
+			);
+
+			expect(clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('calls clearGroupRateLimit when transitioning rate_limited → pending', async () => {
+			const rateLimitedTask = { ...mockTask, status: 'rate_limited' as const };
+			const { service, clearGroupRateLimit } = makeRuntimeServiceWithClearRateLimit();
+			const factory = makeSetStatusTaskManagerFactory(rateLimitedTask);
+			setup({ task: rateLimitedTask, runtimeService: service, taskManagerFactory: factory });
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'pending', mode: 'manual' },
+				{}
+			);
+
+			expect(clearGroupRateLimit).toHaveBeenCalledWith(TASK_UUID);
+		});
+
+		it('does NOT call clearGroupRateLimit when transitioning usage_limited → completed', async () => {
+			const usageLimitedTask = { ...mockTask, status: 'usage_limited' as const };
+			const { service, clearGroupRateLimit } = makeRuntimeServiceWithClearRateLimit();
+			const factory = makeSetStatusTaskManagerFactory(usageLimitedTask);
+			setup({ task: usageLimitedTask, runtimeService: service, taskManagerFactory: factory });
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'completed', mode: 'manual' },
+				{}
+			);
+
+			expect(clearGroupRateLimit).not.toHaveBeenCalled();
+		});
+
+		it('does NOT call clearGroupRateLimit when transitioning in_progress → pending', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			const { service, clearGroupRateLimit } = makeRuntimeServiceWithClearRateLimit();
+			const factory = makeSetStatusTaskManagerFactory(inProgressTask);
+			setup({ task: inProgressTask, runtimeService: service, taskManagerFactory: factory });
+
+			await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'pending', mode: 'manual' },
+				{}
+			);
+
+			expect(clearGroupRateLimit).not.toHaveBeenCalled();
+		});
+
+		it('continues normally when no runtime is available for the room', async () => {
+			const usageLimitedTask = { ...mockTask, status: 'usage_limited' as const };
+			// getRuntime() returns null — no runtime for this room
+			const service = { getRuntime: mock(() => null) } as unknown as RoomRuntimeService;
+			const factory = makeSetStatusTaskManagerFactory(usageLimitedTask);
+			setup({ task: usageLimitedTask, runtimeService: service, taskManagerFactory: factory });
+
+			// Should not throw — handler continues and calls setTaskStatus
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'in_progress', mode: 'manual' },
+				{}
+			);
+
+			expect(result).toEqual({ task: { ...usageLimitedTask, status: 'in_progress' } });
+		});
+
+		it('calls clearGroupRateLimit BEFORE setTaskStatus', async () => {
+			const usageLimitedTask = { ...mockTask, status: 'usage_limited' as const };
+			const callOrder: string[] = [];
+			const clearGroupRateLimit = mock(async () => {
+				callOrder.push('clearGroupRateLimit');
+				return true;
+			});
+			const cancelTask = mock(async () => ({ success: true, cancelledTaskIds: [TASK_UUID] }));
+			const terminateTaskGroup = mock(async () => true);
+			const runtime = { clearGroupRateLimit, cancelTask, terminateTaskGroup };
+			const service = { getRuntime: mock(() => runtime) } as unknown as RoomRuntimeService;
+
+			const setTaskStatusMock = mock(async () => {
+				callOrder.push('setTaskStatus');
+				return { ...usageLimitedTask, status: 'in_progress' as const };
+			});
+			const manager = {
+				createTask: mock(async () => usageLimitedTask),
+				getTask: mock(async () => usageLimitedTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => usageLimitedTask),
+				cancelTask: mock(async () => ({ ...usageLimitedTask, status: 'cancelled' as const })),
+				setTaskStatus: setTaskStatusMock,
+				archiveTask: mock(async () => ({ ...usageLimitedTask })),
+			};
+			const factory = mock(() => manager) as unknown as TaskManagerFactory;
+
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				{ notifyChange: () => {} } as never,
+				factory,
+				service
+			);
+
+			await handlers.get('task.setStatus')!(
+				{ roomId: 'room-1', taskId: TASK_UUID, status: 'in_progress', mode: 'manual' },
+				{}
+			);
+
+			expect(callOrder).toEqual(['clearGroupRateLimit', 'setTaskStatus']);
 		});
 	});
 });

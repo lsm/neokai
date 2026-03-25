@@ -287,4 +287,248 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			expect(updated!.restrictions!.sessionRole).toBe('leader');
 		});
 	});
+
+	describe('leader usage_limit re-detection guard (!group.rateLimit)', () => {
+		it('skips usage_limit handler when group.rateLimit is already set (active)', async () => {
+			// Scenario: usage_limit was already detected (group.rateLimit set).
+			// Re-triggering onLeaderTerminalState with the same usage-limit output must NOT
+			// re-apply the backoff or return early — it must fall through to normal completion.
+			let leaderSessionId: string | null = null;
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return makeWorkerMessages(USAGE_LIMIT_MSG);
+					}
+					return [];
+				},
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionId = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Simulate a rateLimit that is already set (first detection already occurred)
+			const existingBackoff = {
+				detectedAt: Date.now() - 10_000,
+				resetsAt: Date.now() + 60_000, // still active
+				sessionRole: 'leader' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, existingBackoff);
+
+			// Re-trigger onLeaderTerminalState — the guard must prevent re-applying backoff
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// group.rateLimit must remain unchanged (not re-applied)
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toEqual(existingBackoff);
+
+			// Task should still be in_progress (no new restriction persisted)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
+		it('skips usage_limit handler when group.rateLimit is expired (re-trigger after reset)', async () => {
+			// Scenario: usage_limit was detected, rateLimit set, then the reset timer fired.
+			// group.rateLimit is expired but still non-null.
+			// onLeaderTerminalState must NOT re-apply backoff — fall through to completion.
+			let leaderSessionId: string | null = null;
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return makeWorkerMessages(USAGE_LIMIT_MSG);
+					}
+					return [];
+				},
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionId = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Expired rate limit — simulates the reset timer having fired
+			const expiredBackoff = {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 10_000, // expired 10s ago
+				sessionRole: 'leader' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, expiredBackoff);
+
+			// Re-trigger onLeaderTerminalState
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// group.rateLimit must remain the expired backoff — not overwritten with a new one
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toEqual(expiredBackoff);
+
+			// Task must not transition to usage_limited again
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+	});
+
+	// ─── clearGroupRateLimit ────────────────────────────────────────────────────────────────
+
+	describe('clearGroupRateLimit(taskId)', () => {
+		it('returns false when no group exists for the task', async () => {
+			ctx = createRuntimeTestContext();
+			ctx.runtime.start();
+			const result = await ctx.runtime.clearGroupRateLimit('non-existent-task');
+			expect(result).toBe(false);
+		});
+
+		it('returns false when the group is already completed', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Mark the group as completed
+			ctx.groupRepo.completeGroup(group.id, group.version);
+
+			const result = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(result).toBe(false);
+		});
+
+		it('clears group rateLimit and task restriction, returns true', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Confirm the group is rate-limited and task restriction is set
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(true);
+			const restricted = await ctx.taskManager.getTask(task.id);
+			expect(restricted!.status).toBe('rate_limited');
+			expect(restricted!.restrictions).toBeDefined();
+
+			// Clear via the new public method
+			const result = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(result).toBe(true);
+
+			// Group rateLimit should be gone
+			const groupAfter = ctx.groupRepo.getActiveGroups('room-1').find((g) => g.id === group.id);
+			expect(groupAfter?.rateLimit).toBeNull();
+
+			// Task restriction should be cleared and status restored to in_progress
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.restrictions).toBeNull();
+			expect(taskAfter!.status).toBe('in_progress');
+		});
+	});
+
+	// ─── leader fallback early return ──────────────────────────────────────────────────────
+
+	describe('leader usage_limit: return early after successful trySwitchToFallbackModel', () => {
+		/**
+		 * Creates a context where trySwitchToFallbackModel succeeds:
+		 * - getGlobalSettings returns a fallback model chain
+		 * - messageHub.request('session.model.get') returns a current model not in the chain
+		 *   (so the first fallback is selected)
+		 * - sessionFactory.switchModel returns success
+		 */
+		function createFallbackCtx(leaderSessionIdRef: { value: string | null }) {
+			return createRuntimeTestContext({
+				getWorkerMessages: (sessionId) => {
+					if (leaderSessionIdRef.value && sessionId === leaderSessionIdRef.value) {
+						return makeWorkerMessages(USAGE_LIMIT_MSG);
+					}
+					return [];
+				},
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: {
+					async request(method: string, _params: unknown) {
+						if (method === 'session.model.get') {
+							return {
+								currentModel: 'claude-sonnet-4-6',
+								modelInfo: { provider: 'anthropic' },
+							};
+						}
+						return undefined;
+					},
+				},
+			});
+		}
+
+		it('clears group rateLimit after successful fallback switch in leader path', async () => {
+			const leaderSessionIdRef: { value: string | null } = { value: null };
+			ctx = createFallbackCtx(leaderSessionIdRef);
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionIdRef.value = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Pre-condition: no rateLimit yet
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// rateLimit must be cleared (not set) after a successful fallback switch
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+		});
+
+		it('clears task restriction after successful fallback switch in leader path', async () => {
+			const leaderSessionIdRef: { value: string | null } = { value: null };
+			ctx = createFallbackCtx(leaderSessionIdRef);
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionIdRef.value = group.leaderSessionId;
+
+			// Simulate that a prior detection set a usage_limited restriction
+			await ctx.taskManager.updateTaskStatus(task.id, 'usage_limited', {
+				restrictions: {
+					type: 'usage_limit',
+					resetAt: Date.now() + 60_000,
+					sessionRole: 'leader',
+					reason: 'Daily/weekly usage cap in leader',
+				},
+			});
+
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Task restriction must be cleared back to in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+			expect(updatedTask!.restrictions).toBeNull();
+		});
+
+		it('does not fall through to normal completion after successful fallback switch', async () => {
+			// If the function returned early, no further processing (e.g. group completion) happens.
+			// The group should still be active (not completed) because the new model query is ongoing.
+			const leaderSessionIdRef: { value: string | null } = { value: null };
+			ctx = createFallbackCtx(leaderSessionIdRef);
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionIdRef.value = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Group must NOT be completed — the new-model query is still pending
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.completedAt).toBeNull();
+		});
+	});
 });

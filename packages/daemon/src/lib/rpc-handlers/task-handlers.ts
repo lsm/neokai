@@ -485,6 +485,21 @@ export function setupTaskHandlers(
 			}
 		}
 
+		// Clear group rate limit when resuming from a rate/usage limited state.
+		// This is a separate block (not inside the restart block above) because
+		// rate_limited/usage_limited tasks are NOT covered by the restart block.
+		// Note: pending is only reachable from these statuses in manual mode
+		// (VALID_STATUS_TRANSITIONS only allows in_progress in runtime mode).
+		if (
+			(task.status === 'usage_limited' || task.status === 'rate_limited') &&
+			(params.status === 'in_progress' || params.status === 'pending')
+		) {
+			const runtime = runtimeService?.getRuntime(params.roomId);
+			if (runtime) {
+				await runtime.clearGroupRateLimit(taskId);
+			}
+		}
+
 		// Apply status change
 		const updatedTask = await taskManager.setTaskStatus(taskId, params.status, {
 			result: params.result,
@@ -1066,6 +1081,15 @@ export function setupTaskHandlers(
 					`Failed to transition task ${taskId} from review to in_progress: ${String(err)}`
 				);
 			}
+		}
+
+		// rate_limited/usage_limited tasks: clear the group's rate limit so the message can be
+		// routed normally. clearGroupRateLimit() also restores the task status to in_progress
+		// and clears any task restrictions. Falls through to the generic
+		// routeHumanMessageToGroup() call below. If clearGroupRateLimit returns false (no
+		// group found), we continue anyway — routeHumanMessageToGroup will surface the error.
+		if (task.status === 'rate_limited' || task.status === 'usage_limited') {
+			await runtime.clearGroupRateLimit(taskId);
 		}
 
 		const groupRepo = makeGroupRepo();

@@ -34,8 +34,18 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { ChannelResolver } from '../runtime/channel-resolver';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
-import { ListPeersSchema, SendMessageSchema, ReportDoneSchema } from './step-agent-tool-schemas';
-import type { ListPeersInput, SendMessageInput, ReportDoneInput } from './step-agent-tool-schemas';
+import {
+	ListPeersSchema,
+	SendMessageSchema,
+	ReportDoneSchema,
+	ListReachableAgentsSchema,
+} from './step-agent-tool-schemas';
+import type {
+	ListPeersInput,
+	SendMessageInput,
+	ReportDoneInput,
+	ListReachableAgentsInput,
+} from './step-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -332,6 +342,87 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		},
 
 		/**
+		 * List all agents and nodes this agent can reach, grouped as:
+		 *   - withinNodePeers: agents in the same workflow node (current group members)
+		 *   - crossNodeTargets: agents/nodes reachable via declared cross-node paths
+		 *
+		 * Uses agent-friendly terminology — no mention of channels or policies.
+		 * Gate status is included for cross-node targets so agents know whether
+		 * a target may require conditions to be met before delivery is permitted.
+		 *
+		 * Does NOT include self or the task-agent coordinator.
+		 */
+		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
+			const loaded = loadGroupAndResolver();
+			if (!loaded.ok) return loaded.error;
+			const { group, resolver } = loaded;
+
+			// Within-node peers: group members excluding self and the task-agent coordinator
+			const withinNodePeers = group.members
+				.filter((m) => m.sessionId !== mySessionId && m.role !== 'task-agent')
+				.map((m) => ({
+					agentName: m.role,
+					status: m.status,
+				}));
+
+			const reachabilityDeclared = !resolver.isEmpty();
+
+			// Cross-node targets: outgoing channel entries where the target role is NOT
+			// already in the current session group (i.e., it lives on a different node).
+			const withinNodeRoles = new Set(group.members.map((m) => m.role));
+
+			type CrossNodeTarget = {
+				agentName: string;
+				isFanOut: boolean;
+				gate: { type: string; isGated: boolean; description?: string };
+			};
+			const crossNodeTargets: CrossNodeTarget[] = [];
+
+			if (reachabilityDeclared) {
+				const seen = new Set<string>();
+				for (const ch of resolver.getResolvedChannels()) {
+					if (ch.fromRole !== myRole) continue;
+					if (withinNodeRoles.has(ch.toRole)) continue; // within-node — already listed above
+					if (seen.has(ch.toRole)) continue; // deduplicate (e.g. bidirectional split)
+					seen.add(ch.toRole);
+
+					const gate = ch.gate;
+					const gateType = gate?.type ?? 'none';
+					// A gate is "blocking" (isGated) when a condition must be evaluated at delivery
+					// time — i.e. anything other than no gate at all or an 'always' gate.
+					const isGated = gate !== undefined && gate.type !== 'always' && gate.type !== undefined;
+					const entry: CrossNodeTarget = {
+						agentName: ch.toRole,
+						isFanOut: ch.isFanOut ?? false,
+						gate: { type: gateType, isGated },
+					};
+					if (gate?.description) {
+						entry.gate.description = gate.description;
+					}
+					crossNodeTargets.push(entry);
+				}
+			}
+
+			const totalReachable = withinNodePeers.length + crossNodeTargets.length;
+			const crossNodeSummary =
+				crossNodeTargets.length > 0
+					? ` Cross-node targets: ${crossNodeTargets.map((t) => t.agentName).join(', ')}.`
+					: '';
+
+			return jsonResult({
+				success: true,
+				myAgentName: myRole,
+				withinNodePeers,
+				crossNodeTargets,
+				reachabilityDeclared,
+				message:
+					`You can reach ${totalReachable} agent(s) in total. ` +
+					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
+					crossNodeSummary,
+			});
+		},
+
+		/**
 		 * Signal that this step agent has completed its work.
 		 *
 		 * Marks the step's SpaceTask as 'completed', persists the optional summary
@@ -400,6 +491,16 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 				'Use this to discover which peers are active and what direct messaging channels are available.',
 			ListPeersSchema.shape,
 			(args) => handlers.list_peers(args)
+		),
+		tool(
+			'list_reachable_agents',
+			'List all agents and nodes this agent can reach, grouped as within-node peers ' +
+				'(agents in the same workflow node) and cross-node targets (agents/nodes on other nodes). ' +
+				'Gate status is included for each cross-node target so you know whether a condition ' +
+				'must pass before delivery is permitted. ' +
+				'Use this before sending a message to understand who you can reach and whether any gates apply.',
+			ListReachableAgentsSchema.shape,
+			(args) => handlers.list_reachable_agents(args)
 		),
 		tool(
 			'send_message',
