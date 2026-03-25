@@ -13,6 +13,7 @@ import {
 	navigateToInbox,
 	navigateToRoom,
 	navigateToRoomAgent,
+	navigateToHome,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
@@ -84,17 +85,6 @@ const RoomOverviewIcon = () => (
 	</svg>
 );
 
-const RoomAgentIcon = () => (
-	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-		<path
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			stroke-width={2}
-			d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1 1 .03 2.7-1.41 2.417l-2.194-.44a9.06 9.06 0 01-5.197 0l-2.193.44c-1.44.283-2.41-1.416-1.41-2.416L5 14.5"
-		/>
-	</svg>
-);
-
 const GLOBAL_BOTTOM_TABS: TabItem[] = [
 	{ id: 'inbox', label: 'Inbox', icon: InboxIcon },
 	{ id: 'rooms', label: 'Rooms', icon: RoomsIcon },
@@ -104,9 +94,9 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 
 const ROOM_BOTTOM_TABS: TabItem[] = [
 	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
-	{ id: 'room-agent', label: 'Agent', icon: RoomAgentIcon },
-	{ id: 'inbox', label: 'Inbox', icon: InboxIcon },
-	{ id: 'settings', label: 'Settings', icon: SettingsIcon },
+	{ id: 'room-agent', label: 'Agent', icon: ChatsIcon },
+	{ id: 'inbox', label: 'Missions', icon: InboxIcon },
+	{ id: 'settings', label: '/', icon: SettingsIcon },
 ];
 
 export function BottomTabBar() {
@@ -135,7 +125,11 @@ export function BottomTabBar() {
 				navigateToSessions();
 				break;
 			case 'settings':
-				navigateToSettings();
+				if (isInRoomContext) {
+					navigateToHome();
+				} else {
+					navigateToSettings();
+				}
 				break;
 			case 'room-overview':
 				if (roomId) navigateToRoom(roomId);
