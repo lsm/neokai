@@ -924,6 +924,31 @@ export interface UpdateSpaceWorkflowParams {
 // ============================================================================
 
 /**
+ * A directed messaging channel in the portable export format.
+ *
+ * Differences from `WorkflowChannel`:
+ * - `id` is stripped (space-specific, regenerated on import if needed)
+ * - `from`/`to` use agent slot name strings (`WorkflowNodeAgent.name`), node names,
+ *   or `'*'` for broadcast — all portable across Space instances.
+ */
+export interface ExportedWorkflowChannel {
+	/**
+	 * Source agent slot name (`WorkflowNodeAgent.name`), node name for fan-out,
+	 * or `'*'` for all agents in the workflow.
+	 */
+	from: string;
+	/**
+	 * Target agent slot name(s), node name for fan-out, or `'*'` for all agents.
+	 * An array enables fan-out or hub-spoke topologies.
+	 */
+	to: string | string[];
+	direction: 'one-way' | 'bidirectional';
+	isCyclic?: boolean;
+	label?: string;
+	gate?: WorkflowCondition;
+}
+
+/**
  * A single agent entry within a multi-agent exported workflow node.
  * Mirrors `WorkflowNodeAgent` but uses a portable `agentRef` name instead of a UUID.
  */
@@ -1103,10 +1128,11 @@ export interface ExportedSpaceWorkflow {
 	config?: Record<string, unknown>;
 	/**
 	 * Directed messaging channels for the workflow.
-	 * Uses agent name strings (portable — not UUIDs). Exported and imported as-is.
+	 * Uses agent slot name strings and node names (portable — not UUIDs).
+	 * Channel `id` fields are stripped during export and omitted here.
 	 * Absent or empty means agents are fully isolated (no messaging constraints).
 	 */
-	channels?: WorkflowChannel[];
+	channels?: ExportedWorkflowChannel[];
 }
 
 /**
