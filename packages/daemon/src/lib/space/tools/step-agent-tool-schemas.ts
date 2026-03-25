@@ -1,10 +1,11 @@
 /**
- * Step Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 2
+ * Step Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 3
  * peer communication tools available to step agent sub-sessions.
  *
  * Tools:
  *   list_peers   — list other group members with their roles, statuses, and permitted channels
  *   send_message — channel-validated direct messaging tool
+ *   report_done  — signal that this agent has completed its work
  *
  * This file contains only schema definitions — no runtime logic or side effects.
  *

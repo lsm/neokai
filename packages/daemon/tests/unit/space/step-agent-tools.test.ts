@@ -4,6 +4,7 @@
  * Covers all step agent peer communication tools:
  *   list_peers   — list peers excluding self and task-agent
  *   send_message — channel-validated direct messaging
+ *   report_done  — signal agent completion, persist summary, emit event
  *
  * Tests use a real SQLite database (via runMigrations) and mock message
  * injectors so no real agent sessions are created.
@@ -795,6 +796,53 @@ describe('step-agent-tools: report_done', () => {
 		// completed → completed is invalid
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('Invalid status transition');
+	});
+
+	test('daemonHub emit throwing does not affect tool success', async () => {
+		// If the event emit fails (e.g. hub is shutting down), the DB update should
+		// still be committed and the tool should still return success.
+		const throwingHub = {
+			emit: async (_name: string, _payload: unknown) => {
+				throw new Error('hub unavailable');
+			},
+		};
+
+		const config = makeConfig(ctx, {
+			daemonHub: throwingHub as unknown as StepAgentToolsConfig['daemonHub'],
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.report_done({ summary: 'done despite hub error' });
+		const data = JSON.parse(result.content[0].text);
+
+		// Tool should succeed — hub error is non-fatal
+		expect(data.success).toBe(true);
+		expect(data.stepTaskId).toBe(ctx.stepTaskId);
+
+		// DB state should reflect completion
+		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
+		expect(updated?.status).toBe('completed');
+	});
+
+	test('daemonHub not called when task update fails', async () => {
+		// Verify that the hub is NOT called when setTaskStatus throws (e.g. task not found)
+		const emitted: string[] = [];
+		const trackingHub = {
+			emit: async (name: string, _payload: unknown) => {
+				emitted.push(name);
+			},
+		};
+
+		const config = makeConfig(ctx, {
+			stepTaskId: 'nonexistent-step-task',
+			daemonHub: trackingHub as unknown as StepAgentToolsConfig['daemonHub'],
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.report_done({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		// Hub should not have been called since the DB update never happened
+		expect(emitted).toHaveLength(0);
 	});
 });
 
