@@ -22,6 +22,7 @@ import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
+import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
 import type { SessionCache } from './session-cache';
@@ -64,7 +65,7 @@ export class MessagePersistence {
 		try {
 			const mentions = ReferenceResolver.extractReferences(text);
 			if (mentions.length === 0) {
-				return { text, referenceMetadata: {} };
+				return { text, referenceMetadata: {}, resolvedReferences: {} };
 			}
 
 			const context: ResolutionContext = {
@@ -100,10 +101,10 @@ export class MessagePersistence {
 				}
 			}
 
-			return { text, referenceMetadata };
+			return { text, referenceMetadata, resolvedReferences: resolved };
 		} catch (err) {
 			this.logger.warn('[MessagePersistence] Reference preprocessing failed, skipping:', err);
-			return { text, referenceMetadata: {} };
+			return { text, referenceMetadata: {}, resolvedReferences: {} };
 		}
 	}
 
@@ -158,10 +159,18 @@ export class MessagePersistence {
 			// 2b. Preprocess @ references (extract + resolve) if resolver is available
 			const preprocessed = this.referenceResolver
 				? await this.preprocessReferences(finalContent, session)
-				: { text: finalContent, referenceMetadata: {} as ReferenceMetadata };
+				: {
+						text: finalContent,
+						referenceMetadata: {} as ReferenceMetadata,
+						resolvedReferences: {},
+					};
+
+			// 2c. Build reference context block and prepend to agent message
+			const refContext = buildReferenceContext(preprocessed.resolvedReferences);
+			const agentContent = prependContextToMessage(finalContent, refContext);
 
 			// 3. Build message content (text + images)
-			const messageContent = buildMessageContent(finalContent, images);
+			const messageContent = buildMessageContent(agentContent, images);
 
 			// 4. Create SDK user message
 			const sdkUserMessage: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
