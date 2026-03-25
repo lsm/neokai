@@ -11,6 +11,7 @@ import {
 	createRuntimeTestContext,
 	createGoalAndTask,
 	type RuntimeTestContext,
+	type RuntimeTestContextOptions,
 } from './room-runtime-test-helpers';
 
 describe('RoomRuntime - leader terminal error detection', () => {
@@ -25,12 +26,27 @@ describe('RoomRuntime - leader terminal error detection', () => {
 		return { id: 'msg-1', text, toolCallNames: [] };
 	}
 
+	/** Shared mock messageHub that returns current model info for session.model.get requests. */
+	function createMockMessageHub() {
+		return {
+			request: async (method: string) => {
+				if (method === 'session.model.get') {
+					return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
+				}
+				return undefined;
+			},
+		};
+	}
+
 	/**
 	 * Spawn a group, route worker to leader (worker succeeds), then simulate
 	 * the leader reaching terminal state with the given output text.
 	 * Returns the group and task.
 	 */
-	async function spawnAndSimulateLeaderOutput(leaderOutput: string) {
+	async function spawnAndSimulateLeaderOutput(
+		leaderOutput: string,
+		extraOpts?: Omit<RuntimeTestContextOptions, 'getWorkerMessages'>
+	) {
 		let leaderSessionId: string | null = null;
 
 		ctx = createRuntimeTestContext({
@@ -41,6 +57,7 @@ describe('RoomRuntime - leader terminal error detection', () => {
 				}
 				return [];
 			},
+			...extraOpts,
 		});
 
 		const { task } = await createGoalAndTask(ctx);
@@ -231,6 +248,219 @@ describe('RoomRuntime - leader terminal error detection', () => {
 			// the re-detection guard should have skipped the usage_limit block.
 			const updatedGroup = ctx.groupRepo.getGroup(group.id);
 			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+		});
+
+		it('does NOT route to worker after successful fallback model switch in leader path', async () => {
+			// After trySwitchToFallbackModel succeeds, onLeaderTerminalState returns early.
+			// The leader's stale error output must NOT be routed back to the worker as feedback.
+			// We do this manually (not via spawnAndSimulateLeaderOutput) so we can snapshot the
+			// call state exactly before onLeaderTerminalState fires.
+			let leaderSessionId: string | null = null;
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId, _afterMessageId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return [makeMessage("You've hit your limit · resets 1pm (America/New_York)")];
+					}
+					return [];
+				},
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: createMockMessageHub(),
+			});
+
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			leaderSessionId = group.leaderSessionId;
+
+			// Route worker → leader (worker has no error, empty messages)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Snapshot inject calls to worker BEFORE onLeaderTerminalState
+			const workerInjectsBeforeLeader = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group.workerSessionId
+			).length;
+
+			// Trigger leader terminal state with usage_limit text + fallback configured
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Task should NOT be paused — fallback switch succeeded, task stays in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit must NOT be set
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// No NEW inject calls to the worker should have been added by onLeaderTerminalState
+			// (the stale error text must NOT be routed back to the worker as feedback)
+			const workerInjectsAfterLeader = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group.workerSessionId
+			).length;
+			expect(workerInjectsAfterLeader).toBe(workerInjectsBeforeLeader);
+
+			// switchModel should have been called on the leader session
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+			expect(switchModelCalls[0].args[0]).toBe(group.leaderSessionId);
+			expect(switchModelCalls[0].args[1]).toBe('claude-haiku-4-5');
+		});
+
+		it('clears task restriction after successful fallback switch in leader path', async () => {
+			// clearTaskRestriction has an early-return guard: it only clears when
+			// task.status is 'rate_limited' or 'usage_limited'. To make this test
+			// non-tautological we inject a stale usage_limited restriction into the DB
+			// BEFORE onLeaderTerminalState fires, so clearTaskRestriction has something
+			// to actually clear. The test fails if clearTaskRestriction is deleted.
+			let leaderSessionId: string | null = null;
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId, _afterMessageId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return [makeMessage("You've hit your limit · resets 1pm (America/New_York)")];
+					}
+					return [];
+				},
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: createMockMessageHub(),
+			});
+
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			leaderSessionId = group.leaderSessionId;
+
+			// Route worker → leader
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Inject stale usage_limited restriction from a prior detection cycle.
+			// clearTaskRestriction will only clear if status is rate_limited/usage_limited.
+			const staleRestriction = JSON.stringify({
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1,
+				limitType: 'usage_limit',
+				reason: 'Daily/weekly usage cap',
+			});
+			ctx.db.run(`UPDATE tasks SET status = 'usage_limited', restrictions = ? WHERE id = ?`, [
+				staleRestriction,
+				task.id,
+			]);
+
+			// Confirm stale state is in place
+			const taskBefore = await ctx.taskManager.getTask(task.id);
+			expect(taskBefore!.status).toBe('usage_limited');
+			expect(taskBefore!.restrictions).not.toBeNull();
+
+			// Trigger leader terminal state — fallback switch succeeds, clearTaskRestriction fires
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// clearTaskRestriction must have cleared the stale restriction
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.restrictions).toBeNull();
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
+		});
+
+		it('clears group rate limit after successful fallback switch in leader path', async () => {
+			// clearRateLimit is called inside `if (!group.rateLimit)`, so it normally clears null.
+			// To make this test non-tautological we override switchModel to SET group.rateLimit
+			// mid-call (simulating a concurrent set between the guard check and the clear call).
+			// After onLeaderTerminalState, clearRateLimit at line 1154 must have cleared the
+			// non-null sentinel. The test fails if clearRateLimit is deleted.
+			let leaderSessionId: string | null = null;
+			let groupIdForSpy: string | null = null;
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (sessionId, _afterMessageId) => {
+					if (leaderSessionId && sessionId === leaderSessionId) {
+						return [makeMessage("You've hit your limit · resets 1pm (America/New_York)")];
+					}
+					return [];
+				},
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: createMockMessageHub(),
+			});
+
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			leaderSessionId = group.leaderSessionId;
+			groupIdForSpy = group.id;
+
+			// Override switchModel to set group.rateLimit while the fallback switch is in progress.
+			// This ensures clearRateLimit at line 1154 actually clears a non-null sentinel.
+			ctx.sessionFactory.switchModel = async (sessionId, model, provider) => {
+				ctx.sessionFactory.calls.push({
+					method: 'switchModel',
+					args: [sessionId, model, provider],
+				});
+				if (groupIdForSpy) {
+					ctx.groupRepo.setRateLimit(groupIdForSpy, {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60_000,
+						sessionRole: 'leader',
+					});
+				}
+				return { success: true, model };
+			};
+
+			// Route worker → leader
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Trigger leader terminal state — fallback switch fires, sets rateLimit mid-call,
+			// then clearRateLimit at line 1154 clears the non-null sentinel.
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// clearRateLimit must have cleared the rate limit set by the spy
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// switchModel was called (confirms the fallback path ran, not the guard-skip path)
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+
+			// Task should not be paused
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
 		});
 	});
 });
