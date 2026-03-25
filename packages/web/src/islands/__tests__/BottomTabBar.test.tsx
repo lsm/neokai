@@ -46,6 +46,8 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomTabSignal,
+	currentRoomActiveTabSignal,
 } from '../../lib/signals.ts';
 import {
 	navigateToInbox,
@@ -54,6 +56,7 @@ import {
 	navigateToSettings,
 	navigateToRoom,
 	navigateToRoomAgent,
+	navigateToHome,
 } from '../../lib/router.ts';
 
 describe('BottomTabBar', () => {
@@ -62,6 +65,8 @@ describe('BottomTabBar', () => {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomTabSignal.value = null;
+		currentRoomActiveTabSignal.value = null;
 		mockItemsSignal.value = [];
 		vi.clearAllMocks();
 	});
@@ -399,6 +404,36 @@ describe('BottomTabBar', () => {
 			fireEvent.click(agentTab);
 
 			expect(navigateToRoomAgent).toHaveBeenCalledWith(ROOM_ID);
+		});
+
+		it('should call navigateToRoom with roomId and set currentRoomTabSignal to goals when Missions tab is clicked', () => {
+			render(<BottomTabBar />);
+
+			const missionsTab = screen.getByRole('tab', { name: 'Missions' });
+			fireEvent.click(missionsTab);
+
+			expect(currentRoomTabSignal.value).toBe('goals');
+			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
+		});
+
+		it('should call navigateToHome when "/" tab is clicked', () => {
+			render(<BottomTabBar />);
+
+			const homeTab = screen.getByRole('tab', { name: '/' });
+			fireEvent.click(homeTab);
+
+			expect(navigateToHome).toHaveBeenCalledTimes(1);
+		});
+
+		it('should mark Missions tab as active when currentRoomActiveTabSignal is goals', () => {
+			currentRoomActiveTabSignal.value = 'goals';
+			render(<BottomTabBar />);
+
+			const missionsTab = screen.getByRole('tab', { name: 'Missions' });
+			expect(missionsTab.getAttribute('aria-selected')).toBe('true');
+
+			const overviewTab = screen.getByRole('tab', { name: 'Overview' });
+			expect(overviewTab.getAttribute('aria-selected')).toBe('false');
 		});
 
 		it('should show global tabs when navSection is rooms but roomId is null', () => {

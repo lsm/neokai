@@ -5,6 +5,7 @@ import {
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
 	currentRoomTabSignal,
+	currentRoomActiveTabSignal,
 	type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -171,8 +172,14 @@ export function BottomTabBar() {
 	const isTabActive = (id: TabItem['id']): boolean => {
 		if (isInRoomContext) {
 			if (id === 'room-agent') return isViewingRoomAgent;
-			if (id === 'room-overview') return isViewingRoomDashboard && navSection === 'rooms';
-			if (id === 'room-missions') return currentRoomTabSignal.value === 'goals';
+			if (id === 'room-missions') return currentRoomActiveTabSignal.value === 'goals';
+			// Overview is only active when on dashboard and no specific room tab is selected
+			if (id === 'room-overview')
+				return (
+					isViewingRoomDashboard &&
+					navSection === 'rooms' &&
+					currentRoomActiveTabSignal.value !== 'goals'
+				);
 		}
 		return navSection === id;
 	};
