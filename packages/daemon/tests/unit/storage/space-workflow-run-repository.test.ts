@@ -115,9 +115,10 @@ describe('SpaceWorkflowRunRepository', () => {
 	});
 
 	describe('getRehydratableRuns', () => {
-		it('returns in_progress and needs_attention runs; excludes pending, completed, cancelled', () => {
-			// 'pending' — excluded (transient creation state)
-			repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
+		it('returns pending, in_progress, and needs_attention runs; excludes completed and cancelled', () => {
+			// 'pending' — included (crash recovery: pending runs with no tasks are cancelled,
+			// pending runs with tasks are promoted to in_progress by rehydrateExecutors)
+			const r1 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Pending' });
 
 			// 'in_progress' — included
 			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'InProgress' });
@@ -136,9 +137,9 @@ describe('SpaceWorkflowRunRepository', () => {
 			repo.updateStatus(r5.id, 'cancelled');
 
 			const rehydratable = repo.getRehydratableRuns(spaceId);
-			expect(rehydratable).toHaveLength(2);
+			expect(rehydratable).toHaveLength(3);
 			const titles = rehydratable.map((r) => r.title).sort();
-			expect(titles).toEqual(['InProgress', 'NeedsAttention']);
+			expect(titles).toEqual(['InProgress', 'NeedsAttention', 'Pending']);
 		});
 	});
 
