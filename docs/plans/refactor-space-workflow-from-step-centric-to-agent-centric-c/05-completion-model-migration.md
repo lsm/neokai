@@ -41,10 +41,12 @@ Replace the terminal-node detection model (run completes when `advance()` reache
    }
    ```
 3. Completion logic:
-   - Query all session groups associated with the workflow run
-   - Count members with status `'done'`
-   - A run is complete when ALL members across ALL groups have status `'done'` or `'completed'` or `'failed'`
+   - Query path: `workflowRunId` → `space_tasks` (filtered by `workflowRunId`) → `sessionGroupId` → `space_session_group_members`
+   - Specifically: query `space_tasks` WHERE `workflow_run_id = ?` to get all task IDs, then for each task with a non-null `session_group_id`, query `space_session_group_members` WHERE `session_group_id IN (?)`
+   - Count members with status `'done'`, `'completed'`, or `'failed'`
+   - A run is complete when ALL members across ALL groups have a terminal status (`'done'` | `'completed'` | `'failed'`)
    - Members with status `'active'` mean the run is not complete
+   - **Edge case — nodes with no tasks**: If a node in the workflow has no tasks yet (agents not spawned, possibly because no cross-node channel has fired to activate it), those nodes are **excluded** from the completion check. Only nodes with at least one task contribute to the agent count. This prevents a workflow from being stuck waiting for nodes that haven't been activated.
 
 **Acceptance Criteria**:
 - `isComplete()` returns true only when all agents have reached a terminal state
@@ -137,3 +139,9 @@ Replace the terminal-node detection model (run completes when `advance()` reache
 **Dependencies**: Tasks 5.2, 5.3
 
 **Agent Type**: coder
+
+## Rollback Strategy
+
+- **CompletionDetector** (Task 5.1): New class, no existing behavior modified. If the all-agents-done detection incorrectly marks runs as complete, the `CompletionDetector` can be temporarily bypassed by commenting out its invocation in `processRunTick()`.
+- **Tick loop changes** (Task 5.2): The new completion path is gated behind `hasCrossNodeChannels()`. Reverting the tick loop change causes workflows with cross-node channels to fall through to the old advance-based path (which returns no-op per Task 2.6, so runs would need manual intervention — but at least they wouldn't auto-complete incorrectly).
+- **Status lifecycle** (Task 5.3): No new statuses are added; existing status transitions are clarified. This is a documentation/consistency change with minimal rollback risk.

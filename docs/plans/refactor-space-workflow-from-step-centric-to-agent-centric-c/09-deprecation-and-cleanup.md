@@ -1,4 +1,4 @@
-# Milestone 8: Deprecation and Cleanup
+# Milestone 9: Deprecation and Cleanup
 
 ## Goal
 
@@ -14,7 +14,7 @@ Mark the step-transition model as deprecated, add migration tooling, and clean u
 
 ## Tasks
 
-### Task 8.1: Deprecation Warnings for Step-Centric APIs
+### Task 9.1: Deprecation Warnings for Step-Centric APIs
 
 **Description**: Add deprecation warnings to step-centric APIs and workflow features.
 
@@ -41,7 +41,7 @@ Mark the step-transition model as deprecated, add migration tooling, and clean u
 
 ---
 
-### Task 8.2: Workflow Migration Script
+### Task 9.2: Workflow Migration Script
 
 **Description**: Create a migration utility that converts existing step-centric workflows to agent-centric workflows.
 
@@ -70,7 +70,7 @@ Mark the step-transition model as deprecated, add migration tooling, and clean u
 
 ---
 
-### Task 8.3: Clean Up advance() from Non-Legacy Code Paths
+### Task 9.3: Clean Up advance() from Non-Legacy Code Paths
 
 **Description**: Remove `advance()` calls from code paths that should now use agent-driven advancement.
 
@@ -88,13 +88,13 @@ Mark the step-transition model as deprecated, add migration tooling, and clean u
 - No hidden dependencies on `advance()` in the agent-centric code path
 - Existing tests still pass
 
-**Dependencies**: Tasks 6.3, 8.2
+**Dependencies**: Tasks 6.3, 9.2
 
 **Agent Type**: coder
 
 ---
 
-### Task 8.4: Comprehensive Test Coverage Update
+### Task 9.4: Comprehensive Test Coverage Update
 
 **Description**: Update all test suites to cover both the legacy and new models, ensuring no regressions.
 
@@ -119,13 +119,13 @@ Mark the step-transition model as deprecated, add migration tooling, and clean u
 - `bun run lint` passes
 - No regressions in any test suite
 
-**Dependencies**: Tasks 8.1, 8.2, 8.3
+**Dependencies**: Tasks 9.1, 9.2, 9.3
 
 **Agent Type**: coder
 
 ---
 
-### Task 8.5: Online Integration Tests
+### Task 9.5: Online Integration Tests
 
 **Description**: Write online integration tests that exercise the full agent-centric workflow model end-to-end.
 
@@ -149,6 +149,13 @@ Mark the step-transition model as deprecated, add migration tooling, and clean u
 - Gate enforcement is verified
 - Completion detection works correctly
 
-**Dependencies**: Tasks 8.4
+**Dependencies**: Tasks 9.4
 
 **Agent Type**: coder
+
+## Rollback Strategy
+
+- Deprecation warnings are non-blocking (log-only) and can be removed instantly without code changes
+- The migration script is opt-in (RPC handler) — existing workflows are not auto-migrated
+- If `advance()` cleanup causes issues, the old code paths can be restored since transitions are preserved (dual model)
+- `CompletionDetector` issues can be mitigated by temporarily disabling the new completion path (the old advance-based path still works for transition-only workflows)

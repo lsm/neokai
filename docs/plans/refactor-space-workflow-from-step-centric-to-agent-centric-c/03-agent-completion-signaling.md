@@ -39,7 +39,7 @@ Add explicit agent completion signaling to replace the implicit "all tasks compl
 **Description**: Add the completion-related columns to `space_session_group_members`.
 
 **Subtasks**:
-1. Add Migration 48 to:
+1. Add a migration (**use the next available migration number at implementation time**; currently 52 — after the cross-node channels migration from Task 2.3) to:
    - Update the `status` CHECK constraint on `space_session_group_members` to include `'done'`
    - Add `completion_summary TEXT` column
    - Add `done_at INTEGER` column
@@ -127,5 +127,63 @@ Add explicit agent completion signaling to replace the implicit "all tasks compl
 - No regressions in existing step-agent tool tests
 
 **Dependencies**: Task 3.3
+
+**Agent Type**: coder
+
+## Rollback Strategy
+
+- **DB migration** (Task 3.2): Adds nullable columns (`completion_summary`, `done_at`) to `space_session_group_members` and extends the status CHECK constraint. The migration is reversible — columns can be dropped and the constraint reverted (though keeping `'done'` in the constraint is harmless even if unused).
+- **report_done tool** (Task 3.3): New tool added to step agents. If reverted, agents simply can't call it — no existing behavior breaks since the old model doesn't depend on explicit completion signaling.
+- **Liveness guard** (Task 3.6): The auto-completion logic in `processRunTick()` is gated behind the presence of cross-node channels (via the same `hasCrossNodeChannels()` check from Task 2.6). Disabling it is a one-line change.
+
+---
+
+### Task 3.6: Agent Liveness Guard — Timeout for report_done
+
+**Description**: Add a timeout mechanism to prevent workflow runs from hanging indefinitely when an agent is alive but never calls `report_done` (e.g., agent crashes mid-task, hangs, runs out of context, or simply never decides it's done).
+
+**Design**: Leverage the existing liveness detection infrastructure in `SpaceRuntime.processRunTick()` (which already checks for dead/stale agents via `active_session` and task status). The new timeout extends this to detect "alive but stuck" agents.
+
+**Timeout strategy**:
+- An agent is considered "potentially stuck" if ALL of the following are true:
+  1. The agent's session is active (not crashed/disconnected)
+  2. The agent's member status is `'active'` (not `'done'`, `'completed'`, or `'failed'`)
+  3. The agent's task(s) on the current node are all in a terminal state (`completed`, `needs_attention`, `cancelled`)
+  4. A configurable timeout has elapsed since the last terminal task state was reached (default: **10 minutes**)
+- When an agent is detected as stuck:
+  - The system auto-marks the agent's member status as `'done'` with a system-generated completion summary: `"Auto-completed: all tasks finished but agent did not call report_done within {N} minutes"`
+  - The `doneAt` timestamp is set to the auto-completion time
+  - A warning event is emitted: `spaceSessionGroup.memberAutoCompleted`
+  - The workflow run is **not** escalated to `needs_attention` — this is a soft auto-completion
+
+**Why not escalate**: The agent has finished its work (all tasks are done); it simply forgot or was unable to call `report_done`. Escalating to `needs_attention` would require human intervention for something that doesn't need it. The auto-completion is logged but non-blocking.
+
+**Configuration**:
+- Add a configurable timeout constant in `packages/daemon/src/lib/space/runtime/constants.ts`: `AGENT_REPORT_DONE_TIMEOUT_MS = 10 * 60 * 1000` (10 minutes)
+- This can be overridden per-workflow in the future via `SpaceWorkflow.settings` if needed
+
+**Subtasks**:
+1. In `SpaceRuntime.processRunTick()`, add a new check after the existing liveness checks:
+   - For each workflow run, query session group members with status `'active'`
+   - For each active member, check if all their tasks on the current node are terminal
+   - If so, check if the time since the last terminal task `updated_at` exceeds `AGENT_REPORT_DONE_TIMEOUT_MS`
+   - If exceeded, auto-complete the member
+2. Create `autoCompleteStuckMembers(workflowRunId: string): Promise<AutoCompletedMember[]>` in a new utility file `packages/daemon/src/lib/space/runtime/agent-liveness.ts`
+3. Add unit tests:
+   - Agent with completed tasks but no `report_done` within timeout → auto-completed
+   - Agent with completed tasks but `report_done` called before timeout → not auto-completed
+   - Agent with active tasks → not auto-completed (still working)
+   - Agent with `needs_attention` tasks → not auto-completed (tasks are not 'completed')
+   - Multiple agents, some stuck and some not → only stuck ones auto-complete
+4. Add a `memberAutoCompleted` event type to the session group event system
+
+**Acceptance Criteria**:
+- Stuck agents are auto-completed after the timeout period
+- Non-stuck agents (with active tasks or who called `report_done`) are unaffected
+- The auto-completion emits an event for real-time UI awareness
+- The timeout is configurable via a constant
+- Unit tests cover all scenarios
+
+**Dependencies**: Tasks 3.2, 3.3
 
 **Agent Type**: coder

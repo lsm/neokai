@@ -113,20 +113,20 @@ Add gate/condition support to `WorkflowChannel`, enabling channels to enforce po
 
 ---
 
-### Task 1.5: Update Shared Module Exports
+### Task 1.5: Verify Shared Module Exports and Typecheck (folded into Tasks 1.1 and 1.2)
 
-**Description**: Ensure all new types and utilities from this milestone are properly exported from the shared package.
+> **Note**: This task has been folded into the acceptance criteria of Tasks 1.1 and 1.2. The following verification steps are required as part of those tasks:
+>
+> - Verify `packages/shared/src/mod.ts` re-exports everything needed
+> - Run `bun run typecheck` to verify no import errors
+> - Run `bun run lint` to verify no lint errors
+> - Ensure new types are accessible from `@neokai/shared`
+>
+> This is not a standalone task — it is a verification checklist completed as part of Tasks 1.1 and 1.2.
 
-**Subtasks**:
-1. Verify `packages/shared/src/mod.ts` re-exports everything needed
-2. Run `bun run typecheck` to verify no import errors
-3. Run `bun run lint` to verify no lint errors
+## Rollback Strategy
 
-**Acceptance Criteria**:
-- `bun run typecheck` passes
-- `bun run lint` passes
-- New types are accessible from `@neokai/shared`
-
-**Dependencies**: Tasks 1.1, 1.2
-
-**Agent Type**: coder
+- This milestone is purely additive (new optional `gate` field on `WorkflowChannel`). No existing behavior is changed.
+- No DB schema changes in this milestone.
+- If issues arise, the `gate` field can be ignored by downstream code — channels without gates work identically to current behavior.
+- The `ChannelGateEvaluator` class is new code with no impact on existing paths unless explicitly called.

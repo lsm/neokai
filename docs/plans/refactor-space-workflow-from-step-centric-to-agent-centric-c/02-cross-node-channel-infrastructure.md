@@ -100,7 +100,7 @@ Extend the channel system to support cross-node channels (channels that span bet
 **Description**: Add database storage for cross-node channels on the `SpaceWorkflow` table and update the workflow repository.
 
 **Subtasks**:
-1. Add a migration (Migration 47) to add a `cross_node_channels TEXT` column to `space_workflows` table (JSON-serialized array of `CrossNodeChannel`)
+1. Add a migration (**use the next available migration number at implementation time**; currently 51) to add a `cross_node_channels TEXT` column to `space_workflows` table (JSON-serialized array of `CrossNodeChannel`). The plan intentionally does not hardcode the migration number since it drifts over time.
 2. Update `packages/daemon/src/storage/repositories/space-workflow-repository.ts` to:
    - Serialize `crossNodeChannels` to JSON when persisting
    - Deserialize from JSON when loading
@@ -165,3 +165,58 @@ Extend the channel system to support cross-node channels (channels that span bet
 **Dependencies**: Tasks 2.2, 2.3
 
 **Agent Type**: coder
+
+---
+
+### Task 2.6: Dual-Model Conflict Resolution Rules
+
+**Description**: Define and implement the conflict resolution strategy for workflows that have both `WorkflowTransition` edges AND `CrossNodeChannel` definitions (dual-model coexistence). This addresses what happens when both models exist simultaneously or when they race against each other.
+
+**Conflict resolution rules:**
+
+1. **Cross-node channels take precedence over transitions**: When a workflow run has any `crossNodeChannels` defined, the agent-centric model is the primary advancement mechanism. Transitions are kept for data compatibility but are not evaluated by the executor for advancement.
+
+2. **`advance()` becomes a no-op for agent-centric runs**: When `WorkflowExecutor.advance()` is called on a workflow run that has `crossNodeChannels` configured, it returns `{ advanced: false, reason: 'Workflow uses agent-centric model (cross-node channels configured)' }` without creating tasks or changing `currentNodeId`. This prevents races between `advance()` and agent-driven messaging.
+
+3. **Mid-run migration is supported**: If a user adds cross-node channels to a running workflow that previously used only transitions:
+   - The next `processRunTick()` detects the change (queries `crossNodeChannels` at tick time, not cached at run start)
+   - `advance()` is immediately disabled for that run
+   - Any nodes that were activated via `advance()` retain their existing tasks/sessions
+   - Future advancement is agent-driven only
+
+4. **Task Agent guidance**: The Task Agent system prompt (updated in Milestone 6) will include explicit instructions: "If this workflow has cross-node channels, do NOT call `advance_workflow`. Use `send_message` with cross-node targets instead."
+
+5. **No race condition between models**: Since `advance()` is disabled when cross-node channels exist, there is no race. The check is done at the start of `advance()` (synchronous query) and `processRunTick()` (same query). Both paths are protected.
+
+**Subtasks**:
+1. Create a helper function `hasCrossNodeChannels(workflow: SpaceWorkflow): boolean` in `space-utils.ts`
+2. In `WorkflowExecutor.advance()`, add the guard at the top:
+   ```ts
+   if (hasCrossNodeChannels(workflow)) {
+     return { advanced: false, reason: 'Workflow uses agent-centric model' };
+   }
+   ```
+3. In `SpaceRuntime.processRunTick()`, use `hasCrossNodeChannels()` to choose between completion models (this feeds into Milestone 5)
+4. Add unit tests for the conflict resolution:
+   - Workflow with both transitions and cross-node channels: `advance()` returns no-op
+   - Workflow with only transitions: `advance()` works as before
+   - Workflow with only cross-node channels: `advance()` returns no-op
+   - Mid-run channel addition: next tick detects and switches model
+
+**Acceptance Criteria**:
+- `advance()` is a no-op when cross-node channels exist
+- No race condition between `advance()` and agent-driven messaging
+- Mid-run model switching is handled gracefully
+- Unit tests cover all conflict scenarios
+- Existing transition-only workflows are unaffected
+
+**Dependencies**: Task 2.1
+
+**Agent Type**: coder
+
+## Rollback Strategy
+
+- **DB migration** (Task 2.3): Adds a nullable `cross_node_channels TEXT` column to `space_workflows`. This is fully reversible — the column can be dropped without data loss (it's only populated for workflows that use cross-node channels, and existing workflows have `NULL`).
+- **Type changes** (Task 2.1): The `crossNodeChannels` field is optional on `SpaceWorkflow`. Removing it is a non-breaking type change.
+- **Export/import** (Task 2.4): Export/import changes are additive. Older exports without cross-node channels import correctly (field is optional).
+- **Conflict resolution** (Task 2.6): The `advance()` guard checks for `crossNodeChannels` presence. If reverted, `advance()` works normally for all workflows.

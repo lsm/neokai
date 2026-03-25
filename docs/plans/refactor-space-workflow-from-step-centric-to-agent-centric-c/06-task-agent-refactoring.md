@@ -144,3 +144,10 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 **Dependencies**: Tasks 6.2, 6.3, 6.4
 
 **Agent Type**: coder
+
+## Rollback Strategy
+
+- **System prompt changes** (Task 6.1): Prompt changes take effect on the next Task Agent session creation. Reverting the prompt is instant — no persisted state depends on it.
+- **report_workflow_done** (Task 6.2): New tool. If reverted, it's removed from the tool list. Workflows that already called it would have their run marked as complete (this is correct behavior, not a problem to roll back).
+- **advance_workflow deprecation** (Task 6.3): Deprecation warnings are log-only. Removing them restores the original tool behavior.
+- **MCP wiring** (Task 6.4): New dependencies injected into MCP server config. Reverting removes the injections — step agent tools work without them (cross-node features become unavailable but within-node features remain).

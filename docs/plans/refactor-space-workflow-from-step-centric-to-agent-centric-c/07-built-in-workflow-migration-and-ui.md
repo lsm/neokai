@@ -1,15 +1,14 @@
-# Milestone 7: Built-in Workflow Migration and UI Updates
+# Milestone 7: Built-in Workflow Migration
 
 ## Goal
 
-Migrate the 3 built-in workflow templates (Coding, Research, Review-Only) to the agent-centric model, and update the frontend visual editor to support cross-node channels with gates.
+Migrate the 3 built-in workflow templates (Coding, Research, Review-Only) to the agent-centric model. This milestone focuses on backend workflow definition changes and can run in parallel with Milestone 8 (UI updates).
 
 ## Scope
 
 - Rewrite built-in workflows to use cross-node gated channels instead of transitions
-- Update visual workflow editor to display cross-node channels
-- Update WorkflowEditor component to configure cross-node channel gates
-- Add web tests and e2e tests
+- Update seed logic to persist cross-node channels
+- Backend tests for migrated workflows
 
 ## Tasks
 
@@ -24,7 +23,7 @@ Migrate the 3 built-in workflow templates (Coding, Research, Review-Only) to the
      - Code -> Verify: `always` gate channel (coder sends to verifier)
      - Verify -> Plan: `task_result` gate channel (verifier sends to planner on 'failed')
      - Verify -> Done: `task_result` gate channel (verifier sends to general on 'passed')
-   - Keep existing transitions for backward compatibility (dual model)
+   - Keep existing transitions for backward compatibility (dual model — see Task 2.6 conflict resolution)
    - Add cross-node channels to the workflow definition
 2. **Research Workflow** (Planner -> General):
    - Add a cross-node `always` gate channel from planner to general
@@ -44,105 +43,33 @@ Migrate the 3 built-in workflow templates (Coding, Research, Review-Only) to the
 
 ---
 
-### Task 7.2: Update Visual Workflow Editor for Cross-Node Channels
+### Task 7.2: Backend Tests for Migrated Workflows
 
-**Description**: Update the visual workflow editor UI to display and configure cross-node channels with gates.
+**Description**: Write backend unit tests verifying the migrated built-in workflows have correct cross-node channels and that the dual-model conflict resolution works.
 
 **Subtasks**:
-1. In `packages/web/src/components/space/visual-editor/WorkflowCanvas.tsx`:
-   - Render cross-node channels as arrows between nodes (similar to existing transition arrows)
-   - Add visual distinction for gated channels (e.g., different color or gate icon)
-   - Allow clicking on a cross-node channel to edit its gate configuration
-2. In `packages/web/src/components/space/visual-editor/VisualWorkflowEditor.tsx`:
-   - Add a panel/modal for editing cross-node channel gates
-   - Support all 4 condition types: always, human, condition, task_result
-   - Allow configuring gate expression, description, retries, timeout
-3. In `packages/web/src/components/space/WorkflowEditor.tsx`:
-   - Add a "Cross-Node Channels" section in the non-visual workflow editor
-   - CRUD interface for cross-node channels
-4. Create new component `CrossNodeChannelEditor.tsx` for gate configuration
+1. Update `packages/daemon/tests/unit/space/built-in-workflows.test.ts`:
+   - Verify Coding workflow has cross-node channels with correct gates
+   - Verify Research workflow has cross-node channels
+   - Verify transitions still exist (dual model)
+2. Verify conflict resolution rules from Task 2.6:
+   - Built-in workflows with cross-node channels: `advance()` returns no-op
+   - Agent-driven advancement works via cross-node channels
+3. Verify seed logic persists cross-node channels correctly
 
 **Acceptance Criteria**:
-- Cross-node channels are visible in the visual editor
-- Users can add/edit/delete cross-node channels
-- Gate configuration UI supports all condition types
-- Visual distinction between gated and ungated channels
-- Existing transition editing still works
+- All backend tests pass
+- Migrated workflows have correct cross-node channel definitions
+- Dual-model conflict resolution is verified for built-in workflows
+- No regressions in existing built-in workflow tests
 
-**Dependencies**: Tasks 2.1, 7.1
+**Dependencies**: Tasks 7.1, 2.6
 
 **Agent Type**: coder
 
----
+## Rollback Strategy
 
-### Task 7.3: Update WorkflowNodeCard for Agent Completion State
-
-**Description**: Update the `WorkflowNodeCard` component to show agent completion state within a node.
-
-**Subtasks**:
-1. In `packages/web/src/components/space/WorkflowNodeCard.tsx`:
-   - Show per-agent completion status (active/done/failed) when session group data is available
-   - Use visual indicators (checkmark, spinner, x-icon) for agent status
-   - Show the completion summary when an agent reports done
-2. In `packages/web/src/components/space/visual-editor/WorkflowNode.tsx`:
-   - Add per-agent status indicators in the visual editor
-   - Show "all agents done" indicator on completed nodes
-
-**Acceptance Criteria**:
-- Node cards show real-time agent completion state
-- Visual editor shows agent status within nodes
-- Status updates are reflected in real-time via WebSocket events
-
-**Dependencies**: Task 3.4
-
-**Agent Type**: coder
-
----
-
-### Task 7.4: Web Tests for UI Changes
-
-**Description**: Write web tests (vitest) for the updated UI components.
-
-**Subtasks**:
-1. Update `packages/web/src/components/space/__tests__/WorkflowEditor.test.tsx`:
-   - Test cross-node channel CRUD operations
-2. Create `packages/web/src/components/space/visual-editor/__tests__/CrossNodeChannelEditor.test.tsx`:
-   - Test gate configuration for each condition type
-3. Update `packages/web/src/components/space/__tests__/WorkflowNodeCard.test.tsx`:
-   - Test agent completion state display
-4. Update `packages/web/src/components/space/visual-editor/__tests__/WorkflowCanvas.test.tsx`:
-   - Test cross-node channel rendering
-
-**Acceptance Criteria**:
-- All web tests pass (`cd packages/web && bunx vitest run`)
-- Cross-node channel UI is tested
-- Gate configuration UI is tested
-- No regressions in existing workflow editor tests
-
-**Dependencies**: Tasks 7.2, 7.3
-
-**Agent Type**: coder
-
----
-
-### Task 7.5: E2E Tests for Agent-Centric Workflow
-
-**Description**: Write Playwright e2e tests for the agent-centric workflow model.
-
-**Subtasks**:
-1. Create `packages/e2e/tests/features/agent-centric-workflow.e2e.ts`:
-   - Test creating a workflow with cross-node channels
-   - Test adding a gate to a cross-node channel in the visual editor
-   - Test viewing agent completion state in the workflow UI
-2. Update `packages/e2e/tests/helpers/workflow-editor-helpers.ts`:
-   - Add helpers for cross-node channel operations
-   - Add helpers for gate configuration
-
-**Acceptance Criteria**:
-- E2E tests pass (`make run-e2e TEST=tests/features/agent-centric-workflow.e2e.ts`)
-- Tests follow E2E test rules (pure browser-based, no API calls in test actions)
-- No regressions in existing e2e tests
-
-**Dependencies**: Tasks 7.2, 7.3
-
-**Agent Type**: coder
+- Built-in workflow migration only affects new spaces (existing spaces keep their persisted workflow data)
+- If issues arise, the `seedBuiltInWorkflows()` function can be reverted to remove cross-node channels from new spaces
+- The dual-model conflict resolution (Task 2.6) ensures that reverting cross-node channels falls back to the transition-based model automatically
+- No DB schema changes in this milestone (cross-node channels column was added in Task 2.3)

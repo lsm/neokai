@@ -61,24 +61,33 @@ The target system treats workflows as collaboration graphs of agents:
 
 1. **Backward compatibility**: Existing workflows must continue to work. The refactoring should be additive -- the new channel-gate model coexists with the step-transition model during migration.
 
-2. **Incremental migration**: The change is too large for a single PR. The plan uses 8 milestones, each independently deployable.
+2. **Incremental migration**: The change is too large for a single PR. The plan uses 9 milestones, each independently deployable.
 
 3. **Channel gates are optional**: Not all channels need gates. Unconditional channels work like current `always` transitions.
 
-4. **Agent completion signaling**: Agents explicitly report done (via tool call), replacing the implicit "all tasks completed on step = advance" model.
+4. **Agent completion signaling**: Agents explicitly report done (via tool call), replacing the implicit "all tasks completed on step = advance" model. A timeout-based liveness guard auto-completes stuck agents (alive but forgot to call `report_done`).
 
 5. **Gate evaluation reuses existing infrastructure**: The `WorkflowCondition` type and `evaluateCondition()` logic move to channels rather than being rewritten.
 
+6. **Dual-model conflict resolution**: When a workflow has both transitions AND cross-node channels, cross-node channels take precedence. `advance()` becomes a no-op for such workflows. This prevents race conditions between the two models. See Task 2.6 for full specification.
+
+7. **Lazy target-node activation**: When a cross-node channel fires but the target node has no active agents, the router lazily creates tasks/sessions for that node on demand. No pre-spawning or Task Agent orchestration needed.
+
+8. **Structured cross-node targets only**: Cross-node `send_message` uses `{ role, node }` object syntax (no `role@node` string parsing) to avoid ambiguity.
+
+9. **Migration numbers are dynamic**: DB migration numbers are not hardcoded in the plan (they drift over time). Implementation must use the next available migration number at implementation time.
+
 ## Milestones
 
-1. **Channel Gate Types** -- Add gate/condition support to `WorkflowChannel`, create `ChannelGateEvaluator`, unit tests
-2. **Cross-Node Channel Infrastructure** -- Extend channels to span nodes (not just within-node), new DB columns, cross-node channel resolution
-3. **Agent Completion Signaling** -- New `report_done` tool for step agents, all-agents-done completion detection in SpaceRuntime
-4. **Agent-Driven Advancement** -- Agent-initiated workflow progression via gated channels (replaces `advance()` as primary driver), update Task Agent prompt
-5. **Completion Model Migration** -- Replace terminal-node detection with all-agents-done, remove `advance()` from hot path, update SpaceRuntime tick
-6. **Task Agent Refactoring** -- Redefine Task Agent as collaboration manager, update system prompt, update MCP tools, deprecate `advance_workflow`
-7. **Built-in Workflow Migration & UI Updates** -- Migrate 3 built-in workflows to agent-centric model, update visual editor, update frontend components
-8. **Deprecation & Cleanup** -- Mark step-transition model as deprecated, migration scripts, cleanup old code paths, comprehensive test coverage
+1. **Channel Gate Types** -- Add gate/condition support to `WorkflowChannel`, create `ChannelGateEvaluator`, unit tests (4 tasks)
+2. **Cross-Node Channel Infrastructure** -- Extend channels to span nodes, DB migration, resolution, dual-model conflict resolution (6 tasks)
+3. **Agent Completion Signaling** -- New `report_done` tool, liveness guard with timeout, completion state tracking (6 tasks)
+4. **Agent-Driven Advancement** -- Channel routing layer, lazy target-node activation, gated cross-node messaging (6 tasks)
+5. **Completion Model Migration** -- All-agents-done detector, update SpaceRuntime tick, status lifecycle (4 tasks)
+6. **Task Agent Refactoring** -- Collaboration manager prompt, `report_workflow_done`, deprecate `advance_workflow` (5 tasks)
+7. **Built-in Workflow Migration** -- Migrate 3 built-in workflows to agent-centric model, backend tests (2 tasks)
+8. **UI Updates** -- Visual editor for cross-node channels, gate config UI, agent completion state, web/e2e tests (4 tasks)
+9. **Deprecation & Cleanup** -- Deprecation warnings, migration scripts, cleanup `advance()`, comprehensive tests (5 tasks)
 
 ## Cross-Milestone Dependencies
 
@@ -88,11 +97,17 @@ The target system treats workflows as collaboration graphs of agents:
 - Milestone 4 depends on Milestones 1 and 2 (needs gated cross-node channels)
 - Milestone 5 depends on Milestones 3 and 4 (needs completion detection + agent-driven advancement)
 - Milestone 6 depends on Milestone 5 (needs the new advancement model before refactoring Task Agent)
-- Milestone 7 depends on Milestone 6 (needs new model before updating built-in workflows and UI)
-- Milestone 8 depends on Milestone 7 (final cleanup after all migrations)
+- Milestone 7 depends on Milestone 6 (needs new model before updating built-in workflows)
+- Milestone 8 depends on Milestones 2, 3, 7 (needs cross-node types + completion state + backend migration)
+- Milestone 9 depends on Milestones 6 and 7 (final cleanup after all migrations)
 
-Key sequencing decision: Milestones 1 and 3 can be developed in parallel. Milestone 2 can start after Milestone 1. Milestones 4-8 are sequential.
+Key sequencing decisions:
+- **Milestones 1 and 3 can be developed in parallel** (no dependencies between them)
+- **Milestones 7 and 8 can be developed in parallel** (backend migration vs UI updates are independent workstreams)
+- Milestone 2 can start after Milestone 1
+- Milestones 4-6 are sequential
+- Milestone 9 is the final milestone
 
 ## Total Estimated Task Count
 
-~32 tasks across 8 milestones.
+42 tasks across 9 milestones (excluding Task 1.5 which is folded into acceptance criteria).
