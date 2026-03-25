@@ -1,6 +1,7 @@
-import { useState } from 'preact/hooks';
+import { useId, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import type { ReferenceMention, ReferenceMetadata, ReferenceType } from '@neokai/shared';
+import ReferenceTypeIcon from './ReferenceTypeIcon.tsx';
 
 export interface MentionTokenProps {
 	mention: ReferenceMention;
@@ -11,99 +12,25 @@ export interface MentionTokenProps {
 const TYPE_STYLES: Record<ReferenceType, { container: string; icon: string; label: string }> = {
 	task: {
 		container: 'bg-blue-500/15 text-blue-300 hover:bg-blue-500/25',
-		icon: 'text-blue-400',
+		icon: 'w-3 h-3 text-blue-400',
 		label: 'task',
 	},
 	goal: {
 		container: 'bg-purple-500/15 text-purple-300 hover:bg-purple-500/25',
-		icon: 'text-purple-400',
+		icon: 'w-3 h-3 text-purple-400',
 		label: 'goal',
 	},
 	file: {
 		container: 'bg-green-500/15 text-green-300 hover:bg-green-500/25',
-		icon: 'text-green-400',
+		icon: 'w-3 h-3 text-green-400',
 		label: 'file',
 	},
 	folder: {
 		container: 'bg-yellow-500/15 text-yellow-300 hover:bg-yellow-500/25',
-		icon: 'text-yellow-400',
+		icon: 'w-3 h-3 text-yellow-400',
 		label: 'folder',
 	},
 };
-
-function TokenIcon({ type, className }: { type: ReferenceType; className?: string }) {
-	if (type === 'task') {
-		return (
-			<svg
-				class={cn('w-3 h-3 shrink-0', className)}
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				aria-hidden="true"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-				/>
-			</svg>
-		);
-	}
-	if (type === 'goal') {
-		return (
-			<svg
-				class={cn('w-3 h-3 shrink-0', className)}
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				aria-hidden="true"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"
-				/>
-			</svg>
-		);
-	}
-	if (type === 'folder') {
-		return (
-			<svg
-				class={cn('w-3 h-3 shrink-0', className)}
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				aria-hidden="true"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
-				/>
-			</svg>
-		);
-	}
-	// file
-	return (
-		<svg
-			class={cn('w-3 h-3 shrink-0', className)}
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke="currentColor"
-			aria-hidden="true"
-		>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={2}
-				d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-			/>
-		</svg>
-	);
-}
 
 /**
  * Renders a single @ reference as a styled, interactive pill token.
@@ -113,6 +40,7 @@ function TokenIcon({ type, className }: { type: ReferenceType; className?: strin
  */
 export default function MentionToken({ mention, metadata, onClick }: MentionTokenProps) {
 	const [showTooltip, setShowTooltip] = useState(false);
+	const tooltipId = useId();
 
 	const tokenKey = `@ref{${mention.type}:${mention.id}}`;
 	const metaEntry = metadata?.[tokenKey];
@@ -123,7 +51,7 @@ export default function MentionToken({ mention, metadata, onClick }: MentionToke
 	const ariaLabel = `${styles.label} reference: ${displayText}`;
 
 	const handleKeyDown = (e: KeyboardEvent) => {
-		if (e.key === 'Enter' && onClick) {
+		if ((e.key === 'Enter' || e.key === ' ') && onClick) {
 			e.preventDefault();
 			onClick();
 		}
@@ -133,8 +61,9 @@ export default function MentionToken({ mention, metadata, onClick }: MentionToke
 		<span class="relative inline-flex">
 			<span
 				role={onClick ? 'button' : undefined}
-				tabIndex={0}
+				tabIndex={onClick ? 0 : undefined}
 				aria-label={ariaLabel}
+				aria-describedby={showTooltip ? tooltipId : undefined}
 				onClick={onClick}
 				onKeyDown={handleKeyDown}
 				onMouseEnter={() => setShowTooltip(true)}
@@ -148,12 +77,13 @@ export default function MentionToken({ mention, metadata, onClick }: MentionToke
 					styles.container
 				)}
 			>
-				<TokenIcon type={mention.type} className={styles.icon} />
+				<ReferenceTypeIcon type={mention.type} className={styles.icon} />
 				<span class="max-w-[160px] truncate">{displayText}</span>
 			</span>
 
 			{showTooltip && (
 				<span
+					id={tooltipId}
 					role="tooltip"
 					class={cn(
 						'absolute z-50 bottom-full left-0 mb-1.5',

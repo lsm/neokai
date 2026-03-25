@@ -151,10 +151,32 @@ describe('MentionToken', () => {
 			expect(token).toBeNull();
 		});
 
-		it('is focusable via tabIndex=0', () => {
-			const { container } = render(<MentionToken mention={taskMention} />);
+		it('is focusable via tabIndex=0 when onClick is provided', () => {
+			const { container } = render(<MentionToken mention={taskMention} onClick={vi.fn()} />);
 			const token = container.querySelector('[tabindex="0"]');
 			expect(token).toBeTruthy();
+		});
+
+		it('is not focusable when onClick is not provided', () => {
+			const { container } = render(<MentionToken mention={taskMention} />);
+			const token = container.querySelector('[tabindex="0"]');
+			expect(token).toBeNull();
+		});
+
+		it('sets aria-describedby to tooltip id when tooltip is visible', () => {
+			const { container } = render(<MentionToken mention={taskMention} onClick={vi.fn()} />);
+			const token = container.querySelector('[aria-label]');
+			fireEvent.mouseEnter(token!);
+			const tooltip = container.querySelector('[role="tooltip"]');
+			const tooltipId = tooltip?.getAttribute('id');
+			expect(tooltipId).toBeTruthy();
+			expect(token?.getAttribute('aria-describedby')).toBe(tooltipId);
+		});
+
+		it('does not set aria-describedby when tooltip is hidden', () => {
+			const { container } = render(<MentionToken mention={taskMention} onClick={vi.fn()} />);
+			const token = container.querySelector('[aria-label]');
+			expect(token?.getAttribute('aria-describedby')).toBeNull();
 		});
 
 		it('uses metadata displayText in aria-label when available', () => {
@@ -204,11 +226,19 @@ describe('MentionToken', () => {
 			expect(onClick).toHaveBeenCalledTimes(1);
 		});
 
+		it('calls onClick when Space key is pressed', () => {
+			const onClick = vi.fn();
+			const { container } = render(<MentionToken mention={taskMention} onClick={onClick} />);
+			const token = container.querySelector('[aria-label]');
+			fireEvent.keyDown(token!, { key: ' ' });
+			expect(onClick).toHaveBeenCalledTimes(1);
+		});
+
 		it('does not call onClick when other keys are pressed', () => {
 			const onClick = vi.fn();
 			const { container } = render(<MentionToken mention={taskMention} onClick={onClick} />);
 			const token = container.querySelector('[aria-label]');
-			fireEvent.keyDown(token!, { key: 'Space' });
+			fireEvent.keyDown(token!, { key: 'Tab' });
 			fireEvent.keyDown(token!, { key: 'a' });
 			expect(onClick).not.toHaveBeenCalled();
 		});
