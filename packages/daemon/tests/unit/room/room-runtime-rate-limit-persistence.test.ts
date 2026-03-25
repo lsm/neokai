@@ -373,4 +373,56 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			expect(updatedTask!.status).toBe('in_progress');
 		});
 	});
+
+	// ─── clearGroupRateLimit ────────────────────────────────────────────────────────────────
+
+	describe('clearGroupRateLimit(taskId)', () => {
+		it('returns false when no group exists for the task', async () => {
+			ctx = createRuntimeTestContext();
+			ctx.runtime.start();
+			const result = await ctx.runtime.clearGroupRateLimit('non-existent-task');
+			expect(result).toBe(false);
+		});
+
+		it('returns false when the group is already completed', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Mark the group as completed
+			ctx.groupRepo.completeGroup(group.id, group.version);
+
+			const result = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(result).toBe(false);
+		});
+
+		it('clears group rateLimit and task restriction, returns true', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Confirm the group is rate-limited and task restriction is set
+			expect(ctx.groupRepo.isRateLimited(group.id)).toBe(true);
+			const restricted = await ctx.taskManager.getTask(task.id);
+			expect(restricted!.status).toBe('rate_limited');
+			expect(restricted!.restrictions).toBeDefined();
+
+			// Clear via the new public method
+			const result = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(result).toBe(true);
+
+			// Group rateLimit should be gone
+			const groupAfter = ctx.groupRepo.getActiveGroups('room-1').find((g) => g.id === group.id);
+			expect(groupAfter?.rateLimit).toBeNull();
+
+			// Task restriction should be cleared and status restored to in_progress
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.restrictions).toBeNull();
+			expect(taskAfter!.status).toBe('in_progress');
+		});
+	});
 });

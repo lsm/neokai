@@ -727,44 +727,55 @@ export class RoomRuntime {
 				// Fall through to the worktree check so the worker can attempt cleanup/retry.
 			}
 			if (errorClass?.class === 'usage_limit') {
-				// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
-				// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
-				log.info(
-					`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
-				);
-				const switched = await this.trySwitchToFallbackModel(
-					groupId,
-					group.workerSessionId,
-					'worker'
-				);
-				if (!switched) {
-					// No fallback available — fall through to rate_limit behavior (backoff + pause)
-					// Parse reset time from the usage limit message, or use 1-minute default
-					const rateLimitBackoff = errorClass.resetsAt
-						? createRateLimitBackoff(workerOutputText, 'worker')
-						: null;
-					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
-						detectedAt: Date.now(),
-						resetsAt: Date.now() + 60 * 1000,
-						sessionRole: 'worker',
-					};
-					this.groupRepo.setRateLimit(groupId, backoff);
-					this.appendGroupEvent(groupId, 'rate_limited', {
-						text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
-						resetsAt: backoff.resetsAt,
-						sessionRole: 'worker',
-					});
-					await this.persistTaskRestriction(
-						group.taskId,
-						backoff,
-						'usage_limit',
-						`Daily/weekly usage cap`
+				// Only attempt fallback / backoff on first detection (group.rateLimit is null).
+				// After the initial backoff expires, recoverStuckWorkers re-triggers this handler
+				// with the same old "You've hit your limit" text still in the worker output.
+				// Skipping re-detection here lets the worker fall through to the worktree check
+				// and attempt cleanup/retry instead of re-applying a stale backoff indefinitely.
+				// (group.rateLimit is intentionally NOT cleared by the timer — it acts as a
+				// sentinel so that re-triggers caused by recoverStuckWorkers never loop.)
+				if (!group.rateLimit) {
+					// Usage limit (daily/weekly cap) — do NOT wait. Try fallback model immediately.
+					// If no fallback is configured, fall through to rate_limit behavior (pause + backoff).
+					log.info(
+						`Usage limit detected in worker output for group ${groupId}: ${errorClass.reason}`
 					);
-					this.scheduleTickAfterRateLimitReset(groupId);
-					return;
+					const switched = await this.trySwitchToFallbackModel(
+						groupId,
+						group.workerSessionId,
+						'worker'
+					);
+					if (!switched) {
+						// No fallback available — fall through to rate_limit behavior (backoff + pause)
+						// Parse reset time from the usage limit message, or use 1-minute default
+						const rateLimitBackoff = errorClass.resetsAt
+							? createRateLimitBackoff(workerOutputText, 'worker')
+							: null;
+						const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+							detectedAt: Date.now(),
+							resetsAt: Date.now() + 60 * 1000,
+							sessionRole: 'worker',
+						};
+						this.groupRepo.setRateLimit(groupId, backoff);
+						this.appendGroupEvent(groupId, 'rate_limited', {
+							text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+							resetsAt: backoff.resetsAt,
+							sessionRole: 'worker',
+						});
+						await this.persistTaskRestriction(
+							group.taskId,
+							backoff,
+							'usage_limit',
+							`Daily/weekly usage cap`
+						);
+						this.scheduleTickAfterRateLimitReset(groupId);
+						return;
+					}
+					// Fall through to normal routing — fallback model switch event was already appended
+					// in trySwitchToFallbackModel so the UI shows the switch clearly.
 				}
-				// Fall through to normal routing — fallback model switch event was already appended
-				// in trySwitchToFallbackModel so the UI shows the switch clearly.
+				// group.rateLimit already set (even if expired): re-trigger after expiry.
+				// Fall through to the worktree check so the worker can attempt cleanup/retry.
 			}
 		}
 
@@ -1813,6 +1824,25 @@ export class RoomRuntime {
 			group.id,
 			isActiveGroup ? 'Task group terminated by user status change.' : undefined
 		);
+		return true;
+	}
+
+	/**
+	 * Clear the rate limit backoff for the group associated with a task.
+	 *
+	 * Called when a user manually transitions a task from `usage_limited`/`rate_limited`
+	 * back to `in_progress` so that stale rate-limit state doesn't block the next worker
+	 * iteration from forwarding its output to the leader.
+	 *
+	 * Returns `true` if an active group was found and cleared, `false` otherwise.
+	 */
+	async clearGroupRateLimit(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.completedAt !== null) return false;
+
+		this.groupRepo.clearRateLimit(group.id);
+		await this.clearTaskRestriction(taskId);
+		log.info(`Cleared rate limit for group ${group.id} (task ${taskId})`);
 		return true;
 	}
 
