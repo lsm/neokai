@@ -6,6 +6,7 @@
  * No direct state access is performed.
  */
 
+import { expect } from '@playwright/test';
 import type { Page, Locator } from '@playwright/test';
 import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
 
@@ -14,9 +15,6 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
 /** The chat textarea that accepts user input */
 const CHAT_INPUT_SELECTOR = 'textarea[placeholder*="Ask"]';
 
-/** The reference autocomplete dropdown (role="listbox") */
-const AUTOCOMPLETE_SELECTOR = '[role="listbox"]';
-
 /** Individual reference items inside the autocomplete */
 const AUTOCOMPLETE_ITEM_SELECTOR = '[role="option"]';
 
@@ -24,10 +22,10 @@ const AUTOCOMPLETE_ITEM_SELECTOR = '[role="option"]';
 
 /**
  * Get the reference autocomplete dropdown locator.
- * The dropdown has role="listbox" and aria-label "References" or "Files & Folders".
+ * Anchored on data-testid="reference-autocomplete" for robustness.
  */
 export function getReferenceDropdown(page: Page) {
-	return page.locator(AUTOCOMPLETE_SELECTOR).first();
+	return page.locator('[data-testid="reference-autocomplete"]');
 }
 
 /**
@@ -67,41 +65,14 @@ export async function typeInChatInput(page: Page, text: string): Promise<void> {
 }
 
 /**
- * Get all reference autocomplete items currently visible in the dropdown.
- *
- * Returns a Locator pointing to all `role="option"` elements inside the listbox.
- */
-export function getReferenceItems(page: Page): Locator {
-	return page.locator(`${AUTOCOMPLETE_SELECTOR} ${AUTOCOMPLETE_ITEM_SELECTOR}`);
-}
-
-/**
- * Navigate to an autocomplete item by index using keyboard and select it with Enter.
- *
- * Index is 0-based and maps to the global order of items across all groups.
- * The hook initializes `selectedIndex` to `0`, so index 0 is already selected
- * when the dropdown opens. Pressing ArrowDown N times moves to index N.
- *
- * @param page - Playwright page
- * @param index - 0-based index of the item to select
- */
-export async function selectReferenceByIndex(page: Page, index: number): Promise<void> {
-	const textarea = getMessageInput(page);
-	for (let i = 0; i < index; i++) {
-		await textarea.press('ArrowDown');
-	}
-	await textarea.press('Enter');
-}
-
-/**
  * Click on a specific autocomplete item whose text contains `searchText`.
  *
  * @param page - Playwright page
  * @param searchText - Substring of the item's display text to match
  */
 export async function selectReferenceByClick(page: Page, searchText: string): Promise<void> {
-	const item = page
-		.locator(`${AUTOCOMPLETE_SELECTOR} ${AUTOCOMPLETE_ITEM_SELECTOR}`)
+	const item = getReferenceDropdown(page)
+		.locator(AUTOCOMPLETE_ITEM_SELECTOR)
 		.filter({ hasText: searchText })
 		.first();
 	await item.waitFor({ state: 'visible', timeout: 5000 });
@@ -204,7 +175,7 @@ export async function createRoomSession(page: Page, roomId: string): Promise<str
 	// Wait for the session to be ready
 	const textarea = getMessageInput(page);
 	await textarea.waitFor({ state: 'visible', timeout: 15000 });
-	await textarea.waitFor({ state: 'enabled', timeout: 5000 });
+	await expect(textarea).toBeEnabled({ timeout: 5000 });
 
 	return sessionId;
 }

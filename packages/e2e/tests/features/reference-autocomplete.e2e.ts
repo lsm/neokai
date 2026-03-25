@@ -5,6 +5,7 @@
  * - Basic appearance and dropdown visibility
  * - Grouped results by type (Tasks, Goals)
  * - Filtering as user types
+ * - Selection by click (inserts @ref token)
  * - Dismissal via Escape and input clear
  * - Works in the middle of text (not just at the start)
  * - Menu exclusivity (slash command and reference menus don't coexist)
@@ -49,7 +50,7 @@ test.describe('Reference Autocomplete', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a room with task and goal — gives reference.search something to return.
-		// Dev branch signature: (page, taskTitle, goalTitle, taskDesc?, goalDesc?)
+		// Signature: (page, taskTitle, goalTitle, taskDesc?, goalDesc?)
 		const result = await createRoomWithTaskAndGoal(
 			page,
 			TASK_TITLE,
@@ -112,9 +113,7 @@ test.describe('Reference Autocomplete', () => {
 			await expect(dropdown.locator('text=Goals')).toBeVisible();
 		});
 
-		test('should show "References" header when task/goal results are present', async ({
-			page,
-		}) => {
+		test('should show "References" header when task/goal results are present', async ({ page }) => {
 			await typeInChatInput(page, SEARCH_QUERY);
 			await waitForReferenceAutocomplete(page);
 

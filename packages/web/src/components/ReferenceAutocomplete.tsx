@@ -108,6 +108,7 @@ export default function ReferenceAutocomplete({
 	return (
 		<div
 			ref={containerRef}
+			data-testid="reference-autocomplete"
 			role="listbox"
 			aria-label={headerLabel}
 			class={cn(
