@@ -173,6 +173,13 @@ export class ChannelRouter {
 			} catch (err) {
 				// Detect DB UNIQUE constraint violation caused by a concurrent activateNode() call.
 				// The winning writer already created the tasks — re-read and return them.
+				//
+				// Note on partial-activation tradeoff: when the violation occurs on the nth
+				// agent slot (n > 1), the tasks already pushed to `tasks` earlier in this
+				// loop are silently discarded in favour of the re-read set. This is safe
+				// because both callers resolved task metadata from the same DB state, so the
+				// winning writer's tasks are equivalent. The returned set is guaranteed to be
+				// a superset of what this caller created so far, so no task is lost.
 				if (isDuplicateConstraintError(err)) {
 					const concurrentTasks = this.getActiveTasksForNode(runId, nodeId);
 					if (concurrentTasks.length > 0) {
@@ -253,6 +260,13 @@ export class ChannelRouter {
 	 *
 	 * Terminal tasks (completed, cancelled, needs_attention, archived) are
 	 * excluded so cyclic workflows can re-activate a node after its tasks complete.
+	 *
+	 * `draft` is intentionally excluded even though it is a valid `SpaceTaskStatus`.
+	 * The ChannelRouter always creates tasks with `status: 'pending'` — `draft` is
+	 * reserved for tasks created by external callers that are not yet ready to run.
+	 * The Migration 54 index matches this exclusion, meaning two draft tasks for the
+	 * same (run, node, slot) are allowed to coexist. Callers that create draft tasks
+	 * outside ChannelRouter must manage uniqueness themselves.
 	 */
 	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
 		const ACTIVE_STATUSES = new Set([

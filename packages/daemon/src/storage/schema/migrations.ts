@@ -3277,11 +3277,16 @@ export function runMigration53(db: BunDatabase): void {
  * tuple, preventing duplicate tasks when multiple concurrent ChannelRouter.activateNode()
  * calls race to activate the same node.
  *
- * The partial WHERE clause restricts the uniqueness guarantee to "active" statuses only
- * (pending, in_progress, review, rate_limited, usage_limited). Terminal statuses
- * (completed, cancelled, needs_attention, archived, draft) are excluded so that:
- * - Cyclic workflows can re-activate a node after its tasks complete
- * - Failed/cancelled activations can be retried without hitting the constraint
+ * The partial WHERE clause restricts the uniqueness guarantee to "active" statuses only:
+ * pending, in_progress, review, rate_limited, usage_limited.
+ *
+ * Excluded statuses and rationale:
+ * - completed / cancelled / needs_attention / archived: terminal statuses excluded so
+ *   cyclic workflows can re-activate a node after tasks finish, and failed activations
+ *   can be retried.
+ * - draft: intentionally excluded because ChannelRouter never creates draft tasks and
+ *   draft is reserved for externally-managed tasks not yet ready to run. Two draft
+ *   tasks for the same slot may coexist; external callers own their uniqueness.
  *
  * The NULL exclusions preserve backward-compat with legacy tasks that predate the
  * channel/slot system (agentId-shorthand tasks with NULL workflow_node_id or slot_role).

@@ -211,6 +211,28 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 		).not.toThrow();
 	});
 
+	test('allows two draft tasks with the same run+node+slot (draft excluded from index)', () => {
+		// draft is intentionally excluded from the partial index so that external callers
+		// can create draft tasks without being constrained by ChannelRouter's uniqueness guarantee.
+		// Two draft tasks for the same (run, node, slot) must NOT trigger a UNIQUE violation.
+		insertTask(db, {
+			id: 't-1',
+			runId: 'run-1',
+			nodeId: 'node-1',
+			slotRole: 'coder',
+			status: 'draft',
+		});
+		expect(() =>
+			insertTask(db, {
+				id: 't-2',
+				runId: 'run-1',
+				nodeId: 'node-1',
+				slotRole: 'coder',
+				status: 'draft',
+			})
+		).not.toThrow();
+	});
+
 	test('allows multiple legacy tasks with NULL workflow_run_id', () => {
 		insertTask(db, { id: 't-1', runId: null, nodeId: null, slotRole: null, status: 'pending' });
 		expect(() =>
