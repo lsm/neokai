@@ -93,12 +93,12 @@ Redefine the Task Agent's role from pipeline-advancing orchestrator to collabora
 
 ---
 
-### Task 6.4: Update Task Agent MCP Server Configuration
+### Task 6.4: Verify Task Agent MCP Server Configuration
 
-**Description**: Clean up the Task Agent's MCP server to reflect the new agent-centric tool set.
+**Description**: Verify the Task Agent's MCP server is clean and consistent after the `advance_workflow` removal (done in Task 4.5).
 
 **Subtasks**:
-1. Remove any remaining references to `advance_workflow` in `TaskAgentToolsConfig` and `createTaskAgentMcpServer()`
+1. Verify no remaining references to `advance_workflow` in `TaskAgentToolsConfig` and `createTaskAgentMcpServer()` (should already be clean from Task 4.5)
 2. Verify the tool list includes: `spawn_step_agent`, `list_group_members`, `report_result`, `report_workflow_done`, `request_human_input`
 3. Verify no references to the old step-advancement model remain
 

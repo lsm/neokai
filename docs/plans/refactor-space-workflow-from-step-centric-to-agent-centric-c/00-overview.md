@@ -2,7 +2,7 @@
 
 ## Goal Summary
 
-Transform the Space workflow system from a sequential step/pipeline model (directed graph of nodes with `advance()` as the central nervous system) to an agent-centric collaboration model (collaboration graph of agents with gated communication channels). Agents become the primary execution units that self-direct, with gates moving from `WorkflowTransition` to `WorkflowChannel`, and completion detected by all-agents-done rather than terminal-node detection.
+Transform the Space workflow system from a sequential step/pipeline model (directed graph of nodes with a central `advance()` function driving step-by-step progression) to an agent-centric collaboration model (collaboration graph of agents with gated communication channels). The `advance()` function, `advance_workflow` tool, `WorkflowTransition` type, and `currentNodeId` tracking are all removed and replaced with agent-driven messaging, cross-node gated channels, and all-agents-done completion detection.
 
 **The Space workflow feature is not yet released, so backward compatibility is NOT needed.** This allows a clean cutover — we can directly replace the old step-centric model with the new agent-centric model without maintaining dual paths, deprecation warnings, or migration scripts.
 
@@ -13,16 +13,16 @@ The current system treats workflows as directed graphs of sequential steps:
 - **`WorkflowNode`** -- a step in the graph, assigned one or more agents
 - **`WorkflowTransition`** -- directed edges between steps with optional `WorkflowCondition` guards (always, human, condition, task_result)
 - **`SpaceWorkflowRun`** -- tracks execution with a single `currentNodeId` (one active step at a time)
-- **`WorkflowExecutor.advance()`** -- the central nervous system: evaluates transitions from the current step, follows the first matching transition, creates pending tasks for the target step
-- **`SpaceRuntime.executeTick()`** -- polls for completed step tasks, calls `advance()` to move forward
-- **`TaskAgentManager`** -- manages Task Agent sessions (orchestrator per task) that use MCP tools (`spawn_step_agent`, `check_step_status`, `advance_workflow`, `report_result`) to drive workflows
+- **`WorkflowExecutor.advance()`** -- step-by-step progression: evaluates transitions from the current step, follows the first matching transition, creates pending tasks for the target step *(to be deleted in Milestone 4)*
+- **`SpaceRuntime.executeTick()`** -- polls for completed step tasks, calls `advance()` to move forward *(to be rewritten in Milestones 4-5)*
+- **`TaskAgentManager`** -- manages Task Agent sessions (orchestrator per task) that use MCP tools (`spawn_step_agent`, `check_step_status`, `advance_workflow` *(to be deleted)*, `report_result`) to drive workflows
 - **`WorkflowChannel`** -- currently node-scoped messaging topology for inter-agent communication within a step (no gates, just topology)
 - **`ChannelResolver`** -- validates `canSend(fromRole, toRole)` based on declared topology
 
 Key files:
 - `packages/shared/src/types/space.ts` -- all workflow types (WorkflowNode, WorkflowTransition, WorkflowCondition, WorkflowChannel, etc.)
 - `packages/shared/src/types/space-utils.ts` -- ResolvedChannel, resolveNodeAgents, resolveNodeChannels, validateNodeChannels
-- `packages/daemon/src/lib/space/runtime/workflow-executor.ts` -- WorkflowExecutor with advance(), condition evaluation
+- `packages/daemon/src/lib/space/runtime/workflow-executor.ts` -- WorkflowExecutor with advance() *(to be deleted in Milestone 4)*, condition evaluation
 - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- SpaceRuntime tick loop, task processing
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- Task Agent lifecycle, sub-session management
 - `packages/daemon/src/lib/space/agents/task-agent.ts` -- Task Agent system prompt builder
@@ -50,14 +50,13 @@ The target system treats workflows as collaboration graphs of agents:
    - Channel-level gates with policy evaluation (condition checks before message delivery)
    - Gates enforce policies like "coder can't send to reviewer until PR exists and CI passes"
 
-4. **advance() is removed entirely**
+4. **advance() is fully removed**
    - Agents drive themselves by sending messages through gated channels
    - The executor becomes a channel-routing + gate-enforcement layer
    - Completion is detected when all agents report done
 
 5. **Task Agent role changes**
-   - Less "advance the pipeline", more "manage the collaboration"
-   - Coordinates agents, monitors gates, handles human escalation
+   - Collaboration manager that coordinates agents, monitors gates, handles human escalation
 
 ## Key Architectural Decisions
 
@@ -67,7 +66,7 @@ The target system treats workflows as collaboration graphs of agents:
 
 3. **Channel gates are optional**: Not all channels need gates. Unconditional channels work like current `always` transitions.
 
-4. **Agent completion signaling**: Agents explicitly report done (via tool call), replacing the implicit "all tasks completed on step = advance" model. A timeout-based liveness guard auto-completes stuck agents (alive but forgot to call `report_done`).
+4. **Agent completion signaling**: Agents explicitly report done (via tool call), replacing the implicit "all tasks completed on a node" detection model. A timeout-based liveness guard auto-completes stuck agents (alive but forgot to call `report_done`).
 
 5. **Gate evaluation reuses existing infrastructure**: The `WorkflowCondition` type and `evaluateCondition()` logic move to channels rather than being rewritten.
 
