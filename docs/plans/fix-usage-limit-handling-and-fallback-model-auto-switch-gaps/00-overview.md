@@ -40,7 +40,7 @@ All fixes follow the existing patterns in the codebase -- the re-detection guard
 
 ## Total Estimated Task Count
 
-14 tasks across 6 milestones (Milestones 3 and 4 from the original plan merged).
+18 tasks across 6 milestones (Milestones 3 and 4 from the original plan merged).
 
 ## Verification Notes
 

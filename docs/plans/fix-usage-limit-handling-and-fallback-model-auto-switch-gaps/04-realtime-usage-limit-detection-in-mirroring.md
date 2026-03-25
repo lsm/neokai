@@ -6,7 +6,7 @@ The real-time message mirroring callback in `setupMirroring()` (line 2242) only 
 
 ## Tasks
 
-### Task 5.1: Add `usage_limit` handling to `setupMirroring()` callback
+### Task 4.1: Add `usage_limit` handling to `setupMirroring()` callback
 
 **Title**: Add `usage_limit` detection to the mirroring callback in `setupMirroring()`
 
@@ -48,7 +48,7 @@ The real-time message mirroring callback in `setupMirroring()` (line 2242) only 
 
 ---
 
-### Task 5.2: Unit tests for real-time usage_limit mirroring
+### Task 4.2: Unit tests for real-time usage_limit mirroring
 
 **Title**: Add tests for usage_limit detection in mirroring callback
 
@@ -64,6 +64,6 @@ The real-time message mirroring callback in `setupMirroring()` (line 2242) only 
 - Test "mirroring sets backoff when usage_limit detected and no fallback available" passes.
 - Test "mirroring switches model when usage_limit detected and fallback available" passes.
 
-**Dependencies**: Task 5.1
+**Dependencies**: Task 4.1
 
 **Agent Type**: coder
