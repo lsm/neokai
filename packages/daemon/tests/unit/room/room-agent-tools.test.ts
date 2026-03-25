@@ -382,6 +382,47 @@ describe('Room Agent Tools', () => {
 				expect(result.success).toBe(true);
 			}
 		});
+
+		it('should auto-assign goal_review tasks to planner agent', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Review goal',
+					description: 'Review progress on goal',
+					task_type: 'goal_review',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { assignedAgent: string };
+			expect(task.assignedAgent).toBe('planner');
+		});
+
+		it('should respect explicit assigned_agent over goal_review auto-assign', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Review goal',
+					description: 'Review progress on goal',
+					task_type: 'goal_review',
+					assigned_agent: 'coder',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { assignedAgent: string };
+			expect(task.assignedAgent).toBe('coder');
+		});
+
+		it('should allow explicitly assigning goal_review tasks to planner', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Review goal',
+					description: 'Review progress on goal',
+					task_type: 'goal_review',
+					assigned_agent: 'planner',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { assignedAgent: string };
+			expect(task.assignedAgent).toBe('planner');
+		});
 	});
 
 	describe('list_tasks', () => {

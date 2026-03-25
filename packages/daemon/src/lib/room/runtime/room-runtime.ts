@@ -39,7 +39,7 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
-import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
+import type { LeaderToolCallbacks, LeaderToolResult, ReviewContext } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
 import type {
 	PlannerCreateTaskParams,
@@ -3852,12 +3852,23 @@ export class RoomRuntime {
 
 		// Determine worker config based on assigned agent type
 		const agentType = task.assignedAgent ?? 'coder';
-		const workerRole = agentType === 'general' ? 'general' : 'coder';
+		const workerRole =
+			agentType === 'general' ? 'general' : agentType === 'planner' ? 'planner' : 'coder';
 		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
 		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
 		const workerProvider = this.resolveProviderForModel(workerModel);
 		const leaderProvider = this.resolveProviderForModel(leaderModel);
 		let workerConfig: WorkerConfig;
+
+		// Mutable ref for planner's isPlanApproved gate — set after spawn completes.
+		// Only used when agentType === 'planner'.
+		let spawnedGroupId: string | null = null;
+
+		// For recurring missions, get the active execution to link tasks and group to it.
+		// Declared at function scope so it's accessible after spawn for setExecutionId.
+		const activeExecution =
+			goal?.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
+		const isRecurringExecution = activeExecution != null;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
 		const leaderContextConfig = {
@@ -3869,7 +3880,8 @@ export class RoomRuntime {
 			groupId: '',
 			model: leaderModel,
 			provider: leaderProvider,
-			reviewContext: 'code_review' as const,
+			// Dynamically set so general/coder agents get 'code_review' and planner gets 'plan_review'.
+			reviewContext: (agentType === 'planner' ? 'plan_review' : 'code_review') as ReviewContext,
 		};
 
 		if (agentType === 'general') {
@@ -3888,6 +3900,89 @@ export class RoomRuntime {
 				initFactory: (workerSessionId) =>
 					createGeneralAgentInit({ ...generalConfig, sessionId: workerSessionId }),
 				taskMessage: buildGeneralTaskMessage(generalConfig),
+				leaderTaskContext: buildLeaderTaskContext(leaderContextConfig),
+			};
+		} else if (agentType === 'planner') {
+			// Planner agent: used for goal_review tasks. Mirrors spawnPlanningGroup() callback wiring.
+			// Planner tasks REQUIRE a linked goal — fail fast if none exists.
+			if (!goal) {
+				await this.taskManager.failTask(task.id, 'Planner tasks require a linked goal');
+				await this.emitTaskUpdateById(task.id);
+				return;
+			}
+
+			// workerModel/workerProvider already resolve to planner values when agentType === 'planner'
+			// (workerRole === 'planner' in the model resolution above) — no need to re-resolve.
+			const plannerModel = workerModel;
+			const plannerProvider = workerProvider;
+
+			// Build create_draft_task callback — mirrors spawnPlanningGroup pattern
+			const createDraftTask = async (
+				params: PlannerCreateTaskParams
+			): Promise<{ id: string; title: string }> => {
+				const draftTask = await this.taskManager.createTask({
+					title: params.title,
+					description: params.description,
+					priority: params.priority,
+					dependsOn: params.dependsOn,
+					taskType: 'coding',
+					status: 'draft',
+					createdByTaskId: task.id,
+					assignedAgent: params.agent,
+				});
+				// Link the draft task to the goal (or execution for recurring missions)
+				if (goal) {
+					if (isRecurringExecution && activeExecution) {
+						await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, draftTask.id);
+					} else {
+						await this.goalManager.linkTaskToGoal(goal.id, draftTask.id);
+					}
+				}
+				log.info(`Planner created draft task: ${draftTask.id} (${draftTask.title})`);
+				return { id: draftTask.id, title: draftTask.title };
+			};
+
+			const updateDraftTask = async (
+				taskId: string,
+				updates: {
+					title?: string;
+					description?: string;
+					priority?: TaskPriority;
+					assignedAgent?: AgentType;
+				}
+			): Promise<{ id: string; title: string }> => {
+				return this.taskManager.updateDraftTask(taskId, updates);
+			};
+
+			const removeDraftTask = async (taskId: string): Promise<boolean> => {
+				return this.taskManager.removeDraftTask(taskId);
+			};
+
+			// isPlanApproved uses the function-scope spawnedGroupId ref — set after spawn() returns
+			const isPlanApproved = () => {
+				if (!spawnedGroupId) return false;
+				return this.groupRepo.getGroup(spawnedGroupId)?.approved ?? false;
+			};
+
+			const plannerConfig = {
+				task,
+				goal,
+				room: currentRoom,
+				sessionId: '', // placeholder — overwritten by initFactory
+				workspacePath: this.taskGroupManager.workspacePath,
+				model: plannerModel,
+				provider: plannerProvider,
+				createDraftTask,
+				updateDraftTask,
+				removeDraftTask,
+				isPlanApproved,
+			};
+
+			workerConfig = {
+				role: 'planner',
+				initFactory: (workerSessionId) =>
+					createPlannerAgentInit({ ...plannerConfig, sessionId: workerSessionId }),
+				taskMessage: buildPlannerTaskMessage(plannerConfig),
 				leaderTaskContext: buildLeaderTaskContext(leaderContextConfig),
 			};
 		} else {
@@ -3912,6 +4007,8 @@ export class RoomRuntime {
 		}
 
 		let group;
+		// Determine reviewContext based on agent type — planner uses plan_review guidelines.
+		const reviewContext = agentType === 'planner' ? 'plan_review' : 'code_review';
 		try {
 			group = await this.taskGroupManager.spawn(
 				currentRoom,
@@ -3929,8 +4026,16 @@ export class RoomRuntime {
 				},
 				(groupId) => this.createLeaderCallbacks(groupId),
 				workerConfig,
-				'code_review'
+				reviewContext
 			);
+			// Wire up spawnedGroupId for planner's isPlanApproved gate
+			if (agentType === 'planner') {
+				spawnedGroupId = group.id;
+				// For recurring missions, link the group to the execution for correlation.
+				if (isRecurringExecution && activeExecution) {
+					this.groupRepo.setExecutionId(group.id, activeExecution.id);
+				}
+			}
 		} catch (err) {
 			// UNIQUE constraint violation means a concurrent tick already spawned a group
 			// for this task. With the spawningTaskIds guard this should be rare, but the

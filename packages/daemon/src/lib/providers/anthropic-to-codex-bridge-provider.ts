@@ -505,6 +505,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		// Reset cached auth so a new provider instance starts with a clean slate.
 		// Without this, cachedBridgeAuth=null from a previous run would cause
 		// isAvailable() to return false even when valid credentials are present.
+		this.cachedCredentials = null;
 		this.cachedBridgeAuth = undefined;
 		this.cachedApiKey = undefined;
 	}

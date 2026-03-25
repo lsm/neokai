@@ -195,6 +195,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						"Task type 'planning' is reserved for internal use. Use 'coding', 'research', 'design', or 'goal_review' instead.",
 				});
 			}
+			// goal_review tasks should be handled by the planner agent unless explicitly assigned
+			const effectiveAgent =
+				args.assigned_agent ?? (args.task_type === 'goal_review' ? 'planner' : undefined);
 			let task;
 			try {
 				task = await taskManager.createTask({
@@ -203,7 +206,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					priority: args.priority,
 					dependsOn: args.depends_on,
 					taskType: args.task_type,
-					assignedAgent: args.assigned_agent,
+					assignedAgent: effectiveAgent,
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -1054,7 +1057,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 						"Task type - determines agent preset (default: coding). Note: 'planning' is reserved for internal use."
 					),
 				assigned_agent: z
-					.enum(['coder', 'general'])
+					.enum(['coder', 'general', 'planner'])
 					.optional()
 					.describe('Agent type to execute this task (default: coder)'),
 			},
