@@ -287,9 +287,14 @@ export function setupGoalHandlers(
 		if (!params.taskId) {
 			throw new Error('Task ID is required');
 		}
+		if (!taskManagerFactory) {
+			throw new Error('Task manager factory is required for goal.linkTask');
+		}
 
 		const goalManager = goalManagerFactory(params.roomId);
 		const goalId = resolveGoalId(params.goalId, params.roomId, goalManager);
+		const { taskRepo } = taskManagerFactory(params.roomId);
+		const taskId = resolveTaskId(params.taskId, params.roomId, taskRepo);
 
 		// For recurring missions with an active execution, use the atomic dual-write path.
 		let goal;
@@ -297,12 +302,12 @@ export function setupGoalHandlers(
 		if (linkedGoal?.missionType === 'recurring') {
 			const activeExecution = goalManager.getActiveExecution(goalId);
 			if (activeExecution) {
-				goal = await goalManager.linkTaskToExecution(goalId, activeExecution.id, params.taskId);
+				goal = await goalManager.linkTaskToExecution(goalId, activeExecution.id, taskId);
 			} else {
-				goal = await goalManager.linkTaskToGoal(goalId, params.taskId);
+				goal = await goalManager.linkTaskToGoal(goalId, taskId);
 			}
 		} else {
-			goal = await goalManager.linkTaskToGoal(goalId, params.taskId);
+			goal = await goalManager.linkTaskToGoal(goalId, taskId);
 		}
 
 		return { goal };

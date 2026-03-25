@@ -230,6 +230,17 @@ const mockGoalManager = {
 
 const createMockGoalManager = (): GoalManagerLike => mockGoalManager as unknown as GoalManagerLike;
 
+// Mock TaskManagerFactory for goal.linkTask tests
+const mockTaskRepo = {
+	getTaskByShortId: mock((_roomId: string, shortId: string) => ({ id: shortId })),
+};
+const mockTaskManager = {};
+const createMockTaskManagerFactory = (): TaskManagerFactory =>
+	mock(() => ({
+		taskManager: mockTaskManager,
+		taskRepo: mockTaskRepo,
+	})) as unknown as TaskManagerFactory;
+
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
 	hub: MessageHub;
@@ -304,9 +315,15 @@ describe('Goal RPC Handlers', () => {
 		mockGoalManager.recordMetric.mockClear();
 		mockGoalManager.checkMetricTargets.mockClear();
 		mockGoalManager.getGoalByShortId.mockClear();
+		mockTaskRepo.getTaskByShortId.mockClear();
 
 		// Setup handlers with mocked dependencies
-		setupGoalHandlers(messageHubData.hub, daemonHubData.daemonHub, createMockGoalManager);
+		setupGoalHandlers(
+			messageHubData.hub,
+			daemonHubData.daemonHub,
+			createMockGoalManager,
+			createMockTaskManagerFactory()
+		);
 	});
 
 	afterEach(() => {
@@ -1714,8 +1731,11 @@ describe('Goal RPC Handlers', () => {
 		});
 
 		describe('goal.linkTask', () => {
-			it('resolves short ID to UUID before linking task', async () => {
+			const TASK_UUID = 'task-uuid-1234-5678-abcd';
+
+			it('resolves short IDs to UUIDs before linking task', async () => {
 				resolveShortId();
+				mockTaskRepo.getTaskByShortId.mockReturnValueOnce({ id: TASK_UUID });
 				// getGoal is called inside linkTask to check missionType
 				mockGoalManager.getGoal.mockResolvedValueOnce({
 					id: GOAL_UUID,
@@ -1735,10 +1755,10 @@ describe('Goal RPC Handlers', () => {
 
 				await handler({ roomId: ROOM_UUID, goalId: 'g-1', taskId: 'task-abc' }, {});
 
-				expect(mockGoalManager.linkTaskToGoal).toHaveBeenCalledWith(GOAL_UUID, 'task-abc');
+				expect(mockGoalManager.linkTaskToGoal).toHaveBeenCalledWith(GOAL_UUID, TASK_UUID);
 			});
 
-			it('throws when short ID is not found', async () => {
+			it('throws when goal short ID is not found', async () => {
 				rejectShortId();
 				const handler = messageHubData.handlers.get('goal.linkTask')!;
 
