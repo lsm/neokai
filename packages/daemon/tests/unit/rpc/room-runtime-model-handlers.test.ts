@@ -211,5 +211,34 @@ describe('RoomRuntimeModel Handlers', () => {
 				handler!({ sessionId: 'switch-error', model: 'claude-opus-4', provider: 'anthropic' }, {})
 			).rejects.toThrow('Model switch failed');
 		});
+
+		it('emits session.updated event with correct payload on success', async () => {
+			const handler = messageHubData.handlers.get('room.runtime.model.switch');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!(
+				{ sessionId: 'test-session-123', model: 'claude-opus-4', provider: 'anthropic' },
+				{}
+			)) as { success: boolean; model: string };
+
+			expect(result.success).toBe(true);
+			expect(messageHubData.hub.event).toHaveBeenCalledTimes(1);
+			expect(messageHubData.hub.event).toHaveBeenCalledWith(
+				'session.updated',
+				{ sessionId: 'test-session-123', model: 'claude-opus-4' },
+				{ channel: 'session:test-session-123' }
+			);
+		});
+
+		it('does not emit session.updated event when model switch fails', async () => {
+			const handler = messageHubData.handlers.get('room.runtime.model.switch');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ sessionId: 'switch-error', model: 'claude-opus-4', provider: 'anthropic' }, {})
+			).rejects.toThrow('Model switch failed');
+
+			expect(messageHubData.hub.event).not.toHaveBeenCalled();
+		});
 	});
 });
