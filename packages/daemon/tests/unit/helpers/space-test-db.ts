@@ -160,6 +160,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			pr_number INTEGER,
 			pr_created_at INTEGER,
 			archived_at INTEGER,
+			completion_summary TEXT,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,

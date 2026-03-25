@@ -199,6 +199,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// This table stores MCP server configurations that are available globally.
 	// Idempotent via CREATE TABLE IF NOT EXISTS.
 	runMigration50(db);
+
+	// Migration 51: Add completion_summary column to space_tasks.
+	// Stores the agent's done report — the human-readable summary an agent writes when
+	// it marks a task completed. This is the canonical location for agent completion state
+	// (alongside the existing status, completed_at, and task_agent_session_id columns).
+	runMigration51(db);
 }
 
 /**
@@ -3143,6 +3149,26 @@ export function runMigration49(db: BunDatabase): void {
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
 	);
+}
+
+/**
+ * Migration 51: Add completion_summary column to space_tasks.
+ *
+ * Agent completion state is tracked entirely on space_tasks — not on session group members.
+ * The three columns that together represent agent completion state are:
+ *   - status            — existing, set to 'completed' (or 'needs_attention' / 'cancelled')
+ *   - completed_at      — existing, timestamp stamped automatically on terminal status change
+ *   - completion_summary — NEW, free-text summary written by the agent when it finishes
+ *
+ * SpaceSessionGroupMember is NOT extended because that table is being removed entirely
+ * in the agent-centric refactor (Task 8.2).
+ *
+ * Uses ADD COLUMN IF NOT EXISTS (SQLite 3.37+) for idempotency.
+ */
+export function runMigration51(db: BunDatabase): void {
+	if (!tableHasColumn(db, 'space_tasks', 'completion_summary')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN completion_summary TEXT`);
+	}
 }
 
 /**

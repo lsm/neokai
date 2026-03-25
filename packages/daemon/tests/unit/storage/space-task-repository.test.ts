@@ -393,6 +393,38 @@ describe('SpaceTaskRepository', () => {
 		});
 	});
 
+	describe('completionSummary', () => {
+		it('is undefined when not set', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			expect(task.completionSummary).toBeUndefined();
+		});
+
+		it('sets completionSummary via updateTask', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, {
+				status: 'completed',
+				completionSummary: 'Implemented the feature and added tests.',
+			});
+			expect(updated!.completionSummary).toBe('Implemented the feature and added tests.');
+			expect(updated!.status).toBe('completed');
+			expect(updated!.completedAt).toBeDefined();
+		});
+
+		it('clears completionSummary with null', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { completionSummary: 'Done.' });
+			const cleared = repo.updateTask(task.id, { completionSummary: null });
+			expect(cleared!.completionSummary).toBeUndefined();
+		});
+
+		it('persists completionSummary across reads', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { completionSummary: 'All done!' });
+			const fetched = repo.getTask(task.id);
+			expect(fetched!.completionSummary).toBe('All done!');
+		});
+	});
+
 	describe('findByGoalId', () => {
 		it('returns tasks for a given goal', () => {
 			repo.createTask({ spaceId, title: 'A', description: '', goalId: 'goal-1' });

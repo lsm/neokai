@@ -207,6 +207,15 @@ export interface SpaceTask {
 	 * session is created. Null when no Task Agent has been spawned yet.
 	 */
 	taskAgentSessionId?: string | null;
+	/**
+	 * Human-readable summary written by the agent when it marks the task as done.
+	 *
+	 * This field, together with `status` (set to 'completed') and `completedAt`
+	 * (auto-stamped on terminal status change), forms the complete agent completion
+	 * state. All three live on space_tasks — not on SpaceSessionGroupMember, which
+	 * is being removed in the agent-centric refactor.
+	 */
+	completionSummary?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Start timestamp (milliseconds since epoch) */
@@ -282,6 +291,11 @@ export interface UpdateSpaceTaskParams {
 	 * Set when spawning a Task Agent; null to clear the reference.
 	 */
 	taskAgentSessionId?: string | null;
+	/**
+	 * Human-readable summary written by the agent when it marks the task as done.
+	 * Set alongside `status: 'completed'`; null to clear.
+	 */
+	completionSummary?: string | null;
 }
 
 // ============================================================================
