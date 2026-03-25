@@ -223,5 +223,9 @@ class RoomMcpStore {
 	}
 }
 
-/** Singleton store instance for room MCP enablement */
+/** Singleton store instance for room MCP enablement.
+ *
+ * Supports subscribing to one room at a time. Switching rooms via subscribe(roomId)
+ * automatically unsubscribes the previous room. If concurrent room subscriptions
+ * are needed in the future, convert this to a per-room Map of store instances. */
 export const roomMcpStore = new RoomMcpStore();
