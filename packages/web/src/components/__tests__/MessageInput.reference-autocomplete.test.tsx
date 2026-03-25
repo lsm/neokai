@@ -6,6 +6,7 @@
  * - useReferenceAutocomplete is wired up and its props are passed to InputTextarea
  * - handleReferenceSelect replaces @query with @ref{type:id} token
  * - Reference autocomplete keyboard events take precedence over command autocomplete
+ * - Command autocomplete is suppressed when reference autocomplete is visible
  */
 
 import { signal } from '@preact/signals';
@@ -23,13 +24,19 @@ const mockRequest = vi.fn(async () => ({ messages: [] }));
 
 // Mutable reference autocomplete state
 let mockReferenceShowAutocomplete = false;
-let mockReferenceResults: unknown[] = [];
+let mockReferenceResults = [];
 let mockReferenceSelectedIndex = 0;
 const mockReferenceHandleKeyDown = vi.fn(() => false);
 const mockReferenceHandleSelect = vi.fn(() => {});
 const mockReferenceClose = vi.fn(() => {});
 
+// Captures the onSelect callback passed to useReferenceAutocomplete so tests can
+// invoke handleReferenceSelect directly and verify its content-replacement logic.
+let capturedOnSelect = null;
+
 // Mutable command autocomplete state
+let mockCommandShowAutocomplete = false;
+let mockCommandFilteredCommands = [];
 const mockCommandHandleKeyDown = vi.fn(() => false);
 
 vi.mock('../../lib/state.ts', () => ({
@@ -62,24 +69,28 @@ vi.mock('../../hooks', () => ({
 		close: vi.fn(() => {}),
 	}),
 	useCommandAutocomplete: () => ({
-		showAutocomplete: false,
-		filteredCommands: [],
+		showAutocomplete: mockCommandShowAutocomplete,
+		filteredCommands: mockCommandFilteredCommands,
 		selectedIndex: 0,
 		handleSelect: vi.fn(() => {}),
 		close: vi.fn(() => {}),
 		handleKeyDown: mockCommandHandleKeyDown,
 	}),
-	useReferenceAutocomplete: () => ({
-		showAutocomplete: mockReferenceShowAutocomplete,
-		results: mockReferenceResults,
-		selectedIndex: mockReferenceSelectedIndex,
-		searchQuery: '',
-		handleSelect: mockReferenceHandleSelect,
-		close: mockReferenceClose,
-		handleKeyDown: mockReferenceHandleKeyDown,
-	}),
-	extractActiveAtQuery: vi.fn((content: string) => {
-		// Real implementation for select tests
+	useReferenceAutocomplete: (opts) => {
+		// Capture the onSelect (= handleReferenceSelect) so tests can call it directly
+		capturedOnSelect = opts.onSelect;
+		return {
+			showAutocomplete: mockReferenceShowAutocomplete,
+			results: mockReferenceResults,
+			selectedIndex: mockReferenceSelectedIndex,
+			searchQuery: '',
+			handleSelect: mockReferenceHandleSelect,
+			close: mockReferenceClose,
+			handleKeyDown: mockReferenceHandleKeyDown,
+		};
+	},
+	extractActiveAtQuery: vi.fn((content) => {
+		// Mirror the real implementation so handleReferenceSelect tests work correctly
 		if (!content.includes('@')) return null;
 		for (let i = content.length - 1; i >= 0; i--) {
 			if (content[i] === '@') {
@@ -136,8 +147,11 @@ describe('MessageInput reference autocomplete', () => {
 		mockReferenceHandleKeyDown.mockClear();
 		mockReferenceHandleSelect.mockClear();
 		mockReferenceClose.mockClear();
+		mockCommandShowAutocomplete = false;
+		mockCommandFilteredCommands = [];
 		mockCommandHandleKeyDown.mockReturnValue(false);
 		mockCommandHandleKeyDown.mockClear();
+		capturedOnSelect = null;
 
 		Object.defineProperty(window, 'matchMedia', {
 			writable: true,
@@ -156,7 +170,7 @@ describe('MessageInput reference autocomplete', () => {
 	describe('keyboard event priority', () => {
 		it('reference autocomplete handleKeyDown is called before command autocomplete', () => {
 			const { container } = renderInput();
-			const textarea = container.querySelector('textarea')!;
+			const textarea = container.querySelector('textarea');
 
 			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
 
@@ -167,7 +181,7 @@ describe('MessageInput reference autocomplete', () => {
 			mockReferenceHandleKeyDown.mockReturnValue(true);
 
 			const { container } = renderInput();
-			const textarea = container.querySelector('textarea')!;
+			const textarea = container.querySelector('textarea');
 
 			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
 
@@ -179,7 +193,7 @@ describe('MessageInput reference autocomplete', () => {
 			mockReferenceHandleKeyDown.mockReturnValue(false);
 
 			const { container } = renderInput();
-			const textarea = container.querySelector('textarea')!;
+			const textarea = container.querySelector('textarea');
 
 			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
 
@@ -194,7 +208,7 @@ describe('MessageInput reference autocomplete', () => {
 
 			const onSend = vi.fn(async () => {});
 			const { container } = render(<MessageInput sessionId="test-session" onSend={onSend} />);
-			const textarea = container.querySelector('textarea')!;
+			const textarea = container.querySelector('textarea');
 
 			fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -207,7 +221,7 @@ describe('MessageInput reference autocomplete', () => {
 
 			const onSend = vi.fn(async () => {});
 			const { container } = render(<MessageInput sessionId="test-session" onSend={onSend} />);
-			const textarea = container.querySelector('textarea')!;
+			const textarea = container.querySelector('textarea');
 
 			fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -216,20 +230,84 @@ describe('MessageInput reference autocomplete', () => {
 	});
 
 	describe('reference selection — content replacement', () => {
-		it('replaces @query at end of content with @ref token', async () => {
-			// The hook's handleSelect calls the onSelect callback which is handleReferenceSelect
-			// We test it indirectly by checking setContent was called with the right value
-			// Since the hook is mocked, we simulate what handleReferenceSelect would do
-			// by calling it directly via the component internals.
-			//
-			// However since hooks are mocked, we test the real handleReferenceSelect logic
-			// separately via the extractActiveAtQuery integration below.
+		it('replaces @query at end of content with @ref{type:id} token', () => {
+			mockDraftContent = 'fix @task';
+			renderInput();
 
-			// The hook handleSelect is provided; we verify the onSelect wiring by
-			// checking that the reference autocomplete's handleSelect prop is connected.
-			// This is covered by the keyboard event tests above.
-			// Here we test content replacement via a direct re-render with content set.
-			expect(true).toBe(true); // placeholder - see below for integration
+			expect(capturedOnSelect).not.toBeNull();
+			act(() => {
+				capturedOnSelect({ type: 'task', id: 't-42', displayText: 'Fix login bug' });
+			});
+
+			// content = 'fix @task', query = 'task', atPos = 4
+			// newContent = 'fix ' + '@ref{task:t-42} '
+			expect(mockSetContent).toHaveBeenCalledWith('fix @ref{task:t-42} ');
+		});
+
+		it('replaces @query when combined with a slash command prefix', () => {
+			mockDraftContent = '/agent @task';
+			renderInput();
+
+			expect(capturedOnSelect).not.toBeNull();
+			act(() => {
+				capturedOnSelect({ type: 'task', id: 't-99', displayText: 'Do something' });
+			});
+
+			// content = '/agent @task', query = 'task', atPos = 7
+			// newContent = '/agent ' + '@ref{task:t-99} '
+			expect(mockSetContent).toHaveBeenCalledWith('/agent @ref{task:t-99} ');
+		});
+
+		it('replaces @-only query (just @ with no query text)', () => {
+			mockDraftContent = 'hello @';
+			renderInput();
+
+			expect(capturedOnSelect).not.toBeNull();
+			act(() => {
+				capturedOnSelect({ type: 'goal', id: 'g-5', displayText: 'Launch v2' });
+			});
+
+			// content = 'hello @', query = '', atPos = 6
+			// newContent = 'hello ' + '@ref{goal:g-5} '
+			expect(mockSetContent).toHaveBeenCalledWith('hello @ref{goal:g-5} ');
+		});
+
+		it('returns early without calling setContent when no active @query in content', () => {
+			mockDraftContent = 'no at-sign here';
+			renderInput();
+
+			expect(capturedOnSelect).not.toBeNull();
+			act(() => {
+				capturedOnSelect({ type: 'task', id: 't-1', displayText: 'Something' });
+			});
+
+			expect(mockSetContent).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('menu visibility — no overlap', () => {
+		it('suppresses command autocomplete when reference autocomplete is visible', () => {
+			mockReferenceShowAutocomplete = true;
+			mockCommandShowAutocomplete = true;
+			mockCommandFilteredCommands = ['agent', 'compact'];
+			mockReferenceResults = [{ type: 'task', id: 't-1', displayText: 'Some task' }];
+
+			const { getByText, queryByText } = renderInput();
+
+			// Reference menu should be visible
+			expect(getByText('References')).toBeTruthy();
+			// Command menu should be suppressed
+			expect(queryByText('Slash Commands')).toBeNull();
+		});
+
+		it('shows command autocomplete when reference autocomplete is hidden', () => {
+			mockReferenceShowAutocomplete = false;
+			mockCommandShowAutocomplete = true;
+			mockCommandFilteredCommands = ['agent', 'compact'];
+
+			const { getByText } = renderInput();
+
+			expect(getByText('Slash Commands')).toBeTruthy();
 		});
 	});
 
@@ -240,8 +318,6 @@ describe('MessageInput reference autocomplete', () => {
 
 			const { container } = renderInput();
 
-			// ReferenceAutocomplete renders nothing when results is empty,
-			// so we check that the "References" header is absent
 			expect(container.textContent).not.toContain('References');
 		});
 
@@ -274,11 +350,9 @@ describe('MessageInput reference autocomplete', () => {
 			const { getAllByRole } = renderInput();
 
 			const buttons = getAllByRole('button');
-			// Find the two task buttons (may have more buttons for other UI)
 			const taskButtons = buttons.filter(
 				(b) => b.textContent?.includes('First task') || b.textContent?.includes('Second task')
 			);
-			// The second task button (index 1) should have the selected style
 			expect(taskButtons[1].className).toContain('border-blue-500');
 			expect(taskButtons[0].className).not.toContain('border-blue-500');
 		});

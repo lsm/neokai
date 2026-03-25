@@ -235,16 +235,22 @@ export default function MessageInput({
 		]
 	);
 
+	// Destructure stable callback refs to avoid recreating handleKeyDown on every render
+	// (hooks return new object instances each render, but the functions inside are stable
+	// via useCallback, so depending on the functions directly is more efficient)
+	const refHandleKeyDown = referenceAutocomplete.handleKeyDown;
+	const cmdHandleKeyDown = commandAutocomplete.handleKeyDown;
+
 	// Keyboard handler
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
 			// Reference autocomplete takes precedence when visible
-			if (referenceAutocomplete.handleKeyDown(e)) {
+			if (refHandleKeyDown(e)) {
 				return;
 			}
 
 			// Then try command autocomplete
-			if (commandAutocomplete.handleKeyDown(e)) {
+			if (cmdHandleKeyDown(e)) {
 				return;
 			}
 
@@ -273,7 +279,7 @@ export default function MessageInput({
 				}
 			}
 		},
-		[referenceAutocomplete, commandAutocomplete, handleSubmit, agentWorking]
+		[refHandleKeyDown, cmdHandleKeyDown, handleSubmit, agentWorking]
 	);
 
 	// Model switch handler
@@ -462,7 +468,9 @@ export default function MessageInput({
 							}}
 							disabled={disabled}
 							placeholder={getPlaceholderForSessionType(sessionType)}
-							showCommandAutocomplete={commandAutocomplete.showAutocomplete}
+							showCommandAutocomplete={
+								commandAutocomplete.showAutocomplete && !referenceAutocomplete.showAutocomplete
+							}
 							filteredCommands={commandAutocomplete.filteredCommands}
 							selectedCommandIndex={commandAutocomplete.selectedIndex}
 							onCommandSelect={commandAutocomplete.handleSelect}
