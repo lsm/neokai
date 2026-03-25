@@ -303,6 +303,8 @@ const ALL_TASK_STATUSES: TaskStatus[] = [
 	'cancelled',
 	'archived',
 	'draft',
+	'rate_limited',
+	'usage_limited',
 ];
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -314,6 +316,8 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 	cancelled: 'Cancelled',
 	archived: 'Archived',
 	draft: 'Draft',
+	rate_limited: 'Rate Limited',
+	usage_limited: 'Usage Limited',
 };
 
 function isDestructiveTransition(from: TaskStatus, to: TaskStatus): boolean {

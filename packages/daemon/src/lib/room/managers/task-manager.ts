@@ -28,12 +28,21 @@ import type {
 export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 	draft: ['pending'],
 	pending: ['in_progress', 'cancelled'],
-	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
+	in_progress: [
+		'review',
+		'completed',
+		'needs_attention',
+		'cancelled',
+		'rate_limited',
+		'usage_limited',
+	],
 	review: ['completed', 'needs_attention', 'in_progress'],
 	completed: ['in_progress', 'archived'], // Reactivate or archive
 	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
 	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
+	rate_limited: ['in_progress', 'needs_attention', 'cancelled'], // Resume or fail
+	usage_limited: ['in_progress', 'needs_attention', 'cancelled'], // Resume or fail
 };
 
 /**
@@ -242,6 +251,14 @@ export class TaskManager {
 			updates.error = null;
 			updates.result = null;
 			updates.progress = null;
+		}
+
+		// Clear restrictions when resuming from a rate/usage limited state.
+		if (
+			(task.status === 'rate_limited' || task.status === 'usage_limited') &&
+			newStatus === 'in_progress'
+		) {
+			updates.restrictions = null;
 		}
 
 		// When transitioning FROM archived (unarchiving), clear the archived_at timestamp

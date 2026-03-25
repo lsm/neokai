@@ -4,6 +4,8 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomTabSignal,
+	currentRoomActiveTabSignal,
 	type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -13,12 +15,13 @@ import {
 	navigateToInbox,
 	navigateToRoom,
 	navigateToRoomAgent,
+	navigateToHome,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id: NavSection | 'room-agent' | 'room-overview';
+	id: NavSection | 'room-agent' | 'room-overview' | 'room-missions' | 'room-home';
 	label: string;
 	icon: () => JSX.Element;
 }
@@ -73,6 +76,28 @@ const SettingsIcon = () => (
 	</svg>
 );
 
+const HomeIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+		/>
+	</svg>
+);
+
+const MissionIcon = () => (
+	<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M13 10V3L4 14h7v7l9-11h-7z"
+		/>
+	</svg>
+);
+
 const RoomOverviewIcon = () => (
 	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 		<path
@@ -80,17 +105,6 @@ const RoomOverviewIcon = () => (
 			stroke-linejoin="round"
 			stroke-width={2}
 			d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
-		/>
-	</svg>
-);
-
-const RoomAgentIcon = () => (
-	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-		<path
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			stroke-width={2}
-			d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1 1 .03 2.7-1.41 2.417l-2.194-.44a9.06 9.06 0 01-5.197 0l-2.193.44c-1.44.283-2.41-1.416-1.41-2.416L5 14.5"
 		/>
 	</svg>
 );
@@ -104,9 +118,9 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 
 const ROOM_BOTTOM_TABS: TabItem[] = [
 	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
-	{ id: 'room-agent', label: 'Agent', icon: RoomAgentIcon },
-	{ id: 'inbox', label: 'Inbox', icon: InboxIcon },
-	{ id: 'settings', label: 'Settings', icon: SettingsIcon },
+	{ id: 'room-agent', label: 'Agent', icon: ChatsIcon },
+	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
+	{ id: 'room-home', label: '/', icon: HomeIcon },
 ];
 
 export function BottomTabBar() {
@@ -143,13 +157,29 @@ export function BottomTabBar() {
 			case 'room-agent':
 				if (roomId) navigateToRoomAgent(roomId);
 				break;
+			case 'room-missions':
+				if (roomId) {
+					currentRoomTabSignal.value = 'goals';
+					navigateToRoom(roomId);
+				}
+				break;
+			case 'room-home':
+				navigateToHome();
+				break;
 		}
 	};
 
 	const isTabActive = (id: TabItem['id']): boolean => {
 		if (isInRoomContext) {
 			if (id === 'room-agent') return isViewingRoomAgent;
-			if (id === 'room-overview') return isViewingRoomDashboard && navSection === 'rooms';
+			if (id === 'room-missions') return currentRoomActiveTabSignal.value === 'goals';
+			// Overview is only active when on dashboard and no specific room tab is selected
+			if (id === 'room-overview')
+				return (
+					isViewingRoomDashboard &&
+					navSection === 'rooms' &&
+					currentRoomActiveTabSignal.value !== 'goals'
+				);
 		}
 		return navSection === id;
 	};

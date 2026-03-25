@@ -50,6 +50,10 @@ export const createRoomModalSignal = signal<boolean>(false);
 // Room.tsx watches this and switches activeTab accordingly, then clears it
 export const currentRoomTabSignal = signal<string | null>(null);
 
+// Persistent signal tracking the current room's active tab
+// This persists across renders unlike currentRoomTabSignal which is transient
+export const currentRoomActiveTabSignal = signal<string | null>(null);
+
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'

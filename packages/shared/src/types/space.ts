@@ -124,7 +124,9 @@ export type SpaceTaskStatus =
 	| 'completed'
 	| 'needs_attention'
 	| 'cancelled'
-	| 'archived';
+	| 'archived'
+	| 'rate_limited'
+	| 'usage_limited';
 
 /**
  * Space task priority

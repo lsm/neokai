@@ -230,6 +230,17 @@ const mockGoalManager = {
 
 const createMockGoalManager = (): GoalManagerLike => mockGoalManager as unknown as GoalManagerLike;
 
+// Mock TaskManagerFactory for goal.linkTask tests
+const mockTaskRepo = {
+	getTaskByShortId: mock((_roomId: string, shortId: string) => ({ id: shortId })),
+};
+const mockTaskManager = {};
+const createMockTaskManagerFactory = (): TaskManagerFactory =>
+	mock(() => ({
+		taskManager: mockTaskManager,
+		taskRepo: mockTaskRepo,
+	})) as unknown as TaskManagerFactory;
+
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
 	hub: MessageHub;
@@ -304,9 +315,15 @@ describe('Goal RPC Handlers', () => {
 		mockGoalManager.recordMetric.mockClear();
 		mockGoalManager.checkMetricTargets.mockClear();
 		mockGoalManager.getGoalByShortId.mockClear();
+		mockTaskRepo.getTaskByShortId.mockClear();
 
 		// Setup handlers with mocked dependencies
-		setupGoalHandlers(messageHubData.hub, daemonHubData.daemonHub, createMockGoalManager);
+		setupGoalHandlers(
+			messageHubData.hub,
+			daemonHubData.daemonHub,
+			createMockGoalManager,
+			createMockTaskManagerFactory()
+		);
 	});
 
 	afterEach(() => {
@@ -1127,13 +1144,18 @@ describe('Goal RPC Handlers', () => {
 	});
 
 	describe('task approval handlers', () => {
-		function setupApprovalHandlers(task: NeoTask | null, resumeResult = true) {
+		function setupApprovalHandlers(
+			task: NeoTask | null,
+			resumeResult = true,
+			taskRepoMock?: { getTaskByShortId: () => { id: string } | null }
+		) {
 			const taskManager = {
 				getTask: mock(async () => task),
 				reviewTask: mock(async () => task),
 				updateTaskStatus: mock(async () => task),
 			};
-			const taskManagerFactory: TaskManagerFactory = mock(() => taskManager);
+			const taskRepo = taskRepoMock ?? { getTaskByShortId: mock(() => null) };
+			const taskManagerFactory: TaskManagerFactory = mock(() => ({ taskManager, taskRepo }));
 
 			const runtime = {
 				resumeWorkerFromHuman: mock(async () => resumeResult),
@@ -1150,7 +1172,7 @@ describe('Goal RPC Handlers', () => {
 				runtimeService
 			);
 
-			return { taskManager, runtime, runtimeService };
+			return { taskManager, runtime, runtimeService, taskRepo };
 		}
 
 		it('registers task.approve handler', async () => {
@@ -1160,7 +1182,7 @@ describe('Goal RPC Handlers', () => {
 
 		it('approves coding task via task.approve and resumes runtime', async () => {
 			const task = {
-				id: 'task-123',
+				id: '08ba6a00-be49-44c5-b1fe-3795f2906b8a',
 				roomId: 'room-123',
 				title: 'Task',
 				description: '',
@@ -1176,12 +1198,15 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.approve');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+			const result = (await handler!(
+				{ roomId: 'room-123', taskId: '08ba6a00-be49-44c5-b1fe-3795f2906b8a' },
+				{}
+			)) as {
 				success: boolean;
 			};
 
 			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
-				'task-123',
+				'08ba6a00-be49-44c5-b1fe-3795f2906b8a',
 				expect.stringContaining('Human has approved the PR'),
 				{ approved: true }
 			);
@@ -1190,7 +1215,7 @@ describe('Goal RPC Handlers', () => {
 
 		it('approves planning task via task.approve and resumes runtime', async () => {
 			const task = {
-				id: 'task-123',
+				id: '08ba6a00-be49-44c5-b1fe-3795f2906b8a',
 				roomId: 'room-123',
 				title: 'Task',
 				description: '',
@@ -1206,12 +1231,15 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.approve');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+			const result = (await handler!(
+				{ roomId: 'room-123', taskId: '08ba6a00-be49-44c5-b1fe-3795f2906b8a' },
+				{}
+			)) as {
 				success: boolean;
 			};
 
 			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
-				'task-123',
+				'08ba6a00-be49-44c5-b1fe-3795f2906b8a',
 				expect.stringContaining('create tasks 1:1 from the approved plan'),
 				{ approved: true }
 			);
@@ -1220,7 +1248,7 @@ describe('Goal RPC Handlers', () => {
 
 		it('throws when task.approve resume fails', async () => {
 			const task = {
-				id: 'task-123',
+				id: '08ba6a00-be49-44c5-b1fe-3795f2906b8a',
 				roomId: 'room-123',
 				title: 'Task',
 				description: '',
@@ -1236,9 +1264,74 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('task.approve');
 			expect(handler).toBeDefined();
 
-			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
-				'Failed to resume task task-123'
+			await expect(
+				handler!({ roomId: 'room-123', taskId: '08ba6a00-be49-44c5-b1fe-3795f2906b8a' }, {})
+			).rejects.toThrow('Failed to resume task 08ba6a00-be49-44c5-b1fe-3795f2906b8a');
+		});
+
+		it('resolves short ID to full UUID when approving a task', async () => {
+			const task = {
+				id: 'task-08ba6a00-be49-44c5-b1fe-3795f2906b8a',
+				roomId: 'room-123',
+				title: 'Task',
+				description: '',
+				status: 'review',
+				priority: 'normal',
+				taskType: 'coding',
+				progress: 0,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as NeoTask;
+			const getTaskByShortId = mock(() => ({ id: task.id }));
+			const { runtime, taskRepo } = setupApprovalHandlers(task, true, { getTaskByShortId });
+			const handler = messageHubData.handlers.get('task.approve');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ roomId: 'room-123', taskId: 't-42' }, {})) as {
+				success: boolean;
+			};
+
+			expect(getTaskByShortId).toHaveBeenCalledWith('room-123', 't-42');
+			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
+				'task-08ba6a00-be49-44c5-b1fe-3795f2906b8a',
+				expect.stringContaining('Human has approved the PR'),
+				{ approved: true }
 			);
+			expect(result.success).toBe(true);
+		});
+
+		it('uses full UUID directly when taskId is already a UUID', async () => {
+			const taskId = '08ba6a00-be49-44c5-b1fe-3795f2906b8a';
+			const task = {
+				id: taskId,
+				roomId: 'room-123',
+				title: 'Task',
+				description: '',
+				status: 'review',
+				priority: 'normal',
+				taskType: 'coding',
+				progress: 0,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as NeoTask;
+			const getTaskByShortId = mock(() => null);
+			const { runtime } = setupApprovalHandlers(task, true, { getTaskByShortId });
+			const handler = messageHubData.handlers.get('task.approve');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ roomId: 'room-123', taskId }, {})) as {
+				success: boolean;
+			};
+
+			expect(getTaskByShortId).not.toHaveBeenCalled();
+			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
+				taskId,
+				expect.stringContaining('Human has approved the PR'),
+				{ approved: true }
+			);
+			expect(result.success).toBe(true);
 		});
 	});
 
@@ -1638,8 +1731,11 @@ describe('Goal RPC Handlers', () => {
 		});
 
 		describe('goal.linkTask', () => {
-			it('resolves short ID to UUID before linking task', async () => {
+			const TASK_UUID = 'task-uuid-1234-5678-abcd';
+
+			it('resolves short IDs to UUIDs before linking task', async () => {
 				resolveShortId();
+				mockTaskRepo.getTaskByShortId.mockReturnValueOnce({ id: TASK_UUID });
 				// getGoal is called inside linkTask to check missionType
 				mockGoalManager.getGoal.mockResolvedValueOnce({
 					id: GOAL_UUID,
@@ -1659,10 +1755,10 @@ describe('Goal RPC Handlers', () => {
 
 				await handler({ roomId: ROOM_UUID, goalId: 'g-1', taskId: 'task-abc' }, {});
 
-				expect(mockGoalManager.linkTaskToGoal).toHaveBeenCalledWith(GOAL_UUID, 'task-abc');
+				expect(mockGoalManager.linkTaskToGoal).toHaveBeenCalledWith(GOAL_UUID, TASK_UUID);
 			});
 
-			it('throws when short ID is not found', async () => {
+			it('throws when goal short ID is not found', async () => {
 				rejectShortId();
 				const handler = messageHubData.handlers.get('goal.linkTask')!;
 

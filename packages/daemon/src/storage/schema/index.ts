@@ -19,6 +19,10 @@ export { runMigration12 } from './migrations';
 export { runMigration47 } from './migrations';
 // knip-ignore-next-line
 export { runMigration48 } from './migrations';
+// knip-ignore-next-line
+export { runMigration49 } from './migrations';
+// knip-ignore-next-line
+export { runMigration50 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -146,7 +150,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -167,6 +171,7 @@ export function createTables(db: BunDatabase): void {
         input_draft TEXT,
         updated_at INTEGER,
         short_id TEXT,
+        restrictions TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -328,7 +333,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Application-level MCP server registry
 	db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
         id TEXT PRIMARY KEY,
