@@ -108,13 +108,7 @@ interface PopoverPos {
 	below: boolean;
 }
 
-function MentionTokenBase({
-	refType,
-	id,
-	displayText,
-	status: _status,
-	sessionId,
-}: MentionTokenProps) {
+function MentionTokenBase({ refType, id, displayText, status, sessionId }: MentionTokenProps) {
 	const [isHovered, setIsHovered] = useState(false);
 	const [loadState, setLoadState] = useState<LoadState>('idle');
 	const [resolvedData, setResolvedData] = useState<ResolvedReference | null>(null);
@@ -123,6 +117,11 @@ function MentionTokenBase({
 	const { callIfConnected } = useMessageHub();
 
 	const typeStyle = TYPE_STYLES[refType];
+
+	// Entity is considered deleted/not-found when:
+	// 1. The persisted metadata status was 'not_found' at message-save time, OR
+	// 2. The live RPC resolve returned null after a successful fetch
+	const isNotFound = status === 'not_found' || (loadState === 'loaded' && resolvedData === null);
 
 	const handleMouseEnter = useCallback(async () => {
 		// Compute fixed viewport position before showing — escapes scroll containers
@@ -164,13 +163,15 @@ function MentionTokenBase({
 				ref={tokenRef}
 				class={cn(
 					'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs font-medium cursor-default transition-colors',
-					typeStyle.pill
+					typeStyle.pill,
+					isNotFound && 'opacity-50 line-through'
 				)}
 				onMouseEnter={handleMouseEnter}
 				onMouseLeave={handleMouseLeave}
 				data-testid="mention-token"
 				data-ref-type={refType}
 				data-ref-id={id}
+				data-not-found={isNotFound ? 'true' : undefined}
 			>
 				<span class="opacity-60 text-[10px] uppercase tracking-wide">{typeStyle.label}</span>
 				<span>{displayText}</span>
