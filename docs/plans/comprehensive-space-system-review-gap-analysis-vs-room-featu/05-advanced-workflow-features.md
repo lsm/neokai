@@ -2,9 +2,11 @@
 
 > **Design revalidation notice:** Before implementing any task, revalidate file paths, function signatures, and integration points against the current codebase.
 
-**Milestone goal:** After this milestone, workflows support versioning, cron-based recurring execution, goal/mission integration, and a template gallery. These features make the workflow system powerful enough for production use.
+**Milestone goal:** After this milestone, workflows support versioning (safe editing during runs), a template gallery for sharing and discovering workflows, and dynamic reconfiguration (with safety guards).
 
-**Scope:** Workflow versioning, cron scheduling, goal integration, template gallery, and dynamic reconfiguration.
+**Scope:** Workflow versioning, template gallery, and dynamic reconfiguration.
+
+**Note:** Task 5.2 (Cron Scheduling) and Task 5.3 (Goal/Mission Integration) have been moved to the appendix. Cron scheduling is a Room cron-utils port, and goal integration requires bridging to the Room GoalManager -- neither is a prerequisite for the core workflow execution vision.
 
 ---
 
@@ -64,126 +66,7 @@ On each `updateWorkflow()` call, snapshot the current state to `space_workflow_v
 
 ---
 
-## Task 5.2: Cron Scheduling for Recurring Workflows
-
-**Priority:** P2
-**Agent type:** coder
-**Depends on:** Task 2.3 (reliable tick loop), Task 5.1 (versioning for consistent execution)
-
-### Description
-
-Add the ability to schedule workflow runs on a cron schedule. This enables recurring workflows like "run test suite every morning" or "scan for vulnerabilities every Friday."
-
-### Subtasks
-
-1. Add a `schedule` field to `SpaceWorkflow` (or a separate `space_workflow_schedule` table): `{ expression: string, timezone: string, enabled: boolean }`.
-2. Create `packages/daemon/src/lib/space/runtime/workflow-scheduler.ts`:
-   - Resolves cron expressions to next run times.
-   - Maintains a `Map<workflowId, nextRunAt>` for active schedules.
-   - On each tick, check if any schedule's `nextRunAt` has passed. If so, start a new workflow run via `startWorkflowRun()`.
-   - Skip if the previous run is still in_progress (no concurrent runs for the same scheduled workflow).
-3. Add `spaceWorkflow.setSchedule` and `spaceWorkflow.getSchedule` RPC handlers.
-4. Add a "Schedule" section in the workflow editor UI.
-
-### Files to modify/create
-
-- `packages/daemon/src/lib/space/runtime/workflow-scheduler.ts` -- NEW
-- `packages/shared/src/types/space.ts` -- Add Schedule type
-- `packages/daemon/src/storage/schema/migrations.ts` -- Add schedule table/column
-- `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- Integrate scheduler into tick
-- `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts` -- Add schedule handlers
-- `packages/web/src/components/space/WorkflowEditor.tsx` -- Add schedule UI
-
-### Implementation approach
-
-Use the same cron infrastructure from Room's goal system (`packages/daemon/src/lib/room/runtime/cron-utils.ts`) if applicable. The scheduler is checked on every tick (5s granularity is sufficient for minute-level cron schedules). Store `nextRunAt` in the schedule config so it persists across restarts.
-
-### Edge cases
-
-- Multiple schedules firing at the same tick -- process in order of workflow ID.
-- Schedule fires while the previous run is still active -- skip and log.
-- Daemon restart with missed schedule -- on startup, check all schedules and fire any that are overdue (within a configurable catch-up window).
-- Schedule with very frequent expression (every minute) -- cap the minimum interval to prevent API abuse.
-
-### Testing
-
-- Unit test: Cron expression resolves to correct next run time.
-- Unit test: Scheduler fires on tick when nextRunAt has passed.
-- Unit test: Scheduler skips when previous run is still active.
-- Unit test: Catch-up fires missed schedules on startup.
-- Integration test: Scheduled workflow creates runs at expected times.
-
-### Acceptance criteria
-
-- [ ] Cron expression resolves to correct next run time
-- [ ] Scheduler creates workflow runs on schedule
-- [ ] Active run blocks concurrent scheduled run
-- [ ] Missed schedules are caught up on restart
-- [ ] Minimum interval cap prevents API abuse
-- [ ] Schedule UI in workflow editor works
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-## Task 5.3: Goal/Mission Integration for Workflows
-
-**Priority:** P2
-**Agent type:** coder
-**Depends on:** Task 5.2 (scheduling)
-
-### Description
-
-Wire up the existing `goalId` field on `SpaceWorkflowRun` so that workflow completion updates mission metrics and recurring mission execution can trigger workflow runs.
-
-### Subtasks
-
-1. In `TaskAgentManager.handleSubSessionComplete()` and `report_result` tool handler:
-   - When a workflow run completes (terminal step reached), if `run.goalId` is set:
-     - Update the associated mission's metric if the workflow run produced a result.
-     - Emit a `space.mission.progress` event.
-2. In `SpaceRuntime.cleanupTerminalExecutors()`:
-   - When a workflow run reaches `completed`, check if it has a `goalId`.
-   - If so, record the run result as a mission execution.
-3. In the workflow scheduler (Task 5.2):
-   - For recurring missions, the schedule can trigger workflow runs.
-   - When a scheduled run completes, update the mission's execution history.
-4. Add `spaceWorkflowRun.listByGoal` RPC handler for the mission integration.
-
-### Files to modify
-
-- `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- Report completion to mission
-- `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- Handle mission integration on completion
-- `packages/daemon/src/lib/space/runtime/workflow-scheduler.ts` -- Trigger from mission schedule
-- `packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts` -- Add listByGoal handler
-
-### Implementation approach
-
-The goal/mission system already exists in Room (`packages/daemon/src/lib/room/managers/goal-manager.ts`). The Space `goalId` field stores the same goal UUID. The integration is a cross-reference: when a workflow run completes, look up the mission by `goalId` and update its metrics. This does NOT require porting the Room goal system -- it only requires reading/writing the same `goals` table.
-
-### Edge cases
-
-- Workflow run with a `goalId` that references a Room goal (cross-system reference) -- skip silently.
-- Mission deleted while workflow run is active -- the run completes normally, the mission update is a no-op.
-- Multiple workflow runs for the same mission -- each run updates metrics independently (last-write-wins).
-
-### Testing
-
-- Unit test: Workflow completion with goalId updates mission metric.
-- Unit test: Workflow completion without goalId does not affect missions.
-- Unit test: Deleted mission does not break workflow completion.
-- Integration test: Full flow -- mission created, workflow run associated, run completes, metric updated.
-
-### Acceptance criteria
-
-- [ ] Workflow run completion updates associated mission metrics
-- [ ] Run without goalId does not affect missions
-- [ ] Mission deletion does not break workflow runs
-- [ ] `listByGoal` RPC handler returns runs for a mission
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-## Task 5.4: Template Gallery
+## Task 5.2: Template Gallery
 
 **Priority:** P2
 **Agent type:** coder
@@ -238,7 +121,7 @@ The export/import system already handles agent name resolution. `createFromTempl
 
 ---
 
-## Task 5.5: Dynamic Reconfiguration During Execution
+## Task 5.3: Dynamic Reconfiguration During Execution
 
 **Priority:** P3 (lowest priority)
 **Agent type:** coder

@@ -2,9 +2,11 @@
 
 > **Design revalidation notice:** Before implementing any task, revalidate file paths, function signatures, and integration points against the current codebase.
 
-**Milestone goal:** After this milestone, a human can define a workflow in the visual editor, save it, click a button to run it, see its progress in real time, and observe it reaching a terminal step (completed or failed). A simple linear workflow (e.g., Research: Plan -> Execute) should complete end-to-end.
+**Milestone goal:** After this milestone, a human can define a workflow with their own topology in the visual editor (not just a built-in template), save it, click a button to run it, see its progress in real time, and observe it reaching a terminal step (completed or failed). At minimum, a user-defined 3-node sequential chain and a user-defined conditional branching workflow must complete end-to-end.
 
-**Scope:** Frontend run trigger, workflow run detail view, task detail view, basic validation improvements, and an end-to-end integration test that proves the system works.
+**Scope:** Frontend run trigger, workflow run detail view, task detail view, basic validation improvements, and an end-to-end integration test that proves user-defined topologies work.
+
+**Depends on:** Task 0 (Workflow Model Assessment) -- the assessment may identify condition type changes needed before M1 can proceed.
 
 ---
 
@@ -223,30 +225,26 @@ Add new private validation methods to `SpaceWorkflowManager`. Keep the existing 
 
 ---
 
-## Task 1.5: End-to-End Workflow Execution Integration Test
+## Task 1.5: End-to-End Workflow Execution Integration Test (with User-Defined Topologies)
 
 **Priority:** P1
 **Agent type:** coder
-**Depends on:** Tasks 1.1, 1.2, 1.3, 1.4
+**Depends on:** Tasks 1.1, 1.2, 1.3, 1.4, Task 0
 
 ### Description
 
-Write a comprehensive integration test that proves a simple workflow can be defined, saved, run, and observed completing end-to-end. This test uses the Research workflow (2-node: Plan -> Execute) as the target since it has no human gates and always-condition transitions, making it fully autonomous.
+Write comprehensive integration tests that prove user-defined workflows (not just built-in templates) can be created, saved, run, and observed completing end-to-end. This milestone's key differentiator is proving that a human who creates their own workflow topology in the visual editor gets a working execution -- not just pre-made templates.
 
 ### Subtasks
 
 1. Create `packages/daemon/tests/integration/space-workflow-e2e.test.ts`:
-   - Setup: Create a Space with default agents and Research workflow.
-   - Act: Call `spaceWorkflowRun.start` with the Research workflow.
-   - Assert: Workflow run transitions through both steps and reaches `completed` status.
-   - Assert: Two SpaceTask records exist (one per step), both `completed`.
-   - Assert: `iterationCount` is 0 (no cycles).
-2. Add a second test case for the Coding workflow (4-node with human gate):
-   - Assert: Workflow run reaches `needs_attention` at the human gate.
-   - Assert: After setting `humanApproved: true` and resetting status, the run resumes.
-3. Add a third test case for cycle detection:
-   - Assert: Workflow run with `maxIterations: 1` correctly escalates to `needs_attention` after one cycle.
-4. Mock the agent session creation (sub-sessions) to immediately complete, so the test does not require real API calls.
+   - **Test A: Built-in Research workflow (baseline)** -- Create a Space with default agents, use the Research workflow (2-node: Plan -> Execute with `always` conditions). Assert: workflow run reaches `completed`, two tasks created, both `completed`, `iterationCount` is 0.
+   - **Test B: User-defined 3-node sequential chain** -- Programmatically create a custom workflow (Step A -> Step B -> Step C, all `always` conditions) via `spaceWorkflow.create`. Assert: workflow run visits all 3 nodes in order, reaches `completed`, 3 tasks created.
+   - **Test C: User-defined conditional branching** -- Create a custom workflow (Step A -> Step B on "passed", Step A -> Step C on "failed", using `task_result` conditions). Mock the first agent to return "passed". Assert: workflow routes to Step B, not Step C.
+   - **Test D: Coding workflow with human gate** -- Assert: run reaches `needs_attention` at the human gate. After setting `humanApproved: true` and resetting status, the run resumes.
+   - **Test E: Cycle detection** -- Assert: workflow run with `maxIterations: 1` and an `isCyclic` transition correctly escalates to `needs_attention` after one cycle.
+2. Mock the agent session creation (sub-sessions) to immediately complete, so the test does not require real API calls.
+3. If Task 0 identified new condition types that were added to the model, add a test for those as well.
 
 ### Files to create
 
@@ -256,6 +254,8 @@ Write a comprehensive integration test that proves a simple workflow can be defi
 ### Implementation approach
 
 Use the existing test patterns from `packages/daemon/tests/online/` and `packages/daemon/tests/unit/`. Mock `TaskAgentManager.spawnTaskAgent()` to immediately complete tasks (simulate agent finishing work). Focus on testing the WorkflowExecutor + SpaceRuntime integration, not the actual agent execution.
+
+For user-defined topologies, use `SpaceWorkflowManager.createWorkflow()` with explicit node and transition definitions rather than relying on built-in templates. This proves that the API supports arbitrary graph structures.
 
 ### Edge cases
 
@@ -269,7 +269,9 @@ Use the existing test patterns from `packages/daemon/tests/online/` and `package
 
 ### Acceptance criteria
 
-- [ ] Research workflow completes end-to-end in test
+- [ ] Research workflow (built-in template) completes end-to-end
+- [ ] User-defined 3-node sequential chain completes end-to-end
+- [ ] User-defined conditional branching routes correctly on task_result
 - [ ] Coding workflow correctly blocks at human gate
 - [ ] Cycle detection correctly escalates after maxIterations
 - [ ] Test runs in CI without real API credentials

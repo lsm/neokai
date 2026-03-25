@@ -2,9 +2,11 @@
 
 > **Design revalidation notice:** Before implementing any task, revalidate file paths, function signatures, and integration points against the current codebase.
 
-**Milestone goal:** After this milestone, humans can approve workflow gates from the browser, respond to questions posed by Task Agents, pause and resume workflows, and route messages to specific agent sessions during execution.
+**Milestone goal:** After this milestone, humans can approve workflow gates from the browser, respond to questions posed by Task Agents, and pause/resume workflows.
 
-**Scope:** Human gate approval UI, message routing to agents, workflow pause/resume, and the Space Agent's orchestration of human interactions.
+**Scope:** Human gate approval UI, message routing to agents, and workflow pause/resume.
+
+**Note:** Task 4.4 (Space Agent Orchestration) has been moved to the appendix. The Space Agent's orchestration behavior is a Room-like leader coordination pattern that is not a prerequisite for workflow execution. The human interaction primitives (gate approval, question response, pause/resume) are the essential new capabilities.
 
 ---
 
@@ -184,66 +186,4 @@ Pause is a simple status flag change. The tick loop already skips runs that are 
 - [ ] Resume restores normal tick behavior
 - [ ] Daemon restart preserves paused state
 - [ ] UI buttons work correctly
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-## Task 4.4: Space Agent Orchestration of Human Interactions
-
-**Priority:** P2
-**Agent type:** general (design + implementation)
-**Depends on:** Tasks 4.1, 4.2, 4.3
-
-### Description
-
-Enhance the Space Agent's system prompt and notification handling to properly orchestrate human interactions during workflow execution. The Space Agent receives `SessionNotificationSink` events but may not handle all human-interaction scenarios correctly. This task ensures the Space Agent can:
-
-1. Correctly interpret gate-blocked notifications and inform the human (not try to fix it autonomously).
-2. Handle task failure notifications by summarizing the error for the human.
-3. Respond to `request_human_input` events by relaying the question to the human.
-4. Manage pause/resume requests from the human.
-
-### Subtasks
-
-1. Review and update the Space Agent system prompt (in `space-chat-agent.ts` or `global-spaces-agent.ts`) to include:
-   - Clear instructions on how to handle each notification type.
-   - Instructions to NOT attempt to resolve `human` gates autonomously.
-   - Instructions to relay questions from Task Agents to the human.
-   - Instructions to respect the space's autonomy level.
-2. Add a `spaceWorkflowRun.updateConfig` RPC handler that allows the Space Agent (or human) to update run config (e.g., `maxIterations`, custom fields) without changing status.
-3. Add integration between the Space Agent's tool set and the new human-interaction RPCs:
-   - Space Agent can call `approveGate` on behalf of the human (in semi_autonomous mode).
-   - Space Agent can call `pause`/`resume` in semi_autonomous mode.
-4. Test the full orchestration flow: workflow reaches gate -> Space Agent notified -> Space Agent informs human -> human approves -> Space Agent confirms -> workflow resumes.
-
-### Files to modify
-
-- `packages/daemon/src/lib/space/agents/space-chat-agent.ts` -- Update system prompt
-- `packages/daemon/src/lib/space/agents/global-spaces-agent.ts` -- Update system prompt
-- `packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts` -- Add `updateConfig` handler
-- `packages/daemon/src/lib/space/tools/global-spaces-tools.ts` -- Add workflow interaction tools
-
-### Implementation approach
-
-The Space Agent already receives `[TASK_EVENT]` notifications via `SessionNotificationSink`. The notifications include JSON payloads with structured data. Enhance the system prompt to parse and act on these events correctly. The key change is ensuring the Space Agent does NOT try to resolve human gates or rate limits autonomously in `supervised` mode.
-
-### Edge cases
-
-- Space Agent in `supervised` mode receives a gate notification -- should inform the human, not try to approve.
-- Space Agent in `semi_autonomous` mode receives a task failure -- may retry once autonomously, then escalate.
-- Multiple notifications arrive simultaneously -- the Space Agent should process them in order.
-
-### Testing
-
-- Manual test: Full orchestration flow with Coding workflow (human gate).
-- Manual test: Semi-autonomous mode handles simple task failures.
-- Prompt test: Verify system prompt correctly instructs the Space Agent on notification handling.
-
-### Acceptance criteria
-
-- [ ] Space Agent system prompt covers all notification types
-- [ ] Space Agent does NOT resolve human gates in supervised mode
-- [ ] Space Agent relays questions from Task Agents to humans
-- [ ] Semi-autonomous mode handles simple failures autonomously
-- [ ] `updateConfig` RPC allows modifying run config
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

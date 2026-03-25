@@ -4,11 +4,62 @@
 
 **Milestone goal:** After this milestone, workflows survive daemon restarts, detect and recover from dead loops, handle API rate limits gracefully, and classify errors for automatic or semi-automatic recovery.
 
-**Scope:** Dead loop detection, persistent tick recovery, rate limit handling, error classification, and pending run rehydration.
+**Scope:** Transition map fix (data-model prerequisite), dead loop detection, persistent tick recovery, rate limit handling, error classification, and runtime recreation hardening.
 
 ---
 
-## Task 2.1: Dead Loop / Infinite Bounce Detection
+## Task 2.1: Fix Missing Task Status Transitions
+
+**Priority:** P0 (blocks Task 2.2 -- rate limit handling requires this transition)
+**Agent type:** coder
+**Depends on:** nothing
+
+### Description
+
+The `VALID_SPACE_TASK_TRANSITIONS` map in `packages/daemon/src/lib/space/managers/space-task-manager.ts:26` does NOT include `in_progress -> rate_limited` or `in_progress -> usage_limited` as valid transitions. Even if the error classification pipeline (Task 2.5) is built and correctly identifies a rate-limited error, attempting to transition a task to `rate_limited` will throw an `Invalid status transition` error. This is a data-model-level prerequisite that must be fixed before any error handling task.
+
+### Subtasks
+
+1. Read `VALID_SPACE_TASK_TRANSITIONS` in `space-task-manager.ts` to confirm the current state.
+2. Add `rate_limited` and `usage_limited` to the valid transitions FROM `in_progress`:
+   - `in_progress -> rate_limited`
+   - `in_progress -> usage_limited`
+3. Verify the existing outbound transitions from `rate_limited` and `usage_limited` are correct (they should allow returning to `pending` or `in_progress` for retry).
+4. Add unit tests for each new transition.
+5. Document the transition map in a code comment for future maintainers.
+
+### Files to modify
+
+- `packages/daemon/src/lib/space/managers/space-task-manager.ts` -- Update `VALID_SPACE_TASK_TRANSITIONS`
+
+### Implementation approach
+
+This is a one-line change per transition in the transition map. The map is a `Record<SpaceTaskStatus, SpaceTaskStatus[]>`. Verify that `rate_limited` and `usage_limited` are already defined as valid `SpaceTaskStatus` values in the shared types.
+
+### Edge cases
+
+- Invalid status values -- TypeScript will catch at compile time.
+- Existing tasks in these statuses (if any) -- verify they can transition to valid next states.
+
+### Testing
+
+- Unit test: `setTaskStatus(taskId, 'rate_limited')` succeeds when task is `in_progress`.
+- Unit test: `setTaskStatus(taskId, 'usage_limited')` succeeds when task is `in_progress`.
+- Unit test: `setTaskStatus(taskId, 'rate_limited')` throws when task is `pending`.
+- Unit test: Existing transitions are not affected.
+
+### Acceptance criteria
+
+- [ ] `in_progress -> rate_limited` is a valid transition
+- [ ] `in_progress -> usage_limited` is a valid transition
+- [ ] Outbound transitions from `rate_limited`/`usage_limited` allow retry
+- [ ] Unit tests cover all new transitions
+- [ ] Existing transitions are not affected
+- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+
+---
+
+## Task 2.2: Dead Loop / Infinite Bounce Detection
 
 **Priority:** P0
 **Agent type:** coder
@@ -64,11 +115,11 @@ The `nodeHistory` and `bounceCounter` are persisted in the DB so they survive da
 
 ---
 
-## Task 2.2: Rate Limit / Usage Limit Handling at Workflow Level
+## Task 2.3: Rate Limit / Usage Limit Handling at Workflow Level
 
 **Priority:** P1
 **Agent type:** coder
-**Depends on:** Task 2.1 (error classification feeds into the same notification system)
+**Depends on:** Task 2.1 (transition map fix), Task 2.5 (error classification)
 
 ### Description
 
@@ -77,7 +128,8 @@ When a step agent hits rate limits or usage limits, the error is surfaced as a s
 ### Subtasks
 
 1. In `TaskAgentManager`, subscribe to `session.error` events for step agent sub-sessions (already partially done -- see `registerCompletionCallback` in task-agent-manager.ts which handles `session.error`).
-2. Classify the error: if the error message contains rate limit or usage limit keywords (e.g., "rate_limit_error", "overloaded_error", "429"), set the step task status to `rate_limited` instead of marking the run as `needs_attention`.
+2. Use the error classifier from Task 2.5 to classify the error. If `category === 'rate_limited'`:
+   - Set the step task status to `rate_limited` (now valid after Task 2.1).
 3. Add a retry-after mechanism: when a step task is `rate_limited`, the `SpaceRuntime.processRunTick()` should:
    - Skip the task (do not escalate to `needs_attention`)
    - Wait until a configurable `retryAfterMs` has elapsed (default 60s)
@@ -89,11 +141,11 @@ When a step agent hits rate limits or usage limits, the error is surfaced as a s
 
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- Error classification in error handler
 - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- Rate-limited task handling in `processRunTick()`
-- `packages/daemon/src/lib/space/managers/space-task-manager.ts` -- Add `rate_limited` status transition support
+- `packages/daemon/src/lib/space/managers/space-task-manager.ts` -- Status transitions (Task 2.1 adds the map entries)
 
 ### Implementation approach
 
-The `session.error` handler in `TaskAgentManager.registerCompletionCallback()` already marks the member as `failed`. Enhance it to classify the error and set task status accordingly. The `processRunTick()` method in SpaceRuntime already checks for `needs_attention` and `in_progress` tasks -- add a `rate_limited` branch that checks the elapsed time and resets to `pending` for re-spawn.
+The `session.error` handler in `TaskAgentManager.registerCompletionCallback()` already marks the member as `failed`. Enhance it to use the error classifier (Task 2.5) and set task status to `rate_limited` when appropriate. The `processRunTick()` method in SpaceRuntime already checks for `needs_attention` and `in_progress` tasks -- add a `rate_limited` branch that checks the elapsed time and resets to `pending` for re-spawn.
 
 ### Edge cases
 
@@ -120,7 +172,7 @@ The `session.error` handler in `TaskAgentManager.registerCompletionCallback()` a
 
 ---
 
-## Task 2.3: Pending Run Recovery After Daemon Restart
+## Task 2.4: Pending Run Recovery and Runtime Recreation Hardening
 
 **Priority:** P1
 **Agent type:** coder
@@ -128,35 +180,45 @@ The `session.error` handler in `TaskAgentManager.registerCompletionCallback()` a
 
 ### Description
 
-When the daemon crashes between creating a workflow run record (status: `pending` -> `in_progress`) and creating the first task, the run is stuck in `in_progress` with no tasks. The `rehydrateExecutors()` method currently only rehydrates `in_progress` AND `needs_attention` runs (changed in recent commits), but if the run has no tasks at all (task creation failed before crash), the tick loop silently skips it.
+Ensure that `SpaceRuntimeService` reliably recreates all active runtimes on daemon startup and that orphaned runs (created but never started) are recovered. This combines two related reliability concerns: (a) orphaned run recovery when the daemon crashes between run creation and task creation, and (b) runtime recreation health checks with retry logic.
 
 ### Subtasks
 
-1. In `SpaceRuntime.rehydrateExecutors()`, after rehydrating executors, scan for `in_progress` runs that have zero tasks in `space_tasks`. For these orphaned runs:
+1. **Orphaned run recovery** -- In `SpaceRuntime.rehydrateExecutors()`, after rehydrating executors, scan for `in_progress` runs that have zero tasks in `space_tasks`. For these orphaned runs:
    - Create the initial task(s) using the workflow's start node (same logic as `startWorkflowRun`).
    - Log a warning about the recovery.
-2. Add a similar check in `processRunTick()`: if the current step has zero tasks and the run has been `in_progress` for more than 60 seconds (stuck), attempt to create the missing tasks.
-3. Add a `stuckSince` timestamp to `run.config._stuckSince` for tracking how long a run has been in a potentially stuck state.
+2. **Stuck run detection** -- In `processRunTick()`, if the current step has zero tasks and the run has been `in_progress` for more than 60 seconds (stuck), attempt to create the missing tasks.
+3. **Runtime recreation retry** -- Audit `SpaceRuntimeService.createOrGetRuntime()` for error handling. Wrap creation in retry logic with exponential backoff (3 attempts, 1s/2s/4s). If all retries fail, log the error but do not crash daemon startup.
+4. **Startup health check** -- After creating all runtimes on startup, iterate `workflowRunRepo.getRehydratableRuns()` for each space and verify that each run has an executor in the runtime's executor map. Log discrepancies and attempt recovery.
+5. **Missing executor recovery** -- If a run is missing an executor after the health check, attempt to create the runtime for that space and re-run the executor creation. If that also fails, mark the run as `needs_attention` with reason "Runtime recreation failed after daemon restart."
 
 ### Files to modify
 
 - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- Add orphaned run recovery in `rehydrateExecutors()` and `processRunTick()`
+- `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- Add retry logic and health check
 
 ### Implementation approach
 
 After the existing `rehydrateExecutors()` loop, add a second pass that checks each rehydrated executor for zero tasks. If found, call the same task-creation logic used in `startWorkflowRun()`. The `startWorkflowRun` method is idempotent in terms of task creation -- it creates tasks for the `startNodeId` and the `currentNodeId` will match after rehydration.
+
+For runtime recreation, wrap `createOrGetRuntime()` in a retry loop. The health check runs after all runtimes are created during daemon startup.
 
 ### Edge cases
 
 - Run's workflow was deleted while the run was in progress -- skip the run, log warning.
 - Run's start node was deleted from the workflow definition -- cancel the run.
 - Run already has tasks but they are all `cancelled` -- this is a legitimate state, do not create more tasks.
+- Database is locked or corrupted during health check -- fail gracefully, log error, do not crash daemon startup.
+- Hundreds of spaces -- health check should be fast (single indexed query + Map lookup).
 
 ### Testing
 
 - Unit test: Orphaned run (in_progress, no tasks) gets initial tasks created on rehydrate.
 - Unit test: Run with deleted workflow is skipped with warning.
 - Unit test: Run with tasks is not affected.
+- Unit test: Missing executor is detected and recreated after retry.
+- Unit test: Runtime creation failure marks run as needs_attention.
+- Unit test: Health check is fast (< 100ms for 100 spaces).
 - Integration test: Simulate crash between run creation and task creation, verify recovery.
 
 ### Acceptance criteria
@@ -165,48 +227,7 @@ After the existing `rehydrateExecutors()` loop, add a second pass that checks ea
 - [ ] Recovery logs a warning for visibility
 - [ ] Runs with deleted workflows are skipped safely
 - [ ] Existing runs with tasks are not affected
-- [ ] Recovery works both on startup (rehydrate) and during ticks (stuck detection)
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-## Task 2.4: SpaceRuntimeService Guaranteed Runtime Recreation
-
-**Priority:** P1
-**Agent type:** coder
-**Depends on:** Task 2.3
-
-### Description
-
-Ensure that `SpaceRuntimeService` reliably recreates all active runtimes on daemon startup. If the runtime fails to recreate (e.g., due to a DB error), the affected spaces' workflow runs should be detected and recovered on the first tick.
-
-### Subtasks
-
-1. Audit `SpaceRuntimeService.createOrGetRuntime()` for error handling -- ensure that a failed creation does not silently skip the space.
-2. Add a startup health check in `SpaceRuntimeService`: after creating all runtimes, iterate `workflowRunRepo.getRehydratableRuns()` for each space and verify that each run has an executor in the runtime's executor map. Log discrepancies.
-3. If a run is missing an executor, attempt to create the runtime for that space and re-run the executor creation. If that also fails, mark the run as `needs_attention` with reason "Runtime recreation failed after daemon restart."
-
-### Files to modify
-
-- `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- Add health check
-
-### Implementation approach
-
-Add a `verifyRuntimes()` method to `SpaceRuntimeService` that cross-references the DB's active runs with the in-memory executor maps. Call this after all runtimes are created during daemon startup.
-
-### Edge cases
-
-- Database is locked or corrupted -- fail gracefully, log error, do not crash daemon startup.
-- Hundreds of spaces -- health check should be fast (single indexed query + Map lookup).
-
-### Testing
-
-- Unit test: Missing executor is detected and recreated.
-- Unit test: Runtime creation failure marks run as needs_attention.
-- Unit test: Health check is fast (< 100ms for 100 spaces).
-
-### Acceptance criteria
-
+- [ ] Runtime creation has retry logic with exponential backoff
 - [ ] Health check runs on daemon startup
 - [ ] Missing executors are recreated automatically
 - [ ] Unrecoverable runs are marked needs_attention
@@ -217,9 +238,9 @@ Add a `verifyRuntimes()` method to `SpaceRuntimeService` that cross-references t
 
 ## Task 2.5: Error Classification Pipeline
 
-**Priority:** P2
+**Priority:** P1
 **Agent type:** coder
-**Depends on:** Tasks 2.1, 2.2
+**Depends on:** nothing
 
 ### Description
 

@@ -2,9 +2,11 @@
 
 > **Design revalidation notice:** Before implementing any task, revalidate file paths, function signatures, and integration points against the current codebase.
 
-**Milestone goal:** After this milestone, users can see real-time updates for workflow runs, inspect task agent conversations, review past workflow run history, and debug issues by examining step execution logs.
+**Milestone goal:** After this milestone, users can see real-time updates for workflow runs via DaemonHub events, view a step execution timeline overlaid on the workflow graph, and access debug-level information for troubleshooting.
 
-**Scope:** Real-time DaemonHub events for task/run state, workflow run history UI, task agent conversation inspection, and step execution timeline.
+**Scope:** Real-time DaemonHub events for task/run state, step execution timeline, and run-level debugging information.
+
+**Note:** Task 3.2 (Conversation Inspector) and Task 3.3 (Run History View) have been moved to the appendix as they are monitoring niceties, not prerequisites for workflow execution or reliability.
 
 ---
 
@@ -64,115 +66,7 @@ The DaemonHub already emits `spaceSessionGroup.created` and `spaceSessionGroup.m
 
 ---
 
-## Task 3.2: Task Agent Conversation Inspector
-
-**Priority:** P1
-**Agent type:** coder
-**Depends on:** Task 1.3 (TaskDetailView)
-
-### Description
-
-Enhance the `TaskDetailView` (from Task 1.3) to show the full conversation history of the task's agent session, including tool calls, tool results, and the agent's reasoning. This is essential for debugging workflow steps.
-
-### Subtasks
-
-1. Add a "Conversation" tab to `TaskDetailView` that fetches and displays messages from the task's session:
-   - Use existing `message.list` RPC or `session.get` to fetch session messages.
-   - Display messages in chronological order with role indicators (user / assistant / tool).
-   - Render tool calls as collapsible blocks showing the tool name, input, and result.
-2. Add a "Logs" tab showing session-level events (status changes, errors, rehydration).
-3. Add auto-refresh: subscribe to `session.updated` DaemonHub events for the task's session to stream new messages as they arrive.
-4. Add a "Sub-sessions" tab for multi-agent steps, showing all sub-sessions and their status (from the session group).
-
-### Files to modify/create
-
-- `packages/web/src/components/space/TaskDetailView.tsx` -- Enhance with conversation, logs, sub-sessions tabs
-- `packages/web/src/lib/space-store.ts` -- Add session message fetching
-- `packages/daemon/src/lib/rpc-handlers/` -- May need a `space.task.getMessages` RPC if none exists
-
-### Implementation approach
-
-The `ChatContainer.tsx` component already renders messages with tool calls. Adapt or extract the message rendering logic into a reusable component. The `taskAgentSessionId` field on `SpaceTask` provides the session ID.
-
-### Edge cases
-
-- Task has no session (pending) -- show "No session yet" placeholder.
-- Very long conversations (1000+ messages) -- add virtual scrolling or pagination.
-- Session deleted before view is opened -- show "Session no longer available" error.
-
-### Testing
-
-- Component test: Conversation tab renders messages.
-- Component test: Tool calls are collapsible.
-- Component test: Auto-refresh updates on new messages.
-- Component test: Sub-sessions tab shows all group members.
-
-### Acceptance criteria
-
-- [ ] TaskDetailView shows full agent conversation
-- [ ] Tool calls are rendered with input/result
-- [ ] New messages stream in real-time via DaemonHub events
-- [ ] Sub-sessions tab shows all group members for multi-agent steps
-- [ ] Performance is acceptable for conversations with 100+ messages
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-## Task 3.3: Workflow Run History View
-
-**Priority:** P1
-**Agent type:** coder
-**Depends on:** Task 1.2 (WorkflowRunView)
-
-### Description
-
-Create a history view showing all past workflow runs for a space, with the ability to inspect completed, cancelled, and failed runs. This is the "activity feed" for Space workflows.
-
-### Subtasks
-
-1. Add a "Run History" section to the `WorkflowRunView` (or a separate `WorkflowRunHistory.tsx`) that shows:
-   - Chronological list of all workflow runs (paginated, 20 per page)
-   - Run summary: title, status, workflow name, duration (createdAt -> completedAt), step count
-   - Click expands to show the step execution timeline (which steps were executed, in what order, with timestamps)
-   - Each step shows: step name, task count, status, duration
-2. Add filtering by: workflow, status, date range.
-3. Add a `spaceWorkflowRun.list` enhancement to support pagination and sorting (or do it client-side from the existing list).
-4. Cross-reference `space_tasks` with `workflowRunId` to build the step timeline.
-
-### Files to modify/create
-
-- `packages/web/src/components/space/WorkflowRunHistory.tsx` -- NEW (or extend WorkflowRunView)
-- `packages/web/src/lib/space-store.ts` -- Add filtered/sorted run signals
-
-### Implementation approach
-
-The `workflowRuns` signal in SpaceStore already has all runs. The `tasksByWorkflowRunId` computed groups tasks by run. Cross-reference `task.workflowNodeId` with `workflow.nodes` to build the step timeline. Duration is computed from `task.startedAt` and `task.completedAt`.
-
-### Edge cases
-
-- Run with 50+ steps (long cycle) -- paginate step timeline.
-- Run referencing a deleted workflow -- show "Workflow deleted" but still display step names from task data.
-- Run with no tasks (orphaned) -- show "No step data available."
-
-### Testing
-
-- Component test: History list renders all runs with correct metadata.
-- Component test: Step timeline shows correct step order and durations.
-- Component test: Filtering works (status, workflow, date).
-- Component test: Pagination works.
-
-### Acceptance criteria
-
-- [ ] History view shows all past runs
-- [ ] Each run shows status, duration, step count
-- [ ] Step timeline is expandable and shows execution order
-- [ ] Filtering by status and workflow works
-- [ ] Runs referencing deleted workflows still display step names
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-## Task 3.4: Step Execution Timeline in WorkflowRunView
+## Task 3.2: Step Execution Timeline in WorkflowRunView
 
 **Priority:** P1
 **Agent type:** coder
@@ -229,11 +123,11 @@ The workflow definition provides the full node list and transitions. The `curren
 
 ---
 
-## Task 3.5: Run-Level Debugging Information
+## Task 3.3: Run-Level Debugging Information
 
 **Priority:** P2
 **Agent type:** coder
-**Depends on:** Task 3.1 (real-time events), Task 3.4 (timeline)
+**Depends on:** Task 3.1 (real-time events), Task 3.2 (timeline)
 
 ### Description
 
@@ -248,6 +142,10 @@ Add a "Debug" section to the `WorkflowRunView` that shows technical details usef
    - Show tick timing (time between `executeTick()` calls).
 2. Add a "raw state" view that serializes the `WorkflowExecutor`'s current state (current node, outgoing transitions, last condition evaluation result).
 3. Add a "Run Log" that shows a chronological list of events: step started, step completed, condition evaluated, gate blocked, etc. Store these in a new `workflow_run_events` table.
+
+### Design Note (P2 from review)
+
+The review suggested evaluating whether DaemonHub events (already pub/sub, already consumed by the frontend) can be used for the debug view instead of creating a parallel persistence mechanism. Consider this: DaemonHub events are ephemeral (in-memory, lost on restart). For debugging, we need persistent events that survive daemon restarts and can be reviewed after the fact. Therefore, a `workflow_run_events` DB table is still warranted for the "Run Log" feature. However, the real-time timeline (Task 3.2) should use DaemonHub events for live updates.
 
 ### Files to modify/create
 
