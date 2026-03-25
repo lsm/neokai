@@ -195,6 +195,13 @@ export class RoomRuntime {
 	private stuckWorkerRecoveryInFlight = new Set<string>();
 
 	/**
+	 * Group IDs whose stuck-leader recovery is currently in-flight.
+	 * Guards against duplicate message injections across successive ticks
+	 * while the leader is being re-activated after a rate/usage limit expiry.
+	 */
+	private stuckLeaderRecoveryInFlight = new Set<string>();
+
+	/**
 	 * Task IDs whose group spawn is currently in-flight (async).
 	 * Guards against concurrent ticks re-attempting spawn for the same task while
 	 * `spawnGroupForTask` is awaiting worktree creation or DB insert — the window
@@ -1067,12 +1074,9 @@ export class RoomRuntime {
 					return;
 				}
 				// Only apply backoff on first detection.
-				// Unlike the worker path (where recoverStuckWorkers re-triggers onWorkerTerminalState
-				// after expiry), there is no recoverStuckLeaders mechanism that re-calls this handler.
-				// The !group.rateLimit guard is a defensive check: it prevents the backoff from being
-				// reset if this handler is somehow called again while a rate limit is already recorded.
-				// A full leader retry after 429 would require re-injecting the worker message into the
-				// leader session — tracked as a future improvement (out of scope for this fix).
+				// recoverStuckLeaders re-injects the worker message into the leader session after
+				// expiry, which causes onLeaderTerminalState to fire again. The !group.rateLimit guard
+				// prevents the backoff from being reset on those re-triggers.
 				if (errorClass?.class === 'rate_limit' && !group.rateLimit) {
 					const rateLimitBackoff = errorClass.resetsAt
 						? createRateLimitBackoff(leaderOutputText, 'leader')
@@ -2671,6 +2675,95 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Detect and recover leader sessions stuck after a rate/usage limit has expired.
+	 *
+	 * Pre-conditions for recovery:
+	 * - Leader session exists in the session factory
+	 * - Leader session is idle or interrupted (not actively processing)
+	 * - Group has an expired rate limit scoped to the leader role
+	 * - Group is NOT awaiting human review
+	 * - Group is NOT paused waiting for a question answer
+	 * - A recovery for this group is NOT already in-flight from a previous tick
+	 */
+	private recoverStuckLeaders(): void {
+		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
+
+		const now = Date.now();
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		for (const group of activeGroups) {
+			// Only recover when the leader has an expired rate limit scoped to the leader role
+			const hasExpiredLeaderRateLimit =
+				group.rateLimit !== null &&
+				now >= group.rateLimit.resetsAt &&
+				group.rateLimit.sessionRole === 'leader';
+
+			if (!hasExpiredLeaderRateLimit) continue;
+			// Skip groups awaiting human review
+			if (group.submittedForReview) continue;
+			// Skip groups paused waiting for a question answer
+			if (group.waitingForQuestion) continue;
+
+			// Leader must be in the session factory (not a zombie)
+			if (!this.sessionFactory.hasSession(group.leaderSessionId)) continue;
+
+			// Leader must be in a terminal state (idle or interrupted)
+			const leaderState = this.sessionFactory.getProcessingState(group.leaderSessionId);
+			if (leaderState !== 'idle' && leaderState !== 'interrupted') continue;
+
+			// Guard against duplicate in-flight recovery: if a previous tick already
+			// injected a message for this group and the leader hasn't started processing yet,
+			// skip it to avoid sending duplicate messages.
+			if (this.stuckLeaderRecoveryInFlight.has(group.id)) {
+				log.debug(`[StuckLeader] Group ${group.id}: recovery already in-flight, skipping`);
+				continue;
+			}
+
+			// Construct a continuation message summarising the last worker output
+			let continuationMessage = '[Auto-recovery] Resuming leader review after rate limit expired.';
+			if (this.getWorkerMessages) {
+				const workerMessages = this.getWorkerMessages(
+					group.workerSessionId,
+					group.lastForwardedMessageId
+				);
+				if (workerMessages.length > 0) {
+					const excerpt = workerMessages
+						.map((m) => m.text)
+						.join('\n')
+						.slice(0, 500);
+					continuationMessage += ` Last worker output:\n${excerpt}`;
+				}
+			}
+
+			log.warn(
+				`[StuckLeader] Group ${group.id}: leader is '${leaderState}' with expired rate limit. ` +
+					`Re-injecting worker message to resume review.`
+			);
+
+			// Clear the expired rate limit and any task restriction
+			this.groupRepo.clearRateLimit(group.id);
+			void this.clearTaskRestriction(group.taskId);
+
+			this.appendGroupEvent(group.id, 'status', {
+				text: 'Leader recovered from expired rate limit. Re-injecting worker message.',
+			});
+
+			// Mark as in-flight before firing, clear when injection completes
+			this.stuckLeaderRecoveryInFlight.add(group.id);
+			void this.sessionFactory
+				.injectMessage(group.leaderSessionId, continuationMessage)
+				.catch((err) => {
+					log.error(`[StuckLeader] Group ${group.id}: re-inject threw:`, err);
+				})
+				.finally(() => {
+					this.stuckLeaderRecoveryInFlight.delete(group.id);
+				});
+
+			// Schedule a follow-up tick to pick up the leader's fresh output
+			this.scheduleTick();
+		}
+	}
+
+	/**
 	 * Auto-clean stale session groups whose tasks have reached a terminal state.
 	 *
 	 * Groups become stale when a task transitions to completed/cancelled/archived
@@ -2797,6 +2890,11 @@ export class RoomRuntime {
 		// This recovers cases where the observer callback fired but the routing failed silently.
 		// Note: synchronous scan, only fires async work as fire-and-forget if stuck workers are found.
 		this.recoverStuckWorkers();
+
+		// Safety net: detect leader sessions stuck after a rate/usage limit has expired.
+		// Re-injects the last worker message so the leader can resume reviewing.
+		// Note: synchronous scan, only fires async work as fire-and-forget if stuck leaders are found.
+		this.recoverStuckLeaders();
 
 		// Recurring mission scheduler: check for due missions and trigger new executions.
 		// Also checks for completed executions to advance next_run_at.
