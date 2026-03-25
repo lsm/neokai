@@ -37,15 +37,32 @@ The fix adds a public `clearGroupRateLimit(taskId)` method to `RoomRuntime` and 
 
 **Title**: Integrate `clearGroupRateLimit()` into the `task.setStatus` RPC handler
 
-**Description**: In `packages/daemon/src/lib/rpc-handlers/task-handlers.ts`, in the `task.setStatus` handler (around line 467-486), add a call to `runtime.clearGroupRateLimit(taskId)` when the task was in `usage_limited` or `rate_limited` status and the new status is `in_progress` or `pending`. This must happen BEFORE `setTaskStatus()` is called so the group state is clean before the task status changes.
+**Description**: In `packages/daemon/src/lib/rpc-handlers/task-handlers.ts`, in the `task.setStatus` handler, add a call to `runtime.clearGroupRateLimit(taskId)` when the task was in `usage_limited` or `rate_limited` status and the new status is `in_progress` or `pending`. This must happen BEFORE `setTaskStatus()` is called so the group state is clean before the task status changes.
+
+**IMPORTANT — block placement**: The existing restart block at lines 467-486 only handles transitions from `needs_attention`, `cancelled`, and `archived` (when `params.mode === 'manual'`). A task in `usage_limited` or `rate_limited` status would NOT hit this block. Therefore, the `clearGroupRateLimit` call must be in a **new, separate top-level conditional block** — NOT nested inside the existing restart block.
 
 **Subtasks**:
-1. In the `task.setStatus` handler, after the existing `groupRepo.resetGroupForRestart` block (line 467-486) but before `setTaskStatus` (line 489), add a block that checks if the current task status is `usage_limited` or `rate_limited` and the new status is `in_progress` or `pending`.
-2. If so, get the runtime and call `runtime.clearGroupRateLimit(taskId)`.
-3. This should use the same runtime lookup pattern already present: `runtimeService?.getRuntime(params.roomId)`.
+1. After the existing restart block (lines 467-486, which ends with `}`) and BEFORE the `setTaskStatus` call (line 489), add a new top-level conditional block:
+   ```typescript
+   // Clear group rate limit when resuming from a rate/usage limited state.
+   // This is a separate block (not inside the restart block above) because
+   // rate_limited/usage_limited tasks are NOT covered by the restart block.
+   if (
+       (task.status === 'usage_limited' || task.status === 'rate_limited') &&
+       (params.status === 'in_progress' || params.status === 'pending')
+   ) {
+       const runtime = runtimeService?.getRuntime(params.roomId);
+       if (runtime) {
+           runtime.clearGroupRateLimit(taskId);
+       }
+   }
+   ```
+2. The `runtimeService` variable is already available in the handler scope (used earlier in the cancel path).
+3. No error is thrown if `clearGroupRateLimit` returns `false` (no group found) or if no runtime is available.
 
 **Acceptance Criteria**:
 - When `task.setStatus` transitions from `usage_limited`/`rate_limited` to `in_progress`/`pending`, `group.rateLimit` is cleared.
+- The clear happens in a separate top-level block (NOT inside the restart block).
 - The clear happens before `setTaskStatus()` so the runtime state is consistent.
 - If no runtime is available, the handler continues normally (no error thrown).
 
