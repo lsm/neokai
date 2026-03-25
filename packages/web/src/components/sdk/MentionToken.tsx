@@ -10,7 +10,7 @@
 
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
-import { useState, useCallback } from 'preact/hooks';
+import { useState, useCallback, useRef } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { useMessageHub } from '../../hooks/useMessageHub.ts';
 import type { ReferenceType, ReferenceMetadata, ResolvedReference } from '@neokai/shared';
@@ -41,18 +41,8 @@ const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
 
 function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
 	switch (resolved.type) {
-		case 'task': {
-			const d = resolved.data as { title?: string; status?: string; description?: string };
-			return (
-				<div>
-					{d.title && <div class="font-medium text-white">{d.title}</div>}
-					{d.status && <div class="text-xs text-gray-400 mt-0.5">Status: {d.status}</div>}
-					{d.description && (
-						<div class="text-xs text-gray-400 mt-1 line-clamp-2">{d.description}</div>
-					)}
-				</div>
-			);
-		}
+		// task and goal share the same shape
+		case 'task':
 		case 'goal': {
 			const d = resolved.data as { title?: string; status?: string; description?: string };
 			return (
@@ -91,6 +81,9 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
 				</div>
 			);
 		}
+		default: {
+			return <div class="text-xs text-gray-400">Unknown reference type</div>;
+		}
 	}
 }
 
@@ -107,6 +100,14 @@ export interface MentionTokenProps {
 
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
 
+/** Popover position computed from getBoundingClientRect, used for fixed positioning. */
+interface PopoverPos {
+	top: number;
+	left: number;
+	/** True when the popover is rendered below the token (not enough space above). */
+	below: boolean;
+}
+
 function MentionTokenBase({
 	refType,
 	id,
@@ -117,12 +118,23 @@ function MentionTokenBase({
 	const [isHovered, setIsHovered] = useState(false);
 	const [loadState, setLoadState] = useState<LoadState>('idle');
 	const [resolvedData, setResolvedData] = useState<ResolvedReference | null>(null);
+	const [popoverPos, setPopoverPos] = useState<PopoverPos>({ top: 0, left: 0, below: false });
+	const tokenRef = useRef<HTMLSpanElement>(null);
 	const { callIfConnected } = useMessageHub();
 
 	const typeStyle = TYPE_STYLES[refType];
 
 	const handleMouseEnter = useCallback(async () => {
+		// Compute fixed viewport position before showing — escapes scroll containers
+		// and overflow:hidden ancestors that would clip an absolute popover.
+		if (tokenRef.current) {
+			const rect = tokenRef.current.getBoundingClientRect();
+			// Flip below the token when there is insufficient space above (< 160 px)
+			const below = rect.top < 160;
+			setPopoverPos({ top: below ? rect.bottom : rect.top, left: rect.left, below });
+		}
 		setIsHovered(true);
+
 		// Only fetch once; skip if already fetched or no sessionId to call with
 		if (loadState === 'idle' && sessionId) {
 			setLoadState('loading');
@@ -143,9 +155,13 @@ function MentionTokenBase({
 		setIsHovered(false);
 	}, []);
 
+	// Popover offset from the token edge (px)
+	const POPOVER_GAP = 6;
+
 	return (
-		<span class="relative inline-block align-baseline">
+		<span class="inline-block align-baseline">
 			<span
+				ref={tokenRef}
 				class={cn(
 					'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs font-medium cursor-default transition-colors',
 					typeStyle.pill
@@ -162,7 +178,16 @@ function MentionTokenBase({
 
 			{isHovered && (
 				<div
-					class="absolute bottom-full left-0 mb-2 z-50 min-w-[180px] max-w-[280px] bg-dark-800 border border-gray-600/50 rounded-md shadow-lg p-3 text-sm pointer-events-none animate-fadeIn"
+					style={{
+						position: 'fixed',
+						left: `${popoverPos.left}px`,
+						top: popoverPos.below
+							? `${popoverPos.top + POPOVER_GAP}px`
+							: `${popoverPos.top - POPOVER_GAP}px`,
+						transform: popoverPos.below ? 'none' : 'translateY(-100%)',
+						zIndex: 9999,
+					}}
+					class="min-w-[180px] max-w-[280px] bg-dark-800 border border-gray-600/50 rounded-md shadow-lg p-3 text-sm pointer-events-none animate-fadeIn"
 					role="tooltip"
 					data-testid="mention-token-popover"
 				>
@@ -199,7 +224,13 @@ export type MentionSegment = {
 export type UnknownMentionSegment = { kind: 'unknown-mention'; content: string };
 export type Segment = TextSegment | MentionSegment | UnknownMentionSegment;
 
-const VALID_REF_TYPES = new Set<string>(['task', 'goal', 'file', 'folder']);
+// Use `satisfies` so the compiler catches any mismatch with the ReferenceType union
+const VALID_REF_TYPES: ReadonlySet<string> = new Set<string>([
+	'task',
+	'goal',
+	'file',
+	'folder',
+] satisfies readonly ReferenceType[]);
 
 /**
  * Parse text content into display segments, resolving @ref{type:id} tokens.

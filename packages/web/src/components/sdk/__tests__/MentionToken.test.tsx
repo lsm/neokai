@@ -275,7 +275,6 @@ describe('MentionToken', () => {
 		it('calls reference.resolve RPC on first hover when sessionId is provided', async () => {
 			mockCallIfConnected.mockResolvedValue({ resolved: null });
 
-			render(<MentionToken refType="task" id="t-42" displayText="Task" sessionId="session-123" />);
 			const { container } = render(
 				<MentionToken refType="task" id="t-42" displayText="Task" sessionId="session-123" />
 			);
@@ -291,7 +290,6 @@ describe('MentionToken', () => {
 		});
 
 		it('does not call RPC when sessionId is absent', async () => {
-			render(<MentionToken refType="task" id="t-1" displayText="Task" />);
 			const { container } = render(<MentionToken refType="task" id="t-1" displayText="Task" />);
 			const token = container.querySelector('[data-testid="mention-token"]');
 			fireEvent.mouseEnter(token!);

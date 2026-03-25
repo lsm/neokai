@@ -21,6 +21,7 @@ import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
 import type { JSX } from 'preact';
+import { Fragment } from 'preact';
 import type { ReferenceMetadata } from '@neokai/shared';
 
 /**
@@ -43,7 +44,9 @@ function renderMessageText(
 		<>
 			{segments.map((seg, idx) => {
 				if (seg.kind === 'text') {
-					return <span key={idx}>{seg.content}</span>;
+					// Use Fragment to emit text nodes without a DOM wrapper, preserving
+					// the original text-node structure for selection and layout.
+					return <Fragment key={idx}>{seg.content}</Fragment>;
 				}
 				if (seg.kind === 'mention') {
 					return (
