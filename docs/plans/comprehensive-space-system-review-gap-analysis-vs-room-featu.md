@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The Space system is a workflow-graph-based multi-agent orchestration engine that surpasses the Room system in visual workflow authoring, multi-agent parallelism, and channel topology flexibility. However, the Space system has significant gaps in goal/mission integration, runtime reliability (rate limit detection, dead loop detection, lifecycle hooks), tick persistence (JobQueue), UI task management views, and cron scheduling. This document provides a concrete, prioritized list of missing pieces with implementation tasks.
+The Space system is a workflow-graph-based multi-agent orchestration engine that surpasses the Room system in visual workflow authoring, multi-agent parallelism, and channel topology flexibility. However, the Space system has significant gaps in goal/mission integration, runtime reliability (rate limit detection, dead loop detection, lifecycle hooks), tick persistence (JobQueue), UI task management views, and cron scheduling. This document provides a concrete, prioritized list of missing pieces organized into milestones with detailed implementation specs.
 
 This analysis is based on a thorough code-level review of both systems as of 2026-03-24, cross-referencing `packages/daemon/src/lib/room/` (Room) against `packages/daemon/src/lib/space/` (Space), their shared types, RPC handlers, storage repositories, and frontend components.
 
@@ -62,15 +62,14 @@ This analysis is based on a thorough code-level review of both systems as of 202
 - `mission_metric_history` table for time-series metric snapshots.
 
 **What Space has:**
-- `goalId` field on `SpaceTask` and `SpaceWorkflowRun` -- passive metadata only.
-- `findByGoalId()` query in `SpaceTaskRepository`.
+- `goalId` field on `SpaceWorkflowRun` (nullable `goal_id` column in `space_workflow_runs` table).
 - No import or reference to `GoalManager` anywhere in the Space module.
 
 **Missing:**
 1. Space task completion does NOT trigger goal progress recalculation.
 2. No mission type support for Space workflows (no `one_shot`/`measurable`/`recurring` distinction).
 3. No `structuredMetrics` on Space tasks.
-4. No `mission_executions` tracking for Space workflow runs (Space has its own `space_workflow_runs` table but no linkage to Room's `mission_executions`).
+4. No `mission_executions` tracking for Space workflow runs.
 5. No cron scheduling for recurring Space workflows.
 6. No `consecutiveFailures` or auto-retry logic in Space.
 7. No autonomy level enforcement (Space has `autonomyLevel` on the Space entity but no runtime enforcement).
@@ -80,11 +79,11 @@ This analysis is based on a thorough code-level review of both systems as of 202
 ### 2. Runtime Error Detection and Recovery (Parity: 50%) -- HIGH
 
 **What Room has:**
-- `classifyError()` -- 4-class taxonomy (terminal/rate_limit/usage_limit/recoverable) parsing SDK "API Error: NNN" messages.
+- `classifyError()` -- 4-class taxonomy (terminal/rate_limit/usage_limit/recoverable) parsing SDK "API Error: NNN" messages. Regex: `/^API Error:\s*(\d{3})/m`. Terminal codes: 400, 401, 403, 404, 422.
 - `detectTerminalError()` -- immediate task failure on 4xx errors.
 - `trySwitchToFallbackModel()` -- automatic model fallback on rate_limit/usage_limit using `GlobalSettings.fallbackModels` chain.
 - `createRateLimitBackoff()` -- exponential backoff with parsed `retry-after` timestamps.
-- `onAgentRateLimited()` -- runtime method that transitions task to `rate_limited`, creates backoff entry, attempts model fallback, schedules deferred resume.
+- Inline rate limit handling in `onWorkerTerminalState` / `onLeaderTerminalState`.
 
 **What Space has:**
 - `rate_limited` and `usage_limited` statuses in `SpaceTaskStatus` type.
@@ -93,468 +92,952 @@ This analysis is based on a thorough code-level review of both systems as of 202
 - `error` field on `SpaceTask` persisted to DB.
 
 **Missing:**
-1. **No inbound transitions** -- `VALID_SPACE_TASK_TRANSITIONS` at `space-task-manager.ts:26` defines `in_progress → ['review', 'completed', 'needs_attention', 'cancelled']` but does NOT include `rate_limited` or `usage_limited`. Even if the error classification pipeline existed, attempting to transition a task to these statuses would throw an `Invalid status transition` error. This is a data-model-level prerequisite that must be fixed before any rate limit detection code can work.
+1. **No inbound transitions** -- `VALID_SPACE_TASK_TRANSITIONS` at `space-task-manager.ts:26` defines `in_progress → ['review', 'completed', 'needs_attention', 'cancelled']` but does NOT include `rate_limited` or `usage_limited`. This is a data-model-level prerequisite that blocks all rate limit detection.
 2. No `classifyError()` equivalent -- no runtime pipeline that watches for "API Error: NNN" in agent output and classifies it.
 3. No `trySwitchToFallbackModel()` -- no automatic model fallback when rate limits are hit.
 4. No `createRateLimitBackoff()` -- no exponential backoff with parsed retry-after timestamps.
-5. No automatic transition to `rate_limited`/`usage_limited` status when API errors are detected. The statuses exist in the type but nothing writes them.
-6. No deferred resume after backoff expires -- tasks that hit rate limits will stay stuck until manual intervention.
+5. No automatic transition to `rate_limited`/`usage_limited` status when API errors are detected.
+6. No deferred resume after backoff expires -- tasks that hit rate limits will stay stuck.
 
-**Impact:** Space agents hit rate limits and freeze. The status types exist but the transition map blocks them and no runtime code populates them. This is a critical reliability gap for any extended autonomous operation.
+**Impact:** Space agents hit rate limits and freeze. The status types exist but the transition map blocks them and no runtime code populates them.
 
 ### 3. Dead Loop Detection (Parity: 0%) -- HIGH
 
 **What Room has:**
-- `DeadLoopDetector` with configurable `maxFailures`, `rapidFailureWindow`, `reasonSimilarityThreshold`.
+- `DeadLoopDetector` with configurable `maxFailures` (default 5), `rapidFailureWindow` (default 5 min), `reasonSimilarityThreshold` (default 0.75).
 - Count-based detection: same gate fails N times within the time window.
 - Similarity-based detection: uses Levenshtein distance to avoid counting distinct issues as a loop.
 - `recordAndCheckDeadLoop()` in RoomRuntime: records gate failure, checks for loop, fails task with diagnostic message.
-- Gate failure history persisted in `SessionGroupRepository` (per-group metadata).
 
 **What Space has:**
 - `maxIterations` cap on cyclic edges in `WorkflowExecutor` -- prevents infinite cycling but only for cyclic transitions.
 - No gate failure tracking or similarity analysis.
 
 **Missing:**
-1. No dead loop detection for condition gates. A `condition`-type transition that repeatedly fails with the same shell command output will bounce forever until `maxIterations` is hit (which is workflow-level, not gate-level).
+1. No dead loop detection for condition gates.
 2. No gate failure history or similarity-based analysis.
 3. No diagnostic message generation for dead loops.
-
-**Impact:** Space workflows can get stuck bouncing on a condition gate without the runtime detecting or reporting the loop. The `maxIterations` cap on cyclic edges is the only safeguard.
 
 ### 4. Lifecycle Hooks (Parity: 0%) -- HIGH
 
 **What Room has:**
-- `WorkerExitGate` with 7+ hook functions:
-  - `checkNotOnBaseBranch` -- enforces feature branch creation.
-  - `checkPrExists` -- requires GitHub PR.
-  - `checkPrSynced` -- verifies local HEAD matches PR.
-  - `checkWorkerPrMerged` -- verifies PR was merged (post-approval).
-  - `checkDraftTasksCreated` -- planner must create tasks.
-  - Bypass markers (RESEARCH_ONLY, VERIFICATION_COMPLETE, etc.) for read-only tasks.
-- `LeaderSubmitGate`:
-  - `checkLeaderPrExists` -- PR must exist before submitting for review.
-  - `checkPrIsMergeable` -- no conflicts, CI passing.
-  - `checkPrHasReviews` -- reviewer sub-agents must post reviews.
-- `LeaderCompleteGate`:
-  - `checkLeaderPrMerged` -- PR must be merged before completing.
-  - `checkLeaderRootRepoSynced` -- syncs root repo after merge.
-  - `checkLeaderDraftsExist` -- planner tasks must have drafts.
-- `closeStalePr()` -- closes superseded PRs.
+- `WorkerExitGate` with 7+ hook functions, `LeaderSubmitGate`, `LeaderCompleteGate`. Each returns `HookResult { pass, bypassed?, reason?, bounceMessage? }`.
+- Bypass markers: `RESEARCH_ONLY:`, `VERIFICATION_COMPLETE:`, `INVESTIGATION_RESULT:`, `ANALYSIS_COMPLETE:`.
+- `closeStalePr()` for superseded PR cleanup.
 
 **What Space has:**
-- Workflow `condition`-type transitions with shell command evaluation -- can check git/gh state programmatically.
+- Workflow `condition`-type transitions with shell command evaluation.
 - `human`-type transitions for human gates.
-- `task_result`-type transitions for result-based branching.
 - No lifecycle hook framework.
 
 **Missing:**
-1. No deterministic gate framework equivalent. Conditions are declarative (shell commands) but there is no structured hook system with pass/bail/bounce semantics.
-2. No bypass marker detection for read-only tasks.
-3. No PR lifecycle validation (PR exists, synced, mergeable, merged, has reviews).
+1. No deterministic gate framework equivalent.
+2. No bypass marker detection.
+3. No PR lifecycle validation.
 4. No root repo sync after merge.
 5. No stale PR cleanup.
-
-**Impact:** Space agents can "complete" tasks without creating PRs, without merging PRs, and without verifying CI. The workflow condition system can approximate some of this via shell commands, but it lacks the structured gate framework, bounce messages, and bypass detection that makes Room's system robust.
 
 ### 5. Human-in-the-Loop Workflow (Parity: 55%) -- HIGH
 
 **What Room has:**
-- `submitForReview()` -- leader calls `submit_for_review(pr_url)`, moves task to `review` status with PR URL.
-- `escalateToHumanReview()` -- runtime-enforced escalation when max feedback iterations are reached.
-- `resumeWorkerFromHuman()` / `resumeLeaderFromHuman()` -- resumes after human rejection/approval.
-- `HeaderReviewBar.tsx` -- UI component with approve/reject buttons, PR link display.
-- `routeHumanMessageToGroup()` -- routes human messages to worker or leader of active groups.
-- `reviveTaskForMessage()` -- allows sending messages to completed/failed tasks by recreating groups.
-- `waitingForQuestion` state tracking -- supports AskUserQuestion from SDK.
-- `answerQuestion()` in SessionFactory -- answers pending SDK questions programmatically.
+- `HeaderReviewBar.tsx` -- approve/reject buttons with PR link display.
+- `routeHumanMessageToGroup()` -- routes human messages to worker or leader.
+- `answerQuestion()` for SDK AskUserQuestion.
+- `request('task.approve', { roomId, taskId })` / `request('task.reject', { roomId, taskId, feedback })` RPC calls.
 
 **What Space has:**
-- `review` status in `SpaceTaskStatus` with valid transitions.
+- `review` status with valid transitions.
 - `reviewTask()` method with PR metadata.
 - `request_human_input` MCP tool in Task Agent.
-- `NotificationSink` with deferred message delivery to Space Agent session.
-- Human gate transitions (`human` condition type in workflows).
-- `WorkflowGateError` for human-gate-blocked advancement.
+- `HumanInputArea` in `SpaceTaskPane.tsx` for `needs_attention` status.
 
 **Missing:**
-1. No `HeaderReviewBar` equivalent in the Space UI -- no approve/reject buttons for Space tasks in `review` status.
-2. No `routeHumanMessageToGroup()` equivalent -- no way to route a human message directly to a specific Space step agent session.
-3. No `reviveTaskForMessage()` equivalent -- no way to send messages to completed/failed Space tasks.
-4. No `escalateToHumanReview()` runtime-enforced escalation.
-5. No `answerQuestion()` equivalent for Space sub-sessions (step agents cannot programmatically answer AskUserQuestion from SDK).
-6. No `waitingForQuestion` state tracking for Space sessions.
-
-**Impact:** Humans can interact with Space workflows via the Space Agent chat and the human gate transition, but there is no task-level review UI (approve/reject), no direct message routing to step agents, and no question-answer protocol for SDK AskUserQuestion calls.
+1. No approve/reject controls for tasks in `review` status.
+2. No direct message routing to step agent sessions.
+3. No `answerQuestion()` for Space sub-sessions.
 
 ### 6. Tick Loop and Scheduling (Parity: 30%) -- HIGH
 
 **What Room has:**
-- `JobQueue` integration -- ticks are enqueued via `enqueueRoomTick()` and processed by `JobQueueProcessor`.
-- `scheduleTick()` -- event-driven tick wake-up (immediate response to state changes, not just polling).
-- `cancelPendingTickJobs()` -- cancels queued ticks on pause/stop.
-- Room tick handler registered via `jobProcessor.register(ROOM_TICK, handler)`.
-- Cron scheduling for recurring missions via `GoalManager.scheduleTick()` + `getNextRunAt()`.
-- 30-second default tick interval.
+- `JobQueue` integration -- `enqueueRoomTick(roomId, jobQueue, delayMs)` enqueues persistent `room.tick` jobs.
+- `createRoomTickHandler(getRuntimeForRoom, jobQueue)` -- handler that calls `runtime.tick()` and re-enqueues.
+- Registration via `jobProcessor.register(ROOM_TICK, handler)` in `RoomRuntimeService.start()`.
+- Event-driven wake-up on room creation.
+- `cancelPendingTickJobs()` on pause/stop.
 
 **What Space has:**
-- `setInterval`-based tick loop (5-second interval).
+- `setInterval`-based tick loop (5-second default, configurable via `tickIntervalMs`).
 - Immediate first tick on `start()`.
 - No event-driven wake-up.
 
 **Missing:**
-1. No JobQueue integration -- `setInterval` is lost on daemon restart, and there is no persistent tick scheduling.
-2. No event-driven tick wake-up -- fastest reaction to state changes is next 5s poll.
-3. No cron scheduling for recurring workflows (no equivalent to Room's `GoalManager.scheduleTick()`).
-4. No per-space tick isolation -- single shared interval for all spaces.
+1. No JobQueue integration -- `setInterval` is lost on daemon restart.
+2. No event-driven tick wake-up.
+3. No cron scheduling for recurring workflows.
+4. No per-space tick isolation.
 
-**Impact:** Space ticks are in-memory only. After a daemon restart, the tick loop restarts but any ticks that would have fired during downtime are missed. Recurring workflows cannot be scheduled.
-
-### 8. UI Task Management (Parity: 50%) -- HIGH
+### 7. UI Task Management (Parity: 50%) -- HIGH
 
 **What Room has:**
-- `RoomTasks.tsx` -- full task list with filtering by status, priority grouping, task counts.
-- `TaskViewV2.tsx` -- task conversation view with turn-based rendering, slide-out panel.
-- `TaskConversationRenderer.tsx` -- renders agent turn blocks.
-- `TaskInfoPanel.tsx` -- task metadata sidebar.
-- `HeaderReviewBar.tsx` -- review controls (approve/reject, PR link).
-- `GoalsEditor.tsx` -- goal creation, editing, progress bars, execution history, metric tracking.
-- `TaskViewModelSelector.tsx` -- model selector per task.
-- `RoomContext.tsx` -- full room context provider with signals for tasks, goals, groups.
-- `RoomDashboard.tsx` -- room overview with goal/task status.
+- `TaskViewV2.tsx` with `useTaskViewData()` hook, `useGroupMessages()` LiveQuery, `useTurnBlocks()`.
+- `GoalsEditor.tsx` with two-step create wizard, mission type tabs, metrics bars, execution history.
+- `TaskReviewBar` from `task-shared/`.
 
 **What Space has:**
-- `SpaceTaskPane.tsx` -- basic task list for a space.
-- `SpaceContextPanel.tsx` -- space overview with workflow run status.
-- `SpaceDashboard.tsx` -- space listing and creation.
-- `WorkflowEditor.tsx` -- visual workflow editor (drag-drop canvas, node cards, edge editing).
-- `WorkflowNodeCard.tsx` -- multi-agent support per step.
-- `WorkflowList.tsx` -- workflow listing.
-- `WorkflowRulesEditor.tsx` -- rule configuration.
+- `SpaceTaskPane.tsx` -- basic right-column task detail with status, priority, agents, result/error, HumanInputArea.
+- `SpaceContextPanel.tsx` -- space list with nested task rows.
+- `WorkflowEditor.tsx` -- visual workflow editor.
 
 **Missing:**
-1. No `SpaceTaskDetail` equivalent -- no way to view a Space task's conversation history in the UI.
-2. No `SpaceGoalsEditor` equivalent -- no goal creation/editing UI for Space.
-3. No `SpaceReviewBar` equivalent -- no approve/reject controls for tasks in `review` status.
-4. No `SpaceTaskConversationRenderer` -- no turn-based conversation view for Space task sessions.
-5. No task model selector for Space tasks.
-6. No space-level dashboard equivalent to `RoomDashboard` (showing goal progress, active tasks, workflow status).
+1. No task conversation history view.
+2. No goals editor.
+3. No review bar (approve/reject) for `review` status.
+4. No space-level dashboard with goal progress.
 
-### 7. Persistence and Recovery (Parity: 70%) -- MEDIUM
+### 8. Persistence and Recovery (Parity: 70%) -- MEDIUM
 
 **What Room has:**
-- `RuntimeRecovery` -- recovers active groups, restores sessions from DB, re-attaches MCP servers, injects continuation messages.
-- Session mirroring with `sdk.message` subscription for rate limit detection.
-- `recoverZombieGroups()` -- cleans up orphaned active groups.
-- Full session state recovery including `waitingForQuestion` handling.
-- MCP server re-attachment on restart (runtime-only, non-serializable).
-- Worktree tracking and cleanup.
+- `RuntimeRecovery` -- recovers active groups, restores sessions, re-attaches MCP servers.
+- `recoverZombieGroups()` for orphan cleanup.
 
 **What Space has:**
-- `TaskAgentManager.rehydrate()` -- restores Task Agent sessions from DB, re-attaches MCP servers, restarts streaming, injects re-orientation message.
-- Sub-sessions restored to cache but not fully rehydrated (Task Agent re-spawns via MCP tools).
-- Executor rehydration from DB (`rehydrateExecutors()`).
+- `TaskAgentManager.rehydrate()` -- restores Task Agent sessions from DB.
 - `pending` runs excluded from rehydration.
-- No mirroring or rate limit detection via `sdk.message`.
 
 **Missing:**
-1. **`pending` runs excluded from rehydration** -- if a run was mid-creation during crash (between `createRun()` and `updateStatus('in_progress')`), it is silently skipped and its executor is never loaded.
-2. **Sub-session streaming not restarted** -- sub-sessions are restored to the in-memory cache but their SDK streaming queries are not restarted. The Task Agent must re-spawn them via MCP tools after receiving a re-orientation message.
-3. **No mirroring** -- no `sdk.message` subscription for rate limit detection on Space sessions.
-4. **No zombie cleanup** -- no equivalent to `cleanupZombieGroups()` for orphaned Space session groups.
+1. `pending` runs excluded from rehydration.
+2. No zombie cleanup for orphaned Space session groups.
 
-### 8. Event Handling and DaemonHub Integration (Parity: 65%) -- MEDIUM
+### 9. Event Handling and DaemonHub Integration (Parity: 65%) -- MEDIUM
 
 **What Room has:**
-- `daemonHub.emit()` for real-time events: `room.task.update`, `goal.progressUpdated`, `goal.created`.
-- Session mirroring via `sdk.message` subscription for rate limit detection.
-- Event subscriptions: `room.created`, `room.updated`, `goal.created`, `room.task.update`.
-- Real-time task update events so frontend UI updates in real time.
+- `daemonHub.emit()` for real-time events: `room.task.update`, `goal.progressUpdated`, etc.
+- Events scoped via `sessionId: 'room:${roomId}'`.
 
 **What Space has:**
-- `NotificationSink` pattern with structured events (task_needs_attention, workflow_run_needs_attention, task_timeout, workflow_run_completed).
-- `SessionNotificationSink` -- production implementation using deferred message delivery.
-- Event deduplication via `notifiedTaskSet` (in-memory, not persisted).
-- DaemonHub events for session groups: `spaceSessionGroup.created`, `spaceSessionGroup.memberAdded`, `spaceSessionGroup.memberUpdated`.
+- `NotificationSink` pattern with deferred delivery.
+- `space.task.created`, `space.task.updated`, `space.task.completed`, `space.task.failed` DaemonHub events (from `space-task-handlers.ts` and `task-agent-tools.ts`).
+- `spaceSessionGroup.created/memberAdded/memberUpdated` events.
 
 **Missing:**
-1. No `daemonHub.emit()` for real-time Space task status updates -- the frontend must poll or use live queries to detect status changes.
-2. No event subscription for Space task status changes (no equivalent to Room's `room.task.update` subscription that triggers tick).
-3. No mirroring events for rate limit detection.
+1. No `goal.progressUpdated` event when Space task completion triggers goal update.
 
 **Not a gap (intentional design):**
-- `notifiedTaskSet` is intentionally in-memory only (documented restart contract at `space-runtime.ts:150-153`). Tasks in `needs_attention` at restart re-notify once so the new Space Agent session learns about outstanding issues. See Task 9 (validation task).
+- `notifiedTaskSet` is intentionally in-memory only (documented restart contract at `space-runtime.ts:150-153`).
 
-### 9. Inter-Agent Messaging (Parity: 95%) -- LOW
+### 10. Inter-Agent Messaging (Parity: 95%) -- LOW
 
-**What Room has:**
-- Fixed Worker-to-Leader routing via `routeWorkerToLeader()`.
-- Fixed Leader-to-Worker routing via `routeLeaderToWorker()`.
-- Message envelope formatting via `formatWorkerToLeaderEnvelope()`, `formatLeaderToWorkerFeedback()`.
-- `answerQuestion()` for SDK AskUserQuestion.
+**Assessment:** Space leads Room here via `ChannelResolver` + `send_message` MCP tool. Only minor gap: no `answerQuestion()` for SDK AskUserQuestion in sub-sessions.
 
-**What Space has:**
-- `ChannelResolver` with flexible topologies (one-way, bidirectional, hub-spoke).
-- `send_message` MCP tool for peer step agent communication with channel enforcement.
-- `list_peers` MCP tool for discovering permitted communication targets.
-- `request_human_input` MCP tool (human-in-the-loop).
-- `TaskAgentManager.injectSubSessionMessage()` for programmatic message injection.
-- `SessionNotificationSink` with deferred delivery.
+### 11. Worktree/Task Isolation (Parity: N/A) -- DESIGN CHOICE
 
-**Assessment:** Space leads Room here. The ChannelResolver provides flexible, declarative topologies that Room's fixed Worker-Leader routing cannot match. The only minor gap is the lack of `answerQuestion()` for SDK AskUserQuestion responses in sub-sessions.
-
-### 10. Worktree/Task Isolation (Parity: N/A) -- DESIGN CHOICE
-
-**What Room has:**
-- Git worktree creation for every task group via `WorktreeManager`.
-- Isolated feature branches per task.
-- Worktree cleanup on group completion/failure/archival.
-- Root repo sync after PR merge.
-
-**What Space has:**
-- No worktree creation -- all Space agents share the same workspace path.
-- This is a **deliberate design choice** for the Space system's multi-agent parallel model, where multiple agents may need to work on the same codebase simultaneously.
-
-**Assessment:** Not a gap. Space uses a different isolation model (workflow-defined agents rather than worktree-isolated sessions). Worktree support could be added as an optional feature but is not required for parity.
+**Assessment:** Not a gap. Space uses shared workspace by design.
 
 ---
 
-## Prioritized Implementation Plan
+## Dependency Graph
 
-### Phase 1: Critical -- Goal Integration + Reliability (4 tasks)
+```
+Task 0 (Goal Bridge Design) ──→ Task 1 (Goal Progress Wiring) ──→ Task 11 (DaemonHub Events)
+                                 │                                  │
+                                 │                                  ↓
+                                 │                              Task 13 (Goal UI)
+                                 │                                  │
+                                 │                                  ↓
+                                 │                              Task 14 (Dashboard)
+                                 │
+Task 2 (Rate Limit Pipeline) ──→ Task 6b (Core Exit Hooks) ──→ Task 6c (Advance Hooks)
+                                 │
+Task 3 (Dead Loop Detection) ────┤
+                                 │
+Task 4 (Review UI) ─────────────→ Task 10 (Message Routing)
+                                 │
+Task 5 (Task Detail View)       │
+                                 │
+Task 6a (Hook Design) ──────────┘
+                                 │
+Task 7 (JobQueue Integration) ──→ Task 12 (Cron Scheduling)
+                                 │
+Task 8 (Pending Run Fix)        │
+                                 │
+Task 9 (Dedup Validation)       │
+```
 
-#### Task 0: Design GoalManager Bridge Architecture for Space
+**Parallelization opportunities:**
+- Tasks 0, 2, 3, 4, 5, 7, 8, 9 can all start immediately (no dependencies).
+- Task 6a can start after Task 3.
+- Task 6b can start after Tasks 6a and 3.
+- Task 10 can start after Task 4.
+- Task 1 can start after Task 0.
+- Task 11 can start after Task 1.
+- Task 12 can start after Task 7.
+
+---
+
+## Milestone 1: Foundation -- Data Model Fixes + Goal Bridge Design
+
+**Goal:** Fix blocking data-model issues and produce the architectural design needed for goal integration.
+
+**Milestone Acceptance Criteria:**
+- [ ] `VALID_SPACE_TASK_TRANSITIONS` allows `in_progress → rate_limited` and `in_progress → usage_limited`.
+- [ ] Unit tests cover the new transition map entries.
+- [ ] Design document for GoalManager bridge architecture is approved.
+- [ ] Notification dedup restart contract is validated with unit tests.
+- [ ] Pending workflow run rehydration works correctly.
+
+### Task 0: Design GoalManager Bridge Architecture for Space
 
 - **Priority:** CRITICAL
-- **Description:** `GoalManager` is constructed with a `roomId` parameter and operates on Room-scoped data (the `goals` table has a `room_id` column). Space stores `goalId` on `SpaceWorkflowRun` but has no `roomId` concept. Before any goal integration code can be written, the architectural bridge must be designed. This task produces a design document (not code).
-- **Subtasks:**
-  1. Document the current data model: how `GoalManager` constructor takes `roomId`, how `goals` table is scoped, how `updateGoalsForTask()` queries by room.
-  2. Evaluate three options:
-     - **(a)** Space resolves `roomId` from `goalId` by querying `GoalRepository` directly (requires GoalRepository to accept queries without roomId).
-     - **(b)** Space instantiates its own `GoalManager` with a synthetic or resolved `roomId`.
-     - **(c)** Space stores `roomId` alongside `goalId` on `SpaceWorkflowRun` (schema change).
-  3. Recommend one option with rationale, including schema changes, API surface changes, and migration considerations.
-  4. Define the integration points: `TaskAgentManager.handleSubSessionComplete()` at line ~907 calls `taskManager.setTaskStatus(stepTask.id, 'completed')` — this is where goal progress recalculation should be triggered.
-- **Acceptance Criteria:** A design document at `docs/plans/space-goal-bridge-design.md` with a clear recommendation, covering data model changes, integration points, and backward compatibility.
 - **Agent Type:** general
 - **Dependencies:** None
+- **Description:** `GoalManager` is constructed with `roomId` and operates on Room-scoped data. The `goals` table has a required `room_id` FK to `rooms(id)`. Space stores `goalId` on `SpaceWorkflowRun` (nullable `goal_id` column) but has no `roomId` concept. Before any goal integration code can be written, the bridge architecture must be designed.
 
-#### Task 1: Wire Space Task Completion to Goal Progress Tracking
+- **Files to analyze:**
+  - `packages/daemon/src/lib/room/managers/goal-manager.ts` -- `GoalManager` constructor: `(db, roomId, reactiveDb, shortIdAllocator?)`
+  - `packages/daemon/src/storage/repositories/goal-repository.ts` -- all methods require `roomId` except `getGoalsForTask(taskId)` and `linkTaskToGoal(goalId, taskId)`
+  - `packages/daemon/src/storage/repositories/space-workflow-run-repository.ts` -- `goalId` stored as nullable `goal_id` column
+  - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- integration point at `handleSubSessionComplete()` line ~907
+  - `packages/daemon/src/lib/room/managers/task-manager.ts` -- Room tasks are linked to goals via `GoalRepository.linkTaskToGoal()`, not via a `goalId` field on tasks
+
+- **Design options to evaluate:**
+  1. **(a) Space queries GoalRepository directly** -- Use `GoalRepository.getGoalsForTask(taskId)` to look up goals without needing `roomId`. Problem: Space tasks are not Room tasks, so `linkTaskToGoal` has never been called. The linkage would need to be established at workflow run creation time.
+  2. **(b) Space instantiates GoalManager with resolved roomId** -- When a Space workflow run starts with a `goalId`, resolve the `roomId` from the `goals` table, then create a `GoalManager(roomId)`. Problem: `GoalManager.recalculateProgress()` iterates `goal.linkedTaskIds` which are Room task UUIDs, not Space task IDs.
+  3. **(c) Space tracks its own progress** -- Add a `SpaceTaskProgress` table or extend the goals table with Space-specific task links. Most flexible but most work.
+  4. **(d) Space stores roomId alongside goalId** -- Schema change on `space_workflow_runs` to add `room_id`. Then Space can instantiate `GoalManager(roomId)` and use its full API.
+
+- **Key question to resolve:** How does `updateGoalsForTask()` work when the tasks are Space tasks, not Room tasks? The Room method calls `getGoalsForTask(taskId)` then `calculateProgressFromTasks(goal)` which iterates `goal.linkedTaskIds` and calls `taskRepo.getTask(taskId)`. Space tasks live in a different table (`space_tasks` vs `tasks`) with a different repository (`SpaceTaskRepository` vs `TaskRepository`).
+
+- **Deliverable:** `docs/plans/space-goal-bridge-design.md` with: (a) recommended option, (b) schema changes, (c) API surface changes, (d) integration points, (e) backward compatibility analysis.
+
+- **Acceptance Criteria:** Design document is approved with a clear recommendation.
+
+### Task 2: Rate Limit Detection Pipeline for Space (Data Model Prerequisite)
+
+- **Priority:** HIGH
+- **Agent Type:** coder
+- **Dependencies:** None
+- **Description:** Fix the `VALID_SPACE_TASK_TRANSITIONS` map to allow rate limit transitions. This is a prerequisite for the full pipeline (which will be in a later milestone).
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/managers/space-task-manager.ts` -- line 26: add `'rate_limited'`, `'usage_limited'` to `in_progress` transitions
+
+- **Specific change:**
+  ```ts
+  // Before:
+  in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
+  // After:
+  in_progress: ['review', 'completed', 'needs_attention', 'cancelled', 'rate_limited', 'usage_limited'],
+  ```
+
+- **Edge cases:**
+  - Existing unit tests that enumerate valid transitions must be updated.
+  - The `setTaskStatus()` method's `options` parameter should be extended to accept `{ rateLimitInfo?: { resetsAt: number; sessionRole: string } }` for persisting backoff metadata.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/space-task-manager.test.ts` (create if needed)
+  - Test scenarios: (a) `in_progress → rate_limited` is valid, (b) `in_progress → usage_limited` is valid, (c) all existing transitions still work, (d) invalid transitions still throw
+
+- **Acceptance Criteria:** Transition map updated and tested. PR created.
+
+### Task 8: Pending Run Rehydration Fix
+
+- **Priority:** MEDIUM
+- **Agent Type:** coder
+- **Dependencies:** None
+- **Description:** Handle `pending` workflow runs that were mid-creation during a daemon crash. `rehydrateExecutors()` in `space-runtime.ts` only loads runs with status `in_progress` or `needs_attention`.
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `rehydrateExecutors()` method
+  - `packages/daemon/src/storage/repositories/space-workflow-run-repository.ts` -- add `getRehydratablePendingRuns()` or modify `getRehydratableRuns()`
+
+- **Implementation approach:**
+  1. Modify `SpaceWorkflowRunRepository.getRehydratableRuns()` to also include `pending` runs that have existed for less than a configurable threshold (default 5 minutes).
+  2. In `rehydrateExecutors()`, for `pending` runs: attempt to resume task creation by checking if the workflow run already has tasks in the `space_tasks` table. If yes, transition to `in_progress` and load executor. If no tasks exist after the threshold, transition to `cancelled`.
+  3. Add a configuration option `SpaceRuntimeConfig.pendingRunTimeoutMs` (default 300_000).
+
+- **Edge cases:**
+  - Run was `pending` but has tasks (partial creation) -- resume as `in_progress`.
+  - Run was `pending` with no tasks and just created (< 1 minute) -- keep as `pending`, retry on next tick.
+  - Run was `pending` with no tasks and stale (> 5 minutes) -- cancel.
+  - Multiple `pending` runs for the same workflow -- cancel duplicates, keep newest.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/space-runtime-rehydrate.test.ts` (create if needed)
+  - Test scenarios: (a) pending run with tasks resumes, (b) stale pending run without tasks cancels, (c) fresh pending run without tasks stays pending, (d) multiple pending runs deduplicated
+
+- **Acceptance Criteria:** Pending runs from crashed daemon instances are either recovered or cleaned up on next startup. Unit tests pass.
+
+### Task 9: Validate Notification Dedup Restart Contract
+
+- **Priority:** MEDIUM
+- **Agent Type:** coder
+- **Dependencies:** None
+- **Description:** The `notifiedTaskSet` in `SpaceRuntime` is intentionally in-memory only (documented restart contract at `space-runtime.ts:150-153`). This task validates that contract with tests.
+
+- **Files to modify:**
+  - `packages/daemon/tests/unit/space/space-runtime-notification-dedup.test.ts` (create)
+
+- **Test scenarios:**
+  1. Construct a new `SpaceRuntime` instance -- verify `notifiedTaskSet` is empty (the field is private, so test via behavior: a `needs_attention` task should trigger a notification on the first tick after "restart").
+  2. Simulate restart scenario: create a runtime, add a `needs_attention` task to the DB, call `executeTick()`, verify `safeNotify` was called exactly once for that task.
+  3. On second tick, verify the same task does NOT re-notify (dedup works).
+  4. Verify that calling `setNotificationSink()` clears the dedup set.
+
+- **Implementation notes:**
+  - Follow the same test pattern as `packages/daemon/tests/unit/room/` tests: use a mock `NotificationSink` that records calls.
+  - The `SpaceRuntime` constructor takes `SpaceRuntimeConfig`. For tests, provide a mock `SpaceManager` and `SpaceTaskRepository` that return fixture data.
+
+- **Acceptance Criteria:** Unit tests confirm: (a) dedup set starts empty, (b) `needs_attention` tasks re-notify on first tick after restart, (c) subsequent ticks are deduped.
+
+---
+
+## Milestone 2: Runtime Reliability -- Error Detection + Dead Loops + Tick Persistence
+
+**Goal:** Build the core runtime reliability features that prevent Space workflows from silently hanging or looping.
+
+**Milestone Acceptance Criteria:**
+- [ ] Space tasks automatically transition to `rate_limited` when API returns 429.
+- [ ] Fallback model switching works for Space sessions.
+- [ ] Tasks resume after rate limit backoff expires.
+- [ ] Dead loop detection catches condition gate bounce loops.
+- [ ] Space ticks are persistent across daemon restarts via JobQueue.
+- [ ] Event-driven tick wake-up reduces reaction latency.
+
+### Task 3: Dead Loop Detection for Space Workflow Gates
+
+- **Priority:** HIGH
+- **Agent Type:** coder
+- **Dependencies:** None
+- **Description:** Port dead loop detection from Room to Space. Track condition gate failures per workflow run, detect repeated failures with similar reasons.
+
+- **Files to create:**
+  - `packages/daemon/src/lib/space/runtime/dead-loop-detector.ts`
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `processRunTick()` where `WorkflowTransitionError` is caught
+
+- **Interface design** (adapted from Room's `DeadLoopDetector`):
+  ```ts
+  interface SpaceGateFailureRecord {
+    workflowRunId: string;
+    stepNodeId: string;
+    reason: string;
+    timestamp: number;
+  }
+
+  interface SpaceDeadLoopConfig {
+    maxFailures: number;          // default: 5
+    rapidFailureWindow: number;   // default: 5 * 60 * 1000 (5 min)
+    reasonSimilarityThreshold: number; // default: 0.75
+  }
+
+  function checkSpaceDeadLoop(
+    failures: SpaceGateFailureRecord[],
+    config?: SpaceDeadLoopConfig
+  ): { isDeadLoop: boolean; reason: string; failureCount: number; gateName: string } | null;
+  ```
+
+- **Implementation approach:**
+  1. Reuse Room's Levenshtein similarity algorithm from `room/runtime/dead-loop-detector.ts`. Extract to a shared utility or import directly (both are in the same monorepo package).
+  2. Store gate failure history in `SpaceWorkflowRunRepository` via the `config` JSON column on `space_workflow_runs` (key: `gateFailures`). This avoids schema migrations.
+  3. In `SpaceRuntime.processRunTick()`, when a `WorkflowTransitionError` is caught (the block that currently emits `workflow_run_needs_attention`), record the failure and check for dead loops before emitting the notification.
+  4. On dead loop detection: fail the workflow run with status `needs_attention`, emit a diagnostic `workflow_run_completed` event with a clear message.
+
+- **Integration point:** `space-runtime.ts`, in `processRunTick()` around the `WorkflowTransitionError` catch block (currently at approximately line 770). The error's `message` property contains the gate failure reason.
+
+- **Edge cases:**
+  - Failures across different gates should NOT be counted together (filter by `stepNodeId`).
+  - Similarity threshold prevents counting genuinely different failures as a loop.
+  - Race condition: two ticks processing the same run simultaneously. Mitigation: use the run's `updated_at` timestamp as an optimistic lock.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/dead-loop-detector.test.ts`
+  - Test scenarios: (a) < threshold failures → no dead loop, (b) >= threshold failures with high similarity → dead loop detected, (c) >= threshold failures with low similarity → no dead loop (different issues), (d) diagnostic message format verification, (e) failures across different gates are independent
+
+- **Acceptance Criteria:** Workflow runs that bounce ≥5 times on the same condition gate within 5 minutes (Levenshtein similarity ≥0.75) are detected and failed with a diagnostic message containing the gate name, bounce count, and last failure reason.
+
+### Task 7: JobQueue Integration for Space Tick Loop
+
+- **Priority:** HIGH
+- **Agent Type:** coder
+- **Dependencies:** None
+- **Description:** Replace Space's `setInterval`-based tick loop with the persistent JobQueue system.
+
+- **Files to create:**
+  - `packages/daemon/src/lib/job-handlers/space-tick.handler.ts`
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/job-queue-constants.ts` -- add `SPACE_TICK = 'space.tick'`
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `start()` and `stop()` methods
+  - `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- handler registration
+  - `packages/daemon/src/lib/rpc-handlers/index.ts` -- bootstrap seeding
+
+- **Implementation approach:**
+  1. **Handler pattern** -- Follow `packages/daemon/src/lib/job-handlers/room-tick.handler.ts` exactly:
+     ```ts
+     // space-tick.handler.ts
+     export const DEFAULT_SPACE_TICK_INTERVAL_MS = 10_000; // 10s (Space uses faster ticks than Room's 30s)
+
+     export function enqueueSpaceTick(
+       spaceId: string,
+       jobQueue: JobQueueRepository,
+       delayMs: number = DEFAULT_SPACE_TICK_INTERVAL_MS
+     ): void;
+     // Maintains at most one pending tick per space.
+
+     export function cancelPendingSpaceTickJobs(
+       spaceId: string,
+       jobQueue: JobQueueRepository
+     ): void;
+
+     export function createSpaceTickHandler(
+       getRuntime: () => SpaceRuntime | null,
+       jobQueue: JobQueueRepository,
+       tickIntervalMs: number = DEFAULT_SPACE_TICK_INTERVAL_MS
+     ): JobHandler;
+     ```
+  2. **Registration** -- In `SpaceRuntimeService.start()`, register the handler:
+     ```ts
+     this.jobProcessor.register(SPACE_TICK, createSpaceTickHandler(
+       () => this.spaceRuntime,
+       this.jobQueue
+     ));
+     ```
+  3. **Replace setInterval** -- In `SpaceRuntime.start()`, replace the `setInterval` with a single `enqueueSpaceTick()` call. The handler's re-enqueue loop replaces the polling loop.
+  4. **Event-driven wake-up** -- Add a `scheduleImmediateTick()` method that enqueues a tick with `delayMs: 0`. Call this from:
+     - `SpaceTaskManager.setTaskStatus()` (via a callback in `SpaceRuntimeConfig`)
+     - `SpaceWorkflowRunRepository.updateStatus()` (via a callback)
+     - Human gate resolution in `WorkflowExecutor`
+  5. **Bootstrap seeding** -- In `rpc-handlers/index.ts`, seed ticks for all active spaces on startup, subscribe to `space.created` for new spaces.
+
+- **Edge cases:**
+  - SpaceRuntime is shared (one instance for all spaces). The tick handler calls `runtime.executeTick()` which processes ALL spaces. Per-space isolation comes from the JobQueue job key (each space gets its own pending job).
+  - If SpaceRuntime is null (not yet initialized), the handler should re-enqueue with a retry delay.
+  - On shutdown, call `cancelPendingSpaceTickJobs()` for all active spaces.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/space-tick-handler.test.ts`
+  - Test scenarios: (a) handler enqueues next tick after execution, (b) at most one pending tick per space, (c) cancel removes pending ticks, (d) handler re-enqueues when runtime is null (retry), (e) tick fires across simulated restart (Job is persistent in DB)
+
+- **Acceptance Criteria:** (a) Space ticks are persistent across daemon restarts. (b) Event-driven wake-up reduces reaction latency from 5s to near-immediate. (c) Per-space job isolation. (d) Unit tests pass.
+
+---
+
+## Milestone 3: Goal Integration + Human-in-the-Loop UI
+
+**Goal:** Wire Space task completion to goal progress and build the human review UI.
+
+**Milestone Acceptance Criteria:**
+- [ ] Completing a Space task with a `goalId` updates Room goal progress.
+- [ ] `GoalsEditor` UI reflects Space task contributions.
+- [ ] Space tasks in `review` status show approve/reject controls.
+- [ ] Approving completes the task; rejecting sets it to `needs_attention`.
+- [ ] Users can view Space task conversation history.
+
+### Task 1: Wire Space Task Completion to Goal Progress Tracking
 
 - **Priority:** CRITICAL
-- **Description:** Based on the design from Task 0, create a bridge between Space task status changes and Room's `GoalManager`. When a SpaceTask's step completes (via `TaskAgentManager.handleSubSessionComplete()` which calls `taskManager.setTaskStatus(stepTask.id, 'completed')` at line ~907), trigger goal progress recalculation.
-- **Subtasks:**
-  1. Implement the bridge mechanism chosen in Task 0's design.
-  2. In `TaskAgentManager.handleSubSessionComplete()`, after the `setTaskStatus(stepTask.id, 'completed')` call succeeds, look up the task's `goalId` from its workflow run and call the appropriate goal progress recalculation method.
-  3. Emit `goal.progressUpdated` DaemonHub events so the frontend updates.
-  4. Add unit tests verifying that completing a Space task with a `goalId` triggers goal progress update.
-- **Acceptance Criteria:** Space tasks with `goalId` update Room goal progress when completed. The `GoalsEditor` UI reflects Space task contributions. Unit tests cover the integration path.
 - **Agent Type:** coder
-- **Dependencies:** Task 0 (design must be approved first)
+- **Dependencies:** Task 0 (design approved)
+- **Description:** Implement the bridge between Space task completion and Room's GoalManager, following the design from Task 0.
 
-#### Task 2: Rate Limit Detection Pipeline for Space
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- `handleSubSessionComplete()` at line ~907
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `SpaceRuntimeConfig` interface
+  - Possibly: `packages/daemon/src/storage/repositories/goal-repository.ts` -- if new cross-system query methods are needed
+
+- **Implementation approach** (will be refined based on Task 0 design):
+  1. Add a goal integration callback to `SpaceRuntimeConfig` or `TaskAgentManagerConfig`:
+     ```ts
+     onTaskGoalProgressUpdate?: (taskId: string, goalId: string) => Promise<void>;
+     ```
+  2. In `handleSubSessionComplete()`, after `taskManager.setTaskStatus(stepTask.id, 'completed')` succeeds:
+     - Look up the workflow run to get `goalId`.
+     - If `goalId` exists, call `onTaskGoalProgressUpdate(taskId, goalId)`.
+  3. The callback implementation (in `SpaceRuntimeService` or `rpc-handlers/index.ts`) will:
+     - Resolve the goal from the `goals` table using `GoalRepository`.
+     - Recalculate progress using the design's chosen mechanism.
+     - Emit `goal.progressUpdated` DaemonHub event.
+  4. Also emit `goal.progressUpdated` in `space-task-handlers.ts` when `spaceTask.update` transitions a task to `completed`.
+
+- **Edge cases:**
+  - Task has no `goalId` -- skip silently.
+  - Goal has been deleted since the workflow run started -- handle gracefully (goal lookup returns null, log warning, skip).
+  - Goal belongs to a different room than expected -- depends on Task 0 design.
+  - Multiple tasks completing simultaneously -- each should trigger independent progress updates.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/task-agent-goal-bridge.test.ts` (create)
+  - Test scenarios: (a) completing a task with goalId triggers progress update, (b) completing a task without goalId skips, (c) deleted goal is handled gracefully, (d) goal.progressUpdated event is emitted
+
+- **Acceptance Criteria:** Space tasks with `goalId` update Room goal progress when completed. `GoalsEditor` reflects Space task contributions.
+
+### Task 4: Human Review UI for Space Tasks
 
 - **Priority:** HIGH
-- **Description:** Port the error classification and rate limit detection pipeline from Room to Space. When a Space Task Agent or step agent encounters an "API Error: 429" or usage limit message, the runtime should classify the error, transition the task to `rate_limited`/`usage_limited`, and attempt fallback model switching.
-- **Subtasks:**
-  1. **Update `VALID_SPACE_TASK_TRANSITIONS`** in `space-task-manager.ts:26` — add `rate_limited` and `usage_limited` to the `in_progress` transition list. This is a data-model-level prerequisite: without it, any attempt to transition a task to these statuses throws an `Invalid status transition` error. Add unit tests verifying the new transitions are accepted.
-  2. Extract `classifyError()` and `parseRateLimitReset()` from Room into shared utilities (or import directly).
-  3. Create `SpaceErrorClassifier` module in `space/runtime/`.
-  4. In `TaskAgentManager`, subscribe to `session.error` events on Task Agent sessions. On error, classify and transition.
-  5. Implement `trySwitchToFallbackModel()` for Space sessions (read `fallbackModels` from global settings).
-  6. Create deferred resume mechanism for rate-limited Space tasks (schedule tick wake-up after backoff expires).
-- **Acceptance Criteria:** `in_progress → rate_limited` and `in_progress → usage_limited` transitions are valid and tested. Space tasks automatically transition to `rate_limited` when API returns 429. Fallback model switching works. Tasks resume after backoff expires. Unit tests cover the transition map, error classifier, and fallback logic.
-- **Agent Type:** coder
-- **Dependencies:** None
-
-#### Task 3: Dead Loop Detection for Space Workflow Gates
-
-- **Priority:** HIGH
-- **Description:** Port the dead loop detection concept from Room to Space. Track condition gate failures per workflow run, detect repeated failures with similar reasons, and fail the run with a diagnostic message.
-- **Subtasks:**
-  1. Create `space/runtime/dead-loop-detector.ts` (can reuse/adapt Room's Levenshtein-based implementation).
-  2. Add gate failure tracking to `SpaceWorkflowRunRepository` (store in `run.config` or a dedicated metadata column).
-  3. In `SpaceRuntime.processRunTick()`, when a `WorkflowTransitionError` is caught, record the failure and check for dead loops.
-  4. On dead loop detection, fail the workflow run and emit a `workflow_run_completed` event with diagnostic message.
-- **Acceptance Criteria:** Space workflow runs that bounce repeatedly on the same condition gate (configurable: default ≥3 failures within 10 minutes with Levenshtein similarity ≥0.7 on failure reasons) are detected and failed with a diagnostic message containing: (a) the gate name, (b) the number of bounce cycles, (c) the last failure reason. Unit tests cover count-based detection, similarity-based deduplication, and the diagnostic output format.
-- **Agent Type:** coder
-- **Dependencies:** None
-
-### Phase 2: High Priority -- UI + Runtime (4 tasks)
-
-#### Task 4: Human Review UI for Space Tasks
-
-- **Priority:** HIGH
-- **Description:** Create approve/reject UI controls for Space tasks in `review` status. This is the most visible user-facing gap.
-- **Subtasks:**
-  1. Create `SpaceTaskReviewBar.tsx` component with approve/reject buttons, PR link display.
-  2. Wire approve action to `space.task.update` RPC with status `completed`.
-  3. Wire reject action to `space.task.update` RPC with status `needs_attention` and a feedback message.
-  4. Integrate into `SpaceTaskPane.tsx` or `SpaceContextPanel.tsx`.
-  5. Add E2E test for Space task review workflow.
-- **Acceptance Criteria:** Space tasks in `review` status show approve/reject controls. Approving completes the task; rejecting sets it to `needs_attention`. Unit tests cover the RPC wiring; E2E test covers the full review flow (create task → transition to review → approve/reject → verify status).
 - **Agent Type:** coder
 - **Dependencies:** None
+- **Description:** Create approve/reject UI controls for Space tasks in `review` status.
 
-#### Task 5: Space Task Detail/Conversation View
+- **Files to create:**
+  - `packages/web/src/components/space/SpaceTaskReviewBar.tsx`
+
+- **Files to modify:**
+  - `packages/web/src/components/space/SpaceTaskPane.tsx` -- integrate review bar when task status is `review`
+
+- **Implementation approach:**
+  1. **Follow the pattern of Room's `HeaderReviewBar.tsx`** but adapted for Space:
+     ```tsx
+     interface SpaceTaskReviewBarProps {
+       spaceId: string;
+       taskId: string;
+       task?: SpaceTask | null;
+       onApproved: () => void;
+       onRejected: () => void;
+     }
+     ```
+  2. **Approve action:** Call `spaceStore.updateTask(taskId, { status: 'completed' })`.
+  3. **Reject action:** Open a `RejectModal` with textarea, then call `spaceStore.updateTask(taskId, { status: 'needs_attention', error: feedback })`.
+  4. **PR link display:** Show `task.prUrl` if present (same as Room's pattern).
+  5. **Integration:** In `SpaceTaskPane.tsx`, when `task.status === 'review'`, render `SpaceTaskReviewBar` above the task details.
+
+- **Implementation notes:**
+  - Use the existing `ActionBar` component from `packages/web/src/components/shared/` with `type="review"` (same as Room).
+  - Use `useMessageHub()` hook for the request calls, or delegate to `spaceStore.updateTask()`.
+  - Follow Room's error display pattern (red banner below the bar).
+
+- **Edge cases:**
+  - Task transitions away from `review` while user is viewing -- hide the bar, no action needed.
+  - Network error on approve/reject -- show error banner, keep bar visible.
+
+- **Testing:**
+  - Unit test: Verify the component renders approve/reject buttons when status is `review`.
+  - E2E test file: `packages/e2e/tests/features/space-task-review.e2e.ts` (create)
+  - E2E scenario: create space → create task → transition to review via RPC → verify review bar is visible → click approve → verify task is completed.
+
+- **Acceptance Criteria:** Space tasks in `review` status show approve/reject controls. Approve completes; reject sets to `needs_attention`.
+
+### Task 5: Space Task Detail/Conversation View
 
 - **Priority:** HIGH
-- **Description:** Create a conversation view for Space task sessions, equivalent to Room's `TaskViewV2.tsx`. Users should be able to see the full conversation history of a Space task's AgentSession.
-- **Subtasks:**
-  1. Create `SpaceTaskDetail.tsx` component that loads task session messages.
-  2. Integrate `TaskConversationRenderer.tsx` (or create Space-specific version) for turn-based rendering.
-  3. Add task info sidebar with metadata (status, type, agent, workflow run, PR link).
-  4. Add navigation from `SpaceTaskPane.tsx` to detail view.
-  5. Add E2E test for Space task detail navigation.
-- **Acceptance Criteria:** Users can click a Space task and see its full conversation history with agent turns rendered properly. Unit tests cover the data loading hook; E2E test covers navigation from task list to detail view.
 - **Agent Type:** coder
 - **Dependencies:** None
+- **Description:** Create a conversation view for Space task sessions.
 
-#### Task 6a: Design Space Lifecycle Hook Architecture
+- **Files to create:**
+  - `packages/web/src/components/space/SpaceTaskDetail.tsx`
+  - `packages/web/src/hooks/useSpaceTaskMessages.ts`
+
+- **Files to modify:**
+  - `packages/web/src/components/space/SpaceTaskPane.tsx` -- add navigation to detail view
+  - `packages/web/src/lib/space-store.ts` -- add `getTaskSessionGroups()` action
+
+- **Implementation approach:**
+  1. **Data loading hook** `useSpaceTaskMessages(spaceId, taskId)`:
+     - Call `space.sessionGroup.list` RPC with filter by `taskId` (via `spaceStore`).
+     - For each session group, get member sessions.
+     - Use LiveQuery to stream messages for each session (follow `useGroupMessages()` pattern from Room).
+     - Convert messages to turn blocks via `useTurnBlocks()` (from `packages/web/src/hooks/`).
+  2. **SpaceTaskDetail component:**
+     ```tsx
+     interface SpaceTaskDetailProps {
+       spaceId: string;
+       taskId: string;
+     }
+     ```
+     Render: task header (title, status, priority), agent list with status badges, conversation turns (reuse `AgentTurnBlock` from `packages/web/src/components/room/`), task info sidebar (metadata, error, result).
+  3. **Navigation:** In `SpaceTaskPane.tsx`, add a "View Conversation" button that sets a route state to open `SpaceTaskDetail` in a slide-out panel or full view.
+
+- **Implementation notes:**
+  - Reuse existing components: `AgentTurnBlock`, `RuntimeMessageRenderer`, `SlideOutPanel` from `packages/web/src/components/room/`.
+  - Follow Room's LiveQuery pattern: subscribe to `sessionGroupMessages.byGroup` named query with snapshot + delta handling.
+
+- **Edge cases:**
+  - Task has no session groups (not yet spawned) -- show empty state "Waiting for agent to start..."
+  - Multiple session groups (sub-sessions for different steps) -- show tabs or merged view.
+
+- **Testing:**
+  - Unit test: `useSpaceTaskMessages` hook with mock data.
+  - E2E test file: `packages/e2e/tests/features/space-task-detail.e2e.ts` (create)
+  - E2E scenario: navigate to space task → verify conversation view loads → verify turn blocks render.
+
+- **Acceptance Criteria:** Users can click a Space task and see its full conversation history with agent turns rendered.
+
+### Task 11: DaemonHub Event Emission for Space Goal Progress
+
+- **Priority:** MEDIUM
+- **Agent Type:** coder
+- **Dependencies:** Task 1
+- **Description:** Emit `goal.progressUpdated` DaemonHub events when Space task completion triggers goal update, so the frontend updates in real time.
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- emit event in goal callback
+  - `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts` -- emit event on status transition to completed
+  - `packages/web/src/lib/room-store.ts` -- ensure `goal.progressUpdated` events are subscribed (may already be via Room channel)
+
+- **Implementation approach:**
+  1. In the goal progress callback (wired in Task 1), after recalculation, emit:
+     ```ts
+     daemonHub.emit('goal.progressUpdated', {
+       sessionId: 'global',
+       goalId,
+       goal: updatedGoal,
+     });
+     ```
+  2. In `space-task-handlers.ts`, in the `spaceTask.update` handler, when status transitions to `completed` and the task has a `goalId`, emit the same event.
+
+- **Testing:**
+  - Unit test: verify event emission with correct payload on task completion.
+  - Test file: extend `packages/daemon/tests/unit/space/task-agent-goal-bridge.test.ts`
+
+- **Acceptance Criteria:** Goal progress updates from Space task completions are emitted as DaemonHub events.
+
+---
+
+## Milestone 4: Lifecycle Hooks + Advanced Runtime
+
+**Goal:** Implement the lifecycle hook framework for Space, enabling deterministic validation of agent outputs.
+
+**Milestone Acceptance Criteria:**
+- [ ] Design document for lifecycle hook architecture is approved.
+- [ ] Space step agents are bounced when they exit without creating a PR.
+- [ ] Workflow transitions are blocked when advance hooks fail.
+- [ ] Bypass markers allow skipping hooks for research tasks.
+
+### Task 6a: Design Space Lifecycle Hook Architecture
 
 - **Priority:** HIGH
-- **Description:** Room's lifecycle hooks (WorkerExitGate, LeaderSubmitGate, LeaderCompleteGate) are deeply coupled to the Worker/Leader session group model. Space uses a fundamentally different model: Task Agents drive the workflow via MCP tools, with sub-sessions for step agents. A straight port will not work. This task produces a design document exploring how Room's gate framework maps (or doesn't map) to Space's workflow-step model. Space's shared-workspace model (no worktrees) also changes the semantics of git/PR checks — multiple agents operating on the same repo concurrently may have different constraints than Room's single-worker model.
-- **Subtasks:**
-  1. Catalog all Room lifecycle hooks with their inputs, outputs, and session group dependencies (WorkerExitGate: checkNotOnBaseBranch, checkPrExists, checkPrSynced, checkWorkerPrMerged, checkDraftTasksCreated, bypass markers; LeaderSubmitGate: checkLeaderPrExists, checkPrIsMergeable, checkPrHasReviews; LeaderCompleteGate: checkLeaderPrMerged, checkLeaderRootRepoSynced, checkLeaderDraftsExist; closeStalePr).
-  2. Map each hook to Space's execution model: which hooks apply at step exit (sub-session complete), which at step advance (workflow transition), which at run completion.
-  3. Address shared-workspace concurrency: when multiple step agents operate on the same repo, PR branch checks need locking or coordination.
-  4. Define hook configuration surface: per-workflow-node, per-space, or global defaults.
-  5. Produce design document with diagrams and integration points.
-- **Acceptance Criteria:** Design document at `docs/plans/space-lifecycle-hooks-design.md` with: (a) hook-to-Space mapping table, (b) concurrency strategy for shared workspace, (c) configuration surface recommendation, (d) phased implementation plan.
 - **Agent Type:** general
-- **Dependencies:** Task 3 (dead loop detection prevents infinite bounce loops during hook development)
+- **Dependencies:** Task 3 (dead loop detection)
+- **Description:** Room's lifecycle hooks are deeply coupled to the Worker/Leader session group model. Space uses a fundamentally different model. This task produces a design document.
 
-#### Task 6b: Implement Core Space Exit Hooks
+- **Files to analyze:**
+  - `packages/daemon/src/lib/room/runtime/lifecycle-hooks.ts` -- all hook functions, `HookResult`, `WorkerExitHookContext`, `LeaderCompleteHookContext`, bypass markers
+  - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- `handleSubSessionComplete()` (exit hooks integration point)
+  - `packages/daemon/src/lib/space/runtime/workflow-executor.ts` -- `advance()` (advance hooks integration point)
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `processRunTick()` (run-level hooks)
 
-- **Priority:** HIGH
-- **Description:** Based on Task 6a's design, implement the core exit hooks that fire when a Space step agent's sub-session completes. These enforce that agents produce proper artifacts (PRs, branches) before being marked as done.
-- **Subtasks:**
-  1. Create `SpaceLifecycleHook` interface and `SpaceHookRunner` in `space/runtime/`.
-  2. Implement core exit hooks: `checkNotOnBaseBranch`, `checkPrExists`, `checkPrSynced`.
-  3. Integrate hook runner into `TaskAgentManager.handleSubSessionComplete()` after `setTaskStatus(stepTask.id, 'completed')` — if hooks fail, bounce the task back to `in_progress` with a diagnostic message.
-  4. Add unit tests for each hook with mock git/gh state.
-- **Acceptance Criteria:** Space step agents that complete without creating a PR are bounced back to `in_progress` with a clear diagnostic message. Unit tests cover each hook with pass/bail/failure cases.
-- **Agent Type:** coder
-- **Dependencies:** Task 6a (design must be approved first), Task 3 (dead loop detection)
+- **Key architectural questions:**
+  1. **Exit hooks** fire in `TaskAgentManager.handleSubSessionComplete()` after `setTaskStatus(stepTask.id, 'completed')`. If a hook fails, should we: (a) revert the status back to `in_progress`, or (b) prevent the completion in the first place by running hooks BEFORE `setTaskStatus`? Room runs hooks AFTER worker completes but BEFORE routing to leader.
+  2. **Advance hooks** fire in `WorkflowExecutor.advance()` before the transition is committed. This is straightforward -- throw `WorkflowGateError` to block.
+  3. **Shared workspace concurrency**: Multiple step agents may be creating PRs on the same repo simultaneously. Room avoids this with per-task worktrees. Space needs: (a) branch name coordination (prefix with task ID), or (b) locking, or (c) accept that PR creation may conflict and let agents retry.
+  4. **Configuration surface**: Hooks should be configurable per-workflow-node (different steps may have different requirements). Default hooks should apply to all coding tasks.
 
-#### Task 6c: Implement Space Advance Hooks and Bypass Markers
+- **Deliverable:** `docs/plans/space-lifecycle-hooks-design.md`
 
-- **Priority:** HIGH
-- **Description:** Based on Task 6a's design, implement the step-advance hooks that fire when a workflow transition is about to advance. Also add bypass marker detection for read-only or research tasks.
-- **Subtasks:**
-  1. Implement advance hooks: `checkPrMerged`, `checkPrIsMergeable`, `checkPrHasReviews`.
-  2. Implement bypass marker detection (e.g., `RESEARCH_ONLY`, `VERIFICATION_COMPLETE` in task output).
-  3. Integrate into `WorkflowExecutor.advance()` — if advance hooks fail, throw `WorkflowGateError` to prevent transition.
-  4. Implement `closeStalePr()` equivalent for superseded PRs.
-  5. Add unit tests for advance hooks and bypass markers.
-- **Acceptance Criteria:** Workflow transitions are blocked when advance hooks fail (e.g., PR not merged). Bypass markers allow skipping hooks for appropriate tasks. Unit tests cover each advance hook and bypass scenario.
-- **Agent Type:** coder
-- **Dependencies:** Task 6a (design must be approved first), Task 6b (core hooks must exist first)
+- **Acceptance Criteria:** Design document with: (a) hook-to-Space mapping table, (b) concurrency strategy, (c) configuration surface, (d) integration points, (e) implementation plan.
 
-#### Task 7: JobQueue Integration for Space Tick Loop
+### Task 6b: Implement Core Space Exit Hooks
 
 - **Priority:** HIGH
-- **Description:** Replace Space's `setInterval`-based tick loop with the persistent JobQueue system used by Room.
-- **Subtasks:**
-  1. Add `space.tick` job type to job queue constants.
-  2. Create `space-tick.handler.ts` similar to `room-tick.handler.ts`.
-  3. Register handler in `SpaceRuntimeService.start()`.
-  4. Replace `setInterval` in `SpaceRuntime.start()` with `enqueueSpaceTick()`.
-  5. Add event-driven tick wake-up: schedule tick on task status changes, workflow run creation, human gate resolution.
-- **Acceptance Criteria:** (a) Space ticks are persistent across daemon restarts via the JobQueue — a tick scheduled before restart fires after restart. (b) Event-driven wake-up reduces reaction latency from the current 5s polling interval to near-immediate (state change triggers an immediate tick job). (c) Per-space isolation: each space gets its own tick job keyed by space ID (no single shared interval). (d) Unit tests verify tick job enqueue on state changes and restart recovery.
 - **Agent Type:** coder
-- **Dependencies:** None
+- **Dependencies:** Task 6a, Task 3
+- **Description:** Implement core exit hooks based on Task 6a's design.
 
-### Phase 3: Medium Priority -- Robustness (4 tasks)
+- **Files to create:**
+  - `packages/daemon/src/lib/space/runtime/space-lifecycle-hooks.ts`
 
-#### Task 8: Pending Run Rehydration Fix
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- integrate hook runner
+
+- **Interface design** (adapted from Room):
+  ```ts
+  interface SpaceHookResult {
+    pass: boolean;
+    bypassed?: boolean;
+    reason?: string;
+    bounceMessage?: string;
+  }
+
+  interface SpaceExitHookContext {
+    workspacePath: string;
+    taskId: string;
+    stepNodeId: string;
+    agentOutput?: string;
+    workflowNodeId?: string;
+  }
+
+  // Core hooks to implement:
+  async function checkSpaceNotOnBaseBranch(ctx: SpaceExitHookContext, opts?: HookOptions): Promise<SpaceHookResult>;
+  async function checkSpacePrExists(ctx: SpaceExitHookContext, opts?: HookOptions): Promise<SpaceHookResult>;
+  async function checkSpacePrSynced(ctx: SpaceExitHookContext, opts?: HookOptions): Promise<SpaceHookResult>;
+
+  // Gate runner:
+  async function runSpaceExitGate(ctx: SpaceExitHookContext, opts?: HookOptions): Promise<SpaceHookResult>;
+  ```
+
+- **Integration in `handleSubSessionComplete()`:**
+  ```ts
+  // After setTaskStatus succeeds, BEFORE notifying Task Agent:
+  const hookResult = await runSpaceExitGate({ workspacePath, taskId, stepId, agentOutput });
+  if (!hookResult.pass && hookResult.bounceMessage) {
+    await taskManager.setTaskStatus(stepTask.id, 'in_progress', { error: hookResult.bounceMessage });
+    // Inject bounce message into sub-session
+    return;
+  }
+  ```
+
+- **Edge cases:**
+  - Hook function throws an exception -- catch, log, and bounce with a generic message.
+  - Git/gh CLI not available -- hooks should gracefully fail and bounce with installation instructions.
+  - Shared workspace: another agent modified the branch between hook check and action.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/space-lifecycle-hooks.test.ts`
+  - Test scenarios: (a) pass when on feature branch, (b) bounce when on base branch, (c) pass when PR exists, (d) bounce when no PR, (e) pass when PR synced, (f) bounce when PR behind, (g) bypass markers skip hooks
+
+- **Acceptance Criteria:** Space step agents that complete without creating a PR are bounced with a clear diagnostic.
+
+### Task 6c: Implement Space Advance Hooks and Bypass Markers
+
+- **Priority:** HIGH
+- **Agent Type:** coder
+- **Dependencies:** Task 6a, Task 6b
+- **Description:** Implement advance hooks and bypass markers based on Task 6a's design.
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/space-lifecycle-hooks.ts` -- add advance hooks
+  - `packages/daemon/src/lib/space/runtime/workflow-executor.ts` -- integrate into `advance()`
+
+- **Hooks to implement:**
+  ```ts
+  async function checkSpacePrMerged(ctx, opts?): Promise<SpaceHookResult>;
+  async function checkSpacePrIsMergeable(ctx, opts?): Promise<SpaceHookResult>;
+  async function checkSpacePrHasReviews(ctx, opts?): Promise<SpaceHookResult>;
+  async function runSpaceAdvanceGate(ctx, opts?): Promise<SpaceHookResult>;
+  ```
+
+- **Bypass markers:** Reuse Room's `BYPASS_GATES_MARKERS` constants (`RESEARCH_ONLY:`, `VERIFICATION_COMPLETE:`, etc.). Detect markers in the agent's output text (first/last N characters).
+
+- **Integration in `WorkflowExecutor.advance()`:**
+  ```ts
+  // Before committing the transition:
+  const hookResult = await this.runAdvanceHooks?.(context);
+  if (hookResult && !hookResult.pass) {
+    throw new WorkflowGateError(hookResult.reason ?? 'Advance blocked by hook');
+  }
+  ```
+
+- **Stale PR cleanup:** Port `closeStalePr()` from Room. Call when a new PR is detected for a task that already had a PR (different PR URL).
+
+- **Testing:**
+  - Extend `packages/daemon/tests/unit/space/space-lifecycle-hooks.test.ts`
+  - Test scenarios: (a) advance blocked when PR not merged, (b) advance allowed when PR merged, (c) advance blocked when PR has conflicts, (d) bypass markers skip hooks, (e) stale PR closed when new PR created
+
+- **Acceptance Criteria:** Workflow transitions blocked by advance hooks. Bypass markers work.
+
+---
+
+## Milestone 5: Rate Limit Full Pipeline + Human Message Routing
+
+**Goal:** Complete the rate limit error detection pipeline and enable human message routing to step agents.
+
+**Milestone Acceptance Criteria:**
+- [ ] Full error classification pipeline watches for API errors in Space sessions.
+- [ ] Automatic rate limit detection with status transition and backoff.
+- [ ] Fallback model switching works.
+- [ ] Deferred resume after backoff.
+- [ ] Humans can route messages to specific Space step agent sessions.
+
+### Task 2-Full: Rate Limit Detection Full Pipeline
+
+- **Priority:** HIGH
+- **Agent Type:** coder
+- **Dependencies:** Task 2 (Milestone 1 -- transition map fixed)
+- **Description:** Build the full error classification, model fallback, and deferred resume pipeline for Space. The transition map prerequisite was fixed in Milestone 1.
+
+- **Files to create:**
+  - `packages/daemon/src/lib/space/runtime/space-error-classifier.ts`
+
+- **Files to modify:**
+  - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` -- error subscription and handling
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- deferred resume scheduling
+
+- **Implementation approach:**
+  1. **Create `SpaceErrorClassifier`** -- Import and reuse Room's `classifyError()` and `parseRateLimitReset()` from `room/runtime/error-classifier.ts` and `room/runtime/rate-limit-utils.ts`. No extraction needed -- direct imports within the same package.
+     ```ts
+     // space-error-classifier.ts
+     import { classifyError, ErrorClassification } from '../room/runtime/error-classifier';
+     import { createRateLimitBackoff, parseRateLimitReset } from '../room/runtime/rate-limit-utils';
+
+     export function classifySpaceError(message: string): ErrorClassification | null {
+       return classifyError(message);
+     }
+     ```
+  2. **Error detection in TaskAgentManager** -- Subscribe to session error events. Room does this inline in `onWorkerTerminalState`. For Space, the equivalent is detecting errors in step agent sessions. Options:
+     - (a) Subscribe to `session.updated` events for terminal states, then classify the session's last output.
+     - (b) Use SDK message mirroring (not currently implemented for Space).
+     - Recommended: (a) -- use the existing `DaemonHub` event `session.updated` with a terminal status filter.
+  3. **Rate limit handling** (follow Room's pattern from `room-runtime.ts` lines ~690-770):
+     ```ts
+     if (errorClass.class === 'rate_limit') {
+       await taskManager.setTaskStatus(taskId, 'rate_limited', {
+         error: `Rate limited. Resets at ${new Date(errorClass.resetsAt!).toISOString()}`
+       });
+       // Attempt model fallback
+       await trySwitchToFallbackModel(sessionId);
+       // Schedule deferred resume
+       const delayMs = Math.max(0, (errorClass.resetsAt! - Date.now()) + 5000);
+       scheduleImmediateTick(delayMs); // from Task 7
+     }
+     ```
+  4. **Model fallback** -- Read `settings.fallbackModels` from `GlobalSettings`. Walk the fallback chain: get current model → find next in chain → call `messageHub.request('session.model.switch', { sessionId, model, provider })`. Follow Room's `trySwitchToFallbackModel()` pattern exactly.
+  5. **Deferred resume** -- After the backoff expires, transition the task back to `in_progress`. This requires a timed callback. If Task 7 (JobQueue) is done, use `enqueueSpaceTick(spaceId, jobQueue, delayMs)`. If not, use a `setTimeout` with cleanup on shutdown.
+
+- **Edge cases:**
+  - Fallback chain exhausted -- set task to `needs_attention` with error "All fallback models exhausted".
+  - Backoff time in the past (already expired) -- resume immediately.
+  - Multiple sessions in the same task hitting rate limits -- debounce, only handle the first.
+  - `usage_limit` (not 429) -- no backoff, attempt fallback immediately.
+
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/space-error-classifier.test.ts`
+  - Test scenarios: (a) classify 429 as rate_limit, (b) classify 400 as terminal, (c) classify 500 as recoverable, (d) parse rate limit reset time, (e) model fallback chain walks correctly, (f) exhausted fallback chain sets needs_attention
+  - Online test file: `packages/daemon/tests/online/space/space-rate-limit.test.ts` (create)
+  - Online scenario: Use dev proxy to mock a 429 response, verify task transitions to rate_limited and resumes after backoff.
+
+- **Acceptance Criteria:** Space tasks auto-transition to `rate_limited` on 429. Fallback works. Tasks resume after backoff.
+
+### Task 10: Human Message Routing to Space Step Agents
 
 - **Priority:** MEDIUM
-- **Description:** Handle `pending` workflow runs that were mid-creation during a daemon crash. Currently excluded from rehydration, leaving orphaned `pending` runs in the DB.
-- **Subtasks:**
-  1. Update `rehydrateExecutors()` to include `pending` runs.
-  2. Add a staleness check: if a `pending` run has existed for more than N minutes without tasks, cancel it.
-  3. Attempt task creation for recently-pending runs (re-run the initial task creation logic).
-- **Acceptance Criteria:** Pending runs from crashed daemon instances are either recovered or cleaned up on next startup. Unit tests verify the staleness check (configurable threshold, default 5 minutes) and the recovery/cancellation logic.
 - **Agent Type:** coder
-- **Dependencies:** None
+- **Dependencies:** Task 4
+- **Description:** Add RPC handler for routing human messages to Space step agent sessions.
 
-#### Task 9: Validate Notification Dedup Restart Contract
+- **Files to modify:**
+  - `packages/daemon/src/lib/rpc-handlers/space-task-message-handlers.ts` -- add inject handler (file already exists)
+  - `packages/daemon/src/lib/rpc-handlers/index.ts` -- register new handler
+
+- **New RPC methods:**
+  ```ts
+  // space.task-message.inject
+  // Params: { spaceId: string, taskId: string, sessionId: string, message: string }
+  // Action: Validates session belongs to Space task, injects message via TaskAgentManager
+  ```
+
+- **Implementation approach:**
+  1. Add `spaceTaskMessage.inject` handler in `space-task-message-handlers.ts`.
+  2. Validation: Look up the session via `SpaceSessionGroupRepository.getGroupsByTask(spaceId, taskId)`, verify the `sessionId` is a member of one of the task's groups.
+  3. Injection: Call `taskAgentManager.injectSubSessionMessage(sessionId, message)`.
+  4. Session discovery: Add `space.task.sessions` RPC that returns session groups for a task (or reuse existing `space.sessionGroup.list` with a task filter).
+
+- **Edge cases:**
+  - Session is not found or doesn't belong to the task -- return error.
+  - Session is in a terminal state (completed/failed) -- return error.
+  - Task Agent is not running -- return error.
+
+- **Testing:**
+  - Unit test: verify handler validation rejects invalid session IDs, accepts valid ones.
+  - Test file: `packages/daemon/tests/unit/space/space-task-message-handler.test.ts`
+
+- **Acceptance Criteria:** Humans can send messages to Space step agent sessions via RPC. Handler validates session ownership.
+
+---
+
+## Milestone 6: Cron Scheduling + Goal UI + Dashboard
+
+**Goal:** Add recurring workflow scheduling and complete the Space UI with goal management and dashboard views.
+
+**Milestone Acceptance Criteria:**
+- [ ] Space workflows with a `schedule` field auto-start new runs at configured intervals.
+- [ ] Users can create and manage goals from the Space UI.
+- [ ] Space dashboard shows goal progress, active workflow runs, and task status.
+
+### Task 12: Cron Scheduling for Recurring Space Workflows
 
 - **Priority:** MEDIUM
-- **Description:** The `notifiedTaskSet` in `SpaceRuntime` is intentionally in-memory only (documented restart contract at `space-runtime.ts:150-153`). Tasks already in `needs_attention` at restart time will be re-notified once on the first tick so the new Space Agent session learns about outstanding issues. This task validates that contract holds correctly and adds a unit test to prevent accidental persistence from being introduced.
-- **Subtasks:**
-  1. Write a unit test that verifies `notifiedTaskSet` is empty after `SpaceRuntime` construction (simulating a restart).
-  2. Write a unit test that verifies tasks in `needs_attention` at "restart time" emit a notification on the first tick.
-  3. Add an inline code comment or architecture doc note warning against persisting `notifiedTaskSet`.
-- **Acceptance Criteria:** Unit tests pass confirming the restart contract: (a) the dedup set starts empty, (b) `needs_attention` tasks re-notify on first tick after restart.
 - **Agent Type:** coder
-- **Dependencies:** None
+- **Dependencies:** Task 7 (JobQueue)
+- **Description:** Add cron-based scheduling for recurring Space workflows.
 
-#### Task 10: Human Message Routing to Space Step Agents
+- **Files to modify:**
+  - `packages/daemon/src/storage/repositories/space-workflow-repository.ts` -- add schedule fields
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- add schedule check in tick
+  - Database migration: add `schedule TEXT` and `next_run_at INTEGER` columns to `space_workflows` table
 
-- **Priority:** MEDIUM
-- **Description:** Add the ability to route human messages directly to a specific Space step agent session (equivalent to Room's `routeHumanMessageToGroup()`).
-- **Subtasks:**
-  1. Create `space.task-message.inject` RPC handler that routes a message to a specific Space session.
-  2. Validate the session belongs to a Space task (not an arbitrary session).
-  3. Inject the message via `TaskAgentManager.injectSubSessionMessage()`.
-  4. Add `answerQuestion()` support for Space sub-sessions that have pending `AskUserQuestion` tool calls.
-- **Acceptance Criteria:** (a) New `space.task-message.inject` RPC handler registered in goal-handlers or a new space-message-handlers module, accepting `{taskId, sessionId, message}`. (b) The handler validates the session belongs to a Space task (rejects arbitrary session IDs). (c) Messages are injected via `TaskAgentManager.injectSubSessionMessage()`. (d) Pending SDK `AskUserQuestion` calls in Space sub-sessions can be answered via `space.task-message.answer` RPC. (e) Unit tests cover the RPC handler validation and message injection path. (f) Step agent session IDs are discoverable via existing `space.session-group.list` RPC or a new `space.task.sessions` RPC.
-- **Agent Type:** coder
-- **Dependencies:** Task 4 (review UI needs message routing)
+- **Implementation approach:**
+  1. **Schema migration:** Add `schedule` (JSON: `{ expression: string; timezone: string }`) and `next_run_at` (Unix seconds) to `space_workflows`.
+  2. **Next-run computation:** Reuse `packages/daemon/src/lib/room/runtime/cron-utils.ts` directly:
+     ```ts
+     import { getNextRunAt, isValidCronExpression } from '../room/runtime/cron-utils';
+     ```
+  3. **Tick handler:** In `SpaceRuntime.executeTick()`, add a `processScheduledWorkflows()` step that:
+     - Lists workflows with `next_run_at <= now` and `schedule != null`.
+     - For each due workflow, starts a new run via `startWorkflowRun()`.
+     - Computes and persists the next `next_run_at`.
+  4. **Catch-up detection:** If `next_run_at` is in the past by more than one interval, only start ONE run (not backfill missed runs). This follows Room's approach.
 
-#### Task 11: DaemonHub Event Emission for Space Task Updates
+- **Edge cases:**
+  - Invalid cron expression -- validate on save, reject with clear error.
+  - Timezone changes -- recompute `next_run_at` when timezone is updated.
+  - Workflow deleted while scheduled -- cleanup in tick handler.
+  - Space archived -- skip all scheduled workflows for archived spaces.
 
-- **Priority:** MEDIUM
-- **Description:** Emit `daemonHub` events for Space task status changes so the frontend can update in real time without polling.
-- **Subtasks:**
-  1. Add `space.task.update` DaemonHub event emission in `SpaceTaskManager` status transition methods.
-  2. Subscribe to `space.task.update` events in the Space frontend (`space-store.ts`) for reactive updates.
-  3. Add `goal.progressUpdated` event emission when Space task completion triggers goal update.
-- **Acceptance Criteria:** Space task status changes are reflected in the frontend in real time without manual refresh. Unit tests verify DaemonHub event emission on each status transition.
-- **Agent Type:** coder
-- **Dependencies:** Task 1 (goal integration)
+- **Testing:**
+  - Unit test file: `packages/daemon/tests/unit/space/space-cron-scheduling.test.ts`
+  - Test scenarios: (a) valid cron creates run at correct time, (b) catch-up starts only one run, (c) archived space skips, (d) deleted workflow cleaned up
 
-### Phase 4: Future/Nice-to-Have (3 tasks)
+- **Acceptance Criteria:** Scheduled Space workflows auto-start new runs at configured intervals.
 
-#### Task 12: Cron Scheduling for Recurring Space Workflows
-
-- **Priority:** MEDIUM
-- **Description:** Add cron-based scheduling for recurring Space workflows, equivalent to Room's `GoalManager.scheduleTick()`.
-- **Subtasks:**
-  1. Add `schedule` field to `SpaceWorkflow` (cron expression + timezone).
-  2. Implement `getNextRunAt()` for Space workflows (can reuse Room's `cron-utils.ts`).
-  3. Add tick handler that checks for due recurring workflows and starts new runs.
-  4. Add catch-up detection for missed runs during downtime.
-- **Acceptance Criteria:** Space workflows with a `schedule` field auto-start new runs at the configured cron interval. Unit tests cover cron parsing, next-run computation, and catch-up detection.
-- **Agent Type:** coder
-- **Dependencies:** Task 7 (JobQueue integration)
-
-#### Task 13: Goal Creation UI for Space
+### Task 13: Goal Creation UI for Space
 
 - **Priority:** LOW
-- **Description:** Create a goal/mission creation wizard accessible from the Space context, equivalent to Room's `GoalsEditor.tsx`.
-- **Subtasks:**
-  1. Create `SpaceGoalsEditor.tsx` with goal creation, editing, progress bars.
-  2. Support mission types (one_shot, measurable, recurring).
-  3. Support structured metrics with progress tracking.
-  4. Wire to `goal.*` RPC handlers.
-- **Acceptance Criteria:** Users can create and manage goals from the Space UI. Goal progress reflects Space task contributions. Unit tests cover the goal creation/editing data flow; E2E test covers the goal creation wizard.
 - **Agent Type:** coder
-- **Dependencies:** Task 1 (goal integration)
+- **Dependencies:** Task 1
+- **Description:** Create a goal/mission creation wizard for Space.
 
-#### Task 14: Space Dashboard with Goal/Task Overview
+- **Files to create:**
+  - `packages/web/src/components/space/SpaceGoalsEditor.tsx`
+
+- **Files to modify:**
+  - `packages/web/src/lib/space-store.ts` -- add goal-related actions
+  - `packages/web/src/components/space/SpaceTaskPane.tsx` or a parent layout -- integrate GoalsEditor
+
+- **Implementation approach:**
+  1. **Follow Room's `GoalsEditor.tsx` pattern** but simplify for Space context:
+     ```tsx
+     interface SpaceGoalsEditorProps {
+       spaceId: string;
+       goals: RoomGoal[];
+       tasks?: SpaceTask[];
+     }
+     ```
+  2. Reuse the same `goal.create`, `goal.list`, `goal.update`, `goal.delete` RPC handlers (they are Room-scoped but the Space context would need to know which `roomId` to use -- this depends on Task 0's design).
+  3. If Task 0's design introduces Space-specific goal RPCs, use those instead.
+
+- **Edge cases:**
+  - No Room associated with the Space -- show message "Associate a Room to create goals" (depends on Task 0 design).
+  - Goal created from Room but visible in Space -- show read-only or editable depending on design.
+
+- **Testing:**
+  - E2E test: goal creation wizard flow in Space context.
+  - E2E test file: `packages/e2e/tests/features/space-goals-editor.e2e.ts`
+
+- **Acceptance Criteria:** Users can create and manage goals from the Space UI.
+
+### Task 14: Space Dashboard with Goal/Task Overview
 
 - **Priority:** LOW
-- **Description:** Create a comprehensive Space dashboard equivalent to Room's `RoomDashboard.tsx`, showing goal progress, active workflow runs, task status summary, and recent activity.
-- **Subtasks:**
-  1. Create `SpaceOverviewDashboard.tsx` with goal progress bars, active workflow runs, task status counts.
-  2. Add recent activity feed (task completions, workflow transitions, human approvals).
-  3. Integrate into the Space navigation panel.
-- **Acceptance Criteria:** Users can see at a glance the status of all goals, workflows, and tasks within a Space. Unit tests cover the dashboard data aggregation logic.
 - **Agent Type:** coder
-- **Dependencies:** Task 1 (goal integration), Task 13 (goal UI)
+- **Dependencies:** Task 1, Task 13
+- **Description:** Create a comprehensive Space dashboard.
+
+- **Files to create:**
+  - `packages/web/src/components/space/SpaceOverviewDashboard.tsx`
+
+- **Implementation approach:**
+  1. Show goal progress bars (reuse `GoalsEditor`'s progress bar component).
+  2. Show active workflow runs with status indicators.
+  3. Show task status counts (in_progress, needs_attention, completed).
+  4. Show recent activity feed (task completions, workflow transitions).
+  5. Integrate into Space navigation panel.
+
+- **Testing:**
+  - Unit test: dashboard data aggregation logic.
+  - Test file: `packages/web/tests/space/SpaceOverviewDashboard.test.ts`
+
+- **Acceptance Criteria:** Users can see at a glance the status of all goals, workflows, and tasks within a Space.
 
 ---
 
@@ -574,7 +1057,7 @@ This analysis is based on a thorough code-level review of both systems as of 202
 | 10 | Inter-agent messaging | 95% | LOW | Fixed Worker-Leader routing | ChannelResolver + send_message | Minor: no answerQuestion |
 | 11 | Worktree isolation | N/A | DESIGN | Per-task worktrees | Shared workspace | Intentional design difference |
 
-**Methodology note:** Parity percentages are qualitative assessments of feature coverage, not quantitative scores. "15%" means only metadata fields exist with no runtime integration; "50%" means foundational types/structures are present but no runtime logic populates them; "95%" means near-complete with only minor gaps. These should be read as rough ordinal indicators, not precise measurements.
+**Methodology note:** Parity percentages are qualitative assessments. "15%" means only metadata fields exist with no runtime integration; "50%" means types are present but no runtime logic; "95%" means near-complete with minor gaps. Read as rough ordinal indicators.
 
 ---
 
