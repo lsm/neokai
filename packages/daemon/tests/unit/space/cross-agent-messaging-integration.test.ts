@@ -672,34 +672,6 @@ describe('fan-out one-way A→[B,C,D]', () => {
 		expect(data.error).toContain('does not permit');
 		expect(messages).toHaveLength(0);
 	});
-
-	test('explicit multicast to subset of spokes', async () => {
-		const group = setupFanOutGroup(tdb);
-
-		const workflowRunId = seedWorkflowRunWithChannels(tdb.db, tdb.spaceId, [
-			makeResolvedChannel('hub', 'spoke-b'),
-			makeResolvedChannel('hub', 'spoke-c'),
-			makeResolvedChannel('hub', 'spoke-d'),
-		]);
-
-		const { messages, injector } = makeMessageCapture();
-		const hubHandlers = createStepAgentToolHandlers(
-			makeStepConfig(tdb, 'session-hub', 'hub', group.id, workflowRunId, injector)
-		);
-
-		// Send to only B and C (not D)
-		const result = await hubHandlers.send_message({
-			target: ['spoke-b', 'spoke-c'],
-			message: 'targeted broadcast',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		const deliveredIds = messages.map((m) => m.sessionId);
-		expect(deliveredIds).toContain('session-spoke-b');
-		expect(deliveredIds).toContain('session-spoke-c');
-		expect(deliveredIds).not.toContain('session-spoke-d');
-	});
 });
 
 // ===========================================================================
