@@ -69,12 +69,49 @@ export class AppMcpLifecycleManager {
 	/**
 	 * Returns SDK MCP configs for a specific room.
 	 *
-	 * Stub: Milestone 4 will add the `room_mcp_enablement` table and per-room
-	 * filtering. Until then this falls back to the global enabled set.
+	 * Per-room overrides take precedence:
+	 * - If the room has explicitly enabled servers (via room_mcp_enablement), return those.
+	 * - If the room has no overrides, fall back to globally-enabled servers, but exclude
+	 *   any that are explicitly disabled for this room via per-room override.
 	 */
-	getEnabledMcpConfigsForRoom(_roomId: string): Record<string, McpServerConfig> {
-		// TODO (Milestone 4): Query room_mcp_enablement for roomId and filter accordingly.
-		return this.getEnabledMcpConfigs();
+	getEnabledMcpConfigsForRoom(roomId: string): Record<string, McpServerConfig> {
+		const roomServers = this.db.roomMcpEnablement.getEnabledServers(roomId);
+
+		// If the room has per-room enabled servers, return those (filtered by validation).
+		if (roomServers.length > 0) {
+			const result: Record<string, McpServerConfig> = {};
+			for (const entry of roomServers) {
+				const validation = this.validateEntry(entry);
+				if (!validation.valid) {
+					continue;
+				}
+				result[entry.name] = this.convertEntry(entry);
+			}
+			return result;
+		}
+
+		// No per-room enabled servers. Fall back to global enabled set, but exclude
+		// any servers that are explicitly disabled for this room.
+		const globalServers = this.db.appMcpServers.listEnabled();
+		const result: Record<string, McpServerConfig> = {};
+
+		for (const entry of globalServers) {
+			// Check if this server is explicitly disabled for the room
+			const override = this.db.roomMcpEnablement.getOverride(roomId, entry.id);
+			if (override !== null && !override.enabled) {
+				// Server is explicitly disabled for this room — skip it
+				continue;
+			}
+
+			const validation = this.validateEntry(entry);
+			if (!validation.valid) {
+				continue;
+			}
+
+			result[entry.name] = this.convertEntry(entry);
+		}
+
+		return result;
 	}
 
 	/**
