@@ -198,6 +198,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 		settingsManager: deps.settingsManager,
+		appMcpManager: deps.appMcpManager,
 		reactiveDb: deps.reactiveDb,
 		jobQueue: deps.jobQueue,
 		jobProcessor: deps.jobProcessor,
