@@ -430,15 +430,13 @@ describe('RoomRuntime - terminal error detection', () => {
 			expect(switchModelCalls[0].args[1]).toBe('claude-haiku-4-5');
 		});
 
-		it('clears stale task restriction after successful fallback switch', async () => {
-			const mockMessageHub = {
-				request: async (method: string) => {
-					if (method === 'session.model.get') {
-						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
-					}
-					return undefined;
-				},
-			};
+		it('clears group rate limit after successful fallback switch in worker path', async () => {
+			// clearRateLimit is called inside `if (!group.rateLimit)`, so it normally clears null.
+			// To make this test non-tautological we override switchModel to SET group.rateLimit
+			// mid-call, so clearRateLimit at line 778 actually clears a non-null sentinel.
+			// The test fails if clearRateLimit is deleted from the worker fallback-success path.
+			let groupIdForSpy: string | null = null;
+
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => [
 					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
@@ -447,24 +445,59 @@ describe('RoomRuntime - terminal error detection', () => {
 					({
 						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
 					}) as never,
-				messageHub: mockMessageHub,
+				messageHub: {
+					request: async (method: string) => {
+						if (method === 'session.model.get') {
+							return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
+						}
+						return undefined;
+					},
+				},
 			});
 
-			const { group, task } = await spawnAndSimulateWorkerOutput('');
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
 
-			// Trigger once more to simulate a re-trigger while restrictions might be stale
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			groupIdForSpy = group.id;
+
+			// Override switchModel to set group.rateLimit while the fallback switch runs,
+			// so clearRateLimit at line 778 actually clears a non-null sentinel.
+			ctx.sessionFactory.switchModel = async (sessionId, model, provider) => {
+				ctx.sessionFactory.calls.push({
+					method: 'switchModel',
+					args: [sessionId, model, provider],
+				});
+				if (groupIdForSpy) {
+					ctx.groupRepo.setRateLimit(groupIdForSpy, {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60_000,
+						sessionRole: 'worker',
+					});
+				}
+				return { success: true, model };
+			};
+
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
 
-			// Task restrictions should remain clear
-			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.restrictions).toBeNull();
-
-			// Group rate limit should remain cleared
+			// clearRateLimit must have cleared the sentinel set by the spy
 			const updatedGroup = ctx.groupRepo.getGroup(group.id);
 			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// switchModel was called (confirms the fallback path ran)
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+
+			// Task should not be paused
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.restrictions).toBeNull();
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
 		});
 
 		it('task restriction cleared after fallback switch even with prior rate_limit cycle', async () => {
