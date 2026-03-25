@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import type { ReferenceSearchResult, ReferenceType } from '@neokai/shared';
@@ -53,23 +53,36 @@ export default function ReferenceAutocomplete({
 }: ReferenceAutocompleteProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
+	const [isMobile, setIsMobile] = useState(false);
+
+	// Detect touch/mobile device on mount
+	useEffect(() => {
+		setIsMobile(window.matchMedia('(pointer: coarse)').matches);
+	}, []);
 
 	// Scroll selected item into view
 	useEffect(() => {
 		if (selectedItemRef.current) {
-			selectedItemRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+			selectedItemRef.current.scrollIntoView({
+				block: 'nearest',
+				behavior: isMobile ? 'auto' : 'smooth',
+			});
 		}
-	}, [selectedIndex]);
+	}, [selectedIndex, isMobile]);
 
-	// Close on click outside
+	// Close on click or touch outside
 	useEffect(() => {
-		const handleClickOutside = (e: MouseEvent) => {
+		const handleOutside = (e: MouseEvent | TouchEvent) => {
 			if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
 				onClose();
 			}
 		};
-		document.addEventListener('mousedown', handleClickOutside);
-		return () => document.removeEventListener('mousedown', handleClickOutside);
+		document.addEventListener('mousedown', handleOutside);
+		document.addEventListener('touchend', handleOutside);
+		return () => {
+			document.removeEventListener('mousedown', handleOutside);
+			document.removeEventListener('touchend', handleOutside);
+		};
 	}, [onClose]);
 
 	if (results.length === 0) return null;
@@ -107,8 +120,9 @@ export default function ReferenceAutocomplete({
 				left: position?.left ?? 0,
 				top: position?.top,
 				marginBottom: position ? undefined : '8px',
-				minWidth: '280px',
-				maxWidth: '420px',
+				width: isMobile ? '100%' : undefined,
+				minWidth: isMobile ? undefined : '280px',
+				maxWidth: isMobile ? undefined : '420px',
 			}}
 		>
 			{/* Header */}
@@ -146,8 +160,9 @@ export default function ReferenceAutocomplete({
 								aria-selected={globalIndex === selectedIndex}
 								onClick={() => onSelect(result)}
 								class={cn(
-									'w-full px-3 py-2 text-left transition-colors flex items-start gap-2',
-									'hover:bg-dark-700/50',
+									'w-full px-3 text-left transition-colors flex items-start gap-2',
+									isMobile ? 'py-3' : 'py-2',
+									'hover:bg-dark-700/50 active:bg-dark-700/70',
 									globalIndex === selectedIndex && 'bg-blue-500/20 border-l-2 border-blue-500'
 								)}
 							>
@@ -168,11 +183,15 @@ export default function ReferenceAutocomplete({
 
 			{/* Footer hint */}
 			<div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
-				<p class="text-xs text-gray-500">
-					<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
-					<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
-					<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
-				</p>
+				{isMobile ? (
+					<p class="text-xs text-gray-500">Tap to select</p>
+				) : (
+					<p class="text-xs text-gray-500">
+						<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
+						<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
+						<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
+					</p>
+				)}
 			</div>
 		</div>
 	);
