@@ -565,4 +565,58 @@ describe('resolveChannels — gate field', () => {
 
 		expect(result[0].gate).toEqual(humanGate);
 	});
+
+	test('gate with always type is propagated correctly', () => {
+		const alwaysGate: WorkflowCondition = { type: 'always' };
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow(
+			[node],
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way', gate: alwaysGate }]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result[0].gate).toEqual(alwaysGate);
+	});
+
+	test('gate with task_result type is propagated correctly', () => {
+		const taskResultGate: WorkflowCondition = { type: 'task_result', expression: 'ci_passed' };
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow(
+			[node],
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way', gate: taskResultGate }]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result[0].gate).toEqual(taskResultGate);
+	});
+
+	test('multiple channels with different gate types all propagated correctly', () => {
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'planner', agentId: 'agent-planner' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const plannerGate: WorkflowCondition = { type: 'always' };
+		const reviewGate: WorkflowCondition = { type: 'task_result', expression: 'tests_pass' };
+		const wf = makeWorkflow(
+			[node],
+			[
+				{ from: 'planner', to: 'coder', direction: 'one-way', gate: plannerGate },
+				{ from: 'coder', to: 'reviewer', direction: 'one-way', gate: reviewGate },
+			]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result).toHaveLength(2);
+		const plannerToCoder = result.find((r) => r.fromRole === 'planner');
+		const coderToReviewer = result.find((r) => r.fromRole === 'coder');
+		expect(plannerToCoder?.gate).toEqual(plannerGate);
+		expect(coderToReviewer?.gate).toEqual(reviewGate);
+	});
 });
