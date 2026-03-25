@@ -183,10 +183,17 @@ export class ModelSwitchHandler {
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
+
+				// FIX: Clear sdkSessionId before restart to ensure the new query starts fresh.
+				// The old SDK session file was created with the old model. The SDK may use the
+				// session-file model over the options model, so the model switch wouldn't take effect.
+				session.sdkSessionId = undefined;
+
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
+					sdkSessionId: undefined,
 					config: {
 						model: resolvedModel,
 						provider: newProviderInstance.id as Provider,
@@ -221,10 +228,17 @@ export class ModelSwitchHandler {
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
+
+				// FIX: Clear sdkSessionId before restart to ensure the new query starts fresh.
+				// The old SDK session file was created with the old model. The SDK may use the
+				// session-file model over the options model, so the model switch wouldn't take effect.
+				session.sdkSessionId = undefined;
+
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
+					sdkSessionId: undefined,
 					config: {
 						model: resolvedModel,
 						provider: newProviderInstance.id as Provider,

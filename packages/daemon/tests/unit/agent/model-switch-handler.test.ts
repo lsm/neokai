@@ -162,6 +162,7 @@ describe('ModelSwitchHandler', () => {
 				totalCost: 0,
 				toolCallCount: 0,
 			},
+			sdkSessionId: 'old-sdk-session-id',
 		};
 
 		// Create mocks
@@ -320,6 +321,24 @@ describe('ModelSwitchHandler', () => {
 				expect(restartSpy).toHaveBeenCalled();
 			});
 
+			it('should clear sdkSessionId before restart when query not started', async () => {
+				// FIX: sdkSessionId must be cleared before restart so the new query starts fresh
+				// with the new model. The old SDK session file was created with the old model,
+				// and the SDK may use the session-file model over the options model.
+				handler = createHandler({ queryObject: null });
+				await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				// Verify sdkSessionId was cleared in the session object
+				expect(mockSession.sdkSessionId).toBeUndefined();
+				// Verify sdkSessionId was cleared in the database update
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						sdkSessionId: undefined,
+					})
+				);
+			});
+
 			it('should pass only serializable config fields (no closures or cyclic refs)', async () => {
 				// Simulate a room agent session config with runtime-only non-serializable fields
 				const mockCallback = () => {};
@@ -434,6 +453,24 @@ describe('ModelSwitchHandler', () => {
 					mockSession.id,
 					expect.objectContaining({
 						config: expect.objectContaining({ model: 'opus', provider: expect.any(String) }),
+					})
+				);
+			});
+
+			it('should clear sdkSessionId before restart when query is running', async () => {
+				// FIX: sdkSessionId must be cleared before restart so the new query starts fresh
+				// with the new model. The old SDK session file was created with the old model,
+				// and the SDK may use the session-file model over the options model.
+				handler = createHandler();
+				await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				// Verify sdkSessionId was cleared in the session object
+				expect(mockSession.sdkSessionId).toBeUndefined();
+				// Verify sdkSessionId was cleared in the database update
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						sdkSessionId: undefined,
 					})
 				);
 			});
