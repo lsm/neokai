@@ -222,6 +222,27 @@ describe('ReferenceAutocomplete', () => {
 			expect(onClose).toHaveBeenCalledTimes(1);
 		});
 
+		it('calls onClose when touch-ending outside the component', () => {
+			const onClose = vi.fn();
+			const { container } = render(
+				<div>
+					<ReferenceAutocomplete {...defaultProps} onClose={onClose} />
+					<div data-testid="outside">Outside</div>
+				</div>
+			);
+			const outside = container.querySelector('[data-testid="outside"]');
+			fireEvent.touchEnd(outside!);
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not call onClose when touching inside the component', () => {
+			const onClose = vi.fn();
+			const { container } = render(<ReferenceAutocomplete {...defaultProps} onClose={onClose} />);
+			const buttons = container.querySelectorAll('button[type="button"]');
+			fireEvent.touchEnd(buttons[0]);
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
 		it('does not call onClose when clicking inside the component', () => {
 			const onClose = vi.fn();
 			const { container } = render(<ReferenceAutocomplete {...defaultProps} onClose={onClose} />);
