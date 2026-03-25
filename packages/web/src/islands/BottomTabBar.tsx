@@ -4,6 +4,7 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomTabSignal,
 	type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -19,7 +20,7 @@ import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id: NavSection | 'room-agent' | 'room-overview';
+	id: NavSection | 'room-agent' | 'room-overview' | 'room-missions' | 'room-home';
 	label: string;
 	icon: () => JSX.Element;
 }
@@ -74,6 +75,28 @@ const SettingsIcon = () => (
 	</svg>
 );
 
+const HomeIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+		/>
+	</svg>
+);
+
+const MissionIcon = () => (
+	<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M13 10V3L4 14h7v7l9-11h-7z"
+		/>
+	</svg>
+);
+
 const RoomOverviewIcon = () => (
 	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 		<path
@@ -95,8 +118,8 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 const ROOM_BOTTOM_TABS: TabItem[] = [
 	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
 	{ id: 'room-agent', label: 'Agent', icon: ChatsIcon },
-	{ id: 'inbox', label: 'Missions', icon: InboxIcon },
-	{ id: 'settings', label: '/', icon: SettingsIcon },
+	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
+	{ id: 'room-home', label: '/', icon: HomeIcon },
 ];
 
 export function BottomTabBar() {
@@ -125,17 +148,22 @@ export function BottomTabBar() {
 				navigateToSessions();
 				break;
 			case 'settings':
-				if (isInRoomContext) {
-					navigateToHome();
-				} else {
-					navigateToSettings();
-				}
+				navigateToSettings();
 				break;
 			case 'room-overview':
 				if (roomId) navigateToRoom(roomId);
 				break;
 			case 'room-agent':
 				if (roomId) navigateToRoomAgent(roomId);
+				break;
+			case 'room-missions':
+				if (roomId) {
+					currentRoomTabSignal.value = 'goals';
+					navigateToRoom(roomId);
+				}
+				break;
+			case 'room-home':
+				navigateToHome();
 				break;
 		}
 	};
@@ -144,6 +172,7 @@ export function BottomTabBar() {
 		if (isInRoomContext) {
 			if (id === 'room-agent') return isViewingRoomAgent;
 			if (id === 'room-overview') return isViewingRoomDashboard && navSection === 'rooms';
+			if (id === 'room-missions') return currentRoomTabSignal.value === 'goals';
 		}
 		return navSection === id;
 	};
