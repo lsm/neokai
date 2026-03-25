@@ -82,6 +82,16 @@ vi.mock('../../hooks', () => ({
 		interrupting: false,
 		handleInterrupt: vi.fn(async () => {}),
 	}),
+	useReferenceAutocomplete: () => ({
+		showAutocomplete: false,
+		results: [],
+		selectedIndex: 0,
+		searchQuery: '',
+		handleSelect: vi.fn(() => {}),
+		close: vi.fn(() => {}),
+		handleKeyDown: vi.fn(() => false),
+	}),
+	extractActiveAtQuery: vi.fn(() => null),
 }));
 
 vi.mock('../../lib/connection-manager', () => ({

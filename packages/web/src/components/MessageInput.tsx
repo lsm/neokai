@@ -7,8 +7,14 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
-import { useCallback, useEffect, useState } from 'preact/hooks';
-import type { MessageDeliveryMode, MessageImage, ModelInfo, SessionType } from '@neokai/shared';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import type {
+	MessageDeliveryMode,
+	MessageImage,
+	ModelInfo,
+	ReferenceMention,
+	SessionType,
+} from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -20,6 +26,8 @@ import {
 	useModelSwitcher,
 	useModal,
 	useCommandAutocomplete,
+	useReferenceAutocomplete,
+	extractActiveAtQuery,
 	useFileAttachments,
 	useInterrupt,
 } from '../hooks';
@@ -74,6 +82,9 @@ export default function MessageInput({
 	// Drag and drop state
 	const [isDragging, setIsDragging] = useState(false);
 
+	// Textarea ref for programmatic focus after reference selection
+	const textareaInputRef = useRef<HTMLTextAreaElement>(null);
+
 	// Use shared hooks
 	const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
 	const {
@@ -109,6 +120,29 @@ export default function MessageInput({
 	const commandAutocomplete = useCommandAutocomplete({
 		content,
 		onSelect: handleCommandSelect,
+	});
+
+	// Reference autocomplete
+	const handleReferenceSelect = useCallback(
+		(reference: ReferenceMention) => {
+			const query = extractActiveAtQuery(content);
+			if (query === null) return;
+
+			// The @ token starts at (content.length - query.length - 1)
+			const atPos = content.length - query.length - 1;
+			const refToken = `@ref{${reference.type}:${reference.id}} `;
+			const newContent = content.slice(0, atPos) + refToken;
+			setContent(newContent);
+
+			// Restore focus to textarea after selection
+			textareaInputRef.current?.focus();
+		},
+		[content, setContent]
+	);
+
+	const referenceAutocomplete = useReferenceAutocomplete({
+		content,
+		onSelect: handleReferenceSelect,
 	});
 	const agentWorking = isAgentWorking.value;
 	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
@@ -204,7 +238,12 @@ export default function MessageInput({
 	// Keyboard handler
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			// Try command autocomplete first
+			// Reference autocomplete takes precedence when visible
+			if (referenceAutocomplete.handleKeyDown(e)) {
+				return;
+			}
+
+			// Then try command autocomplete
 			if (commandAutocomplete.handleKeyDown(e)) {
 				return;
 			}
@@ -234,7 +273,7 @@ export default function MessageInput({
 				}
 			}
 		},
-		[commandAutocomplete, handleSubmit, agentWorking]
+		[referenceAutocomplete, commandAutocomplete, handleSubmit, agentWorking]
 	);
 
 	// Model switch handler
@@ -428,9 +467,15 @@ export default function MessageInput({
 							selectedCommandIndex={commandAutocomplete.selectedIndex}
 							onCommandSelect={commandAutocomplete.handleSelect}
 							onCommandClose={commandAutocomplete.close}
+							showReferenceAutocomplete={referenceAutocomplete.showAutocomplete}
+							referenceResults={referenceAutocomplete.results}
+							selectedReferenceIndex={referenceAutocomplete.selectedIndex}
+							onReferenceSelect={referenceAutocomplete.handleSelect}
+							onReferenceClose={referenceAutocomplete.close}
 							isAgentWorking={agentWorking}
 							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
+							textareaRef={textareaInputRef}
 						/>
 					</div>
 				</form>
