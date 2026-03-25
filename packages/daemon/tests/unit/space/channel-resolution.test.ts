@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import type { SpaceAgent, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowCondition, WorkflowNode } from '@neokai/shared';
 import { resolveChannels, validateChannels } from '@neokai/shared';
 
 // ============================================================================
@@ -476,5 +476,93 @@ describe('resolveChannels edge cases', () => {
 		expect(result[0].toRole).toBe('coder');
 		expect(result[0].toAgentId).toBe('agent-coder');
 		expect(result[0].isFanOut).toBeFalsy();
+	});
+});
+
+// ============================================================================
+// gate field propagation
+// ============================================================================
+
+describe('resolveChannels — gate field', () => {
+	const gate: WorkflowCondition = {
+		type: 'condition',
+		expression: 'ci-passing',
+		description: 'CI must pass',
+	};
+
+	test('gate is propagated from WorkflowChannel to ResolvedChannel', () => {
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow(
+			[node],
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way', gate }]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result).toHaveLength(1);
+		expect(result[0].gate).toEqual(gate);
+	});
+
+	test('gate is absent when WorkflowChannel has no gate', () => {
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: 'reviewer', direction: 'one-way' }]);
+		const result = resolveChannels(wf);
+
+		expect(result).toHaveLength(1);
+		expect(result[0].gate).toBeUndefined();
+	});
+
+	test('gate is propagated to both directions in a bidirectional channel', () => {
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow(
+			[node],
+			[{ from: 'coder', to: 'reviewer', direction: 'bidirectional', gate }]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result).toHaveLength(2);
+		expect(result[0].gate).toEqual(gate);
+		expect(result[1].gate).toEqual(gate);
+	});
+
+	test('gate is propagated to all fan-out entries', () => {
+		const nodeA = makeNode('n1', 'NodeA', [{ name: 'coder', agentId: 'agent-coder' }]);
+		const nodeB = makeNode('n2', 'NodeB', [
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'qa', agentId: 'agent-qa' },
+		]);
+		const wf = makeWorkflow(
+			[nodeA, nodeB],
+			[{ from: 'coder', to: 'NodeB', direction: 'one-way', gate }]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result).toHaveLength(2);
+		expect(result.every((r) => r.isFanOut === true)).toBe(true);
+		expect(result[0].gate).toEqual(gate);
+		expect(result[1].gate).toEqual(gate);
+	});
+
+	test('gate with human type is propagated correctly', () => {
+		const humanGate: WorkflowCondition = { type: 'human', description: 'Human must approve' };
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow(
+			[node],
+			[{ from: 'coder', to: 'reviewer', direction: 'one-way', gate: humanGate }]
+		);
+		const result = resolveChannels(wf);
+
+		expect(result[0].gate).toEqual(humanGate);
 	});
 });
