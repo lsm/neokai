@@ -298,6 +298,8 @@ export interface RuntimeTestContextOptions {
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
 	/** Get global settings for testing fallback model logic */
 	getGlobalSettings?: () => GlobalSettings;
+	/** Optional provider availability check for testing fallback chain skipping */
+	isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
 	/** Optional MessageHub mock for testing trySwitchToFallbackModel (session.model.get RPC) */
 	messageHub?: MessageHub;
 }
@@ -339,8 +341,9 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getTask: (taskId) => taskManager.getTask(taskId),
 		getGoal: (goalId) => goalManager.getGoal(goalId),
 		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
-		daemonHub: mockHub as unknown as DaemonHub,
+		isProviderAvailable: opts?.isProviderAvailable,
 		messageHub: opts?.messageHub,
+		daemonHub: mockHub as unknown as DaemonHub,
 	});
 
 	return {

@@ -148,6 +148,12 @@ export interface RoomRuntimeConfig {
 	hookOptions?: HookOptions;
 	/** Dead loop detection config (overrides defaults) */
 	deadLoopConfig?: Partial<DeadLoopConfig>;
+	/**
+	 * Optional callback to verify that a provider is available before switching to it.
+	 * Called with (provider, model) — should return true if the provider is reachable.
+	 * When absent, the availability check is skipped (backward-compatible).
+	 */
+	isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
 	/** Fetch room from DB by ID (for lazy leader init with current config) */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID (for lazy leader init with current data) */
@@ -180,6 +186,7 @@ export class RoomRuntime {
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
 	private readonly deadLoopConfig: DeadLoopConfig;
+	private readonly isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
 	private readonly getGlobalSettings: () => GlobalSettings;
@@ -302,6 +309,7 @@ export class RoomRuntime {
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
 		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
+		this.isProviderAvailable = config.isProviderAvailable;
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
 		this.getGlobalSettings = config.getGlobalSettings;
@@ -372,19 +380,39 @@ export class RoomRuntime {
 			(f) => f.model === currentModel && f.provider === currentProvider
 		);
 
-		// Determine the next fallback model
+		// Determine the starting index for the search
+		const startIndex = currentIndex === -1 ? 0 : currentIndex + 1;
+
+		// Loop through remaining fallbacks to find an available candidate
 		let fallback: FallbackModelEntry | undefined;
-		if (currentIndex === -1) {
-			// Current model is not in fallback chain, use the first fallback
-			fallback = fallbackModels[0];
-		} else {
-			// Try the next one in the chain
-			const nextIndex = currentIndex + 1;
-			if (nextIndex < fallbackModels.length) {
-				fallback = fallbackModels[nextIndex];
+		for (let i = startIndex; i < fallbackModels.length; i++) {
+			const candidate = fallbackModels[i];
+
+			// Skip if same as current model
+			if (candidate.model === currentModel && candidate.provider === currentProvider) {
+				continue;
 			}
-			// If current is the last in chain and there's only one fallback, no point switching
-			// to itself, so don't fall back
+
+			// Check provider availability if a callback is configured
+			if (this.isProviderAvailable) {
+				try {
+					const available = await this.isProviderAvailable(candidate.provider, candidate.model);
+					if (!available) {
+						log.warn(
+							`Skipping fallback ${candidate.provider}/${candidate.model} — provider unavailable`
+						);
+						continue;
+					}
+				} catch (err) {
+					log.warn(
+						`Provider availability check failed for ${candidate.provider}/${candidate.model}: ${String(err)}`
+					);
+					continue;
+				}
+			}
+
+			fallback = candidate;
+			break;
 		}
 
 		if (!fallback) {
@@ -392,11 +420,6 @@ export class RoomRuntime {
 				`No fallback model available for ${sessionRole} session ${sessionId} ` +
 					`(current: ${currentProvider}/${currentModel}, chain exhausted)`
 			);
-			return false;
-		}
-
-		// Don't switch to the same model
-		if (fallback.model === currentModel && fallback.provider === currentProvider) {
 			return false;
 		}
 
