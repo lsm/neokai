@@ -601,7 +601,8 @@ export class RoomRuntimeService {
 
 				// Merge MCP servers from three sources into a single map for the room chat session:
 				//   1. File-based servers (from .mcp.json / settings.json via SettingsManager)
-				//   2. Registry-based servers (application-level entries from AppMcpLifecycleManager)
+				//   2. Registry-based servers (application-level entries from AppMcpLifecycleManager,
+				//      filtered by per-room enablement via getEnabledMcpConfigsForRoom)
 				//   3. room-agent-tools (in-process server for room coordination)
 				//
 				// Precedence (highest to lowest): room-agent-tools > registry > file-based.
@@ -618,7 +619,8 @@ export class RoomRuntimeService {
 				// NOT restart any in-flight query. This is intentional — MCP server changes between
 				// queries are the expected use case, and disrupting an active query is not safe.
 				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
-				const registryMcpServers = this.ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
+				const registryMcpServers =
+					this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(room.id) ?? {};
 				roomChatSession.setRuntimeMcpServers({
 					...fileMcpServers,
 					...registryMcpServers,
@@ -702,13 +704,12 @@ export class RoomRuntimeService {
 		const unsubMcpChanged = this.ctx.daemonHub.on(
 			'mcp.registry.changed',
 			() => {
-				// Re-read both sources inside the handler (not hoisted above the loop) so
-				// that if getEnabledMcpServersConfig() ever becomes room-scoped, it will
-				// be called per-room consistently with the initial setupRoomAgentSession path.
-				// Registry configs are global and read once — the call is cheap.
-				const registryMcpServers = this.ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
 				for (const [roomId] of this.runtimes) {
+					// Read both sources inside the handler per-room so that per-room enablement
+					// is respected when re-applying configs after registry changes.
 					const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+					const registryMcpServers =
+						this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(roomId) ?? {};
 					const roomChatSessionId = `room:chat:${roomId}`;
 					void this.ctx.sessionManager
 						.getSessionAsync(roomChatSessionId)

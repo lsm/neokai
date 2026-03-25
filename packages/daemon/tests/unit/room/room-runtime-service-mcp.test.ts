@@ -94,6 +94,7 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({ 'registry-server': registryServer }),
+			getEnabledMcpConfigsForRoom: () => ({ 'registry-server': registryServer }),
 		};
 
 		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
@@ -173,6 +174,7 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({ 'room-agent-tools': conflictingServer }),
+			getEnabledMcpConfigsForRoom: () => ({ 'room-agent-tools': conflictingServer }),
 		};
 
 		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
@@ -239,6 +241,7 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({ 'registry-mcp': registryServer }),
+			getEnabledMcpConfigsForRoom: () => ({ 'registry-mcp': registryServer }),
 		};
 
 		const settingsManager = {
@@ -380,6 +383,7 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({ 'hot-server': registryServer }),
+			getEnabledMcpConfigsForRoom: () => ({ 'hot-server': registryServer }),
 		};
 
 		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
@@ -459,6 +463,7 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({ 'reg-server': registryServer }),
+			getEnabledMcpConfigsForRoom: () => ({ 'reg-server': registryServer }),
 		};
 
 		const setRuntimeMcpServersCalls: Array<Record<string, McpServerConfig>> = [];
@@ -534,6 +539,7 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({}),
+			getEnabledMcpConfigsForRoom: () => ({}),
 		};
 
 		const service = new RoomRuntimeService(
@@ -575,6 +581,7 @@ describe('RoomRuntimeService MCP merge — collision resolution', () => {
 
 		const appMcpManager = {
 			getEnabledMcpConfigs: () => ({ 'shared-name': registryServer }),
+			getEnabledMcpConfigsForRoom: () => ({ 'shared-name': registryServer }),
 		};
 
 		const settingsManager = {
