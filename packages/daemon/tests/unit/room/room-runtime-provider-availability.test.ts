@@ -301,6 +301,39 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 		});
 	});
 
+	describe('switchModel() itself fails after availability check passes', () => {
+		it('returns false when switchModel returns success:false', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
+				getGlobalSettings: makeGlobalSettings([{ model: 'haiku', provider: 'anthropic' }]),
+				messageHub: makeMessageHub('not-in-chain', 'other'),
+				isProviderAvailable: async () => true, // provider is available
+			});
+
+			// Make switchModel report failure (e.g. API error during model switch)
+			ctx.sessionFactory.switchModelImpl = async (_sessionId, model, _provider) => ({
+				success: false,
+				model,
+				error: 'model switch rejected by server',
+			});
+
+			const { group, task } = await spawnGroup();
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// switchModel was called (availability check passed), but it failed
+			const switchCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchCalls.length).toBe(1);
+			expect(switchCalls[0].args[1]).toBe('haiku');
+
+			// trySwitchToFallbackModel returned false → task is usage_limited
+			const updated = await ctx.taskManager.getTask(task.id);
+			expect(updated!.status).toBe('usage_limited');
+		});
+	});
+
 	describe('same-model skip guard', () => {
 		it('skips a fallback entry that matches the current model even if not via chain index', async () => {
 			// Current model is NOT in chain (index -1), but chain[0] happens to be the same model
