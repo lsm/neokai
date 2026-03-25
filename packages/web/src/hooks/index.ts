@@ -63,6 +63,7 @@ export {
 export {
 	useReferenceAutocomplete,
 	extractActiveAtQuery,
+	insertReferenceMention,
 	type UseReferenceAutocompleteOptions,
 	type UseReferenceAutocompleteResult,
 } from './useReferenceAutocomplete';
