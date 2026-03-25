@@ -32,7 +32,11 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 
 **Why add `unregisterSession` to `SessionManager`**: `SessionManager.sessionCache` is `private`. Adding `unregisterSession(sessionId: string): void` as a thin wrapper over `this.sessionCache.remove(sessionId)` mirrors the existing `registerSession()` which wraps `this.sessionCache.set()`, maintaining API symmetry.
 
+**Race condition in `SessionCache.remove()`**: The current `remove()` method (line 141-143 of `session-cache.ts`) only calls `this.sessions.delete(sessionId)` but does **NOT** clear `this.sessionLoadLocks`. This creates a race: if a concurrent `getAsync()` call has already passed the `sessions.has()` check and is awaiting an in-flight load lock, the load will eventually resolve, check `if (!this.sessions.has(sessionId))` → true (since we just removed it), and re-insert a stale DB-loaded duplicate into the cache. The fix must also clear the load lock in `remove()`, mirroring how `set()` clears it (line 135). Since `SessionCache` is a private dependency of `SessionManager`, the implementer should update `SessionCache.remove()` to also call `this.sessionLoadLocks.delete(sessionId)`. Existing callers of `sessionCache.remove()` (in `SessionLifecycle.delete()`) will benefit from this fix as well.
+
 **Space session collision risk**: Space session IDs use the `space:{uuid}:task:{uuid}` prefix, while Room session IDs use `{role}:{roomId}:{taskId}:{uuid}` or `room:chat:{roomId}`. These are structurally disjoint namespaces, making a collision practically impossible. `SessionCache.set()` has no overwrite guard, but the disjoint namespaces make this moot. No additional guard is needed.
+
+**Namespace invariant**: The disjoint namespace guarantee relies on an invariant that must be preserved: **room role strings (e.g., `coder`, `general`, `planner`, `leader`) must never equal the literal string `"space"`**. If a role named `"space"` were introduced, session IDs like `space:{roomId}:...` could collide with Space session IDs like `space:{spaceId}:task:{taskId}`. This constraint should be documented in the role definition code (where roles are defined/enumerated) to prevent future violations.
 
 ### Bug 2 Fix: Clear sdkSessionId during model switch restart
 
@@ -109,10 +113,20 @@ The root cause is in `QueryLifecycleManager.restart()` (called by `ModelSwitchHa
 **Description**: Add `unregisterSession()` to `SessionManager` for symmetry with the existing `registerSession()`, then register room worker/leader sessions in `SessionCache` through both creation paths and unregister them through all teardown paths.
 
 **Files**:
+- `packages/daemon/src/lib/session/session-cache.ts` — fix `remove()` to also clear `sessionLoadLocks`
 - `packages/daemon/src/lib/session/session-manager.ts` — add `unregisterSession()` method
 - `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` — add `registerSession` in `createAndStartSession()` AND `restoreSession()`, add `unregisterSession` in `stopSession()` and `stop()`
 
 **Subtasks**:
+
+0. **Fix `SessionCache.remove()` race condition**: In `session-cache.ts`, update the `remove()` method (line 141) to also clear the session load lock:
+   ```ts
+   remove(sessionId: string): void {
+       this.sessions.delete(sessionId);
+       this.sessionLoadLocks.delete(sessionId);
+   }
+   ```
+   This mirrors `set()` (line 132-136) which already clears `sessionLoadLocks`. Without this fix, a concurrent `getAsync()` call awaiting a load lock would re-insert a stale DB-loaded duplicate after `remove()` deletes the session from `sessions`. Existing callers of `sessionCache.remove()` (e.g., `SessionLifecycle.delete()`) will also benefit from this fix.
 
 1. Add `unregisterSession(sessionId: string): void` to `SessionManager` that delegates to `this.sessionCache.remove(sessionId)`. This mirrors `registerSession()` which delegates to `this.sessionCache.set()`.
 
@@ -142,8 +156,10 @@ The root cause is in `QueryLifecycleManager.restart()` (called by `ModelSwitchHa
    This prevents stale room session references from remaining in SessionCache after daemon shutdown.
 
 6. Verify that the `SessionCache.getAsync()` guard (line ~100 of `session-cache.ts`) correctly prefers the registered instance if a concurrent `getAsync()` call is in-flight during registration.
+7. Document the namespace invariant: room role strings must never equal `"space"` (add a comment in the role definition code where roles are enumerated).
 
 **Acceptance criteria**:
+- `SessionCache.remove()` also clears `sessionLoadLocks` for the removed session ID (preventing concurrent `getAsync()` from re-inserting a stale duplicate).
 - `SessionManager.unregisterSession()` is available and delegates to `sessionCache.remove()`.
 - Room sessions are registered in `SessionCache` immediately after creation via `createAndStartSession()`.
 - Room sessions are registered in `SessionCache` after restoration via `restoreSession()` (daemon restart path).
@@ -167,11 +183,13 @@ The root cause is in `QueryLifecycleManager.restart()` (called by `ModelSwitchHa
 
 **Subtasks**:
 1. Test that `SessionManager.unregisterSession()` calls `sessionCache.remove()` with the correct session ID.
-2. Test that after `registerSession()` is called, `getSessionAsync()` returns the registered instance (not a DB-loaded duplicate).
-3. Test that after `unregisterSession()` is called, `getSessionAsync()` falls through to DB loading (the session is no longer in cache).
-4. Test the concurrent access guard: if `getAsync()` is called concurrently with `registerSession()`, the registered instance is preferred over the DB-loaded one (this tests the guard at `session-cache.ts:100`).
-5. Test that restoring a session (simulating `restoreSession()` flow) also registers it in SessionCache.
-6. If possible, add an integration test that simulates room session creation via `createAndStartSession()` and verifies the session is findable via `sessionManager.getSessionAsync()`.
+2. Test that `SessionCache.remove()` also clears `sessionLoadLocks` for the removed session ID.
+3. Test the unregister race condition: if `getAsync()` has an in-flight load lock, and `remove()` is called concurrently, the load lock is cleared so the in-flight load does NOT re-insert a stale session into `sessions`.
+4. Test that after `registerSession()` is called, `getSessionAsync()` returns the registered instance (not a DB-loaded duplicate).
+5. Test that after `unregisterSession()` is called, `getSessionAsync()` falls through to DB loading (the session is no longer in cache).
+6. Test the concurrent access guard: if `getAsync()` is called concurrently with `registerSession()`, the registered instance is preferred over the DB-loaded one (this tests the guard at `session-cache.ts:100`).
+7. Test that restoring a session (simulating `restoreSession()` flow) also registers it in SessionCache.
+8. If possible, add an integration test that simulates room session creation via `createAndStartSession()` and verifies the session is findable via `sessionManager.getSessionAsync()`.
 
 **Acceptance criteria**:
 - All tests pass.
