@@ -16,6 +16,8 @@ Enable agents to drive workflow progression through gated cross-node channels. W
 
 ## Tasks
 
+> **Execution order note**: Task 4.1a (lazy activation) is a prerequisite of Task 4.1 (channel router). Despite the numbering, 4.1a must be completed first — the router depends on the `activateNode()` function defined in 4.1a.
+
 ### Task 4.1: Cross-Node Channel Routing Layer
 
 **Description**: Create a `CrossNodeChannelRouter` that handles message delivery across workflow nodes, evaluating gates before delivery.

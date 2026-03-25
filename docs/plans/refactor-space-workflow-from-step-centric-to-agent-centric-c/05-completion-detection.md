@@ -78,7 +78,7 @@ Implement all-agents-done completion detection. The workflow run completes when 
 - No duplicate completion events
 - Terminal executor cleanup works correctly
 
-**Dependencies**: Tasks 5.1, 4.3
+**Dependencies**: Tasks 5.1, 4.3, 4.5
 
 **Agent Type**: coder
 

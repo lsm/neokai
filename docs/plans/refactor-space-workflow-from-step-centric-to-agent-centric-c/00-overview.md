@@ -81,7 +81,7 @@ The target system treats workflows as collaboration graphs of agents:
 1. **Channel Gate Types** -- Add gate/condition support to `WorkflowChannel`, create `ChannelGateEvaluator`, unit tests (4 tasks)
 2. **Cross-Node Channel Infrastructure** -- Extend channels to span nodes, DB migration, resolution (5 tasks)
 3. **Agent Completion Signaling** -- New `report_done` tool, liveness guard with timeout, completion state tracking (6 tasks)
-4. **Agent-Driven Advancement** -- Channel routing layer, lazy target-node activation, gated cross-node messaging, remove `advance()` (6 tasks)
+4. **Agent-Driven Advancement** -- Channel routing layer, lazy target-node activation, gated cross-node messaging, remove `advance()` (7 tasks)
 5. **Completion Detection** -- All-agents-done detector, update SpaceRuntime tick, status lifecycle (4 tasks)
 6. **Task Agent Refactoring** -- Collaboration manager prompt, `report_workflow_done`, remove `advance_workflow` (5 tasks)
 7. **Built-in Workflow Replacement** -- Replace 3 built-in workflows with agent-centric model, backend tests (2 tasks)
@@ -109,4 +109,4 @@ Key sequencing decisions:
 
 ## Total Estimated Task Count
 
-39 tasks across 9 milestones.
+40 tasks across 9 milestones.
