@@ -248,6 +248,10 @@ export class SpaceTaskRepository {
 			fields.push('goal_id = ?');
 			values.push(params.goalId ?? null);
 		}
+		if (params.completionSummary !== undefined) {
+			fields.push('completion_summary = ?');
+			values.push(params.completionSummary ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -371,6 +375,7 @@ export class SpaceTaskRepository {
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? undefined,
+			completionSummary: (row.completion_summary as string | null) ?? undefined,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
