@@ -74,14 +74,30 @@ export class MessagePersistence {
 
 			const resolved = await this.referenceResolver!.resolveAllReferences(mentions, context);
 
-			// Convert ResolvedReference values to ReferenceMetadata entries
 			const referenceMetadata: ReferenceMetadata = {};
+
+			// Include resolved references with entity titles as displayText
 			for (const [token, ref] of Object.entries(resolved)) {
 				referenceMetadata[token] = {
 					type: ref.type,
 					id: ref.id,
-					displayText: ref.id,
+					displayText: extractDisplayText(ref.type, ref.id, ref.data),
 				};
+			}
+
+			// Include unresolved references with status: 'unresolved' so the UI can surface failures
+			const seenTokens = new Set<string>();
+			for (const mention of mentions) {
+				const token = `@ref{${mention.type}:${mention.id}}`;
+				if (!seenTokens.has(token) && !(token in referenceMetadata)) {
+					seenTokens.add(token);
+					referenceMetadata[token] = {
+						type: mention.type,
+						id: mention.id,
+						displayText: mention.id,
+						status: 'unresolved',
+					};
+				}
 			}
 
 			return { text, referenceMetadata };
@@ -226,6 +242,25 @@ export class MessagePersistence {
 			throw error;
 		}
 	}
+}
+
+/**
+ * Extract a human-readable display text from a resolved reference's entity data.
+ *
+ * For tasks and goals, uses the entity title. For files and folders, uses the path.
+ * Falls back to the raw ID if the data shape is unexpected.
+ */
+function extractDisplayText(type: string, id: string, data: unknown): string {
+	if (data !== null && typeof data === 'object') {
+		const d = data as Record<string, unknown>;
+		if ((type === 'task' || type === 'goal') && typeof d['title'] === 'string') {
+			return d['title'];
+		}
+		if ((type === 'file' || type === 'folder') && typeof d['path'] === 'string') {
+			return d['path'];
+		}
+	}
+	return id;
 }
 
 /**

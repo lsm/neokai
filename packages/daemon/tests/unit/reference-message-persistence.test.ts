@@ -218,6 +218,23 @@ describe('ReferenceResolver.resolveAllReferences', () => {
 		expect(result['@ref{task:t-1}']).toBeDefined();
 		expect(result['@ref{task:t-999}']).toBeUndefined();
 	});
+
+	it('deduplicates duplicate references before resolving', async () => {
+		const text = '@ref{task:t-1} and again @ref{task:t-1}';
+		const mentions = ReferenceResolver.extractReferences(text);
+		expect(mentions).toHaveLength(2); // extraction returns duplicates
+
+		const getTaskSpy = taskRepo.getTask as ReturnType<typeof mock>;
+		const getByShortIdSpy = taskRepo.getTaskByShortId as ReturnType<typeof mock>;
+
+		await resolver.resolveAllReferences(mentions, { workspacePath: '/ws', roomId: 'room-1' });
+
+		// getTask should be called at most once for t-1 (deduplication)
+		const taskCallCount =
+			(getTaskSpy.mock.calls.length as number) + (getByShortIdSpy.mock.calls.length as number);
+		// With deduplication, we resolve each unique token once
+		expect(taskCallCount).toBeLessThanOrEqual(2); // at most 1 getTask + 1 getByShortId for the single unique token
+	});
 });
 
 // ============================================================================
@@ -367,14 +384,15 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			'test-session-id',
 			expect.objectContaining({
 				referenceMetadata: {
-					'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 't-1' },
+					// displayText uses the task title, not the raw ID
+					'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
 				},
 			}),
 			'consumed'
 		);
 	});
 
-	it('persists message without metadata when all references fail to resolve', async () => {
+	it('includes unresolved references in metadata with status: unresolved', async () => {
 		const resolver = new ReferenceResolver({
 			taskRepo: {
 				getTask: mock(() => null),
@@ -402,7 +420,16 @@ describe('MessagePersistence with ReferenceResolver', () => {
 
 		expect(saveUserMessageSpy).toHaveBeenCalledWith(
 			'test-session-id',
-			expect.not.objectContaining({ referenceMetadata: expect.anything() }),
+			expect.objectContaining({
+				referenceMetadata: {
+					'@ref{task:t-999}': {
+						type: 'task',
+						id: 't-999',
+						displayText: 't-999',
+						status: 'unresolved',
+					},
+				},
+			}),
 			'consumed'
 		);
 	});
@@ -490,7 +517,15 @@ describe('MessagePersistence with ReferenceResolver', () => {
 			'test-session-id',
 			expect.objectContaining({
 				referenceMetadata: {
-					'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 't-1' },
+					// Resolved reference uses entity title
+					'@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
+					// Unresolved reference is included with status: 'unresolved'
+					'@ref{task:t-999}': {
+						type: 'task',
+						id: 't-999',
+						displayText: 't-999',
+						status: 'unresolved',
+					},
 				},
 			}),
 			'consumed'

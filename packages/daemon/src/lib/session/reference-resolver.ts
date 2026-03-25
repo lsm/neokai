@@ -107,6 +107,7 @@ export class ReferenceResolver {
 	/**
 	 * Resolve all mentions in parallel.
 	 *
+	 * Deduplicates by token before resolving to avoid redundant I/O.
 	 * Returns a map keyed by the raw @ref{type:id} token string.
 	 * Null (unresolved) results are excluded from the returned map.
 	 */
@@ -114,17 +115,27 @@ export class ReferenceResolver {
 		mentions: ReferenceMention[],
 		context: ResolutionContext
 	): Promise<Record<string, ResolvedReference>> {
-		const tokens = mentions.map((m) => `@ref{${m.type}:${m.id}}`);
+		// Deduplicate by token to avoid redundant resolution work
+		const seen = new Map<string, ReferenceMention>();
+		for (const mention of mentions) {
+			const token = `@ref{${mention.type}:${mention.id}}`;
+			if (!seen.has(token)) {
+				seen.set(token, mention);
+			}
+		}
+
+		const uniqueTokens = Array.from(seen.keys());
+		const uniqueMentions = Array.from(seen.values());
 
 		const results = await Promise.all(
-			mentions.map((mention) => this.resolveReference(mention, context))
+			uniqueMentions.map((mention) => this.resolveReference(mention, context))
 		);
 
 		const metadata: Record<string, ResolvedReference> = {};
 		for (let i = 0; i < results.length; i++) {
 			const resolved = results[i];
 			if (resolved !== null) {
-				metadata[tokens[i]] = resolved;
+				metadata[uniqueTokens[i]] = resolved;
 			}
 		}
 
