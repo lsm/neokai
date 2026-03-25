@@ -68,6 +68,7 @@ import type {
 } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createStepAgentMcpServer } from '../tools/step-agent-tools';
+import { ChannelResolver } from './channel-resolver';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
@@ -1390,6 +1391,11 @@ export class TaskAgentManager {
 	 * Build a step agent MCP server for a newly spawned sub-session.
 	 * Called from the `buildStepAgentMcpServer` callback passed to createTaskAgentMcpServer().
 	 *
+	 * Creates a ChannelResolver from the workflow run's config at spawn time and injects
+	 * it directly into the step agent MCP server config. This avoids a per-call DB lookup
+	 * and ensures each sub-session has its own resolver scoped to the channels declared
+	 * at step-start (stored in the run config by SpaceRuntime.storeResolvedChannels()).
+	 *
 	 * The server gives the step agent peer communication tools (list_peers, send_message,
 	 * report_done) that are scoped to its group, channel topology, and step task.
 	 */
@@ -1403,16 +1409,25 @@ export class TaskAgentManager {
 		taskManager: SpaceTaskManager
 	) {
 		const workflowNodeId = this.config.taskRepo.getTask(taskId)?.workflowNodeId ?? '';
+		// Build the ChannelResolver from the workflow run's stored config at spawn time.
+		// Channels are written once at step-start by SpaceRuntime.storeResolvedChannels(),
+		// so reading them here gives the correct topology for this sub-session's lifetime.
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		const channelResolver = ChannelResolver.fromRunConfig(
+			run?.config as Record<string, unknown> | undefined
+		);
+
+
 		return createStepAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
 			taskId,
 			stepTaskId,
 			spaceId,
-			workflowRunId,
+			channelResolver,
 			sessionGroupRepo: this.config.sessionGroupRepo,
 			getGroupId: () => this.taskGroupIds.get(taskId),
-			workflowRunRepo: this.config.workflowRunRepo,
+			workflowRunId,
 			spaceTaskRepo: this.config.taskRepo,
 			workflowNodeId,
 			messageInjector: (targetSessionId, message) =>

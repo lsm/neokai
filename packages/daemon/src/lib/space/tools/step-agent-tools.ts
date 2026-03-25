@@ -30,7 +30,6 @@ import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceSessionGroupRepository } from '../../../storage/repositories/space-session-group-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
@@ -73,14 +72,18 @@ export interface StepAgentToolsConfig {
 	stepTaskId: string;
 	/** Space ID — used for event emission in report_done. */
 	spaceId: string;
-	/** Workflow run ID — used to load channel topology from run config. */
-	workflowRunId: string;
+	/**
+	 * Pre-built channel resolver for this sub-session's topology.
+	 * Created by TaskAgentManager at session spawn time from the workflow run config.
+	 * An empty resolver (no channels) means send_message is unavailable for this session.
+	 */
+	channelResolver: ChannelResolver;
 	/** Session group repository for looking up group members. */
 	sessionGroupRepo: SpaceSessionGroupRepository;
 	/** Returns the group ID for this task from the in-memory map. */
 	getGroupId: () => string | undefined;
-	/** Workflow run repository for reading run config (channel topology). */
-	workflowRunRepo: SpaceWorkflowRunRepository;
+	/** Workflow run ID — used with spaceTaskRepo to query node completion state. */
+	workflowRunId: string;
 	/** Space task repository for querying completion state. */
 	spaceTaskRepo: SpaceTaskRepository;
 	/** Workflow node ID — used to query peer tasks on the same node. */
@@ -121,10 +124,10 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		taskId,
 		stepTaskId,
 		spaceId,
-		workflowRunId,
+		channelResolver,
 		sessionGroupRepo,
 		getGroupId,
-		workflowRunRepo,
+		workflowRunId,
 		spaceTaskRepo,
 		workflowNodeId,
 		messageInjector,
@@ -142,7 +145,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 	type GroupError = { ok: false; error: ToolResult };
 
 	/**
-	 * Helper: load the group and build a ChannelResolver from the current run config.
+	 * Helper: load the session group and return the pre-built channel resolver.
 	 * Returns a discriminated union — callers check `result.ok` before accessing `group`.
 	 */
 	function loadGroupAndResolver(): GroupLoaded | GroupError {
@@ -170,13 +173,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 			};
 		}
 
-		// Build ChannelResolver from the active workflow run's config
-		const run = workflowRunRepo.getRun(workflowRunId);
-		const resolver = ChannelResolver.fromRunConfig(
-			run?.config as Record<string, unknown> | undefined
-		);
-
-		return { ok: true, group, resolver, groupId };
+		return { ok: true, group, resolver: channelResolver, groupId };
 	}
 
 	return {

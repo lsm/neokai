@@ -17,14 +17,13 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
 	createStepAgentToolHandlers,
 	createStepAgentMcpServer,
 	type StepAgentToolsConfig,
 } from '../../../src/lib/space/tools/step-agent-tools.ts';
+import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -88,44 +87,6 @@ function seedSpaceTask(
 }
 
 // ---------------------------------------------------------------------------
-// Workflow run helper
-// ---------------------------------------------------------------------------
-
-function seedWorkflowRunWithChannels(
-	db: BunDatabase,
-	spaceId: string,
-	channels: ResolvedChannel[]
-): string {
-	const workflowRepo = new SpaceWorkflowRepository(db);
-	const workflow = workflowRepo.createWorkflow({
-		spaceId,
-		name: 'Test Workflow',
-		description: '',
-		nodes: [],
-		transitions: [],
-		startNodeId: '',
-		rules: [],
-	});
-
-	const runRepo = new SpaceWorkflowRunRepository(db);
-	const run = runRepo.createRun({
-		spaceId,
-		workflowId: workflow.id,
-		title: 'Test Run',
-		triggeredBy: 'test',
-	});
-
-	// Store resolved channels in config
-	if (channels.length > 0) {
-		runRepo.updateRun(run.id, {
-			config: { _resolvedChannels: channels },
-		});
-	}
-
-	return run.id;
-}
-
-// ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
 
@@ -162,7 +123,6 @@ interface TestCtx {
 	coderSessionId: string;
 	reviewerSessionId: string;
 	taskAgentSessionId: string;
-	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** ID of the parent (main) task seeded in the DB. */
 	parentTaskId: string;
 	/** ID of the step task seeded in the DB. */
@@ -224,8 +184,6 @@ function makeCtx(): TestCtx {
 		orderIndex: 2,
 	});
 
-	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
-
 	return {
 		db,
 		dir,
@@ -238,7 +196,6 @@ function makeCtx(): TestCtx {
 		coderSessionId,
 		reviewerSessionId,
 		taskAgentSessionId,
-		workflowRunRepo,
 		parentTaskId: parentTask.id,
 		stepTaskId: stepTask.id,
 	};
@@ -256,18 +213,26 @@ function makeConfig(
 		taskId: ctx.parentTaskId,
 		stepTaskId: ctx.stepTaskId,
 		spaceId: ctx.spaceId,
+		channelResolver: new ChannelResolver([]),
 		workflowRunId: '',
 		workflowNodeId: '',
 		sessionGroupRepo: ctx.sessionGroupRepo,
 		spaceTaskRepo: ctx.spaceTaskRepo,
 		getGroupId: () => ctx.groupId,
-		workflowRunRepo: ctx.workflowRunRepo,
 		messageInjector: async (sessionId, message) => {
 			injectedMessages.push({ sessionId, message });
 		},
 		taskManager: ctx.taskManager,
 		...overrides,
 	};
+}
+
+/**
+ * Build a ChannelResolver directly from resolved channel entries.
+ * Replaces the old seedWorkflowRunWithChannels + DB approach.
+ */
+function makeResolver(channels: ResolvedChannel[]): ChannelResolver {
+	return new ChannelResolver(channels);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,10 +275,9 @@ describe('step-agent-tools: list_peers', () => {
 	});
 
 	test('reports permitted targets when channels declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
@@ -375,12 +339,9 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('point-to-point succeeds when channel declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 			messageInjector: async (sid, msg) => {
 				injected.push({ sessionId: sid, message: msg });
 			},
@@ -398,10 +359,9 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('point-to-point fails when channel not declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('reviewer', 'coder'), // reverse direction only
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // reverse direction only
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
@@ -423,12 +383,9 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('broadcast (*) succeeds and delivers to all permitted targets', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 			messageInjector: async (sid) => {
 				injected.push(sid);
 			},
@@ -443,10 +400,9 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('broadcast (*) fails when no channels declared', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('reviewer', 'coder'), // coder has no outgoing channels
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // coder has no outgoing channels
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
 		const data = JSON.parse(result.content[0].text);
@@ -466,15 +422,71 @@ describe('step-agent-tools: send_message', () => {
 		expect(data.error).toContain('No channel topology declared');
 	});
 
+
+	test('multicast delivers to all specified target roles', async () => {
+		// Add a third member (security) to the group
+		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
+			role: 'security',
+			status: 'active',
+		});
+
+		const injected: string[] = [];
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('coder', 'security'),
+			]),
+			messageInjector: async (sid) => {
+				injected.push(sid);
+			},
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'multicast!',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(2);
+		expect(injected).toContain(ctx.reviewerSessionId);
+		expect(injected).toContain('session-security');
+	});
+
+	test('multicast partial authorization fails with full error', async () => {
+		// Add security member
+		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
+			role: 'security',
+			status: 'active',
+		});
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				// no coder → security channel
+			]),
+		});
+		const handlers = createStepAgentToolHandlers(config);
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'msg',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.unauthorizedRoles).toContain('security');
+	});
+
+
 	test('hub-spoke: spoke cannot send to other spokes', async () => {
 		// Hub-spoke topology: hub ↔ coder, hub ↔ reviewer (coder cannot send to reviewer directly)
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('hub', 'coder', true),
-			makeResolvedChannel('coder', 'hub', true),
-			makeResolvedChannel('hub', 'reviewer', true),
-			makeResolvedChannel('reviewer', 'hub', true),
-		]);
-		const config = makeConfig(ctx, { workflowRunId }); // myRole='coder'
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('hub', 'coder', true),
+				makeResolvedChannel('coder', 'hub', true),
+				makeResolvedChannel('hub', 'reviewer', true),
+				makeResolvedChannel('reviewer', 'hub', true),
+			]),
+		}); // myRole='coder'
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
@@ -489,13 +501,12 @@ describe('step-agent-tools: send_message', () => {
 			role: 'hub',
 			status: 'active',
 		});
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('hub', 'coder', true),
-			makeResolvedChannel('coder', 'hub', true),
-		]);
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: makeResolver([
+				makeResolvedChannel('hub', 'coder', true),
+				makeResolvedChannel('coder', 'hub', true),
+			]),
 			messageInjector: async (sid) => {
 				injected.push(sid);
 			},
@@ -510,13 +521,13 @@ describe('step-agent-tools: send_message', () => {
 
 	test('bidirectional: both directions work', async () => {
 		// coder ↔ reviewer
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+		const biResolver = makeResolver([
 			makeResolvedChannel('coder', 'reviewer'),
 			makeResolvedChannel('reviewer', 'coder'),
 		]);
 		const injectedToReviewer: string[] = [];
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: biResolver,
 			messageInjector: async (sid) => {
 				injectedToReviewer.push(sid);
 			},
@@ -529,7 +540,7 @@ describe('step-agent-tools: send_message', () => {
 
 		// reviewer → coder (as reviewer)
 		const configAsReviewer = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: biResolver,
 			mySessionId: ctx.reviewerSessionId,
 			myRole: 'reviewer',
 			messageInjector: async (sid) => {
@@ -542,10 +553,9 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('returns error when target role has no active sessions', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'tester'), // 'tester' role not in group
-		]);
-		const config = makeConfig(ctx, { workflowRunId });
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]), // 'tester' role not in group
+		});
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'tester', message: 'test pls' });
 		const data = JSON.parse(result.content[0].text);
@@ -560,12 +570,9 @@ describe('step-agent-tools: send_message', () => {
 			role: 'reviewer',
 			status: 'active',
 		});
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
 		let callCount = 0;
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 			messageInjector: async (_sid) => {
 				callCount++;
 				if (callCount === 1) throw new Error('injection failed');
@@ -585,11 +592,8 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('fails entirely when all injections fail', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 			messageInjector: async () => {
 				throw new Error('always fails');
 			},
@@ -614,11 +618,8 @@ describe('step-agent-tools: send_message', () => {
 	});
 
 	test('returns error when group ID returned but not in DB', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
 		const config = makeConfig(ctx, {
-			workflowRunId,
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
 			getGroupId: () => 'nonexistent-group-id',
 		});
 		const handlers = createStepAgentToolHandlers(config);
@@ -626,6 +627,58 @@ describe('step-agent-tools: send_message', () => {
 		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(false);
 		expect(data.error).toMatch(/not found/);
+	});
+
+	test('best-effort multicast: first delivery succeeds, second fails — partial success', async () => {
+		// Add security member so we can send to two different non-task-agent roles
+		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
+			role: 'security',
+			status: 'active',
+		});
+
+		let callCount = 0;
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('coder', 'security'),
+			]),
+			messageInjector: async (_sid, _msg) => {
+				callCount++;
+				if (callCount === 2) throw new Error('session not available');
+			},
+		});
+		const handlers = createStepAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'Hello',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		// Should NOT return success: false for total failure — it's partial
+		expect(data.success).toBe('partial');
+		expect(data.delivered).toHaveLength(1);
+		expect(data.failed).toHaveLength(1);
+		expect(data.failed[0].error).toContain('session not available');
+		// Both targets were attempted (best-effort, not stop-on-first-error)
+		expect(callCount).toBe(2);
+	});
+
+	test('best-effort multicast: all deliveries fail — success: false', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+			messageInjector: async () => {
+				throw new Error('all sessions unavailable');
+			},
+		});
+		const handlers = createStepAgentToolHandlers(config);
+
+		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.delivered).toHaveLength(0);
+		expect(data.failed).toHaveLength(1);
 	});
 });
 
