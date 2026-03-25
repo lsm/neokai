@@ -2,22 +2,25 @@
 
 ## Goal Summary
 
-Design and implement a comprehensive @ referencing system that allows users to reference tasks, goals, files, and folders from any chat input in the application. When a user types @, an autocomplete menu appears similar to the / command experience, enabling semantic resolution of references that the agent can understand and act upon.
+Design and implement a comprehensive @ referencing system that allows users to reference tasks, goals, files, and folders from the chat input in the application. When a user types @, an autocomplete menu appears similar to the / command experience, enabling semantic resolution of references that the agent can understand and act upon.
+
+**Scope clarification:** The @ trigger applies to the main `MessageInput` component used in Room, Space, and standalone sessions. It does not apply to non-chat input fields (task title editing, goal description editing, etc.) — those are out of scope.
 
 ## High-Level Approach
 
 1. **Reuse existing slash command infrastructure** - The autocomplete menu pattern from `useCommandAutocomplete` and `CommandAutocomplete` will serve as the foundation.
 2. **Support multiple entity types** - Tasks (room tasks, space tasks), Goals/Missions, Files, and Folders.
-3. **Semantic resolution** - The backend parses @ references from input text and resolves them to actual entity data before sending to the agent.
-4. **Persistence as structured mentions** - @ references are stored in message content in a structured format that survives reloads.
+3. **Semantic resolution** - The backend parses @ references from input text and resolves them to actual entity data before sending to the agent. Resolution happens in the `MessagePersistence` layer, not the RPC handler.
+4. **Persistence as structured mentions** - @ references are stored in message content using a dedicated `@ref{}` delimiter that avoids collision with markdown, embedded in the `sdk_message` JSON blob alongside reference metadata.
+5. **Context-aware fallback** - Sessions without room/space context gracefully degrade to file/folder-only references.
 
 ## Milestones
 
-1. **M1: Core Types and RPC Infrastructure** - Define shared types for references and create backend RPC handlers for reference resolution.
+1. **M1: Core Types and RPC Infrastructure** - Define shared types for references, create backend RPC handlers, add workspace file index with caching.
 2. **M2: Frontend Autocomplete Menu** - Implement `useReferenceAutocomplete` hook and `ReferenceAutocomplete` component, extending the slash command pattern.
-3. **M3: Backend Reference Resolution** - Implement message preprocessing to resolve @ references before sending to the agent.
-4. **M4: Reference Token Rendering** - Implement styled mention tokens in the input and in rendered messages.
-5. **M5: E2E Testing** - Comprehensive Playwright tests covering all entity types and edge cases.
+3. **M3: Backend Reference Resolution** - Implement entity resolvers, message preprocessing in MessagePersistence, and agent context injection.
+4. **M4: Reference Token Rendering** - Implement styled mention tokens in rendered messages; keep raw text in native textarea with a visual preview indicator.
+5. **M5: E2E Testing** - Comprehensive Playwright tests covering all entity types and edge cases, with UI/E2E helpers for room entity setup.
 
 ## Cross-Milestone Dependencies
 
@@ -39,12 +42,12 @@ M1 (Types/RPC) ──┬──> M2 (Frontend Menu) ──> M4 (Token Rendering)
 
 ## Total Estimated Task Count
 
-~20 tasks across 5 milestones:
-- M1: 4 tasks (types, RPC handlers, reference resolution service)
+~22 tasks across 5 milestones:
+- M1: 5 tasks (types, RPC handlers, reference resolution service, file index/caching)
 - M2: 5 tasks (hook, component, integration with InputTextarea, keyboard navigation, mobile UX)
-- M3: 4 tasks (message preprocessing, entity fetchers, reference extraction, agent context injection)
-- M4: 4 tasks (mention token component, message rendering integration, persistence format, reference display in history)
-- M5: 3 tasks (basic autocomplete E2E, entity resolution E2E, edge cases E2E)
+- M3: 4 tasks (entity resolvers, message preprocessing, agent context injection, standalone session handling)
+- M4: 3 tasks (mention token component, message rendering integration, persistence format)
+- M5: 5 tasks (E2E helpers, basic autocomplete E2E, entity resolution E2E, edge cases E2E)
 
 ## Reference Syntax Design
 
@@ -59,18 +62,48 @@ M1 (Types/RPC) ──┬──> M2 (Frontend Menu) ──> M4 (Token Rendering)
 **Storage format in message content:**
 
 ```
-[@:task:t-42](task-t-42)  -> Markdown-style link that renders as styled token
-[@:goal:g-7](goal-g-7)    -> Preserves entity type and ID for backend parsing
-[@:file:src/lib.ts](src/lib.ts) -> File path reference
+@ref{task:t-42}        -> Dedicated delimiter, no collision with markdown
+@ref{goal:g-7}         -> Preserves entity type and ID for backend parsing
+@ref{file:src/lib.ts}  -> File path reference
+```
+
+The `@ref{}` syntax was chosen over markdown-style links (`[@:type:id](text)`) because:
+- It cannot be confused with markdown link syntax
+- The regex pattern is unambiguous: `/@ref\{([^}:]+):([^}]+)\}/`
+- It remains human-readable in raw message content
+- It avoids false-positive matching of any standard markdown constructs
+
+**Reference metadata** is stored alongside the message in the `sdk_message` JSON blob (no schema migration needed):
+```json
+{
+  "content": "Fix @ref{task:t-42} and update @ref{file:src/lib.ts}",
+  "referenceMetadata": {
+    "task:t-42": { "type": "task", "id": "...", "displayText": "t-42: Fix auth bug", "status": "in_progress" },
+    "file:src/lib.ts": { "type": "file", "id": "src/lib.ts", "displayText": "src/lib.ts" }
+  }
+}
 ```
 
 ## Key Technical Decisions
 
 1. **Short IDs for entities** - Use existing `shortId` fields on tasks and goals for human-readable references (e.g., `t-42`, `g-7`).
-2. **Fuzzy search** - Implement fuzzy matching across all entity types for intuitive discovery.
-3. **Context-aware resolution** - Backend resolves references based on current session context (room ID, space ID, workspace path).
-4. **Composability with slash commands** - @ references work anywhere in the message, including after slash commands (e.g., `/agent @task-t-42 fix the bug`).
-5. **Agent context injection** - Resolved reference data is injected as structured context before the user message in the SDK message payload.
+2. **Fuzzy search with workspace file index** - Implement a cached workspace file tree that is updated on file-watcher events, enabling fast fuzzy matching without recursive directory listing on every query.
+3. **Context-aware resolution with graceful fallback** - Backend resolves references based on current session context (room ID, space ID, workspace path). Standalone sessions without room/space context only support file/folder references.
+4. **Resolution in MessagePersistence layer** - Reference resolution happens in `MessagePersistence.persist()` (or a preprocessing step before it), not in the thin `message.send` RPC handler. This integrates with the existing persistence and event flow without adding RPC latency.
+5. **Composability with slash commands** - @ references work anywhere in the message, including after slash commands (e.g., `/agent @task-t-42 fix the bug`).
+6. **Agent context injection** - Resolved reference data is injected as structured context before the user message in the SDK message payload.
+7. **Native textarea with raw text** - The input field remains a native `<textarea>` (preserving cursor/IME stability). @ references are stored as raw `@ref{}` text in the input, and rendered as styled tokens only in sent messages. A subtle visual indicator (blue-tinted text or icon) in the textarea hints at active references.
+8. **Access control** - File/folder references are restricted to the workspace root path. Path traversal (`..`, absolute paths, paths outside workspace) is rejected. Task/goal references are scoped to the session's room/space context — cross-room references are not supported.
+9. **ReferenceType as union type** - Uses `'task' | 'goal' | 'file' | 'folder'` (TypeScript union), consistent with existing codebase patterns (e.g., `SessionType`).
+
+## Standalone Session Handling
+
+Sessions without room/space context are supported with graceful degradation:
+- **File/folder search**: Works normally, scoped to workspace root
+- **Task/goal search**: Returns empty results (no tasks/goals exist outside rooms/spaces)
+- **@ trigger**: Shows autocomplete with only file/folder results
+- **Resolution**: File/folder references resolve normally; task/goal references return null (treated as plain text)
+- **UI indicator**: If in standalone session, autocomplete menu header says "Files & Folders" instead of "References"
 
 ## Affected Areas
 
@@ -79,7 +112,7 @@ M1 (Types/RPC) ──┬──> M2 (Frontend Menu) ──> M4 (Token Rendering)
 - `src/hooks/useCommandAutocomplete.ts` (reference)
 - `src/components/ReferenceAutocomplete.tsx` (new)
 - `src/components/CommandAutocomplete.tsx` (reference)
-- `src/components/InputTextarea.tsx` (modify)
+- `src/components/InputTextarea.tsx` (minor modify — add visual hint for @ref tokens)
 - `src/components/MessageInput.tsx` (modify)
 - `src/components/MentionToken.tsx` (new)
 - `src/components/sdk/SDKUserMessage.tsx` (modify for rendering)
@@ -88,8 +121,9 @@ M1 (Types/RPC) ──┬──> M2 (Frontend Menu) ──> M4 (Token Rendering)
 ### Backend (packages/daemon)
 - `src/lib/rpc-handlers/reference-handlers.ts` (new)
 - `src/lib/agent/reference-resolver.ts` (new)
-- `src/lib/agent/message-preprocessor.ts` (new or extend existing)
-- `src/lib/rpc-handlers/session-handlers.ts` (modify message.send)
+- `src/lib/agent/reference-context-builder.ts` (new)
+- `src/lib/session/message-persistence.ts` (modify — add reference preprocessing)
+- `src/lib/file-index.ts` (new — workspace file tree with caching)
 
 ### Shared (packages/shared)
 - `src/types/reference.ts` (new)
@@ -98,3 +132,4 @@ M1 (Types/RPC) ──┬──> M2 (Frontend Menu) ──> M4 (Token Rendering)
 ### E2E Tests (packages/e2e)
 - `tests/features/reference-autocomplete.e2e.ts` (new)
 - `tests/helpers/reference-helpers.ts` (new)
+- `tests/helpers/room-helpers.ts` (new — room/task/goal UI helpers)

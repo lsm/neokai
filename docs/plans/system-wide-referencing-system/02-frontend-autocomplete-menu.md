@@ -2,15 +2,16 @@
 
 ## Milestone Goal
 
-Implement the frontend autocomplete menu that appears when a user types @ in any chat input field. This includes the hook for managing autocomplete state, the component for rendering the menu, and integration with the existing `InputTextarea` component.
+Implement the frontend autocomplete menu that appears when a user types @ in the chat input field. This includes the hook for managing autocomplete state, the component for rendering the menu, integration with the existing `InputTextarea` component, keyboard navigation, and mobile UX.
 
 ## Scope
 
 - `useReferenceAutocomplete` hook (similar pattern to `useCommandAutocomplete`)
 - `ReferenceAutocomplete` component
-- Integration with `InputTextarea` component
+- Integration with `InputTextarea` component (native textarea — no contenteditable)
 - Keyboard navigation and mobile UX
 - Fuzzy search via RPC
+- Standalone session graceful degradation (file/folder only)
 
 ---
 
@@ -25,22 +26,26 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
    - Interface `UseReferenceAutocompleteOptions`: `{ content: string; sessionId: string; onSelect: (reference: ReferenceMention) => void }`
    - Interface `UseReferenceAutocompleteResult`: `{ showAutocomplete: boolean; results: ReferenceSearchResult[]; selectedIndex: number; handleKeyDown: (e: KeyboardEvent) => boolean; handleSelect: (result: ReferenceSearchResult) => void; close: () => void }`
    - State: `showAutocomplete`, `results`, `selectedIndex`, `searchQuery`
-   - Debounced search via RPC (`reference.search`)
+   - Debounced search via RPC (`reference.search`) with 300ms debounce
    - Detection logic: trigger when cursor is immediately after @ (not just at start of text)
    - Extract query between @ and cursor position
 2. Handle edge cases:
    - @ in middle of text should still trigger
-   - Multiple @ in same message (handle each independently)
+   - Multiple @ in same message (handle each independently based on cursor position)
    - Cancel in-progress search on new input
+3. Standalone session handling:
+   - If search results come back with only file/folder entries, update menu header accordingly
+   - No special frontend logic needed — the RPC handler already filters by context
 
 **Acceptance Criteria:**
 - Hook triggers autocomplete when @ is typed anywhere in the input
 - Results are fetched via RPC with debouncing
 - Keyboard navigation works (arrow keys, Enter, Escape)
 - Hook exports match interface pattern from `useCommandAutocomplete`
-- Unit tests cover detection, selection, and keyboard handling
+- Multiple @ mentions in same message are handled correctly
+- Unit tests cover detection, selection, keyboard handling, and multiple @ support
 
-**Depends on:** Task 1.1, Task 1.2
+**Depends on:** Task 1.1, Task 1.3
 
 **Agent Type:** coder
 
@@ -53,7 +58,7 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
 **Subtasks:**
 1. Create `packages/web/src/components/ReferenceAutocomplete.tsx`:
    - Props: `{ results: ReferenceSearchResult[]; selectedIndex: number; onSelect: (result: ReferenceSearchResult) => void; onClose: () => void; position?: { top: number; left: number } }`
-   - Header with icon and "References" label
+   - Header with icon and "References" label (changes to "Files & Folders" if only file/folder results)
    - Grouped sections for each entity type (Tasks, Goals, Files, Folders)
    - Each result shows:
      - Icon indicating type (task/goal/file/folder)
@@ -70,6 +75,7 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
 - Click selection works
 - Click outside closes the menu
 - Styling matches `CommandAutocomplete`
+- Empty groups are hidden (no "Tasks:" header if no task results)
 - Unit tests cover rendering and selection
 
 **Depends on:** Task 1.1, Task 2.1
@@ -80,7 +86,7 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
 
 ### Task 2.3: Integrate Reference Autocomplete with InputTextarea
 
-**Description:** Modify `InputTextarea` component to support reference autocomplete alongside command autocomplete.
+**Description:** Modify `InputTextarea` component to support reference autocomplete alongside command autocomplete. The native `<textarea>` remains — no contenteditable conversion.
 
 **Subtasks:**
 1. Add reference autocomplete props to `InputTextareaProps`:
@@ -90,16 +96,18 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
    - `onReferenceSelect?: (reference: ReferenceMention) => void`
    - `onReferenceClose?: () => void`
 2. Render `ReferenceAutocomplete` conditionally alongside `CommandAutocomplete`
-3. Position menu above cursor (calculate position based on textarea cursor position)
-4. Ensure only one autocomplete menu is visible at a time (close slash command if @ is typed)
-5. Handle the insertion: when reference is selected, replace `@query` with formatted mention token
+3. Position menu above cursor (calculate position based on textarea cursor position using the mirror-div technique)
+4. Ensure only one autocomplete menu is visible at a time (close slash command if @ is typed, close reference if / is typed)
+5. Handle the insertion: when reference is selected, replace `@query` with `@ref{type:id}` formatted text
+6. Add visual hint: when cursor is inside an `@ref{}` token, apply a subtle CSS class to indicate it's a reference (e.g., via a `<span>` overlay or by annotating the textarea wrapper)
 
 **Acceptance Criteria:**
 - @ triggers reference autocomplete in `InputTextarea`
 - `/` still triggers command autocomplete
 - Only one autocomplete menu visible at a time
-- Selected reference replaces the @ and query text
-- Reference is inserted in display format (e.g., `@task-t-42`)
+- Selected reference replaces the @ and query text with `@ref{type:id}` format
+- Native textarea behavior is preserved (cursor position, IME, selection)
+- Unit tests cover insertion and menu switching
 
 **Depends on:** Task 2.1, Task 2.2
 
@@ -120,7 +128,7 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
    - `onReferenceSelect`
    - `onReferenceClose`
 3. Implement `handleReferenceSelect`:
-   - Replace `@query` in content with mention token
+   - Replace `@query` in content with `@ref{type:id}` text
    - Update content signal
    - Focus textarea after selection
 4. Handle keyboard event coordination:
@@ -174,5 +182,6 @@ Implement the frontend autocomplete menu that appears when a user types @ in any
 - Reference autocomplete should work anywhere in the text (not just at the start)
 - The hook must track cursor position to determine if @ is "active"
 - Debounce search to avoid excessive RPC calls during typing
-- Consider performance: limit results and cache recent searches
-- The insertion format should be human-readable plain text that gets converted to structured format on send
+- The native `<textarea>` is preserved — no contenteditable conversion (see P1-1 decision in overview)
+- Insertion format is `@ref{type:id}` which is the raw text stored in the textarea
+- Visual hint in textarea: a subtle indicator (e.g., text color change or background) when cursor is inside an @ref token

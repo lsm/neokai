@@ -2,15 +2,19 @@
 
 ## Milestone Goal
 
-Implement styled mention tokens that render @ references as visually distinct, interactive elements in both the input field (while typing) and in rendered messages. This provides a clear visual representation of references and enables click-to-view functionality.
+Implement styled mention tokens that render @ references as visually distinct, interactive elements in rendered messages. The native `<textarea>` input remains unchanged — references are shown as raw `@ref{type:id}` text in the input field (with a visual hint), and rendered as styled tokens only in sent/persisted messages.
 
 ## Scope
 
 - `MentionToken` component for rendering styled tokens
 - Integration with `SDKUserMessage` for rendering in chat
-- Input field token rendering (draft state)
-- Persistence format for message storage
+- Persistence format: `@ref{type:id}` in message content + reference metadata in `sdk_message` JSON blob
 - Reference display in message history
+- Deleted/moved entity handling
+
+**Key design decision (P1-1):** The input field (`InputTextarea`) uses a native `<textarea>` element with an explicit "uncontrolled with sync" pattern designed to preserve cursor position. Converting to `contenteditable` would introduce significant cursor/IME complexity. Therefore:
+- **In the input field**: References appear as raw `@ref{type:id}` text. A subtle visual indicator (e.g., the text within `@ref{}` tokens gets a distinct color via a `<span>` overlay or the textarea wrapper gets an annotation) hints that the reference is active.
+- **In sent messages**: References are rendered as styled `MentionToken` components.
 
 ---
 
@@ -22,30 +26,33 @@ Implement styled mention tokens that render @ references as visually distinct, i
 
 **Subtasks:**
 1. Create `packages/web/src/components/MentionToken.tsx`:
-   - Props: `{ reference: ReferenceMention; resolved?: ResolvedReference; onClick?: () => void }`
+   - Props: `{ mention: ReferenceMention; metadata?: ReferenceMetadata; onClick?: () => void }`
    - Visual design:
      - Pill-shaped background with distinct color per type:
        - Task: Blue
        - Goal: Purple
        - File: Green
        - Folder: Yellow/Orange
-     - Icon indicating type
-     - Display text (shortId or filename)
-   - Hover state: show tooltip with full details
-   - Click handler: trigger onClick callback
-2. CSS classes following existing design tokens:
-   - Use `borderColors` from `design-tokens.ts`
-   - Match existing mention/tag styles in the app
+     - Icon indicating type (use existing icons from the icon library)
+     - Display text (from `metadata.displayText` or fallback to raw id)
+   - Hover state: show tooltip with full details (title, status, path)
+   - Click handler: trigger onClick callback (e.g., navigate to task detail, open file)
+2. CSS classes — this is **new design work** (no existing mention/tag styles in the codebase):
+   - Define token styles in Tailwind: `rounded-full px-2 py-0.5 text-sm inline-flex items-center gap-1`
+   - Type-specific colors via CSS custom properties or Tailwind variants
+   - Hover: slightly darker background + cursor pointer
 3. Add keyboard accessibility:
    - Focusable when in messages
    - Enter key triggers onClick
+   - ARIA label includes reference type and display text
 
 **Acceptance Criteria:**
-- MentionToken renders with type-appropriate styling
+- MentionToken renders with type-appropriate styling and colors
 - Hover shows tooltip with entity details
 - Click triggers callback
-- Keyboard accessible
-- Unit tests cover rendering and interactions
+- Keyboard accessible with ARIA labels
+- Works with `ReferenceMetadata` from message blob or falls back gracefully
+- Unit tests cover rendering, interactions, and fallback behavior
 
 **Depends on:** Task 1.1 (types)
 
@@ -60,24 +67,28 @@ Implement styled mention tokens that render @ references as visually distinct, i
 **Subtasks:**
 1. Modify `packages/web/src/components/sdk/SDKUserMessage.tsx`:
    - Add reference parsing in message content renderer
-   - Detect markdown-style mentions: `[@:type:id](displayText)`
-   - Replace with `MentionToken` components
-   - Pass resolved data from message metadata (if available)
+   - Detect `@ref{type:id}` mentions using `REFERENCE_PATTERN` from shared types
+   - Replace matches with `MentionToken` components
+   - Load `referenceMetadata` from the `sdk_message` JSON blob for display text and status
 2. Add hover preview:
-   - On hover, fetch full entity data if not already loaded
-   - Show popover with entity details
+   - On hover, fetch full entity data via `reference.resolve` RPC if not already loaded
+   - Show popover with entity details (title, status, description excerpt)
    - Add loading state while fetching
-3. Handle plain @ text:
-   - If user types @reference without autocomplete selection
-   - Render as plain text (no token styling)
-   - Optionally: attempt to resolve on render
+3. Handle edge cases:
+   - Plain `@` text without `{}` syntax: render as-is (no token)
+   - `@ref{}` with unknown type: render as plain text with warning styling
+   - Missing metadata: render token with raw id as display text
+4. Performance consideration:
+   - Use `React.memo` on MentionToken to prevent re-renders during scrolling
+   - Lazy-load hover preview data (don't fetch all references on mount)
 
 **Acceptance Criteria:**
-- @ references in user messages render as styled tokens
-- Tokens show entity details on hover
-- Plain @ text is rendered as-is
+- `@ref{type:id}` in user messages render as styled tokens
+- Tokens show entity details on hover (lazy-loaded)
+- Plain `@` text is rendered as-is
+- Missing metadata falls back to raw id display
 - No performance impact on message list scrolling
-- Unit tests cover parsing and rendering
+- Unit tests cover parsing, rendering, and fallback behavior
 
 **Depends on:** Task 4.1
 
@@ -85,68 +96,49 @@ Implement styled mention tokens that render @ references as visually distinct, i
 
 ---
 
-### Task 4.3: Implement Input Field Token Rendering
+### Task 4.3: Implement Persistence and History Display
 
-**Description:** Show styled mention tokens in the input field while composing a message, replacing the raw @ syntax.
-
-**Subtasks:**
-1. Modify `packages/web/src/components/InputTextarea.tsx`:
-   - Track mentions in input content
-   - When a reference is selected from autocomplete:
-     - Insert markdown-style mention: `[@:type:id](displayText)`
-     - Visually render as token in a contenteditable overlay
-   - Support editing around tokens
-2. Create mention state tracking:
-   - Track active mentions in the draft
-   - Provide method to get mentions for message send
-   - Clear mentions when draft is cleared
-3. Handle edge cases:
-   - Deleting part of a token (delete entire token)
-   - Cursor navigation through tokens
-   - Copy/paste with tokens
-
-**Acceptance Criteria:**
-- Selected references render as styled tokens in input
-- Tokens are treated as atomic units (delete as whole)
-- Cursor navigation works around tokens
-- Mentions are tracked for message sending
-- Unit tests cover mention state management
-
-**Depends on:** Task 2.4, Task 4.1
-
-**Agent Type:** coder
-
----
-
-### Task 4.4: Implement Persistence and History Display
-
-**Description:** Ensure @ references persist correctly in message storage and display correctly in message history.
+**Description:** Ensure @ references persist correctly in message storage and display correctly in message history, including handling of deleted or moved entities.
 
 **Subtasks:**
-1. Define persistence format in message content:
-   - Store as markdown-style: `[@:type:id](displayText)`
-   - Include resolved reference summary in message metadata
-   - Metadata structure: `{ references: { [id: string]: ResolvedReferenceSummary } }`
-2. Modify message persistence in `SDKMessageRepository`:
-   - Store reference metadata alongside message content
-   - Enable reconstruction of resolved data on load
-3. Update message loading in frontend:
-   - Load reference metadata with messages
-   - Pre-populate mention tokens with resolved data
-   - Fall back to plain text if metadata missing (backward compat)
-4. Handle entity changes:
-   - Task/goal deleted: show "deleted" state
-   - Task/goal status changed: show current status on hover
-   - File moved/deleted: show "file not found" state
+1. Persistence format (no schema migration needed):
+   - Message content stores `@ref{type:id}` inline (human-readable, survives plain-text rendering)
+   - `referenceMetadata` is embedded in the `sdk_message` JSON blob (which already stores the full SDK message as JSON):
+     ```json
+     {
+       "role": "user",
+       "content": "Fix @ref{task:t-42} and update @ref{file:src/lib.ts}",
+       "referenceMetadata": {
+         "task:t-42": { "type": "task", "id": "...", "displayText": "t-42: Fix auth bug", "status": "in_progress" },
+         "file:src/lib.ts": { "type": "file", "id": "src/lib.ts", "displayText": "src/lib.ts" }
+       }
+     }
+     ```
+   - This approach avoids any schema migration to `sdk_messages` table
+2. Update message loading in frontend:
+   - When rendering historical messages, extract `referenceMetadata` from the `sdk_message` JSON blob
+   - Pass metadata to `MentionToken` components
+   - Fall back to plain text if metadata is missing (backward compatible with messages before this feature)
+3. Handle entity state changes:
+   - Task/goal deleted: show token with "deleted" styling (strikethrough or faded) and tooltip saying "This task has been deleted"
+   - Task/goal status changed: show current status from metadata (the metadata captures the status at send time — for live status, hover triggers a `reference.resolve` RPC call)
+   - File moved/deleted: show token with "not found" styling and tooltip saying "File not found"
+4. Backward compatibility:
+   - Messages before this feature have no `referenceMetadata` — render `@ref{}` as plain text
+   - The `REFERENCE_PATTERN` regex simply won't match old messages (no `@ref{}` syntax)
 
 **Acceptance Criteria:**
-- References persist correctly in database
-- Historical messages display references correctly
-- Deleted entities show appropriate state
-- Backward compatible with messages before feature
-- Unit tests cover persistence and loading
+- References persist correctly in database (content + metadata in JSON blob)
+- Historical messages display references correctly with metadata
+- Deleted entities show appropriate visual state
+- Status changes are detectable via hover RPC
+- File moves/deletions show "not found" state
+- Messages before this feature render without errors (backward compatible)
+- No schema migration required
+- Unit tests cover persistence format, loading, entity state changes, and backward compatibility
+- Test file: `packages/daemon/tests/unit/reference-message-persistence.test.ts`
 
-**Depends on:** Task 4.2, Task 4.3
+**Depends on:** Task 4.2
 
 **Agent Type:** coder
 
@@ -154,8 +146,9 @@ Implement styled mention tokens that render @ references as visually distinct, i
 
 ## Notes
 
-- The input field token rendering is complex and may need a contenteditable overlay approach
-- Consider using a simpler approach: show raw text in textarea, render tokens in a preview overlay
-- Persistence uses markdown-style syntax for portability and readability
-- Reference metadata in messages enables rich display without re-resolving on every load
-- Consider expiration for reference metadata (re-resolve if too old)
+- The native `<textarea>` is NOT modified for token rendering — it shows raw `@ref{type:id}` text
+- A subtle visual indicator (e.g., distinct text color for content between `@ref{` and `}`) is handled in M2 Task 2.3
+- The `@ref{}` syntax was specifically chosen to not collide with markdown links
+- Persistence uses the existing `sdk_message` JSON column — no schema migration needed
+- Reference metadata captures entity state at send-time; live state is fetched on demand via hover
+- Consider metadata expiration: if metadata is older than 24h, re-resolve on hover to get fresh state
