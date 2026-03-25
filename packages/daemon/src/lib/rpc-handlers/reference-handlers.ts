@@ -274,10 +274,7 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 
 			try {
 				// Fetch extra entries to account for post-search type filtering
-				const fileEntries = fileIndex.search(
-					query,
-					RESULTS_PER_CATEGORY * fileTypes.length * 2
-				);
+				const fileEntries = fileIndex.search(query, RESULTS_PER_CATEGORY * fileTypes.length * 2);
 				// Filter to requested types and enforce per-type limit
 				const byType = new Map<string, number>([
 					['file', 0],
