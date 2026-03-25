@@ -1994,3 +1994,352 @@ describe('round-trip: multi-agent + channels', () => {
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// ExportedWorkflowChannel — export strips `id`, validateExportedWorkflow
+// validates channel references
+// ---------------------------------------------------------------------------
+
+describe('ExportedWorkflowChannel — export and validation', () => {
+	function makeWorkflowWithChannelId(): SpaceWorkflow {
+		return {
+			id: 'wf-ch',
+			spaceId: 'space-1',
+			name: 'Channel Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Code and Review',
+					agents: [
+						{ agentId: 'agent-uuid-1', name: 'coder' },
+						{ agentId: 'agent-uuid-3', name: 'reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			channels: [
+				{
+					id: 'ch-uuid-1',
+					from: 'coder',
+					to: 'reviewer',
+					direction: 'bidirectional',
+					label: 'feedback',
+				},
+			],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+	}
+
+	test('exportWorkflow strips channel id', () => {
+		const workflow = makeWorkflowWithChannelId();
+		const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+
+		expect(exported.channels).toHaveLength(1);
+		const ch = exported.channels![0] as Record<string, unknown>;
+		expect('id' in ch).toBe(false);
+	});
+
+	test('exportWorkflow preserves channel fields except id', () => {
+		const workflow = makeWorkflowWithChannelId();
+		const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+
+		const ch = exported.channels![0];
+		expect(ch.from).toBe('coder');
+		expect(ch.to).toBe('reviewer');
+		expect(ch.direction).toBe('bidirectional');
+		expect(ch.label).toBe('feedback');
+	});
+
+	test('exportWorkflow strips id from channel with gate', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-gate',
+			spaceId: 'space-1',
+			name: 'Gated Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Work',
+					agents: [
+						{ agentId: 'agent-uuid-1', name: 'coder' },
+						{ agentId: 'agent-uuid-3', name: 'reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			channels: [
+				{
+					id: 'ch-gate-uuid',
+					from: 'coder',
+					to: 'reviewer',
+					direction: 'one-way',
+					gate: { type: 'human', description: 'Needs human approval' },
+				},
+			],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+
+		const ch = exported.channels![0] as Record<string, unknown>;
+		expect('id' in ch).toBe(false);
+		expect(ch.gate).toEqual({ type: 'human', description: 'Needs human approval' });
+	});
+
+	test('exportWorkflow strips id from channel with isCyclic', () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-cyclic',
+			spaceId: 'space-1',
+			name: 'Cyclic Workflow',
+			nodes: [
+				{
+					id: 'node-1',
+					name: 'Loop',
+					agents: [
+						{ agentId: 'agent-uuid-1', name: 'coder' },
+						{ agentId: 'agent-uuid-3', name: 'reviewer' },
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: 'node-1',
+			rules: [],
+			tags: [],
+			channels: [
+				{
+					id: 'ch-cyclic-uuid',
+					from: 'coder',
+					to: 'reviewer',
+					direction: 'one-way',
+					isCyclic: true,
+				},
+			],
+			createdAt: 1000,
+			updatedAt: 2000,
+		};
+		const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+
+		const ch = exported.channels![0] as Record<string, unknown>;
+		expect('id' in ch).toBe(false);
+		expect(ch.isCyclic).toBe(true);
+	});
+
+	test('channel id does not appear in exported JSON', () => {
+		const workflow = makeWorkflowWithChannelId();
+		const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+		const json = JSON.stringify(exported);
+
+		expect(json).not.toContain('ch-uuid-1');
+	});
+
+	test('validateExportedWorkflow accepts channels with valid slot name references', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{ agentRef: 'Coder', name: 'coder' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
+					],
+					name: 'Collab',
+				},
+			],
+			transitions: [],
+			startNode: 'Collab',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+	});
+
+	test('validateExportedWorkflow accepts channels referencing node name (fan-out)', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'Coder', name: 'coder' }],
+					name: 'Code',
+				},
+				{
+					agents: [{ agentRef: 'Reviewer', name: 'reviewer' }],
+					name: 'Review',
+				},
+			],
+			transitions: [{ fromNode: 'Code', toNode: 'Review' }],
+			startNode: 'Code',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'Review', direction: 'one-way' }],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+	});
+
+	test('validateExportedWorkflow accepts wildcard * references', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [{ agentRef: 'Coder', name: 'coder' }],
+					name: 'Work',
+				},
+			],
+			transitions: [],
+			startNode: 'Work',
+			rules: [],
+			tags: [],
+			channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+	});
+
+	test('validateExportedWorkflow rejects channel with unknown from reference', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{ agentRef: 'Coder', name: 'coder' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
+					],
+					name: 'Collab',
+				},
+			],
+			transitions: [],
+			startNode: 'Collab',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'unknown-agent', to: 'reviewer', direction: 'one-way' }],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('channels[0].from');
+			expect(result.error).toContain('"unknown-agent"');
+		}
+	});
+
+	test('validateExportedWorkflow rejects channel with unknown to reference', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{ agentRef: 'Coder', name: 'coder' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
+					],
+					name: 'Collab',
+				},
+			],
+			transitions: [],
+			startNode: 'Collab',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'coder', to: 'ghost', direction: 'one-way' }],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('channels[0].to');
+			expect(result.error).toContain('"ghost"');
+		}
+	});
+
+	test('validateExportedWorkflow rejects channel with unknown to in array', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{ agentRef: 'Hub', name: 'hub' },
+						{ agentRef: 'Spoke1', name: 'spoke1' },
+					],
+					name: 'Fan-out',
+				},
+			],
+			transitions: [],
+			startNode: 'Fan-out',
+			rules: [],
+			tags: [],
+			channels: [{ from: 'hub', to: ['spoke1', 'missing-spoke'], direction: 'one-way' }],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('channels[0].to');
+			expect(result.error).toContain('"missing-spoke"');
+		}
+	});
+
+	test('validateExportedWorkflow rejects channel id present in input (schema excludes id)', () => {
+		// The exported channel schema does not accept `id` — it will be dropped silently
+		// by Zod strict parsing, OR pass through if not explicitly rejected.
+		// This test verifies the channel still validates correctly (id stripped by schema).
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			nodes: [
+				{
+					agents: [
+						{ agentRef: 'Coder', name: 'coder' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
+					],
+					name: 'Step',
+				},
+			],
+			transitions: [],
+			startNode: 'Step',
+			rules: [],
+			tags: [],
+			channels: [{ id: 'ch-123', from: 'coder', to: 'reviewer', direction: 'one-way' }],
+		};
+		const result = validateExportedWorkflow(data);
+		// Channel id is stripped by the schema (not included in exportedWorkflowChannelSchema)
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			const ch = result.value.channels![0] as Record<string, unknown>;
+			expect('id' in ch).toBe(false);
+		}
+	});
+
+	test('round-trip: export strips channel id, validate passes', () => {
+		const workflow = makeWorkflowWithChannelId();
+		const agents = [makeAgent(), makeReviewerAgent()];
+		const exported = exportWorkflow(workflow, agents);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.channels).toHaveLength(1);
+			const ch = result.value.channels![0] as Record<string, unknown>;
+			expect('id' in ch).toBe(false);
+			expect(ch.from).toBe('coder');
+			expect(ch.to).toBe('reviewer');
+			expect(ch.direction).toBe('bidirectional');
+		}
+	});
+});

@@ -23,6 +23,7 @@ import type {
 	SpaceWorkflow,
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
+	ExportedWorkflowChannel,
 	ExportedWorkflowNode,
 	ExportedWorkflowNodeAgent,
 	ExportedWorkflowTransition,
@@ -67,22 +68,18 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	instructions: z.string().optional(),
 });
 
-const workflowChannelSchema = z.object({
-	id: z.string().optional(),
+/**
+ * Zod schema for an exported workflow channel.
+ * Differs from the runtime WorkflowChannel schema: `id` is intentionally absent
+ * since channel IDs are space-specific and stripped during export.
+ */
+const exportedWorkflowChannelSchema = z.object({
 	from: z.string().min(1),
 	to: z.union([z.string().min(1), z.array(z.string().min(1))]),
 	direction: z.enum(['one-way', 'bidirectional']),
 	isCyclic: z.boolean().optional(),
 	label: z.string().optional(),
-	gate: z
-		.object({
-			type: z.enum(['always', 'human', 'condition', 'task_result']),
-			expression: z.string().optional(),
-			description: z.string().optional(),
-			maxRetries: z.number().int().nonnegative().optional(),
-			timeoutMs: z.number().int().nonnegative().optional(),
-		})
-		.optional(),
+	gate: workflowConditionSchema.optional(),
 });
 
 const exportedWorkflowNodeSchema = z
@@ -151,7 +148,7 @@ const exportedWorkflowBaseSchema = z.object({
 	rules: z.array(exportedWorkflowRuleSchema),
 	tags: z.array(z.string()),
 	config: z.record(z.string(), z.unknown()).optional(),
-	channels: z.array(workflowChannelSchema).optional(),
+	channels: z.array(exportedWorkflowChannelSchema).optional(),
 });
 
 const exportBundleBaseSchema = z.object({
@@ -314,7 +311,21 @@ export function exportWorkflow(
 	};
 	if (workflow.description !== undefined) result.description = workflow.description;
 	if (workflow.config !== undefined) result.config = workflow.config;
-	if (workflow.channels && workflow.channels.length > 0) result.channels = workflow.channels;
+	// Export channels — strip `id` (space-specific) and convert to portable ExportedWorkflowChannel format
+	if (workflow.channels && workflow.channels.length > 0) {
+		const exportedChannels: ExportedWorkflowChannel[] = workflow.channels.map((ch) => {
+			const exported: ExportedWorkflowChannel = {
+				from: ch.from,
+				to: ch.to,
+				direction: ch.direction,
+			};
+			if (ch.isCyclic !== undefined) exported.isCyclic = ch.isCyclic;
+			if (ch.label !== undefined) exported.label = ch.label;
+			if (ch.gate !== undefined) exported.gate = ch.gate;
+			return exported;
+		});
+		result.channels = exportedChannels;
+	}
 	return result;
 }
 
@@ -415,6 +426,40 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
 				ok: false,
 				error: `invalid: transitions[${i}].toNode "${t.toNode}" does not reference a known node name`,
 			};
+		}
+	}
+
+	// Channel from/to must reference known node names, agent slot names, or '*' wildcard.
+	// Build valid name set: '*' + all node names + all agent slot names (agents[].name).
+	// Single-agent nodes (agentRef shorthand) use the node name for fan-out targeting.
+	if (result.data.channels && result.data.channels.length > 0) {
+		const validChannelNames = new Set<string>(['*']);
+		for (const node of result.data.nodes) {
+			validChannelNames.add(node.name);
+			if (node.agents) {
+				for (const a of node.agents) {
+					validChannelNames.add(a.name);
+				}
+			}
+		}
+		for (let ci = 0; ci < result.data.channels.length; ci++) {
+			const ch = result.data.channels[ci];
+			const loc = `channels[${ci}]`;
+			if (!validChannelNames.has(ch.from)) {
+				return {
+					ok: false,
+					error: `invalid: ${loc}.from "${ch.from}" does not reference a known agent slot name or node name`,
+				};
+			}
+			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+			for (let ti = 0; ti < toList.length; ti++) {
+				if (!validChannelNames.has(toList[ti])) {
+					return {
+						ok: false,
+						error: `invalid: ${loc}.to[${ti}] "${toList[ti]}" does not reference a known agent slot name or node name`,
+					};
+				}
+			}
 		}
 	}
 
