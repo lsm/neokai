@@ -66,8 +66,8 @@ vi.mock('../../../lib/toast.ts', () => ({
 	},
 }));
 
-// Mock Modal component
-vi.mock('../ui/Modal.tsx', () => ({
+// Mock Modal component - correct path from __tests__/ is ../../ui/Modal.tsx
+vi.mock('../../ui/Modal.tsx', () => ({
 	Modal: ({
 		isOpen,
 		onClose,
@@ -90,8 +90,8 @@ vi.mock('../ui/Modal.tsx', () => ({
 		) : null,
 }));
 
-// Mock ConfirmModal component
-vi.mock('../ui/ConfirmModal.tsx', () => ({
+// Mock ConfirmModal component - correct path from __tests__/ is ../../ui/ConfirmModal.tsx
+vi.mock('../../ui/ConfirmModal.tsx', () => ({
 	ConfirmModal: ({
 		isOpen,
 		onClose,
@@ -157,8 +157,8 @@ vi.mock('../SettingsSection.tsx', () => ({
 	),
 }));
 
-// Mock Button component
-vi.mock('../ui/Button.tsx', () => ({
+// Mock Button component - correct path from __tests__/ is ../../ui/Button.tsx
+vi.mock('../../ui/Button.tsx', () => ({
 	Button: ({
 		children,
 		variant,
@@ -329,81 +329,411 @@ describe('AppMcpServersSettings', () => {
 	});
 
 	describe('Add Server Form', () => {
-		it('should have Add MCP Server button', () => {
+		it('should open add form modal when Add MCP Server button is clicked', () => {
+			appMcpStore.appMcpServers.value = [];
 			render(<AppMcpServersSettings />);
 
-			expect(screen.getByText('Add MCP Server')).toBeTruthy();
+			fireEvent.click(screen.getByText('Add MCP Server'));
+
+			expect(screen.getByTestId('modal')).toBeTruthy();
+			expect(screen.getByTestId('modal-title').textContent).toBe('Add MCP Server');
+		});
+
+		it('should close form when Cancel button is clicked', () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			fireEvent.click(screen.getByText('Add MCP Server'));
+			expect(screen.getByTestId('modal')).toBeTruthy();
+
+			// Use text content to find the cancel button inside the modal
+			fireEvent.click(screen.getByText('Cancel'));
+			expect(screen.queryByTestId('modal')).toBeNull();
+		});
+
+		it('should call createAppMcpServer with correct data when form is submitted', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form
+			fireEvent.click(screen.getByText('Add MCP Server'));
+
+			// Fill in name
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'test-server' } });
+
+			// Fill in command (stdio type is default)
+			const commandInput = screen.getByPlaceholderText('e.g., npx');
+			fireEvent.change(commandInput, { target: { value: 'npx' } });
+
+			// Submit form - use the text inside the modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(mockCreateAppMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({
+						name: 'test-server',
+						sourceType: 'stdio',
+						command: 'npx',
+					})
+				);
+			});
+		});
+
+		it('should show validation error when name is empty', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form
+			fireEvent.click(screen.getByText('Add MCP Server'));
+
+			// Try to submit without filling name - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(screen.getByText('Name is required')).toBeTruthy();
+			});
+			expect(mockCreateAppMcpServer).not.toHaveBeenCalled();
+		});
+
+		it('should show validation error when command is empty for stdio type', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form
+			fireEvent.click(screen.getByText('Add MCP Server'));
+
+			// Fill name but not command
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'test-server' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(screen.getByText('Command is required for stdio servers')).toBeTruthy();
+			});
+			expect(mockCreateAppMcpServer).not.toHaveBeenCalled();
+		});
+
+		it('should show success toast after adding server', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form and fill required fields
+			fireEvent.click(screen.getByText('Add MCP Server'));
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'test-server' } });
+			const commandInput = screen.getByPlaceholderText('e.g., npx');
+			fireEvent.change(commandInput, { target: { value: 'npx' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(mockToastSuccess).toHaveBeenCalledWith('Added "test-server"');
+			});
+		});
+
+		it('should close modal after successful add', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form and fill required fields
+			fireEvent.click(screen.getByText('Add MCP Server'));
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'test-server' } });
+			const commandInput = screen.getByPlaceholderText('e.g., npx');
+			fireEvent.change(commandInput, { target: { value: 'npx' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(screen.queryByTestId('modal')).toBeNull();
+			});
+		});
+
+		it('should show error toast when add fails', async () => {
+			appMcpStore.appMcpServers.value = [];
+			mockCreateAppMcpServer.mockRejectedValueOnce(new Error('Failed to add server'));
+			render(<AppMcpServersSettings />);
+
+			// Open form and fill required fields
+			fireEvent.click(screen.getByText('Add MCP Server'));
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'test-server' } });
+			const commandInput = screen.getByPlaceholderText('e.g., npx');
+			fireEvent.change(commandInput, { target: { value: 'npx' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Failed to add server');
+			});
 		});
 	});
 
 	describe('Edit Server', () => {
-		it('should show edit and delete buttons for servers', () => {
-			const servers = [makeServer('1', { name: 'test-server' })];
+		it('should open edit form with pre-populated data when Edit button is clicked', () => {
+			const servers = [
+				makeServer('1', { name: 'test-server', command: 'npx', description: 'Test desc' }),
+			];
 			appMcpStore.appMcpServers.value = servers;
-
 			render(<AppMcpServersSettings />);
 
-			expect(screen.getByTitle('Edit')).toBeTruthy();
-			expect(screen.getByTitle('Delete')).toBeTruthy();
+			fireEvent.click(screen.getByTitle('Edit'));
+
+			expect(screen.getByTestId('modal')).toBeTruthy();
+			expect(screen.getByTestId('modal-title').textContent).toBe('Edit MCP Server');
+			// Name should be pre-populated
+			expect((screen.getByDisplayValue('test-server') as HTMLInputElement).value).toBe(
+				'test-server'
+			);
+		});
+
+		it('should call updateAppMcpServer with correct data when form is submitted', async () => {
+			const servers = [makeServer('1', { name: 'old-name', command: 'npx' })];
+			appMcpStore.appMcpServers.value = servers;
+			render(<AppMcpServersSettings />);
+
+			// Open edit form
+			fireEvent.click(screen.getByTitle('Edit'));
+
+			// Change name
+			const nameInput = screen.getByDisplayValue('old-name');
+			fireEvent.change(nameInput, { target: { value: 'updated-name' } });
+
+			// Submit form - use Save Changes text inside modal
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			await waitFor(() => {
+				expect(mockUpdateAppMcpServer).toHaveBeenCalledWith(
+					'1',
+					expect.objectContaining({
+						name: 'updated-name',
+					})
+				);
+			});
+		});
+
+		it('should show success toast after updating server', async () => {
+			const servers = [makeServer('1', { name: 'test-server', command: 'npx' })];
+			appMcpStore.appMcpServers.value = servers;
+			render(<AppMcpServersSettings />);
+
+			// Open edit form and change name
+			fireEvent.click(screen.getByTitle('Edit'));
+			const nameInput = screen.getByDisplayValue('test-server');
+			fireEvent.change(nameInput, { target: { value: 'new-name' } });
+
+			// Submit form - use Save Changes text inside modal
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			await waitFor(() => {
+				expect(mockToastSuccess).toHaveBeenCalledWith('Updated "new-name"');
+			});
 		});
 	});
 
 	describe('Delete Confirmation', () => {
-		it('should show delete button that triggers confirmation state', () => {
+		it('should show delete confirmation modal when Delete button is clicked', () => {
 			const servers = [makeServer('1', { name: 'test-server' })];
 			appMcpStore.appMcpServers.value = servers;
-
 			render(<AppMcpServersSettings />);
 
-			// Delete button exists and is clickable
-			const deleteButton = screen.getByTitle('Delete');
-			expect(deleteButton).toBeTruthy();
+			fireEvent.click(screen.getByTitle('Delete'));
+
+			expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+			expect(screen.getByTestId('confirm-title').textContent).toBe('Delete MCP Server');
+			expect(screen.getByTestId('confirm-message').textContent).toContain('test-server');
+		});
+
+		it('should close confirmation modal when Cancel is clicked', () => {
+			const servers = [makeServer('1', { name: 'test-server' })];
+			appMcpStore.appMcpServers.value = servers;
+			render(<AppMcpServersSettings />);
+
+			fireEvent.click(screen.getByTitle('Delete'));
+			expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+
+			fireEvent.click(screen.getByTestId('confirm-cancel'));
+			expect(screen.queryByTestId('confirm-modal')).toBeNull();
+		});
+
+		it('should call deleteAppMcpServer when confirm delete is clicked', async () => {
+			const servers = [makeServer('1', { name: 'test-server' })];
+			appMcpStore.appMcpServers.value = servers;
+			render(<AppMcpServersSettings />);
+
+			fireEvent.click(screen.getByTitle('Delete'));
+			fireEvent.click(screen.getByTestId('confirm-ok'));
+
+			await waitFor(() => {
+				expect(mockDeleteAppMcpServer).toHaveBeenCalledWith('1');
+			});
+		});
+
+		it('should show success toast after deleting server', async () => {
+			const servers = [makeServer('1', { name: 'test-server' })];
+			appMcpStore.appMcpServers.value = servers;
+			render(<AppMcpServersSettings />);
+
+			fireEvent.click(screen.getByTitle('Delete'));
+			fireEvent.click(screen.getByTestId('confirm-ok'));
+
+			await waitFor(() => {
+				expect(mockToastSuccess).toHaveBeenCalledWith('Deleted "test-server"');
+			});
+		});
+
+		it('should close confirmation modal after successful delete', async () => {
+			const servers = [makeServer('1', { name: 'test-server' })];
+			appMcpStore.appMcpServers.value = servers;
+			render(<AppMcpServersSettings />);
+
+			fireEvent.click(screen.getByTitle('Delete'));
+			expect(screen.getByTestId('confirm-modal')).toBeTruthy();
+
+			fireEvent.click(screen.getByTestId('confirm-ok'));
+
+			await waitFor(() => {
+				expect(screen.queryByTestId('confirm-modal')).toBeNull();
+			});
+		});
+
+		it('should show error toast when delete fails', async () => {
+			const servers = [makeServer('1', { name: 'test-server' })];
+			appMcpStore.appMcpServers.value = servers;
+			mockDeleteAppMcpServer.mockRejectedValueOnce(new Error('Delete failed'));
+			render(<AppMcpServersSettings />);
+
+			fireEvent.click(screen.getByTitle('Delete'));
+			fireEvent.click(screen.getByTestId('confirm-ok'));
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Delete failed');
+			});
 		});
 	});
 
 	describe('Toggle', () => {
-		it('should render toggle for each server', () => {
+		it('should call setAppMcpServerEnabled when toggle is clicked', async () => {
 			const servers = [makeServer('1', { name: 'test-server', enabled: true })];
 			appMcpStore.appMcpServers.value = servers;
-
 			render(<AppMcpServersSettings />);
 
 			const toggle = screen.getByTestId('settings-toggle');
-			expect(toggle).toBeTruthy();
-			expect(toggle.getAttribute('data-checked')).toBe('true');
+			fireEvent.click(toggle);
+
+			await waitFor(() => {
+				expect(mockSetAppMcpServerEnabled).toHaveBeenCalledWith('1', false);
+			});
 		});
 
-		it('should render toggle as unchecked when server is disabled', () => {
-			const servers = [makeServer('1', { name: 'test-server', enabled: false })];
+		it('should show success toast after toggling', async () => {
+			const servers = [makeServer('1', { name: 'test-server', enabled: true })];
 			appMcpStore.appMcpServers.value = servers;
-
 			render(<AppMcpServersSettings />);
 
 			const toggle = screen.getByTestId('settings-toggle');
-			expect(toggle.getAttribute('data-checked')).toBe('false');
+			fireEvent.click(toggle);
+
+			await waitFor(() => {
+				expect(mockToastSuccess).toHaveBeenCalledWith('Disabled "test-server"');
+			});
+		});
+
+		it('should show error toast when toggle fails', async () => {
+			const servers = [makeServer('1', { name: 'test-server', enabled: true })];
+			appMcpStore.appMcpServers.value = servers;
+			mockSetAppMcpServerEnabled.mockRejectedValueOnce(new Error('Toggle failed'));
+			render(<AppMcpServersSettings />);
+
+			const toggle = screen.getByTestId('settings-toggle');
+			fireEvent.click(toggle);
+
+			await waitFor(() => {
+				expect(mockToastError).toHaveBeenCalledWith('Toggle failed');
+			});
 		});
 	});
 
-	describe('API Mock Behavior', () => {
-		it('mock createAppMcpServer is a function', () => {
-			expect(typeof mockCreateAppMcpServer).toBe('function');
+	describe('HTTP/SSE Server Validation', () => {
+		it('should require URL for SSE source type', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form
+			fireEvent.click(screen.getByText('Add MCP Server'));
+
+			// Select SSE type using the select element
+			const selectEl = screen.getByRole('combobox');
+			fireEvent.change(selectEl, { target: { value: 'sse' } });
+
+			// Fill name but not URL
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'sse-server' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(screen.getByText('URL is required for SSE/HTTP servers')).toBeTruthy();
+			});
+			expect(mockCreateAppMcpServer).not.toHaveBeenCalled();
 		});
 
-		it('mock updateAppMcpServer is a function', () => {
-			expect(typeof mockUpdateAppMcpServer).toBe('function');
+		it('should require URL for HTTP source type', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
+
+			// Open form
+			fireEvent.click(screen.getByText('Add MCP Server'));
+
+			// Select HTTP type
+			const selectEl = screen.getByRole('combobox');
+			fireEvent.change(selectEl, { target: { value: 'http' } });
+
+			// Fill name but not URL
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'http-server' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(screen.getByText('URL is required for SSE/HTTP servers')).toBeTruthy();
+			});
+			expect(mockCreateAppMcpServer).not.toHaveBeenCalled();
 		});
 
-		it('mock deleteAppMcpServer is a function', () => {
-			expect(typeof mockDeleteAppMcpServer).toBe('function');
-		});
+		it('should validate URL format for HTTP source type', async () => {
+			appMcpStore.appMcpServers.value = [];
+			render(<AppMcpServersSettings />);
 
-		it('mock setAppMcpServerEnabled is a function', () => {
-			expect(typeof mockSetAppMcpServerEnabled).toBe('function');
-		});
+			// Open form
+			fireEvent.click(screen.getByText('Add MCP Server'));
 
-		it('should have toast error and success mocks', () => {
-			expect(typeof mockToastError).toBe('function');
-			expect(typeof mockToastSuccess).toBe('function');
+			// Select HTTP type
+			const selectEl = screen.getByRole('combobox');
+			fireEvent.change(selectEl, { target: { value: 'http' } });
+
+			// Fill name and invalid URL
+			const nameInput = screen.getByPlaceholderText('e.g., brave-search');
+			fireEvent.change(nameInput, { target: { value: 'http-server' } });
+
+			const urlInput = screen.getByPlaceholderText('e.g., http://localhost:8080/sse');
+			fireEvent.change(urlInput, { target: { value: 'invalid-url' } });
+
+			// Submit form - click Add Server inside modal
+			fireEvent.click(screen.getByText('Add Server'));
+
+			await waitFor(() => {
+				expect(screen.getByText('URL must start with http:// or https://')).toBeTruthy();
+			});
+			expect(mockCreateAppMcpServer).not.toHaveBeenCalled();
 		});
 	});
 });
