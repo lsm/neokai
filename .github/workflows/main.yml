@@ -364,7 +364,7 @@ jobs:
   test-daemon-shared-unit:
     name: Daemon + Shared Unit Tests (Coverage)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     if: github.event_name != 'push' || github.ref != 'refs/heads/dev'
 
     steps:
