@@ -488,13 +488,15 @@ export function setupTaskHandlers(
 		// Clear group rate limit when resuming from a rate/usage limited state.
 		// This is a separate block (not inside the restart block above) because
 		// rate_limited/usage_limited tasks are NOT covered by the restart block.
+		// Note: pending is only reachable from these statuses in manual mode
+		// (VALID_STATUS_TRANSITIONS only allows in_progress in runtime mode).
 		if (
 			(task.status === 'usage_limited' || task.status === 'rate_limited') &&
 			(params.status === 'in_progress' || params.status === 'pending')
 		) {
 			const runtime = runtimeService?.getRuntime(params.roomId);
 			if (runtime) {
-				runtime.clearGroupRateLimit(taskId);
+				await runtime.clearGroupRateLimit(taskId);
 			}
 		}
 
