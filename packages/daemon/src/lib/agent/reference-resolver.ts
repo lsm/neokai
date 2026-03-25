@@ -1,0 +1,393 @@
+/**
+ * ReferenceResolver — Core service for parsing and resolving @ references
+ *
+ * Handles extracting @ref{} mentions from text and resolving them to their
+ * full entity data. Currently implements file and folder resolvers.
+ * Task and goal resolvers are stubbed (see Task 3.1).
+ *
+ * Path validation enforced for file/folder references:
+ *   - Empty paths are rejected
+ *   - Paths containing `..` are rejected
+ *   - Absolute paths (starting with `/`) are rejected
+ *   - Symlinks that resolve outside the workspace are rejected
+ *
+ * Security note — TOCTOU:
+ *   There is an inherent time-of-check/time-of-use gap between `checkSymlink()`
+ *   (which calls `realpath`) and the subsequent `FileManager.readFile()` /
+ *   `listDirectory()`. An attacker with write access to the workspace could swap a
+ *   symlink in that window. In practice this is low-severity for a chat application
+ *   where the user owns the workspace. The defense-in-depth is:
+ *   1. `checkSymlink` rejects symlinks pointing outside the workspace at check time.
+ *   2. `FileManager.validatePath()` re-checks path containment via
+ *      `normalize(join(workspacePath, path))` at use time, which handles non-symlink
+ *      traversal but does NOT re-resolve symlinks.
+ *   3. The race window is extremely narrow (microseconds).
+ *
+ * Usage:
+ *   const resolver = new ReferenceResolver();
+ *   const mentions = resolver.extractReferences('@ref{file:src/utils.ts}');
+ *   const resolved = await resolver.resolveAllReferences(text, { workspacePath });
+ */
+
+import { join, normalize, relative, isAbsolute } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { FileManager } from '../file-manager.ts';
+import type {
+	ReferenceMention,
+	ResolvedReference,
+	ResolvedFileReference,
+	ResolvedFolderReference,
+	ReferenceType,
+} from '@neokai/shared';
+import { REFERENCE_PATTERN } from '@neokai/shared';
+import { Logger } from '../logger.ts';
+
+const log = new Logger('reference-resolver');
+
+/** Max file content size (50KB) before truncation at line boundary */
+const MAX_FILE_SIZE = 50 * 1024;
+
+/** Max number of directory entries returned for folder references */
+const MAX_FOLDER_ENTRIES = 200;
+
+/**
+ * Context for resolving references — provides session-scoped information.
+ * File/folder resolution only requires workspacePath.
+ * Task/goal resolution (Task 3.1) will use roomId and spaceId.
+ */
+export interface ResolutionContext {
+	roomId?: string;
+	spaceId?: string;
+	workspacePath: string;
+}
+
+export class ReferenceResolver {
+	/**
+	 * Extract all @ref{} mentions from a text string.
+	 * Returns deduplicated mentions in order of appearance.
+	 */
+	extractReferences(text: string): ReferenceMention[] {
+		const mentions: ReferenceMention[] = [];
+		const seen = new Set<string>();
+		// REFERENCE_PATTERN has the g flag but we construct a fresh instance to
+		// avoid shared lastIndex state if REFERENCE_PATTERN is reused elsewhere.
+		const pattern = new RegExp(REFERENCE_PATTERN.source, 'g');
+		let match: RegExpExecArray | null;
+
+		while ((match = pattern.exec(text)) !== null) {
+			const [fullMatch, typeRaw, id] = match;
+
+			if (!this.isValidReferenceType(typeRaw)) {
+				continue;
+			}
+
+			if (seen.has(fullMatch)) continue;
+			seen.add(fullMatch);
+
+			mentions.push({
+				type: typeRaw as ReferenceType,
+				id,
+				displayText: fullMatch,
+			});
+		}
+
+		return mentions;
+	}
+
+	/**
+	 * Resolve a single reference mention to its full data.
+	 * Returns null if the reference cannot be resolved (not found, invalid path, etc.)
+	 */
+	async resolveReference(
+		mention: ReferenceMention,
+		context: ResolutionContext
+	): Promise<ResolvedReference | null> {
+		switch (mention.type) {
+			case 'file':
+				return this.resolveFile(mention.id, context);
+			case 'folder':
+				return this.resolveFolder(mention.id, context);
+			case 'task':
+			case 'goal':
+				// Implemented by Task 3.1 — task/goal resolvers
+				return null;
+			default: {
+				const _exhaustive: never = mention.type;
+				log.warn(`Unknown reference type: ${_exhaustive}`);
+				return null;
+			}
+		}
+	}
+
+	/**
+	 * Extract and resolve all @ref{} mentions in a text string.
+	 * Partial failures are swallowed — failed resolutions are excluded from results.
+	 * Returns a map from the full @ref{} string to its resolved data.
+	 */
+	async resolveAllReferences(
+		text: string,
+		context: ResolutionContext
+	): Promise<Record<string, ResolvedReference>> {
+		const mentions = this.extractReferences(text);
+		const result: Record<string, ResolvedReference> = {};
+
+		for (const mention of mentions) {
+			try {
+				const resolved = await this.resolveReference(mention, context);
+				if (resolved !== null) {
+					result[mention.displayText] = resolved;
+				}
+			} catch (err) {
+				log.warn(`Failed to resolve reference ${mention.displayText}: ${err}`);
+			}
+		}
+
+		return result;
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Path validation
+	// ────────────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Pre-validate a file path before passing to FileManager.
+	 * Throws with a descriptive error for security violations.
+	 */
+	private validatePath(filePath: string): void {
+		// Reject empty paths
+		if (filePath === '' || filePath.trim() === '') {
+			throw new Error('Path must not be empty');
+		}
+
+		// Reject absolute paths
+		if (isAbsolute(filePath)) {
+			throw new Error(`Absolute paths are not allowed: ${filePath}`);
+		}
+
+		// Reject any path component that is `..`
+		// Split on both POSIX and Windows separators for safety
+		const segments = filePath.split(/[/\\]/);
+		if (segments.includes('..')) {
+			throw new Error(`Path traversal detected: ${filePath}`);
+		}
+	}
+
+	/**
+	 * Verify that a resolved absolute path (after symlink expansion) stays
+	 * within the workspace root. Throws if a symlink escapes the workspace.
+	 *
+	 * No-ops when the path does not exist (lets FileManager produce the
+	 * appropriate "file not found" error).
+	 *
+	 * Note: This check has a TOCTOU window — see module-level security note.
+	 */
+	private async checkSymlink(absolutePath: string, workspacePath: string): Promise<void> {
+		let resolvedPath: string;
+		try {
+			resolvedPath = await realpath(absolutePath);
+		} catch {
+			// Path doesn't exist — let FileManager produce the canonical error
+			return;
+		}
+
+		// Resolve workspace symlinks too (e.g. macOS /tmp → /private/tmp)
+		let resolvedWorkspace: string;
+		try {
+			resolvedWorkspace = await realpath(workspacePath);
+		} catch {
+			resolvedWorkspace = normalize(workspacePath);
+		}
+
+		const rel = relative(resolvedWorkspace, resolvedPath);
+
+		// rel starts with '..' → resolvedPath is outside the workspace
+		if (rel.startsWith('..') || isAbsolute(rel)) {
+			throw new Error(`Symlink points outside workspace: ${absolutePath} → ${resolvedPath}`);
+		}
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// File resolver
+	// ────────────────────────────────────────────────────────────────────────────
+
+	private async resolveFile(
+		path: string,
+		context: ResolutionContext
+	): Promise<ResolvedFileReference | null> {
+		// 1. Pre-validate path
+		try {
+			this.validatePath(path);
+		} catch (err) {
+			log.warn(`Path validation failed for file reference "${path}": ${err}`);
+			return null;
+		}
+
+		// 2. Symlink check (see TOCTOU note in module header)
+		const absolutePath = normalize(join(context.workspacePath, path));
+		try {
+			await this.checkSymlink(absolutePath, context.workspacePath);
+		} catch (err) {
+			log.warn(`Symlink validation failed for file reference "${path}": ${err}`);
+			return null;
+		}
+
+		// 3. Read file content as UTF-8 to detect binary and check size
+		const fm = new FileManager(context.workspacePath);
+		let utfResult: { path: string; content: string; encoding: string; size: number; mtime: string };
+
+		try {
+			utfResult = await fm.readFile(path, 'utf-8');
+		} catch (err) {
+			if (err instanceof Error) {
+				if (
+					err.message.includes('File not found') ||
+					err.message.includes('Path is a directory') ||
+					err.message.includes('Path traversal')
+				) {
+					return null;
+				}
+			}
+			log.warn(`Unexpected error reading file "${path}": ${err}`);
+			return null;
+		}
+
+		// 4. Detect binary content (null byte heuristic)
+		const isBinary = utfResult.content.includes('\x00');
+
+		if (isBinary) {
+			return {
+				type: 'file',
+				id: path,
+				data: {
+					path,
+					content: null,
+					binary: true,
+					truncated: false,
+					size: utfResult.size,
+					mtime: utfResult.mtime,
+				},
+			};
+		}
+
+		// 5. UTF-8 text: truncate at line boundary if needed
+		const oversized = utfResult.size > MAX_FILE_SIZE;
+		const content = oversized
+			? this.truncateAtLineBoundary(utfResult.content, MAX_FILE_SIZE)
+			: utfResult.content;
+
+		return {
+			type: 'file',
+			id: path,
+			data: {
+				path,
+				content,
+				binary: false,
+				truncated: oversized,
+				size: utfResult.size,
+				mtime: utfResult.mtime,
+			},
+		};
+	}
+
+	/**
+	 * Truncate text content at the last newline boundary before maxBytes.
+	 * Counts bytes (not characters) to respect multi-byte UTF-8 characters.
+	 */
+	private truncateAtLineBoundary(content: string, maxBytes: number): string {
+		if (Buffer.byteLength(content, 'utf-8') <= maxBytes) {
+			return content;
+		}
+
+		const lines = content.split('\n');
+		let byteCount = 0;
+		let lastValidLineIndex = 0;
+
+		for (let i = 0; i < lines.length; i++) {
+			// +1 for the newline character (except possibly the last line)
+			const lineBytes = Buffer.byteLength(lines[i], 'utf-8') + 1;
+			if (byteCount + lineBytes > maxBytes) break;
+			byteCount += lineBytes;
+			lastValidLineIndex = i + 1;
+		}
+
+		// If no lines fit, return the first line truncated at byte limit
+		if (lastValidLineIndex === 0) {
+			const firstLine = lines[0];
+			return Buffer.from(firstLine, 'utf-8').slice(0, maxBytes).toString('utf-8');
+		}
+
+		const joined = lines.slice(0, lastValidLineIndex).join('\n');
+		// Restore the trailing newline that was part of each included line
+		// (split('\n') removes newlines; we add it back when we truncated mid-file)
+		return lastValidLineIndex < lines.length ? joined + '\n' : joined;
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Folder resolver
+	// ────────────────────────────────────────────────────────────────────────────
+
+	private async resolveFolder(
+		path: string,
+		context: ResolutionContext
+	): Promise<ResolvedFolderReference | null> {
+		// 1. Pre-validate path
+		try {
+			this.validatePath(path);
+		} catch (err) {
+			log.warn(`Path validation failed for folder reference "${path}": ${err}`);
+			return null;
+		}
+
+		// 2. Symlink check (see TOCTOU note in module header)
+		const absolutePath = normalize(join(context.workspacePath, path));
+		try {
+			await this.checkSymlink(absolutePath, context.workspacePath);
+		} catch (err) {
+			log.warn(`Symlink validation failed for folder reference "${path}": ${err}`);
+			return null;
+		}
+
+		// 3. List directory
+		const fm = new FileManager(context.workspacePath);
+		let files: Awaited<ReturnType<FileManager['listDirectory']>>;
+
+		try {
+			files = await fm.listDirectory(path);
+		} catch (err) {
+			if (err instanceof Error) {
+				if (
+					err.message.includes('Directory not found') ||
+					err.message.includes('Path is not a directory') ||
+					err.message.includes('Path traversal')
+				) {
+					return null;
+				}
+			}
+			log.warn(`Unexpected error listing folder "${path}": ${err}`);
+			return null;
+		}
+
+		const entries = files.slice(0, MAX_FOLDER_ENTRIES).map((f) => ({
+			name: f.name,
+			path: f.path,
+			type: f.type,
+		}));
+
+		return {
+			type: 'folder',
+			id: path,
+			data: {
+				path,
+				entries,
+			},
+		};
+	}
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Helpers
+	// ────────────────────────────────────────────────────────────────────────────
+
+	private isValidReferenceType(type: string): type is ReferenceType {
+		return type === 'task' || type === 'goal' || type === 'file' || type === 'folder';
+	}
+}
