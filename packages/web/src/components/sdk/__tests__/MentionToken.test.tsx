@@ -503,4 +503,80 @@ describe('MentionToken', () => {
 			});
 		});
 	});
+
+	// ─── Deleted / not-found visual state ──────────────────────────────────────
+
+	describe('deleted entity visual state', () => {
+		it('applies faded strikethrough styling when status is not_found', () => {
+			const { container } = render(
+				<MentionToken refType="task" id="t-999" displayText="Deleted Task" status="not_found" />
+			);
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token?.className).toContain('opacity-50');
+			expect(token?.className).toContain('line-through');
+		});
+
+		it('sets data-not-found attribute when status is not_found', () => {
+			const { container } = render(
+				<MentionToken refType="task" id="t-999" displayText="Deleted Task" status="not_found" />
+			);
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token?.getAttribute('data-not-found')).toBe('true');
+		});
+
+		it('does not apply deleted styling when status is present and found', () => {
+			const { container } = render(
+				<MentionToken refType="task" id="t-1" displayText="Task" status="open" />
+			);
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token?.className).not.toContain('opacity-50');
+			expect(token?.className).not.toContain('line-through');
+			expect(token?.getAttribute('data-not-found')).toBeNull();
+		});
+
+		it('does not apply deleted styling when no status is provided', () => {
+			const { container } = render(<MentionToken refType="task" id="t-1" displayText="Task" />);
+			const token = container.querySelector('[data-testid="mention-token"]');
+			expect(token?.className).not.toContain('opacity-50');
+			expect(token?.className).not.toContain('line-through');
+		});
+
+		it('applies faded strikethrough styling when RPC resolve returns null', async () => {
+			mockCallIfConnected.mockResolvedValue({ resolved: null });
+
+			const { container } = render(
+				<MentionToken refType="task" id="t-999" displayText="Deleted Task" sessionId="s1" />
+			);
+			const token = container.querySelector('[data-testid="mention-token"]');
+
+			// Before hover: no deleted styling
+			expect(token?.className).not.toContain('opacity-50');
+
+			fireEvent.mouseEnter(token!);
+
+			await waitFor(() => {
+				expect(token?.className).toContain('opacity-50');
+				expect(token?.className).toContain('line-through');
+				expect(token?.getAttribute('data-not-found')).toBe('true');
+			});
+		});
+
+		it('does not apply deleted styling when RPC resolve returns entity data', async () => {
+			mockCallIfConnected.mockResolvedValue({
+				resolved: { type: 'task', id: 't-1', data: { title: 'Task', status: 'open' } },
+			});
+
+			const { container } = render(
+				<MentionToken refType="task" id="t-1" displayText="Task" sessionId="s1" />
+			);
+			const token = container.querySelector('[data-testid="mention-token"]');
+			fireEvent.mouseEnter(token!);
+
+			await waitFor(() => {
+				expect(token?.className).not.toContain('opacity-50');
+				expect(token?.className).not.toContain('line-through');
+				expect(token?.getAttribute('data-not-found')).toBeNull();
+			});
+		});
+	});
 });
