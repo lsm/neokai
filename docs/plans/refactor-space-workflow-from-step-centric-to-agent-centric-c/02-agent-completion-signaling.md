@@ -1,4 +1,4 @@
-# Milestone 3: Agent Completion Signaling
+# Milestone 2: Agent Completion Signaling
 
 ## Goal
 
@@ -14,7 +14,7 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 
 ## Tasks
 
-### Task 3.1: Define Agent Completion State Types
+### Task 2.1: Define Agent Completion State Types
 
 **Description**: Create types for tracking per-agent completion within a workflow run.
 
@@ -34,12 +34,12 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 
 ---
 
-### Task 3.2: DB Migration for Completion Fields
+### Task 2.2: DB Migration for Completion Fields
 
 **Description**: Add the completion-related columns to `space_session_group_members`.
 
 **Subtasks**:
-1. Add a migration (**use the next available migration number at implementation time**; currently 52 — after the cross-node channels migration from Task 2.3) to:
+1. Add a migration (**use the next available migration number at implementation time**) to:
    - Update the `status` CHECK constraint on `space_session_group_members` to include `'done'`
    - Add `completion_summary TEXT` column
    - Add `done_at INTEGER` column
@@ -52,13 +52,13 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 - Existing member CRUD is not affected
 - Migration test passes
 
-**Dependencies**: Task 3.1
+**Dependencies**: Task 2.1
 
 **Agent Type**: coder
 
 ---
 
-### Task 3.3: Add report_done Tool to Step Agent
+### Task 2.3: Add report_done Tool to Step Agent
 
 **Description**: Add a `report_done` MCP tool to step agents, allowing them to explicitly signal completion with an optional summary.
 
@@ -80,13 +80,13 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 - Event is emitted for real-time UI updates
 - The tool accepts an optional summary string
 
-**Dependencies**: Tasks 3.2
+**Dependencies**: Task 2.2
 
 **Agent Type**: coder
 
 ---
 
-### Task 3.4: Add Query Completion State Capability
+### Task 2.4: Add Query Completion State Capability
 
 **Description**: Extend `list_peers` (and optionally add a new `check_completion` tool) to expose completion state of all group members, so agents can determine if all peers are done.
 
@@ -100,13 +100,13 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 - Task Agent's `list_group_members` shows completion state
 - Completion state is queryable by any agent in the group
 
-**Dependencies**: Tasks 3.2, 3.3
+**Dependencies**: Task 2.2
 
 **Agent Type**: coder
 
 ---
 
-### Task 3.5: Unit Tests for Agent Completion Signaling
+### Task 2.5: Unit Tests for Agent Completion Signaling
 
 **Description**: Write unit tests for the completion signaling system.
 
@@ -126,13 +126,13 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 - Completion signaling works correctly for single and multi-agent nodes
 - No regressions in existing step-agent tool tests
 
-**Dependencies**: Task 3.3
+**Dependencies**: Task 2.3
 
 **Agent Type**: coder
 
 ---
 
-### Task 3.6: Agent Liveness Guard — Timeout for report_done
+### Task 2.6: Agent Liveness Guard — Timeout for report_done
 
 **Description**: Add a timeout mechanism to prevent workflow runs from hanging indefinitely when an agent is alive but never calls `report_done` (e.g., agent crashes mid-task, hangs, runs out of context, or simply never decides it's done).
 
@@ -175,12 +175,12 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 - The timeout is configurable via a constant
 - Unit tests cover all scenarios
 
-**Dependencies**: Tasks 3.2, 3.3
+**Dependencies**: Tasks 2.2, 2.3
 
 **Agent Type**: coder
 
 ## Rollback Strategy
 
-- **DB migration** (Task 3.2): Adds nullable columns (`completion_summary`, `done_at`) to `space_session_group_members` and extends the status CHECK constraint. The migration is reversible — columns can be dropped and the constraint reverted.
-- **report_done tool** (Task 3.3): New tool added to step agents. Can be removed without affecting existing behavior.
-- **Liveness guard** (Task 3.6): New logic in `processRunTick()`. Can be disabled with a one-line change.
+- **DB migration** (Task 2.2): Adds nullable columns (`completion_summary`, `done_at`) to `space_session_group_members` and extends the status CHECK constraint. The migration is reversible — columns can be dropped and the constraint reverted.
+- **report_done tool** (Task 2.3): New tool added to step agents. Can be removed without affecting existing behavior.
+- **Liveness guard** (Task 2.6): New logic in `processRunTick()`. Can be disabled with a one-line change.

@@ -1,8 +1,8 @@
-# Milestone 5: Completion Detection
+# Milestone 4: Completion Detection
 
 ## Goal
 
-Implement all-agents-done completion detection. The workflow run completes when all agents report done (or are auto-completed by the liveness guard). This replaces the old terminal-node detection model which was removed in Milestone 4.
+Implement all-agents-done completion detection. The workflow run completes when all agents report done (or are auto-completed by the liveness guard). This replaces the old terminal-node detection model which was removed in Milestone 3.
 
 ## Scope
 
@@ -13,7 +13,7 @@ Implement all-agents-done completion detection. The workflow run completes when 
 
 ## Tasks
 
-### Task 5.1: All-Agents-Done Completion Detector
+### Task 4.1: All-Agents-Done Completion Detector
 
 **Description**: Create a completion detector that determines whether all agents in a workflow run have reported done.
 
@@ -46,8 +46,8 @@ Implement all-agents-done completion detection. The workflow run completes when 
    - Count members with status `'done'`, `'completed'`, or `'failed'`
    - A run is complete when ALL members across ALL groups have a terminal status (`'done'` | `'completed'` | `'failed'`)
    - Members with status `'active'` mean the run is not complete
-   - **Edge case — nodes with no tasks**: If a node in the workflow has no tasks yet (agents not spawned, possibly because no cross-node channel has fired to activate it), those nodes are **excluded** from the completion check. Only nodes with at least one task contribute to the agent count.
-   - **Edge case — pending-but-blocked activations**: Before concluding a run is complete, check whether any node that currently has tasks (i.e., has been activated) has outbound `CrossNodeChannel` policies whose target nodes have no tasks yet. If such "pending activation" channels exist, the run is **not complete** — those target nodes may still receive agents if gates open (via retry, human approval, or condition changes). Only when all reachable nodes have been activated (or explicitly skipped) is the run truly complete.
+   - **Edge case — nodes with no tasks**: If a node in the workflow has no tasks yet (agents not spawned, possibly because no channel has fired to activate it), those nodes are **excluded** from the completion check. Only nodes with at least one task contribute to the agent count.
+   - **Edge case — pending-but-blocked activations**: Before concluding a run is complete, check whether any node that currently has tasks (i.e., has been activated) has outbound channel policies whose target nodes have no tasks yet. If such "pending activation" channels exist, the run is **not complete** — those target nodes may still receive agents if gates open (via retry, human approval, or condition changes). Only when all reachable nodes have been activated (or explicitly skipped) is the run truly complete.
 
 **Acceptance Criteria**:
 - `isComplete()` returns true only when all agents have reached a terminal state
@@ -55,13 +55,13 @@ Implement all-agents-done completion detection. The workflow run completes when 
 - Works correctly for single-agent and multi-agent nodes
 - Handles edge cases (no groups, empty groups, nodes with no tasks)
 
-**Dependencies**: Task 3.2
+**Dependencies**: Task 2.2
 
 **Agent Type**: coder
 
 ---
 
-### Task 5.2: Update SpaceRuntime Tick Loop for Completion Detection
+### Task 4.2: Update SpaceRuntime Tick Loop for Completion Detection
 
 **Description**: Modify the `SpaceRuntime.executeTick()` and `processRunTick()` methods to detect completion via the all-agents-done model.
 
@@ -71,7 +71,7 @@ Implement all-agents-done completion detection. The workflow run completes when 
    - In `processRunTick()`, after the liveness checks:
      - Use `CompletionDetector.isComplete()` to check if the workflow run is complete
      - If complete, mark the run as `'completed'`
-   - Remove any remaining references to the old terminal-node detection logic (if any survived Milestone 4)
+   - Remove any remaining references to the old terminal-node detection logic (if any survived Milestone 3)
 2. Add a `workflow_run_completed` notification event when the completion detector fires
 
 **Acceptance Criteria**:
@@ -79,13 +79,13 @@ Implement all-agents-done completion detection. The workflow run completes when 
 - No duplicate completion events
 - Terminal executor cleanup works correctly
 
-**Dependencies**: Tasks 5.1, 4.3, 4.5
+**Dependencies**: Tasks 4.1, 3.3, 3.5
 
 **Agent Type**: coder
 
 ---
 
-### Task 5.3: Update Workflow Run Status Lifecycle
+### Task 4.3: Update Workflow Run Status Lifecycle
 
 **Description**: Define the workflow run status lifecycle for the agent-centric model.
 
@@ -104,13 +104,13 @@ Implement all-agents-done completion detection. The workflow run completes when 
 - Status is persisted correctly to DB
 - Rehydration after restart works correctly
 
-**Dependencies**: Task 5.2
+**Dependencies**: Task 4.2
 
 **Agent Type**: coder
 
 ---
 
-### Task 5.4: Tests for Completion Detection
+### Task 4.4: Tests for Completion Detection
 
 **Description**: Write tests for the new completion detection system and the updated tick loop.
 
@@ -135,12 +135,12 @@ Implement all-agents-done completion detection. The workflow run completes when 
 - Completion detection works correctly for all scenarios
 - No regressions
 
-**Dependencies**: Tasks 5.2, 5.3
+**Dependencies**: Tasks 4.2, 4.3
 
 **Agent Type**: coder
 
 ## Rollback Strategy
 
-- **CompletionDetector** (Task 5.1): New class. If it incorrectly marks runs as complete, it can be temporarily bypassed by commenting out its invocation in `processRunTick()`.
-- **Tick loop changes** (Task 5.2): The old advance-based path is already removed (Milestone 4). The completion detector is the sole completion mechanism.
-- **Status lifecycle** (Task 5.3): No new statuses are added; existing status transitions are clarified. Minimal rollback risk.
+- **CompletionDetector** (Task 4.1): New class. If it incorrectly marks runs as complete, it can be temporarily bypassed by commenting out its invocation in `processRunTick()`.
+- **Tick loop changes** (Task 4.2): The old advance-based path is already removed (Milestone 3). The completion detector is the sole completion mechanism.
+- **Status lifecycle** (Task 4.3): No new statuses are added; existing status transitions are clarified. Minimal rollback risk.

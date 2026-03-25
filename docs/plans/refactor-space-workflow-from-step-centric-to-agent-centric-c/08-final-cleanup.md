@@ -1,4 +1,4 @@
-# Milestone 9: Final Cleanup
+# Milestone 8: Final Cleanup
 
 ## Goal
 
@@ -15,13 +15,13 @@ Clean up all remaining step-transition code and types that are no longer needed.
 
 ## Tasks
 
-### Task 9.1: Remove WorkflowTransition and Transition-Related Code
+### Task 8.1: Remove WorkflowTransition and Transition-Related Code
 
-**Description**: Remove all step-transition infrastructure that has been replaced by cross-node channels.
+**Description**: Remove all step-transition infrastructure that has been replaced by channels.
 
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`:
-   - Remove `WorkflowTransition` interface (replaced by `CrossNodeChannel`)
+   - Remove `WorkflowTransition` interface (replaced by `WorkflowChannel`)
    - Remove `WorkflowTransitionInput` type
    - Remove `transitions` field from `SpaceWorkflow` interface
    - Remove `transitions` field from `CreateSpaceWorkflowParams` and `UpdateSpaceWorkflowParams`
@@ -42,30 +42,30 @@ Clean up all remaining step-transition code and types that are no longer needed.
 - TypeScript typecheck passes
 - `bun run lint` passes
 
-**Dependencies**: Tasks 6.3, 7.1
+**Dependencies**: Tasks 5.3, 6.1
 
 **Agent Type**: coder
 
 ---
 
-### Task 9.2: Remove currentNodeId from Workflow Run
+### Task 8.2: Remove currentNodeId from Workflow Run
 
 **Description**: Remove `currentNodeId` from `SpaceWorkflowRun` since the agent-centric model doesn't track a single active node.
 
-**Important distinction**: `startNodeId` on `SpaceWorkflow` (the workflow template/definition) **stays unchanged** — it tells the system which node to activate first when a run starts. Only `currentNodeId` on `SpaceWorkflowRun` (the runtime execution state) is removed. In the agent-centric model, `SpaceRuntime.startWorkflowRun()` activates the start node via `activateNode()` (from Task 4.1a) using the workflow's `startNodeId`. After that, nodes are activated lazily by the router — there is no single "current" node to track.
+**Important distinction**: `startNodeId` on `SpaceWorkflow` (the workflow template/definition) **stays unchanged** — it tells the system which node to activate first when a run starts. Only `currentNodeId` on `SpaceWorkflowRun` (the runtime execution state) is removed. In the agent-centric model, `SpaceRuntime.startWorkflowRun()` activates the start node via `activateNode()` (from Task 3.1a) using the workflow's `startNodeId`. After that, nodes are activated lazily by the router — there is no single "current" node to track.
 
-**Iteration tracking stays**: The `iteration_count` and `max_iterations` columns on `space_workflow_runs` remain. Iteration counting is now handled by `CrossNodeChannelRouter.deliverMessage()` when delivering through channels with `isCyclic: true`, replacing the old `advance()` → `followTransition()` path.
+**Iteration tracking stays**: The `iteration_count` and `max_iterations` columns on `space_workflow_runs` remain. Iteration counting is now handled by `ChannelRouter.deliverMessage()` when delivering through channels with `isCyclic: true`, replacing the old `advance()` → `followTransition()` path.
 
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`:
    - Remove `currentNodeId` field from `SpaceWorkflowRun`
    - Keep `startNodeId` on `SpaceWorkflow` (unchanged — it's a workflow definition property)
-   - Keep `iterationCount` and `maxIterations` on `SpaceWorkflowRun` (unchanged — iteration tracking moved to router in M4)
+   - Keep `iterationCount` and `maxIterations` on `SpaceWorkflowRun` (unchanged — iteration tracking moved to router in M3)
 2. Add a DB migration to drop the `current_node_id` column from `space_workflow_runs` (keep `iteration_count` and `max_iterations`)
 3. In `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
    - Update `startWorkflowRun()` to activate the start node via `activateNode()` instead of setting `currentNodeId`
    - Verify iteration tracking is now handled by the router (not by `advance()`)
-4. Clean up any code that reads or writes `currentNodeId` (should already be cleaned up by Milestone 4/5, but verify)
+4. Clean up any code that reads or writes `currentNodeId` (should already be cleaned up by Milestone 3/4, but verify)
 5. Run full test suite to verify no regressions
 
 **Acceptance Criteria**:
@@ -75,13 +75,13 @@ Clean up all remaining step-transition code and types that are no longer needed.
 - No code references `currentNodeId`
 - All tests pass
 
-**Dependencies**: Tasks 4.5, 5.2
+**Dependencies**: Tasks 3.5, 4.2
 
 **Agent Type**: coder
 
 ---
 
-### Task 9.3: Comprehensive Test Suite and Online Integration Tests
+### Task 8.3: Comprehensive Test Suite and Online Integration Tests
 
 **Description**: Run the full test suite and write online integration tests for the complete agent-centric workflow model.
 
@@ -95,7 +95,7 @@ Clean up all remaining step-transition code and types that are no longer needed.
    - Verify the tick loop works correctly with the new model
    - Test all status transitions
 3. Create `packages/daemon/tests/online/space/agent-centric-workflow.test.ts`:
-   - Test full workflow lifecycle with cross-node channels:
+   - Test full workflow lifecycle with channels:
      - Create space with agent-centric workflow
      - Start workflow run
      - Spawn agents
@@ -103,7 +103,7 @@ Clean up all remaining step-transition code and types that are no longer needed.
      - Agents report done
      - Workflow completes
    - Test gate enforcement (human gate blocks, condition gate evaluates)
-   - Test cross-node message delivery
+   - Test channel-based message delivery (within-node, cross-node, DM, fan-out)
    - Test completion detection
    - Test lazy node activation
 4. Follow the existing online test patterns (use `NEOKAI_USE_DEV_PROXY=1` for mocked API calls)
@@ -117,7 +117,7 @@ Clean up all remaining step-transition code and types that are no longer needed.
 - Full workflow lifecycle is exercised end-to-end
 - No regressions in any test suite
 
-**Dependencies**: Tasks 9.1, 9.2
+**Dependencies**: Tasks 8.1, 8.2
 
 **Agent Type**: coder
 
