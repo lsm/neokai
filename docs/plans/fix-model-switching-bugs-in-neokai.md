@@ -47,7 +47,7 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 
 **Fix — use SDK's `forkSession: true` option**: The Claude Agent SDK supports `forkSession: true` as a query option (`packages/shared/src/sdk/sdk.d.ts:906`). When combined with `resume`, it forks the session to a **new session ID** while preserving the full conversation history. The old session file remains intact and resumable.
 
-The fix modifies `QueryOptionsBuilder.addSessionStateOptions()` to set `forkSession: true` when a model switch has occurred. The mechanism:
+The fix requires three coordinated changes:
 
 1. In `ModelSwitchHandler.switchModel()`, after updating the model/provider config, set a transient flag on the session: `session._forkOnNextQuery = true`. This flag is NOT persisted to DB (it's a runtime-only signal).
 2. In `QueryOptionsBuilder.addSessionStateOptions()` (line 323 of `query-options-builder.ts`), when building options:
@@ -56,7 +56,7 @@ The fix modifies `QueryOptionsBuilder.addSessionStateOptions()` to set `forkSess
      - Set `result.forkSession = true` (fork to new session, old one preserved)
      - Clear `session._forkOnNextQuery = false` (consume the flag)
    - Otherwise, behave as before (just set `resume` if `sdkSessionId` exists)
-3. After the SDK starts the forked session, it emits a `system:init` message with a **new** session ID. The existing `sdk-message-handler.ts` (line 641) captures this new ID: `session.sdkSessionId = message.session_id` and persists it to DB.
+3. **Critical**: Update `sdk-message-handler.ts` `handleSystemMessage()` (line 650) to allow overwriting `sdkSessionId` when it changes. The current guard `!session.sdkSessionId` prevents this — after a fork, the SDK emits a `system:init` with a NEW `session_id`, but the guard drops it because the old ID is still set. Without this fix, future restarts would resume the old (pre-fork) session instead of the forked one.
 
 **Why this preserves session resumability**:
 - The old `sdkSessionId` remains valid — the old session file is untouched and can be resumed via `--resume <old-id>` at any time.
@@ -68,9 +68,12 @@ The fix modifies `QueryOptionsBuilder.addSessionStateOptions()` to set `forkSess
 - Using `forkSession: true` preserves the old session AND starts a clean new session with the new model.
 - The SDK handles the fork atomically — no race conditions between old and new sessions.
 
-**Error handling edge case**: If `restart()` throws after the flag is set, the flag remains but is harmless — the next successful `startStreamingQuery()` call will see the flag and apply `forkSession: true`. If the user switches models again before a successful restart, the flag is already set (idempotent). The flag is consumed (cleared) when `addSessionStateOptions()` actually uses it, so it won't leak into subsequent queries.
+**Type-safe flag**: Add `_forkOnNextQuery?: boolean` with a `/** @internal */` JSDoc tag to the `Session` interface in `packages/shared/src/types.ts` (line ~157, near `sdkSessionId`). This avoids `(session as any)` casts scattered across multiple files, lets the TypeScript compiler catch typos, and signals the field should not be serialized to DB. The `@internal` tag marks it as private to the daemon runtime.
 
-**Naming the flag**: Use `session._forkOnNextQuery` with an underscore prefix to indicate it's a private/runtime-only field, consistent with how session objects carry transient state. An alternative is to add it to `session.metadata`, but that would persist to DB unnecessarily. The underscore prefix signals "do not serialize".
+**Error handling edge cases**:
+- If `restart()` throws after the flag is set, the flag remains but is harmless — the next successful `startStreamingQuery()` call will see the flag and apply `forkSession: true`. Note: `session.config.model` was already persisted to DB, so the next query uses the correct new model. The flag being set on retry is actually correct — the retry should fork with the new model.
+- If the user switches models multiple times before any query starts (e.g., A → B → C), each call sets `_forkOnNextQuery = true` (idempotent) and updates `session.config.model`. On the next query start, it forks to model C with the correct resume history. This is correct behavior.
+- If the SDK fork operation itself fails (e.g., corrupted session file), the SDK will likely emit an error message. The `QueryRunner` handles startup errors via its timeout/retry mechanism (lines 354-414 of `query-runner.ts`). If the fork fails, `_forkOnNextQuery` was already consumed, so the next restart attempt would resume without forking — which is acceptable since the model config is already persisted.
 
 ---
 
@@ -78,37 +81,62 @@ The fix modifies `QueryOptionsBuilder.addSessionStateOptions()` to set `forkSess
 
 ### Task 1: Add `forkSession: true` support on model switch (Bug 2)
 
-**Description**: Modify `ModelSwitchHandler.switchModel()` to set a transient flag that causes the next query to fork the SDK session (instead of resuming the same session). Then modify `QueryOptionsBuilder.addSessionStateOptions()` to detect this flag and pass `forkSession: true` alongside `resume` to the SDK.
+**Description**: Modify `ModelSwitchHandler.switchModel()` to set a transient flag that causes the next query to fork the SDK session. Modify `QueryOptionsBuilder.addSessionStateOptions()` to detect this flag and pass `forkSession: true` alongside `resume` to the SDK. **Critical**: Update `sdk-message-handler.ts` to allow overwriting `sdkSessionId` when it changes (fork produces a new session ID).
 
 **Files**:
+- `packages/shared/src/types.ts` — add `_forkOnNextQuery` to `Session` interface
 - `packages/daemon/src/lib/agent/model-switch-handler.ts` — set `_forkOnNextQuery` flag
 - `packages/daemon/src/lib/agent/query-options-builder.ts` — read flag, add `forkSession: true` to options
-- `packages/shared/src/types.ts` — add `_forkOnNextQuery` to `Session` interface (or use type assertion)
+- `packages/daemon/src/lib/agent/sdk-message-handler.ts` — update `sdkSessionId` capture guard to allow overwriting on fork
 
 **Subtasks**:
+0. Add `/** @internal */ _forkOnNextQuery?: boolean;` to the `Session` interface in `packages/shared/src/types.ts` (near `sdkSessionId` at line ~157). The `@internal` tag signals it should not be serialized to DB or exposed to clients. This avoids `as any` casts and gives the TypeScript compiler type-safety.
+
 1. In `ModelSwitchHandler.switchModel()`, after updating `session.config.model` and `session.config.provider` and persisting to DB (both the `!queryObject` and `queryObject` branches), set the transient flag:
    ```ts
-   (session as any)._forkOnNextQuery = true;
+   session._forkOnNextQuery = true;
    ```
    This is set in both branches (after the existing `db.updateSession` calls that update model/provider). The flag is NOT persisted to DB — it's a runtime-only signal.
+
 2. In `QueryOptionsBuilder.addSessionStateOptions()` (line 323 of `query-options-builder.ts`), add logic after the `resume` block:
    ```ts
    // If a model switch requested a fork, use forkSession to create a new session
    // while preserving conversation history. The old session remains resumable.
-   if (result.resume && (this.ctx.session as any)._forkOnNextQuery) {
+   if (result.resume && this.ctx.session._forkOnNextQuery) {
        result.forkSession = true;
-       (this.ctx.session as any)._forkOnNextQuery = false; // consume the flag
+       this.ctx.session._forkOnNextQuery = false; // consume the flag
    }
    ```
    This ensures that when `restart()` calls `startStreamingQuery()` → `runQuery()`, the query options include both `resume` (old session for history) and `forkSession: true` (create new session with new model).
-3. The existing `sdk-message-handler.ts` (line 641) captures the new session ID from the `system:init` message and updates `session.sdkSessionId` in memory and DB. This happens automatically — no change needed.
+
+3. **Critical — update `sdk-message-handler.ts` guard**: The current guard at line 650 is `if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id)`. The `!session.sdkSessionId` condition means "only capture if we don't already have a session ID." After a fork, `session.sdkSessionId` still holds the OLD session ID, so the NEW `system:init` message (with the forked session ID) is silently dropped. This causes future restarts to resume the wrong session branch.
+
+   Change the guard to also allow overwriting when the session ID has changed (indicating a fork):
+   ```ts
+   if (isSDKSystemInit(message) && message.session_id) {
+       const isNewSession = !session.sdkSessionId || session.sdkSessionId !== message.session_id;
+       if (isNewSession) {
+           session.sdkSessionId = message.session_id;
+           db.updateSession(session.id, { sdkSessionId: message.session_id });
+           await daemonHub.emit('session.updated', {
+               sessionId: session.id,
+               source: 'sdk-session',
+               session: { sdkSessionId: message.session_id },
+           });
+       }
+   }
+   ```
+   This preserves the existing behavior (capture on first init) while also handling session ID changes from forks or any future mechanism. The `isSDKSystemInit` guard on line 650 still ensures that other system subtypes (api_retry, status, etc.) cannot accidentally overwrite the field.
+
 4. Verify that `session.config.model` is correctly read by `QueryRunner.runQuery()` (line 159) after the model update, ensuring the new model is passed to the SDK.
 
 **Acceptance criteria**:
+- `_forkOnNextQuery` is a typed field on `Session` (no `as any` casts).
 - After a model switch, the query options include both `resume` (old session ID) and `forkSession: true`.
 - The `_forkOnNextQuery` flag is consumed (set to false) after being used, so it doesn't leak into subsequent queries.
 - The old `sdkSessionId` remains in DB and can be used for resumption (not deleted).
-- A new `sdkSessionId` is captured from the `system:init` message after the fork.
+- A new `sdkSessionId` is captured from the `system:init` message after the fork (the guard in `sdk-message-handler.ts` allows overwriting).
+- After a fork, `session.get` returns the new (forked) `sdkSessionId`, not the old one.
 - Existing unit tests for `ModelSwitchHandler` still pass.
 - New unit test confirms `forkSession: true` is set in options on model switch (see Task 2).
 
@@ -134,6 +162,7 @@ The fix modifies `QueryOptionsBuilder.addSessionStateOptions()` to set `forkSess
 5. Test that the `_forkOnNextQuery` flag is consumed (set to `false`) after `addSessionStateOptions()` uses it.
 6. Test that when `_forkOnNextQuery` is NOT set, `forkSession` is NOT included in options (normal behavior).
 7. Test error path: if `restart()` throws after the flag is set, verify the flag is still set (it will be consumed on the next successful query start).
+8. Test the `sdk-message-handler.ts` guard update: simulate a `system:init` message with a DIFFERENT `session_id` than the current `session.sdkSessionId`, and verify the new ID is captured (overwriting the old one). Also verify that a `system:init` with the SAME `session_id` does NOT trigger an overwrite.
 
 **Acceptance criteria**:
 - Test confirms `_forkOnNextQuery` is set on session after model switch.
@@ -263,7 +292,7 @@ The fix modifies `QueryOptionsBuilder.addSessionStateOptions()` to set `forkSess
 
 **Dev proxy considerations**: The dev proxy mock system does NOT distinguish between models -- all requests to the same endpoint get the same mock response regardless of the `model` field in the request body. This is fine for our test because we are verifying the `forkSession` behavior (observable via `session.get` showing a new `sdkSessionId`), not the actual model used by the SDK. The mock response is sufficient to confirm the agent starts a new forked query after the switch.
 
-**Note on dev proxy `forkSession` support**: The dev proxy may not fully support the `forkSession` flow since it intercepts HTTP requests. If the SDK's `--resume` + `--fork-session` flags cause the subprocess to behave differently, the dev proxy mock may need adjustment. If the forkSession option causes issues with dev proxy, this test should be marked as requiring real credentials (like the GLM model switching test) or the dev proxy mocks may need to be updated. The unit tests (Task 2) provide adequate coverage regardless.
+**Note on dev proxy `forkSession` support**: The dev proxy may not fully support the `forkSession` flow since it intercepts HTTP requests. If the SDK's `--resume` + `--fork-session` flags cause the subprocess to behave differently, the dev proxy mock may need adjustment. If the forkSession option causes issues with dev proxy, this test should be marked as requiring real credentials (like the GLM model switching test) or the dev proxy mocks may need to be updated. The unit tests (Task 2) provide adequate coverage regardless. The `sdk-message-handler.ts` guard fix (Task 1, subtask 3) is a prerequisite for this test to pass — without it, the new `sdkSessionId` would not be captured.
 
 **Acceptance criteria**:
 - Test verifies `sdkSessionId` is non-null after first query.
