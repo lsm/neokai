@@ -1390,5 +1390,241 @@ describe('ChannelRouter', () => {
 				router.canDeliver('nonexistent-run', 'coder', 'planner', { workspacePath: '/tmp/ws' })
 			).rejects.toBeInstanceOf(ActivationError);
 		});
+
+		test('canDeliver: throws ActivationError when workflow not found', async () => {
+			// Create a run, then point it to a nonexistent workflow by bypassing FK checks.
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Orphaned Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// Disable FK enforcement, remap workflow_id to a nonexistent ID, then re-enable.
+			db.exec('PRAGMA foreign_keys = OFF');
+			db.prepare('UPDATE space_workflow_runs SET workflow_id = ? WHERE id = ?').run(
+				'nonexistent-workflow-id',
+				run.id
+			);
+			db.exec('PRAGMA foreign_keys = ON');
+
+			await expect(
+				router.canDeliver(run.id, 'coder', 'planner', { workspacePath: '/tmp/ws' })
+			).rejects.toBeInstanceOf(ActivationError);
+			await expect(
+				router.canDeliver(run.id, 'coder', 'planner', { workspacePath: '/tmp/ws' })
+			).rejects.toThrow(/Workflow not found/);
+		});
+
+		test('canDeliver: condition gate — allowed via mock evaluator (exit 0)', async () => {
+			const allowingRouter = new ChannelRouter({
+				taskRepo,
+				workflowRunRepo,
+				workflowManager,
+				agentManager,
+				gateEvaluator: makeAllowingEvaluator(),
+			});
+
+			const channels: WorkflowChannel[] = [
+				{
+					from: 'coder',
+					to: 'planner',
+					direction: 'one-way',
+					gate: { type: 'condition', expression: 'test -f /some/file' },
+				},
+			];
+			const workflow = buildWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				channels
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Condition Gate Allowed Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const result = await allowingRouter.canDeliver(run.id, 'coder', 'planner', {
+				workspacePath: '/tmp/ws',
+			});
+			expect(result.allowed).toBe(true);
+		});
+
+		test('canDeliver: condition gate — blocked via mock evaluator (exit 1)', async () => {
+			const blockingRouter = new ChannelRouter({
+				taskRepo,
+				workflowRunRepo,
+				workflowManager,
+				agentManager,
+				gateEvaluator: makeBlockingEvaluator(),
+			});
+
+			const channels: WorkflowChannel[] = [
+				{
+					from: 'coder',
+					to: 'planner',
+					direction: 'one-way',
+					gate: { type: 'condition', expression: 'test -f /nonexistent' },
+				},
+			];
+			const workflow = buildWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				channels
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Condition Gate Blocked Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const result = await blockingRouter.canDeliver(run.id, 'coder', 'planner', {
+				workspacePath: '/tmp/ws',
+			});
+			expect(result.allowed).toBe(false);
+			expect(result.reason).toMatch(/condition expression exited/);
+		});
+
+		// -----------------------------------------------------------------------
+		// Wildcard channel matching
+		// -----------------------------------------------------------------------
+
+		test('wildcard from: channel with from="*" matches any sender', async () => {
+			const channels: WorkflowChannel[] = [
+				{
+					from: '*',
+					to: 'planner',
+					direction: 'one-way',
+					gate: { type: 'human' },
+				},
+			];
+			const workflow = buildWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				channels
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Wildcard From Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// 'coder' is not the declared sender, but '*' should match it
+			const blocked = await router.canDeliver(run.id, 'coder', 'planner', {
+				workspacePath: '/tmp/ws',
+				humanApproved: false,
+			});
+			expect(blocked.allowed).toBe(false);
+			expect(blocked.reason).toMatch(/human approval/);
+		});
+
+		test('wildcard to: channel with to="*" matches any target', async () => {
+			const channels: WorkflowChannel[] = [
+				{
+					from: 'coder',
+					to: '*',
+					direction: 'one-way',
+					gate: { type: 'task_result', expression: 'pass' },
+				},
+			];
+			const workflow = buildWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				channels
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Wildcard To Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// 'planner' should be matched by '*'
+			const blocked = await router.canDeliver(run.id, 'coder', 'planner', {
+				workspacePath: '/tmp/ws',
+				taskResult: 'fail',
+			});
+			expect(blocked.allowed).toBe(false);
+
+			const allowed = await router.canDeliver(run.id, 'coder', 'planner', {
+				workspacePath: '/tmp/ws',
+				taskResult: 'pass: all tests green',
+			});
+			expect(allowed.allowed).toBe(true);
+		});
+
+		test('wildcard to: deliverMessage uses wildcard channel gate', async () => {
+			const channels: WorkflowChannel[] = [
+				{
+					from: 'coder',
+					to: '*',
+					direction: 'one-way',
+					gate: { type: 'human' },
+				},
+			];
+			const workflow = buildWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+					{ id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+				],
+				channels
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Wildcard Delivery Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// Wildcard channel gate blocks delivery without approval
+			await expect(
+				router.deliverMessage(run.id, 'coder', 'planner', 'msg', {
+					workspacePath: '/tmp/ws',
+					humanApproved: false,
+				})
+			).rejects.toBeInstanceOf(ChannelGateBlockedError);
+
+			// Wildcard channel gate allows delivery with approval
+			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'msg', {
+				workspacePath: '/tmp/ws',
+				humanApproved: true,
+			});
+			expect(result.fromRole).toBe('coder');
+		});
 	});
 });

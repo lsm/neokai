@@ -180,6 +180,26 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
+	 * Atomically increment the iteration counter for a run, respecting the cap.
+	 *
+	 * Uses a single SQL UPDATE with a WHERE guard so the read-check-write is atomic:
+	 *   UPDATE ... SET iteration_count = iteration_count + 1
+	 *   WHERE id = ? AND iteration_count < max_iterations
+	 *
+	 * @returns true when the counter was incremented (below cap),
+	 *          false when the cap was already reached (no change applied)
+	 */
+	incrementIterationCount(id: string): boolean {
+		const stmt = this.db.prepare(
+			`UPDATE space_workflow_runs
+			 SET iteration_count = iteration_count + 1, updated_at = ?
+			 WHERE id = ? AND iteration_count < max_iterations`
+		);
+		const result = stmt.run(Date.now(), id);
+		return result.changes > 0;
+	}
+
+	/**
 	 * Delete a workflow run by ID
 	 */
 	deleteRun(id: string): boolean {

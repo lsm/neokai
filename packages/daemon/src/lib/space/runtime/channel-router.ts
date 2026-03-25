@@ -383,14 +383,18 @@ export class ChannelRouter {
 		}
 
 		// ── 5. Increment iteration count for cyclic channels ──────────────────
-		// Re-read the run to get the freshest iterationCount before incrementing
-		// (another concurrent delivery may have already incremented it).
+		// Use the atomic incrementIterationCount() which runs a single SQL UPDATE
+		// with a WHERE guard (iteration_count < max_iterations), eliminating any
+		// TOCTOU race between the cap check above and this write. If another
+		// concurrent delivery already pushed the count to the cap, the atomic
+		// increment will return false — we throw to surface the cap violation even
+		// though message delivery already succeeded at this point.
 		if (channel?.isCyclic) {
-			const freshRun = this.config.workflowRunRepo.getRun(runId);
-			if (freshRun) {
-				this.config.workflowRunRepo.updateRun(runId, {
-					iterationCount: freshRun.iterationCount + 1,
-				});
+			const incremented = this.config.workflowRunRepo.incrementIterationCount(runId);
+			if (!incremented) {
+				throw new ActivationError(
+					`Cyclic channel from "${fromRole}" to "${toTarget}" reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
+				);
 			}
 		}
 
