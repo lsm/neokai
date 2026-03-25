@@ -10,7 +10,14 @@
  * - Emit events for downstream processing
  */
 
-import type { MessageContent, MessageDeliveryMode, MessageHub, MessageImage } from '@neokai/shared';
+import type {
+	MessageContent,
+	MessageDeliveryMode,
+	MessageHub,
+	MessageImage,
+	ReferenceMetadata,
+	Session,
+} from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
@@ -18,6 +25,11 @@ import type { DaemonHub } from '../daemon-hub';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
 import type { SessionCache } from './session-cache';
+import {
+	ReferenceResolver,
+	type PreprocessedMessage,
+	type ResolutionContext,
+} from './reference-resolver';
 
 export interface MessagePersistenceData {
 	sessionId: string;
@@ -34,9 +46,49 @@ export class MessagePersistence {
 		private sessionCache: SessionCache,
 		private db: Database,
 		private messageHub: MessageHub,
-		private eventBus: DaemonHub
+		private eventBus: DaemonHub,
+		private referenceResolver?: ReferenceResolver
 	) {
 		this.logger = new Logger('MessagePersistence');
+	}
+
+	/**
+	 * Extract and resolve @ references from a message text.
+	 *
+	 * Returns a PreprocessedMessage with the original text unchanged and a
+	 * populated referenceMetadata map. If no references are found, or if
+	 * resolution fails entirely, returns empty metadata so the message
+	 * still persists normally.
+	 */
+	private async preprocessReferences(text: string, session: Session): Promise<PreprocessedMessage> {
+		try {
+			const mentions = ReferenceResolver.extractReferences(text);
+			if (mentions.length === 0) {
+				return { text, referenceMetadata: {} };
+			}
+
+			const context: ResolutionContext = {
+				workspacePath: session.workspacePath,
+				roomId: session.context?.roomId ?? null,
+			};
+
+			const resolved = await this.referenceResolver!.resolveAllReferences(mentions, context);
+
+			// Convert ResolvedReference values to ReferenceMetadata entries
+			const referenceMetadata: ReferenceMetadata = {};
+			for (const [token, ref] of Object.entries(resolved)) {
+				referenceMetadata[token] = {
+					type: ref.type,
+					id: ref.id,
+					displayText: ref.id,
+				};
+			}
+
+			return { text, referenceMetadata };
+		} catch (err) {
+			this.logger.warn('[MessagePersistence] Reference preprocessing failed, skipping:', err);
+			return { text, referenceMetadata: {} };
+		}
 	}
 
 	/**
@@ -87,11 +139,16 @@ export class MessagePersistence {
 			const expandedContent = expandBuiltInCommand(content);
 			const finalContent = expandedContent || content;
 
+			// 2b. Preprocess @ references (extract + resolve) if resolver is available
+			const preprocessed = this.referenceResolver
+				? await this.preprocessReferences(finalContent, session)
+				: { text: finalContent, referenceMetadata: {} as ReferenceMetadata };
+
 			// 3. Build message content (text + images)
 			const messageContent = buildMessageContent(finalContent, images);
 
 			// 4. Create SDK user message
-			const sdkUserMessage: SDKUserMessage = {
+			const sdkUserMessage: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
 				type: 'user' as const,
 				uuid: messageId as UUID,
 				session_id: sessionId,
@@ -103,6 +160,9 @@ export class MessagePersistence {
 							? [{ type: 'text' as const, text: messageContent }]
 							: messageContent,
 				},
+				...(Object.keys(preprocessed.referenceMetadata).length > 0 && {
+					referenceMetadata: preprocessed.referenceMetadata,
+				}),
 			};
 
 			// 5. Save to database with delivery-aware status

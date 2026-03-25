@@ -215,7 +215,10 @@ function resolveGoal(
 	};
 }
 
-async function resolveFile(id: string, workspacePath: string): Promise<ResolvedReference | null> {
+export async function resolveFile(
+	id: string,
+	workspacePath: string
+): Promise<ResolvedReference | null> {
 	const fileManager = new FileManager(workspacePath);
 
 	// Validate path (throws on traversal — we catch below to return null)
@@ -311,7 +314,10 @@ async function resolveFile(id: string, workspacePath: string): Promise<ResolvedR
 	};
 }
 
-async function resolveFolder(id: string, workspacePath: string): Promise<ResolvedReference | null> {
+export async function resolveFolder(
+	id: string,
+	workspacePath: string
+): Promise<ResolvedReference | null> {
 	const fileManager = new FileManager(workspacePath);
 
 	let entries: Array<{ name: string; path: string; type: 'file' | 'directory' }>;
