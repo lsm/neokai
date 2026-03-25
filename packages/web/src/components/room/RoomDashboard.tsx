@@ -201,7 +201,6 @@ export function RoomDashboard() {
 					tasks={tasks}
 					goalByTaskId={roomStore.goalByTaskId.value}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
-					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onGoalClick={() => {
 						currentRoomTabSignal.value = 'goals';
 					}}

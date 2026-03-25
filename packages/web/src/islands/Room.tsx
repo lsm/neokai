@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
-import { currentRoomTabSignal } from '../lib/signals';
+import { currentRoomTabSignal, currentRoomActiveTabSignal } from '../lib/signals';
 import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
@@ -48,6 +48,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			roomStore.select(null);
 			// Clear any pending tab signal when leaving a room to prevent cross-room contamination
 			currentRoomTabSignal.value = null;
+			currentRoomActiveTabSignal.value = null;
 		};
 	}, [roomId]);
 
@@ -58,6 +59,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			const validTabs: RoomTab[] = ['overview', 'context', 'agents', 'goals', 'settings'];
 			if (validTabs.includes(pendingTab as RoomTab)) {
 				setActiveTab(pendingTab as RoomTab);
+				currentRoomActiveTabSignal.value = pendingTab;
 			}
 			currentRoomTabSignal.value = null;
 		}
@@ -66,6 +68,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	// Update URL when tab changes
 	const handleTabChange = (tab: RoomTab) => {
 		setActiveTab(tab);
+		currentRoomActiveTabSignal.value = tab;
 		navigateToRoom(roomId);
 	};
 
