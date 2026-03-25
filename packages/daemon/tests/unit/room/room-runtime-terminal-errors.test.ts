@@ -349,5 +349,40 @@ describe('RoomRuntime - terminal error detection', () => {
 			// Routing is confirmed by feedbackIteration incrementing.
 			expect(updatedGroup!.feedbackIteration).toBeGreaterThan(0);
 		});
+
+		it('does NOT route worker when group.rateLimit is still active (usage_limit not yet expired)', async () => {
+			// Production flow (rate limit still active):
+			//   1. Initial usage_limit → setRateLimit(resetsAt in future)
+			//   2. Something triggers onWorkerTerminalState again while limit is still active
+			//   3. isRateLimited() returns true (resetsAt > now) → handler returns early at the
+			//      rate-limit guard (line ~634) before any usage_limit detection runs
+			//   4. feedbackIteration stays at 0 — worker output is NOT forwarded to leader
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Confirm first detection set an active (future) rate limit
+			const groupAfterFirst = ctx.groupRepo.getGroup(group.id);
+			expect(groupAfterFirst!.rateLimit).not.toBeNull();
+			expect(groupAfterFirst!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			const originalResetsAt = groupAfterFirst!.rateLimit!.resetsAt;
+
+			// Re-trigger while the limit is still in the future (not yet expired)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// isRateLimited() was true → returned early → rateLimit is unchanged
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBe(originalResetsAt);
+
+			// feedbackIteration must NOT have incremented — no routing happened
+			expect(updatedGroup!.feedbackIteration).toBe(0);
+		});
 	});
 });
