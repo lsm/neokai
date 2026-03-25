@@ -37,7 +37,7 @@ Update the frontend visual editor and components to support the agent-centric mo
 - Gate configuration UI supports all condition types
 - Visual distinction between gated and ungated channels
 
-**Dependencies**: Tasks 2.1, 7.1
+**Dependencies**: Task 2.1
 
 **Agent Type**: coder
 

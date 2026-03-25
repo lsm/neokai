@@ -98,7 +98,7 @@ The target system treats workflows as collaboration graphs of agents:
 - Milestone 5 depends on Milestones 3 and 4 (needs completion detection + agent-driven advancement)
 - Milestone 6 depends on Milestone 5 (needs the new advancement model before refactoring Task Agent)
 - Milestone 7 depends on Milestone 6 (needs new model before updating built-in workflows)
-- Milestone 8 depends on Milestones 2, 3, 7 (needs cross-node types + completion state + backend replacement)
+- Milestone 8 depends on Milestones 2, 3 (needs cross-node types + completion state)
 - Milestone 9 depends on all prior milestones (final cleanup)
 
 Key sequencing decisions:

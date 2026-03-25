@@ -142,7 +142,7 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 - An agent is considered "potentially stuck" if ALL of the following are true:
   1. The agent's session is active (not crashed/disconnected)
   2. The agent's member status is `'active'` (not `'done'`, `'completed'`, or `'failed'`)
-  3. The agent's task(s) on the current node are all in a terminal state (`completed`, `needs_attention`, `cancelled`)
+  3. The agent's task(s) on the agent's node are all in a terminal state (`completed`, `needs_attention`, `cancelled`)
   4. A configurable timeout has elapsed since the last terminal task state was reached (default: **10 minutes**)
 - When an agent is detected as stuck:
   - The system auto-marks the agent's member status as `'done'` with a system-generated completion summary: `"Auto-completed: all tasks finished but agent did not call report_done within {N} minutes"`
@@ -157,7 +157,7 @@ Add explicit agent completion signaling. Agents will explicitly report when they
 1. Create `autoCompleteStuckMembers(workflowRunId: string): Promise<AutoCompletedMember[]>` in a new utility file `packages/daemon/src/lib/space/runtime/agent-liveness.ts`
 2. In `SpaceRuntime.processRunTick()`, add a check that:
    - For each workflow run, queries session group members with status `'active'`
-   - For each active member, checks if all their tasks on the current node are terminal
+   - For each active member, checks if all their tasks on the agent's node are terminal
    - If so, checks if the time since the last terminal task `updated_at` exceeds `AGENT_REPORT_DONE_TIMEOUT_MS`
    - If exceeded, auto-completes the member
 3. Add a `memberAutoCompleted` event type to the session group event system
