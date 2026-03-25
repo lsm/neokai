@@ -437,7 +437,10 @@ export function EdgeRenderer({
 							stroke="transparent"
 							strokeWidth={HITBOX_STROKE_WIDTH}
 							fill="none"
-							style={{ cursor: onChannelSelect ? 'pointer' : 'default', pointerEvents: 'stroke' }}
+							style={{
+								cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
+								pointerEvents: 'stroke',
+							}}
 							onClick={
 								onChannelSelect && channel.id != null
 									? (e: MouseEvent) => {

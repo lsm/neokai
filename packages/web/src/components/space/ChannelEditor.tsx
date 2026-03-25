@@ -243,10 +243,10 @@ function ChannelEntry({
 					{/* To */}
 					<div class="space-y-0.5">
 						<label class="text-xs text-gray-500">To (comma-separated for fan-out)</label>
-						{agentRoles.length > 0 ? (
+						{agentRoles.length > 0 && typeof channel.to === 'string' ? (
 							<select
 								data-testid="channel-to-select"
-								value={typeof channel.to === 'string' ? channel.to : ''}
+								value={channel.to}
 								onChange={(e) => updateField('to', (e.currentTarget as HTMLSelectElement).value)}
 								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-teal-500"
 							>

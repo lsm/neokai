@@ -322,8 +322,13 @@ export function WorkflowCanvas({
 	// Compute channel edges from nodes' channel declarations.
 	// Also merges with any explicitly passed channels prop (for backward compatibility).
 	const computedChannelEdges = useMemo(() => computeChannelEdges(nodes), [nodes]);
-	const effectiveChannels =
-		channels.length > 0 ? [...computedChannelEdges, ...channels] : computedChannelEdges;
+	// Merge computed channel edges with explicitly passed channels, deduplicating by fromStepId+toStepId.
+	const effectiveChannels = (() => {
+		if (channels.length === 0) return computedChannelEdges;
+		const seen = new Set(computedChannelEdges.map((c) => `${c.fromStepId}:${c.toStepId}`));
+		const deduped = channels.filter((c) => !seen.has(`${c.fromStepId}:${c.toStepId}`));
+		return [...computedChannelEdges, ...deduped];
+	})();
 
 	// Clear selection if the selected node is removed externally (e.g. parent deletes it
 	// from the nodes array). Without this, a node re-added with the same stepId would
