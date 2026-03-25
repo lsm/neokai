@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import type { ReferenceSearchResult, ReferenceType } from '@neokai/shared';
+import ReferenceTypeIcon from './ReferenceTypeIcon.tsx';
 
 export interface ReferenceAutocompleteProps {
 	results: ReferenceSearchResult[];
@@ -20,74 +21,15 @@ const TYPE_LABELS: Record<ReferenceType, string> = {
 	folder: 'Folders',
 };
 
+const TYPE_ICON_CLASS: Record<ReferenceType, string> = {
+	task: 'w-3.5 h-3.5 text-indigo-400',
+	goal: 'w-3.5 h-3.5 text-amber-400',
+	file: 'w-3.5 h-3.5 text-blue-400',
+	folder: 'w-3.5 h-3.5 text-yellow-400',
+};
+
 function TypeIcon({ type }: { type: ReferenceType }) {
-	if (type === 'task') {
-		return (
-			<svg
-				class="w-3.5 h-3.5 text-indigo-400 shrink-0"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-				/>
-			</svg>
-		);
-	}
-	if (type === 'goal') {
-		return (
-			<svg
-				class="w-3.5 h-3.5 text-amber-400 shrink-0"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"
-				/>
-			</svg>
-		);
-	}
-	if (type === 'folder') {
-		return (
-			<svg
-				class="w-3.5 h-3.5 text-yellow-400 shrink-0"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
-				/>
-			</svg>
-		);
-	}
-	// file
-	return (
-		<svg
-			class="w-3.5 h-3.5 text-blue-400 shrink-0"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke="currentColor"
-		>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={2}
-				d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-			/>
-		</svg>
-	);
+	return <ReferenceTypeIcon type={type} className={TYPE_ICON_CLASS[type]} />;
 }
 
 /**
