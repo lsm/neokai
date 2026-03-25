@@ -321,4 +321,188 @@ describe('recoverStuckLeaders', () => {
 		ctxWithMessages.runtime.stop();
 		ctxWithMessages.db.close();
 	});
+
+	// ─── Subtask 4: coexistence with recoverStuckWorkers ─────────────────────
+
+	it('recoverStuckLeaders and recoverStuckWorkers both fire in the same tick without interfering', async () => {
+		// Two groups in the same tick:
+		//   group1 — expired WORKER rate limit: recoverStuckWorkers handles it,
+		//             recoverStuckLeaders ignores it (sessionRole !== 'leader')
+		//   group2 — expired LEADER rate limit, no new worker messages:
+		//             recoverStuckWorkers skips it, recoverStuckLeaders handles it
+
+		const workerSessionsWithMessages = new Set<string>();
+		const ctxCoexist = createRuntimeTestContext({
+			maxConcurrentGroups: 2,
+			getWorkerMessages: (sessionId, _afterId) => {
+				if (workerSessionsWithMessages.has(sessionId)) {
+					return [{ id: 'w1', text: 'Worker output for stuck-worker group', toolCallNames: [] }];
+				}
+				return [];
+			},
+		});
+		ctx.runtime.stop();
+
+		// Group 1: expired WORKER rate limit — recoverStuckWorkers will handle it
+		const { task: task1 } = await createGoalAndTask(ctxCoexist);
+		const group1 = ctxCoexist.groupRepo.createGroup(
+			task1.id,
+			`worker-w:${task1.id}`,
+			`leader-w:${task1.id}`
+		);
+		await ctxCoexist.taskManager.updateTaskStatus(task1.id, 'in_progress');
+		ctxCoexist.groupRepo.setRateLimit(group1.id, {
+			detectedAt: Date.now() - 5000,
+			resetsAt: Date.now() - 1000,
+			sessionRole: 'worker',
+		});
+		ctxCoexist.sessionFactory.processingStates.set(group1.workerSessionId, 'idle');
+		ctxCoexist.sessionFactory.processingStates.set(group1.leaderSessionId, 'idle');
+		// group1 has new worker messages — this causes recoverStuckWorkers to trigger
+		workerSessionsWithMessages.add(group1.workerSessionId);
+
+		// Group 2: expired LEADER rate limit — recoverStuckLeaders will handle it
+		const { task: task2 } = await createGoalAndTask(ctxCoexist);
+		const group2 = ctxCoexist.groupRepo.createGroup(
+			task2.id,
+			`worker-l:${task2.id}`,
+			`leader-l:${task2.id}`
+		);
+		await ctxCoexist.taskManager.updateTaskStatus(task2.id, 'in_progress');
+		ctxCoexist.groupRepo.setRateLimit(group2.id, {
+			detectedAt: Date.now() - 5000,
+			resetsAt: Date.now() - 1000,
+			sessionRole: 'leader',
+		});
+		ctxCoexist.sessionFactory.processingStates.set(group2.workerSessionId, 'idle');
+		ctxCoexist.sessionFactory.processingStates.set(group2.leaderSessionId, 'idle');
+		// group2 worker has no new messages — recoverStuckWorkers skips it (messages already forwarded)
+
+		ctxCoexist.runtime.start();
+		await ctxCoexist.runtime.tick();
+		// Allow fire-and-forget worker routing (recoverStuckWorkers) to complete
+		await new Promise((r) => setTimeout(r, 20));
+
+		// recoverStuckLeaders must have injected a continuation message for group2's leader
+		const group2LeaderInjects = ctxCoexist.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === group2.leaderSessionId
+		);
+		expect(group2LeaderInjects).toHaveLength(1);
+		expect(group2LeaderInjects[0].args[1]).toContain('[Auto-recovery]');
+
+		// recoverStuckWorkers must have triggered worker→leader routing for group1:
+		// injectMessage is called on group1's leader with a normal worker envelope
+		// (not an [Auto-recovery] message — that would come from recoverStuckLeaders)
+		const group1RoutingInjects = ctxCoexist.sessionFactory.calls.filter(
+			(c) =>
+				c.method === 'injectMessage' &&
+				c.args[0] === group1.leaderSessionId &&
+				typeof c.args[1] === 'string' &&
+				!(c.args[1] as string).includes('[Auto-recovery]')
+		);
+		expect(group1RoutingInjects.length).toBeGreaterThanOrEqual(1);
+
+		// group2 rate limit must be cleared by recoverStuckLeaders
+		expect(ctxCoexist.groupRepo.getGroup(group2.id)!.rateLimit).toBeNull();
+
+		ctxCoexist.runtime.stop();
+		ctxCoexist.db.close();
+	});
+
+	// ─── Subtask 5: onLeaderTerminalState behavior after re-injection ─────────
+
+	it('leader with fresh output after re-injection completes normally without new backoff', async () => {
+		// After recoverStuckLeaders clears the rate limit and injects a continuation message,
+		// onLeaderTerminalState fires with the leader's fresh output (no error text).
+		// The leader should complete normally with no new rate-limit backoff set.
+		const ctxFresh = createRuntimeTestContext({
+			getWorkerMessages: () => [],
+		});
+		ctx.runtime.stop();
+
+		const { task } = await createGoalAndTask(ctxFresh);
+		const group = ctxFresh.groupRepo.createGroup(task.id, `worker:${task.id}`, `leader:${task.id}`);
+		await ctxFresh.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+		ctxFresh.groupRepo.setRateLimit(group.id, expiredLeaderBackoff());
+		ctxFresh.sessionFactory.processingStates.set(group.leaderSessionId, 'idle');
+
+		ctxFresh.runtime.start();
+
+		// Tick: recoverStuckLeaders clears the rate limit and injects a continuation message
+		await ctxFresh.runtime.tick();
+
+		const injectCalls = ctxFresh.sessionFactory.calls.filter((c) => c.method === 'injectMessage');
+		expect(injectCalls).toHaveLength(1);
+
+		// Rate limit must be cleared so onLeaderTerminalState sees null
+		expect(ctxFresh.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+		// Mark leader as having received work (normally done by routeWorkerToLeader)
+		ctxFresh.groupRepo.setLeaderHasWork(group.id);
+
+		// Simulate leader responding with fresh output — getWorkerMessages returns [] (no error text)
+		// onLeaderTerminalState falls through to normal completion
+		await ctxFresh.runtime.onLeaderTerminalState(group.id, {
+			sessionId: group.leaderSessionId,
+			kind: 'idle',
+		});
+
+		// No new backoff must have been set
+		const updatedGroup = ctxFresh.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.rateLimit).toBeNull();
+
+		// Task must remain in_progress (not paused)
+		const updatedTask = await ctxFresh.taskManager.getTask(task.id);
+		expect(updatedTask!.status).toBe('in_progress');
+
+		ctxFresh.runtime.stop();
+		ctxFresh.db.close();
+	});
+
+	it('re-detection guard prevents backoff reset when rate limit sentinel is present with stale usage-limit text', async () => {
+		// When the rate limit sentinel (group.rateLimit) is still set (even if expired),
+		// the !group.rateLimit guard in onLeaderTerminalState causes the usage_limit block
+		// to be skipped entirely — falling through to normal completion.
+		//
+		// This guard fires when some path re-triggers onLeaderTerminalState while the
+		// sentinel is still present (e.g. a reconnect event before recoverStuckLeaders
+		// clears it, or a mirroring path that doesn't clear first).
+		const STALE_USAGE_LIMIT_TEXT = "You've hit your limit · resets 2pm (America/New_York)";
+
+		const ctxGuard = createRuntimeTestContext({
+			// Return stale usage-limit text as if the leader session still contains the old message
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{ id: 'l1', text: STALE_USAGE_LIMIT_TEXT, toolCallNames: [] },
+			],
+		});
+		ctx.runtime.stop();
+
+		const { task } = await createGoalAndTask(ctxGuard);
+		const group = ctxGuard.groupRepo.createGroup(task.id, `worker:${task.id}`, `leader:${task.id}`);
+		await ctxGuard.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+		// Simulate the state right before re-injection: rate limit is expired but still present
+		const expiredRateLimit = expiredLeaderBackoff();
+		ctxGuard.groupRepo.setRateLimit(group.id, expiredRateLimit);
+		ctxGuard.groupRepo.setLeaderHasWork(group.id);
+
+		// Trigger onLeaderTerminalState with stale usage-limit text while sentinel is non-null.
+		// The re-detection guard (!group.rateLimit is false) must skip the usage_limit block.
+		await ctxGuard.runtime.onLeaderTerminalState(group.id, {
+			sessionId: group.leaderSessionId,
+			kind: 'idle',
+		});
+
+		// resetsAt must NOT have been pushed to a new future value — guard fired correctly
+		const updatedGroup = ctxGuard.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+
+		// Task must not be re-paused with a new future reset
+		const updatedTask = await ctxGuard.taskManager.getTask(task.id);
+		expect(updatedTask!.status).toBe('in_progress');
+
+		ctxGuard.runtime.stop();
+		ctxGuard.db.close();
+	});
 });
