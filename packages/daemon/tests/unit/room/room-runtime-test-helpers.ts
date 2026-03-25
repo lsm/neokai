@@ -107,6 +107,10 @@ export function createMockSessionFactory() {
 			calls.push({ method: 'startSession', args: [sessionId] });
 			return true;
 		},
+		async switchModel(sessionId: string, model: string, provider: string) {
+			calls.push({ method: 'switchModel', args: [sessionId, model, provider] });
+			return { success: true, model };
+		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
 		processingStates: Map<
@@ -256,6 +260,8 @@ export interface RuntimeTestContextOptions {
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
 	/** Get global settings for testing fallback model logic */
 	getGlobalSettings?: () => GlobalSettings;
+	/** Optional mock messageHub for testing fallback model switch logic */
+	messageHub?: { request: (method: string, data?: unknown) => Promise<unknown> };
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -296,6 +302,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getGoal: (goalId) => goalManager.getGoal(goalId),
 		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
 		daemonHub: mockHub as unknown as DaemonHub,
+		messageHub: opts?.messageHub as never,
 	});
 
 	return {

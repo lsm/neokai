@@ -384,5 +384,87 @@ describe('RoomRuntime - terminal error detection', () => {
 			// feedbackIteration must NOT have incremented — no routing happened
 			expect(updatedGroup!.feedbackIteration).toBe(0);
 		});
+
+		it('returns early without routing to leader after successful fallback switch', async () => {
+			// Configure a fallback model and a mock messageHub that provides the current model
+			const mockMessageHub = {
+				request: async (method: string) => {
+					if (method === 'session.model.get') {
+						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
+					}
+					return undefined;
+				},
+			};
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: mockMessageHub,
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should NOT be paused — fallback switch succeeded, task stays in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('usage_limited');
+			expect(updatedTask!.status).not.toBe('rate_limited');
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit must NOT be set
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+
+			// Leader must NOT have been injected with stale error output
+			const leaderInjectCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
+			);
+			expect(leaderInjectCalls).toHaveLength(0);
+
+			// switchModel should have been called on the session factory
+			const switchModelCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchModelCalls).toHaveLength(1);
+			expect(switchModelCalls[0].args[1]).toBe('claude-haiku-4-5');
+		});
+
+		it('clears stale task restriction after successful fallback switch', async () => {
+			const mockMessageHub = {
+				request: async (method: string) => {
+					if (method === 'session.model.get') {
+						return { currentModel: 'claude-opus-4-5', modelInfo: { provider: 'anthropic' } };
+					}
+					return undefined;
+				},
+			};
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: mockMessageHub,
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Trigger once more to simulate a re-trigger while restrictions might be stale
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Task restrictions should remain clear
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.restrictions).toBeNull();
+
+			// Group rate limit should remain cleared
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+		});
 	});
 });
