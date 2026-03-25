@@ -129,7 +129,7 @@ interface MultiAgentSectionProps {
 function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	const nodeAgents = node.agents ?? [];
 
-	// Track which slots have their override fields expanded (keyed by role)
+	// Track which slots have their override fields expanded (keyed by name)
 	const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
 
 	const toggleSlotExpanded = useCallback((role: string) => {
@@ -150,19 +150,19 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 		const agentInfo = agents.find((a) => a.id === agentId);
 		// Guard against agents with empty role strings to avoid indistinguishable slot names
 		const baseRole = agentInfo?.role?.trim() || agentId;
-		// Ensure the slot role is unique within this node. When the same agent is added
+		// Ensure the slot name is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
-		const usedRoles = new Set(nodeAgents.map((a) => a.role));
+		const usedRoles = new Set(nodeAgents.map((a) => a.name));
 		let role = baseRole;
 		for (let i = 2; usedRoles.has(role); i++) {
 			role = `${baseRole}-${i}`;
 		}
-		updateAgents([...nodeAgents, { agentId, role }]);
+		updateAgents([...nodeAgents, { agentId, name: role }]);
 	}
 
 	function removeAgent(role: string) {
-		const removed = nodeAgents.find((a) => a.role === role);
-		const next = nodeAgents.filter((a) => a.role !== role);
+		const removed = nodeAgents.find((a) => a.name === role);
+		const next = nodeAgents.filter((a) => a.name !== role);
 		if (next.length === 0) {
 			// Switch back to single-agent mode: restore agentId from the removed agent and
 			// clear channels (orphaned channels on a single-agent node are semantically invalid)
@@ -180,21 +180,21 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 	function updateAgentInstructions(role: string, instructions: string) {
 		updateAgents(
 			nodeAgents.map((a) =>
-				a.role === role ? { ...a, instructions: instructions || undefined } : a
+				a.name === role ? { ...a, instructions: instructions || undefined } : a
 			)
 		);
 	}
 
 	function updateAgentModel(role: string, model: string) {
 		updateAgents(
-			nodeAgents.map((a) => (a.role === role ? { ...a, model: model || undefined } : a))
+			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
 		);
 	}
 
 	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
 		updateAgents(
 			nodeAgents.map((a) =>
-				a.role === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
+				a.name === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
 			)
 		);
 	}
@@ -231,19 +231,19 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
 					const hasOverrides = !!(sa.model || sa.systemPrompt);
-					const isExpanded = expandedSlots.has(sa.role);
+					const isExpanded = expandedSlots.has(sa.name);
 					return (
 						<div
-							key={sa.role}
+							key={sa.name}
 							class={`rounded p-2 space-y-1 border ${hasOverrides ? 'bg-amber-950/20 border-amber-700/40' : 'bg-dark-800 border-dark-600'}`}
 						>
 							{/* Header: role input + override badge + remove */}
 							<div class="flex items-center gap-1">
 								<input
 									type="text"
-									value={sa.role}
+									value={sa.name}
 									onInput={(e) => {
-										const oldRole = sa.role;
+										const oldRole = sa.name;
 										const newRole = (e.currentTarget as HTMLInputElement).value;
 										// Keep the override section expanded after a rename by migrating the key
 										setExpandedSlots((prev) => {
@@ -254,7 +254,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 											return next;
 										});
 										updateAgents(
-											nodeAgents.map((a) => (a.role === oldRole ? { ...a, role: newRole } : a))
+											nodeAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
 										);
 									}}
 									placeholder="slot role"
@@ -268,7 +268,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 								)}
 								<button
 									type="button"
-									onClick={() => toggleSlotExpanded(sa.role)}
+									onClick={() => toggleSlotExpanded(sa.name)}
 									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
 									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
 									aria-expanded={isExpanded}
@@ -294,7 +294,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 								</button>
 								<button
 									type="button"
-									onClick={() => removeAgent(sa.role)}
+									onClick={() => removeAgent(sa.name)}
 									class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
 									title="Remove agent"
 								>
@@ -315,7 +315,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 								type="text"
 								value={sa.instructions ?? ''}
 								onInput={(e) =>
-									updateAgentInstructions(sa.role, (e.currentTarget as HTMLInputElement).value)
+									updateAgentInstructions(sa.name, (e.currentTarget as HTMLInputElement).value)
 								}
 								placeholder="Per-agent instructions (optional)…"
 								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
@@ -330,7 +330,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 											type="text"
 											value={sa.model ?? ''}
 											onInput={(e) =>
-												updateAgentModel(sa.role, (e.currentTarget as HTMLInputElement).value)
+												updateAgentModel(sa.name, (e.currentTarget as HTMLInputElement).value)
 											}
 											placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
 											data-testid="agent-model-input"
@@ -343,7 +343,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 											value={sa.systemPrompt ?? ''}
 											onInput={(e) =>
 												updateAgentSystemPrompt(
-													sa.role,
+													sa.name,
 													(e.currentTarget as HTMLTextAreaElement).value
 												)
 											}
@@ -410,7 +410,7 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 	const nodeAgents = node.agents ?? [];
 
 	// Collect known roles from node agents (+ wildcard)
-	const knownRoles = ['*', ...nodeAgents.map((sa) => sa.role)];
+	const knownRoles = ['*', ...nodeAgents.map((sa) => sa.name)];
 
 	function updateChannels(next: WorkflowChannel[]) {
 		onUpdate({ ...node, channels: next.length > 0 ? next : undefined });
@@ -645,11 +645,11 @@ export function WorkflowNodeCard({
 									const hasOverrides = !!(a.model || a.systemPrompt);
 									return (
 										<span
-											key={a.role}
+											key={a.name}
 											class={`text-xs border rounded px-1 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-950/30 border-amber-700/50 text-amber-300' : 'bg-dark-700 border-dark-600 text-gray-300'}`}
-											title={`${name} — slot: ${a.role}${hasOverrides ? ' (has overrides)' : ''}`}
+											title={`${name} — slot: ${a.name}${hasOverrides ? ' (has overrides)' : ''}`}
 										>
-											<span>{a.role}</span>
+											<span>{a.name}</span>
 											{hasOverrides && (
 												<span
 													data-testid="override-dot"
@@ -753,7 +753,7 @@ export function WorkflowNodeCard({
 											? (agents.find((a) => a.id === firstId)?.role ?? firstId)
 											: '';
 										const existing: WorkflowNodeAgent[] = firstId
-											? [{ agentId: firstId, role: firstAgentRole }]
+											? [{ agentId: firstId, name: firstAgentRole }]
 											: [];
 										onUpdate({ ...node, agents: existing, agentId: '' });
 									}}

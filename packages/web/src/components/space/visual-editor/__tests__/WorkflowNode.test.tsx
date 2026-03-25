@@ -262,8 +262,8 @@ describe('WorkflowNode multi-agent rendering', () => {
 			...STEP_DRAFT,
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', role: 'coder' },
-				{ agentId: 'agent-2', role: 'reviewer' },
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		};
 		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
@@ -283,7 +283,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 	});
 
 	it('renders single agent name when agents array is empty', () => {
-		const step = { ...STEP_DRAFT, agents: [] as { agentId: string; role: string }[] };
+		const step = { ...STEP_DRAFT, agents: [] as { agentId: string; name: string }[] };
 		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		// Empty agents array = single-agent mode
 		expect(getByTestId('agent-name')).toBeTruthy();
@@ -294,7 +294,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'unknown-agent-id', role: 'coder' }],
+			agents: [{ agentId: 'unknown-agent-id', name: 'coder' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		// Badge shows the slot role (always available), not the agent name (which requires lookup)
@@ -305,7 +305,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' }],
+			agents: [{ agentId: 'agent-1', name: 'coder', model: 'claude-opus-4-6' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		expect(getByTestId('override-indicator')).toBeTruthy();
@@ -315,7 +315,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'coder', systemPrompt: 'Be strict.' }],
+			agents: [{ agentId: 'agent-1', name: 'coder', systemPrompt: 'Be strict.' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		expect(getByTestId('override-indicator')).toBeTruthy();
@@ -325,7 +325,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'coder' }],
+			agents: [{ agentId: 'agent-1', name: 'coder' }],
 		};
 		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		expect(queryByTestId('override-indicator')).toBeNull();
@@ -336,8 +336,8 @@ describe('WorkflowNode multi-agent rendering', () => {
 			...STEP_DRAFT,
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', role: 'coder' },
-				{ agentId: 'agent-2', role: 'reviewer' },
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);

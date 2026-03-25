@@ -89,7 +89,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	 */
 	function buildTaskAgentChannels(agentsToChannel: WorkflowNodeAgent[]): WorkflowChannel[] {
 		return agentsToChannel.map((sa) => {
-			return { from: 'task-agent', to: sa.role, direction: 'bidirectional' };
+			return { from: 'task-agent', to: sa.name, direction: 'bidirectional' };
 		});
 	}
 
@@ -100,20 +100,20 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		const baseRole = agentInfo?.role?.trim() || agentId;
 		// Ensure the slot role is unique within this node. When the same agent is added
 		// multiple times, append a numeric suffix to distinguish the slots.
-		const usedRoles = new Set(stepAgents.map((a) => a.role));
+		const usedRoles = new Set(stepAgents.map((a) => a.name));
 		let role = baseRole;
 		for (let i = 2; usedRoles.has(role); i++) {
 			role = `${baseRole}-${i}`;
 		}
-		const next = [...stepAgents, { agentId, role }];
+		const next = [...stepAgents, { agentId, name: role }];
 		// Merge agents + channels into a single onUpdate call to avoid stale-reference overwrites
 		const newChannels = step.channels === undefined ? buildTaskAgentChannels(next) : step.channels;
 		onUpdate({ ...step, agents: next, agentId: '', channels: newChannels });
 	}
 
 	function removeAgent(role: string) {
-		const removed = stepAgents.find((a) => a.role === role);
-		const next = stepAgents.filter((a) => a.role !== role);
+		const removed = stepAgents.find((a) => a.name === role);
+		const next = stepAgents.filter((a) => a.name !== role);
 		if (next.length === 0) {
 			// Switch back to single-agent mode: restore agentId from the removed agent and
 			// clear channels (orphaned channels on a single-agent step are semantically invalid)
@@ -131,21 +131,21 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	function updateAgentInstructions(role: string, instructions: string) {
 		updateAgents(
 			stepAgents.map((a) =>
-				a.role === role ? { ...a, instructions: instructions || undefined } : a
+				a.name === role ? { ...a, instructions: instructions || undefined } : a
 			)
 		);
 	}
 
 	function updateAgentModel(role: string, model: string) {
 		updateAgents(
-			stepAgents.map((a) => (a.role === role ? { ...a, model: model || undefined } : a))
+			stepAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
 		);
 	}
 
 	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
 		updateAgents(
 			stepAgents.map((a) =>
-				a.role === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
+				a.name === role ? { ...a, systemPrompt: systemPrompt || undefined } : a
 			)
 		);
 	}
@@ -168,7 +168,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								? (agents.find((a) => a.id === firstId)?.role ?? firstId)
 								: '';
 							const existing: WorkflowNodeAgent[] = firstId
-								? [{ agentId: firstId, role: firstAgentRole }]
+								? [{ agentId: firstId, name: firstAgentRole }]
 								: [];
 							onUpdate({ ...step, agents: existing, agentId: '' });
 						}}
@@ -238,10 +238,10 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				{stepAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
 					const hasOverrides = !!(sa.model || sa.systemPrompt);
-					const isExpanded = expandedSlots.has(sa.role);
+					const isExpanded = expandedSlots.has(sa.name);
 					return (
 						<div
-							key={sa.role}
+							key={sa.name}
 							class={`rounded p-2 space-y-1 border ${hasOverrides ? 'bg-amber-950/20 border-amber-700/40' : 'bg-dark-800 border-dark-600'}`}
 							data-testid="agent-entry"
 							data-has-overrides={hasOverrides ? 'true' : undefined}
@@ -251,9 +251,9 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								<input
 									type="text"
 									data-testid="agent-role-input"
-									value={sa.role}
+									value={sa.name}
 									onInput={(e) => {
-										const oldRole = sa.role;
+										const oldRole = sa.name;
 										const newRole = (e.currentTarget as HTMLInputElement).value;
 										// Keep the override section expanded after a rename by migrating the key
 										setExpandedSlots((prev) => {
@@ -264,7 +264,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 											return next;
 										});
 										updateAgents(
-											stepAgents.map((a) => (a.role === oldRole ? { ...a, role: newRole } : a))
+											stepAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
 										);
 									}}
 									placeholder="slot role"
@@ -281,7 +281,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								<button
 									type="button"
 									data-testid="toggle-overrides-button"
-									onClick={() => toggleSlotExpanded(sa.role)}
+									onClick={() => toggleSlotExpanded(sa.name)}
 									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
 									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
 									aria-expanded={isExpanded}
@@ -307,7 +307,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								<button
 									type="button"
 									data-testid="remove-agent-button"
-									onClick={() => removeAgent(sa.role)}
+									onClick={() => removeAgent(sa.name)}
 									class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
 									title="Remove agent"
 								>
@@ -329,7 +329,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 								data-testid="agent-instructions-input"
 								value={sa.instructions ?? ''}
 								onInput={(e) =>
-									updateAgentInstructions(sa.role, (e.currentTarget as HTMLInputElement).value)
+									updateAgentInstructions(sa.name, (e.currentTarget as HTMLInputElement).value)
 								}
 								placeholder="Per-agent instructions (optional)…"
 								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
@@ -345,7 +345,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 											data-testid="agent-model-input"
 											value={sa.model ?? ''}
 											onInput={(e) =>
-												updateAgentModel(sa.role, (e.currentTarget as HTMLInputElement).value)
+												updateAgentModel(sa.name, (e.currentTarget as HTMLInputElement).value)
 											}
 											placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
 											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
@@ -358,7 +358,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 											value={sa.systemPrompt ?? ''}
 											onInput={(e) =>
 												updateAgentSystemPrompt(
-													sa.role,
+													sa.name,
 													(e.currentTarget as HTMLTextAreaElement).value
 												)
 											}
@@ -411,7 +411,7 @@ function ChannelsPanelSection({ step, onUpdate }: ChannelsPanelSectionProps) {
 	const stepAgents = step.agents ?? [];
 
 	// Collect known roles from step agents (+ wildcard)
-	const knownRoles = ['*', ...stepAgents.map((sa) => sa.role)];
+	const knownRoles = ['*', ...stepAgents.map((sa) => sa.name)];
 
 	const [newFrom, setNewFrom] = useState('');
 	const [newTo, setNewTo] = useState('');

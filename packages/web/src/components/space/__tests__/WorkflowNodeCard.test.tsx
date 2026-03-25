@@ -361,8 +361,8 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', role: 'strict-reviewer' },
-				{ agentId: 'agent-2', role: 'quick-reviewer' },
+				{ agentId: 'agent-1', name: 'strict-reviewer' },
+				{ agentId: 'agent-2', name: 'quick-reviewer' },
 			],
 		});
 		const { container } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
@@ -374,8 +374,8 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', role: 'coder' },
-				{ agentId: 'agent-2', role: 'reviewer' },
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		});
 		const { queryAllByTestId } = render(
@@ -388,8 +388,8 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' },
-				{ agentId: 'agent-2', role: 'reviewer' },
+				{ agentId: 'agent-1', name: 'coder', model: 'claude-opus-4-6' },
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		});
 		const { getAllByTestId } = render(
@@ -402,7 +402,7 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 	it('shows override-dot on slot with systemPrompt override', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'coder', systemPrompt: 'Be strict.' }],
+			agents: [{ agentId: 'agent-1', name: 'coder', systemPrompt: 'Be strict.' }],
 		});
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
 		expect(getByTestId('override-dot')).toBeTruthy();
@@ -412,8 +412,8 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [
-				{ agentId: 'agent-1', role: 'coder', model: 'claude-opus-4-6' },
-				{ agentId: 'agent-2', role: 'reviewer', systemPrompt: 'Review carefully.' },
+				{ agentId: 'agent-1', name: 'coder', model: 'claude-opus-4-6' },
+				{ agentId: 'agent-2', name: 'reviewer', systemPrompt: 'Review carefully.' },
 			],
 		});
 		const { getAllByTestId } = render(
@@ -432,7 +432,7 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 	it('does not show slot-overrides section before toggle is clicked', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'planner' }],
+			agents: [{ agentId: 'agent-1', name: 'planner' }],
 		});
 		const { queryByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: true })} />);
 		expect(queryByTestId('slot-overrides')).toBeNull();
@@ -441,7 +441,7 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 	it('shows slot-overrides section after toggle button is clicked', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'planner' }],
+			agents: [{ agentId: 'agent-1', name: 'planner' }],
 		});
 		const { getByTestId, queryByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
@@ -454,7 +454,7 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 	it('hides slot-overrides section after second toggle click', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'planner' }],
+			agents: [{ agentId: 'agent-1', name: 'planner' }],
 		});
 		const { getByTestId, queryByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
@@ -468,7 +468,7 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 	it('override section stays expanded after slot role is renamed', async () => {
 		function Wrapper() {
 			const [step, setStep] = useState(
-				makeStep({ agentId: '', agents: [{ agentId: 'agent-1', role: 'planner' }] })
+				makeStep({ agentId: '', agents: [{ agentId: 'agent-1', name: 'planner' }] })
 			);
 			return <WorkflowNodeCard {...makeProps({ node: step, expanded: true, onUpdate: setStep })} />;
 		}
@@ -487,7 +487,7 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 		const onUpdate = vi.fn();
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', role: 'coder' }],
+			agents: [{ agentId: 'agent-1', name: 'coder' }],
 		});
 		const { getByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true, onUpdate })} />

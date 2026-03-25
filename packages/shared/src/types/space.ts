@@ -163,7 +163,7 @@ export interface SpaceTask {
 	/** ID of a custom Space agent assigned to execute this task */
 	customAgentId?: string;
 	/**
-	 * The `WorkflowNodeAgent.role` of the specific agent slot that spawned this task.
+	 * The `WorkflowNodeAgent.name` of the specific agent slot that spawned this task.
 	 * Stored at task creation time so `spawn_step_agent` can unambiguously map the task
 	 * back to the correct slot even when the same `agentId` appears multiple times in the node.
 	 */
@@ -239,7 +239,7 @@ export interface CreateSpaceTaskParams {
 	/** Custom Space agent to execute this task */
 	customAgentId?: string;
 	/**
-	 * The `WorkflowNodeAgent.role` of the specific slot that spawned this task.
+	 * The `WorkflowNodeAgent.name` of the specific slot that spawned this task.
 	 * See `SpaceTask.slotRole` for details.
 	 */
 	slotRole?: string;
@@ -607,11 +607,11 @@ export interface WorkflowNodeAgent {
 	 *
 	 * This is a **slot-specific label** distinct from `SpaceAgent.role`, which identifies
 	 * the agent's job category (e.g. `"coder"`, `"reviewer"`). The same `SpaceAgent` may
-	 * appear in multiple slots with different `WorkflowNodeAgent.role` values (e.g.
+	 * appear in multiple slots with different `WorkflowNodeAgent.name` values (e.g.
 	 * `"strict-reviewer"` and `"quick-reviewer"`). When added via the UI a second time,
 	 * a numeric suffix is appended automatically (e.g. `"coder"` → `"coder-2"`).
 	 */
-	role: string;
+	name: string;
 	/** Override the agent's default model for this slot. */
 	model?: string;
 	/** Override the agent's default system prompt for this slot. */
@@ -637,10 +637,19 @@ export interface WorkflowNodeAgent {
 export const TASK_AGENT_NODE_ID = '__task_agent__';
 
 /**
- * A directed messaging channel between agents in a workflow node.
- * Channels define which agents may send messages to which other agents.
- * `from` and `to` reference agent roles (matching `WorkflowNodeAgent.role`) or the
- * wildcard `'*'` which matches all agents in the node.
+ * A directed messaging channel between agents in a workflow.
+ * Channels define which agents may send messages to which other agents and
+ * can optionally enforce gate conditions before message delivery.
+ *
+ * Addressing uses agent name strings (`WorkflowNodeAgent.name`) or `'*'` for broadcast.
+ * Cross-node channels use the format `"nodeId/agentName"` in `from`/`to` to
+ * address agents in a specific node; within-node channels use plain agent names.
+ *
+ * Supported messaging patterns:
+ * - Within-node DM:        `{ from: 'coder', to: 'reviewer' }`
+ * - Within-node broadcast: `{ from: 'coder', to: '*' }`
+ * - Cross-node DM:         `{ from: 'nodeA/coder', to: 'nodeB/reviewer' }`
+ * - Cross-node fan-out:    `{ from: 'nodeA/coder', to: ['nodeB/reviewer', 'nodeC/qa'] }`
  *
  * No channels = no messaging constraints (agents are fully isolated).
  */
@@ -648,11 +657,13 @@ export interface WorkflowChannel {
 	/** Optional stable identifier for this channel */
 	id?: string;
 	/**
-	 * Source role string (matches `WorkflowNodeAgent.role`) or `'*'` for all agents in the node.
+	 * Source agent name string (matches `WorkflowNodeAgent.name`) or `'*'` for all agents.
+	 * Cross-node format: `"nodeId/agentName"`.
 	 */
 	from: string;
 	/**
-	 * Target role string, array of role strings, or `'*'` for all agents in the node.
+	 * Target agent name string, array of name strings, or `'*'` for all agents.
+	 * Cross-node format: `"nodeId/agentName"`.
 	 * An array with multiple entries enables fan-out (A→[B,C,D]) and
 	 * hub-spoke bidirectional (A↔[B,C,D]) topologies.
 	 */
@@ -672,6 +683,18 @@ export interface WorkflowChannel {
 	isCyclic?: boolean;
 	/** Optional human-readable label for display in the visual editor */
 	label?: string;
+	/**
+	 * Optional gate condition evaluated before a message is delivered on this channel.
+	 * When present, the message is held until the condition passes.
+	 * Absent means the channel is always open (no gate).
+	 */
+	gate?: WorkflowCondition;
+	/**
+	 * When `true`, message routing on this channel increments `iterationCount` on the run.
+	 * Used for cycle detection in iterative workflows — mark back-edges (channels that
+	 * route output back to an earlier agent) to avoid false cycle detection on merge paths.
+	 */
+	isCyclic?: boolean;
 }
 
 /**
@@ -706,13 +729,6 @@ export interface WorkflowNode {
 	agents?: WorkflowNodeAgent[];
 	/** Node-specific instructions shared by all agents in this node */
 	instructions?: string;
-	/**
-	 * Directed messaging topology between agents in this node.
-	 * No channels = no messaging constraints (agents are fully isolated).
-	 * Roles referenced in `from`/`to` must match `WorkflowNodeAgent.role` values for agents
-	 * in this node, or the wildcard `'*'`.
-	 */
-	channels?: WorkflowChannel[];
 }
 
 /**
@@ -760,12 +776,6 @@ export interface WorkflowNodeInput {
 	 */
 	agents?: WorkflowNodeAgent[];
 	instructions?: string;
-	/**
-	 * Directed messaging topology between agents in this node.
-	 * Roles referenced in `from`/`to` must match `WorkflowNodeAgent.role` values for agents
-	 * in this node, or the wildcard `'*'`.
-	 */
-	channels?: WorkflowChannel[];
 }
 
 /**
@@ -797,11 +807,11 @@ export interface SpaceWorkflow {
 	/** Rules that govern agent behavior during this workflow */
 	rules: WorkflowRule[];
 	/**
-	 * Workflow-level directed messaging channels between agents.
-	 * Use `from`/`to` to reference `WorkflowNodeAgent.role` values (globally unique across
-	 * the workflow) or node names (for fan-out to all agents in a node).
-	 * Channels defined here take precedence over node-level channels.
-	 * No channels = no messaging constraints (agents are fully isolated).
+	 * Directed messaging channels between agents in this workflow.
+	 * Channels define which agents may communicate and under what conditions.
+	 * Agent names in `from`/`to` match `WorkflowNodeAgent.name`; cross-node channels
+	 * use `"nodeId/agentName"` addressing.
+	 * Empty or absent means no messaging constraints (agents are fully isolated).
 	 */
 	channels?: WorkflowChannel[];
 	/**
@@ -865,6 +875,11 @@ export interface CreateSpaceWorkflowParams {
 	maxIterations?: number;
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
+	/**
+	 * Directed messaging channels for this workflow.
+	 * See `SpaceWorkflow.channels` for full semantics.
+	 */
+	channels?: WorkflowChannel[];
 }
 
 /**
@@ -913,6 +928,10 @@ export interface UpdateSpaceWorkflowParams {
 	maxIterations?: number | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
+	/**
+	 * Replaces the entire channel list. Pass `[]` or `null` to clear all channels.
+	 */
+	channels?: WorkflowChannel[] | null;
 }
 
 // ============================================================================
@@ -929,8 +948,9 @@ export interface ExportedWorkflowNodeAgent {
 	/**
 	 * Unique identifier for this agent slot within the node.
 	 * Must be unique across all agents in the same exported node.
+	 * Mirrors `WorkflowNodeAgent.name`.
 	 */
-	role: string;
+	name: string;
 	/** Override the agent's default model for this slot. */
 	model?: string;
 	/** Override the agent's default system prompt for this slot. */
@@ -947,7 +967,7 @@ export interface ExportedWorkflowNodeAgent {
  * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
  *   reference portable across Space instances that may have different UUIDs.
  * - `agents[]` entries have their `agentId` UUIDs replaced by `agentRef` names.
- * - `channels[]` are exported as-is — they already use role strings, not UUIDs.
+ * - `channels[]` have moved to `ExportedSpaceWorkflow.channels` (workflow-level).
  *
  * Node names are used as cross-references throughout the exported format
  * (in `ExportedWorkflowTransition.fromNode`/`toNode`,
@@ -973,12 +993,6 @@ export interface ExportedWorkflowNode {
 	 * When present (non-empty), `agentRef` must be absent.
 	 */
 	agents?: ExportedWorkflowNodeAgent[];
-	/**
-	 * Directed messaging topology between agents in this node.
-	 * Uses role strings (portable — not UUIDs). Exported and imported as-is.
-	 * Absent or empty means agents are fully isolated (no messaging).
-	 */
-	channels?: WorkflowChannel[];
 	/** Human-readable node name — used as the stable cross-reference key in the export */
 	name: string;
 	/** Node-specific instructions appended to the agent's system prompt */
@@ -1103,8 +1117,9 @@ export interface ExportedSpaceWorkflow {
 	/** Additional runtime configuration */
 	config?: Record<string, unknown>;
 	/**
-	 * Workflow-level messaging channels. Exported as-is — they already use role strings
-	 * and node names, not UUIDs, so no remapping is needed on import.
+	 * Directed messaging channels for the workflow.
+	 * Uses agent name strings (portable — not UUIDs). Exported and imported as-is.
+	 * Absent or empty means agents are fully isolated (no messaging constraints).
 	 */
 	channels?: WorkflowChannel[];
 }

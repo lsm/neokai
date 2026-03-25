@@ -61,7 +61,7 @@ const workflowConditionSchema = z
 
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
-	role: z.string().min(1),
+	name: z.string().min(1),
 	model: z.string().optional(),
 	systemPrompt: z.string().optional(),
 	instructions: z.string().optional(),
@@ -74,13 +74,22 @@ const workflowChannelSchema = z.object({
 	direction: z.enum(['one-way', 'bidirectional']),
 	isCyclic: z.boolean().optional(),
 	label: z.string().optional(),
+	gate: z
+		.object({
+			type: z.enum(['always', 'human', 'condition', 'task_result']),
+			expression: z.string().optional(),
+			description: z.string().optional(),
+			maxRetries: z.number().int().nonnegative().optional(),
+			timeoutMs: z.number().int().nonnegative().optional(),
+		})
+		.optional(),
+	isCyclic: z.boolean().optional(),
 });
 
 const exportedWorkflowNodeSchema = z
 	.object({
 		agentRef: z.string().min(1).optional(),
 		agents: z.array(exportedWorkflowNodeAgentSchema).optional(),
-		channels: z.array(workflowChannelSchema).optional(),
 		name: z.string().min(1),
 		instructions: z.string().optional(),
 	})
@@ -226,7 +235,7 @@ export function exportWorkflow(
 	// Export nodes — strip `id`, remap agentId UUIDs → agent names.
 	// Multi-agent nodes (agents[] non-empty) export an `agents` array.
 	// Single-agent nodes export a scalar `agentRef` (backward-compatible shorthand).
-	// Channels are exported as-is (they already use role strings, not UUIDs).
+	// Channels are exported at the workflow level (not per-node).
 	const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
 		const exported: ExportedWorkflowNode = { name: node.name };
 
@@ -235,7 +244,7 @@ export function exportWorkflow(
 			const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
 				const entry: ExportedWorkflowNodeAgent = {
 					agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
-					role: a.role,
+					name: a.name,
 				};
 				if (a.model !== undefined) entry.model = a.model;
 				if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
@@ -256,7 +265,6 @@ export function exportWorkflow(
 		}
 
 		if (node.instructions !== undefined) exported.instructions = node.instructions;
-		if (node.channels && node.channels.length > 0) exported.channels = node.channels;
 
 		return exported;
 	});
@@ -307,7 +315,6 @@ export function exportWorkflow(
 	};
 	if (workflow.description !== undefined) result.description = workflow.description;
 	if (workflow.config !== undefined) result.config = workflow.config;
-	// Workflow-level channels use role strings and node names — no UUID remapping needed.
 	if (workflow.channels && workflow.channels.length > 0) result.channels = workflow.channels;
 	return result;
 }

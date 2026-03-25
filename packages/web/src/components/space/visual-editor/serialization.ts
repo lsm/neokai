@@ -126,7 +126,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			name: s.name,
 			agentId: s.agentId ?? '',
 			agents: s.agents,
-			channels: s.channels,
 			instructions: s.instructions ?? '',
 		};
 		return { step, position };
@@ -231,7 +230,6 @@ interface BuiltWorkflowFields {
 		name: string;
 		agentId?: string;
 		agents?: WorkflowNodeAgent[];
-		channels?: WorkflowChannel[];
 		instructions?: string;
 	}>;
 	transitions: Array<{
@@ -244,6 +242,7 @@ interface BuiltWorkflowFields {
 	rules: Array<{ id?: string; name: string; content: string; appliesTo?: string[] }>;
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
+	channels?: WorkflowChannel[];
 }
 
 /**
@@ -317,8 +316,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 			// Otherwise use the single agentId (may be empty string, serialized as undefined).
 			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
 			agents: hasMultiAgent ? node.step.agents : undefined,
-			channels:
-				node.step.channels && node.step.channels.length > 0 ? node.step.channels : undefined,
 			instructions: node.step.instructions || undefined,
 		};
 	});

@@ -192,13 +192,13 @@ export function buildWorkflowCreateParams(
 				// cause a throw before createWorkflow is called, so '' never reaches the DB.
 				const entry: {
 					agentId: string;
-					role: string;
+					name: string;
 					model?: string;
 					systemPrompt?: string;
 					instructions?: string;
 				} = {
 					agentId: agentId ?? '',
-					role: a.role,
+					name: a.name,
 				};
 				if (a.model !== undefined) entry.model = a.model;
 				if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
@@ -217,8 +217,6 @@ export function buildWorkflowCreateParams(
 		}
 
 		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;
-		if (exportedNode.channels && exportedNode.channels.length > 0)
-			node.channels = exportedNode.channels;
 		return node;
 	});
 
@@ -260,6 +258,7 @@ export function buildWorkflowCreateParams(
 	if (startNodeId) params.startNodeId = startNodeId;
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.config !== undefined) params.config = exported.config;
+	if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
 
 	return { params, nodeNameToId, warnings };
 }
@@ -270,8 +269,7 @@ export function buildWorkflowCreateParams(
  *
  * Validates:
  * 1. Agent refs in nodes: each agentRef must resolve to a known agent name.
- * 2. Channel role refs: roles referenced in channel `from`/`to` must match the roles
- *    of agents assigned to the node (`'*'` wildcard is always valid).
+ * 2. Workflow-level channels: basic structural validation (direction, non-empty from/to).
  *
  * Note: condition expression validation is intentionally omitted here — it is
  * already enforced by the Zod schema in validateExportBundle(), so any bundle
@@ -291,7 +289,6 @@ function validateWorkflowForPreview(
 
 	for (const node of exported.nodes) {
 		// ── 1. Agent ref validation ───────────────────────────────────────────
-		const nodeAgentRefs: string[] = [];
 		if (node.agents && node.agents.length > 0) {
 			// Multi-agent node: validate each agent ref
 			for (const a of node.agents) {
@@ -300,7 +297,6 @@ function validateWorkflowForPreview(
 						`node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
 					);
 				}
-				nodeAgentRefs.push(a.agentRef);
 			}
 		} else {
 			// Single-agent node: validate scalar agentRef
@@ -310,31 +306,31 @@ function validateWorkflowForPreview(
 					`node "${node.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
 				);
 			}
-			if (agentRef) nodeAgentRefs.push(agentRef);
 		}
+	}
 
-		// ── 2. Channel role validation ────────────────────────────────────────
-		if (node.channels && node.channels.length > 0) {
-			// Collect the set of roles for agents assigned to this node
-			const nodeRoles = new Set<string>();
-			for (const agentRef of nodeAgentRefs) {
-				const role = agentNameToRole.get(agentRef);
-				if (role) nodeRoles.add(role);
+	// ── 2. Workflow-level channel validation ──────────────────────────────────
+	if (exported.channels && exported.channels.length > 0) {
+		const validDirections = new Set(['one-way', 'bidirectional']);
+		for (let ci = 0; ci < exported.channels.length; ci++) {
+			const ch = exported.channels[ci];
+			const loc = `channels[${ci}]`;
+			if (!validDirections.has(ch.direction)) {
+				errors.push(
+					`${loc}: direction must be 'one-way' or 'bidirectional', got "${ch.direction}"`
+				);
 			}
-
-			for (const channel of node.channels) {
-				const toRoles = Array.isArray(channel.to) ? channel.to : [channel.to];
-				const rolesToCheck = [channel.from, ...toRoles];
-				for (const role of rolesToCheck) {
-					if (role !== '*' && !nodeRoles.has(role)) {
-						errors.push(
-							`node "${node.name}" channel references role "${role}" which is not matched by any agent in the node`
-						);
-					}
-				}
+			if (!ch.from || !ch.from.trim()) {
+				errors.push(`${loc}: 'from' must be a non-empty agent name string`);
+			}
+			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+			if (toList.length === 0) {
+				errors.push(`${loc}: 'to' must not be empty`);
 			}
 		}
 	}
+
+	void agentNameToRole; // kept in signature for backward compatibility
 
 	return errors;
 }
