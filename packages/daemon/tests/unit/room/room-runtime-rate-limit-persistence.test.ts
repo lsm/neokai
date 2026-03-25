@@ -425,4 +425,110 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			expect(taskAfter!.status).toBe('in_progress');
 		});
 	});
+
+	// ─── leader fallback early return ──────────────────────────────────────────────────────
+
+	describe('leader usage_limit: return early after successful trySwitchToFallbackModel', () => {
+		/**
+		 * Creates a context where trySwitchToFallbackModel succeeds:
+		 * - getGlobalSettings returns a fallback model chain
+		 * - messageHub.request('session.model.get') returns a current model not in the chain
+		 *   (so the first fallback is selected)
+		 * - sessionFactory.switchModel returns success
+		 */
+		function createFallbackCtx(leaderSessionIdRef: { value: string | null }) {
+			return createRuntimeTestContext({
+				getWorkerMessages: (sessionId) => {
+					if (leaderSessionIdRef.value && sessionId === leaderSessionIdRef.value) {
+						return makeWorkerMessages(USAGE_LIMIT_MSG);
+					}
+					return [];
+				},
+				getGlobalSettings: () =>
+					({
+						fallbackModels: [{ model: 'claude-haiku-4-5', provider: 'anthropic' }],
+					}) as never,
+				messageHub: {
+					async request(method: string, _params: unknown) {
+						if (method === 'session.model.get') {
+							return {
+								currentModel: 'claude-sonnet-4-6',
+								modelInfo: { provider: 'anthropic' },
+							};
+						}
+						return undefined;
+					},
+				},
+			});
+		}
+
+		it('clears group rateLimit after successful fallback switch in leader path', async () => {
+			const leaderSessionIdRef: { value: string | null } = { value: null };
+			ctx = createFallbackCtx(leaderSessionIdRef);
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionIdRef.value = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Pre-condition: no rateLimit yet
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// rateLimit must be cleared (not set) after a successful fallback switch
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).toBeNull();
+		});
+
+		it('clears task restriction after successful fallback switch in leader path', async () => {
+			const leaderSessionIdRef: { value: string | null } = { value: null };
+			ctx = createFallbackCtx(leaderSessionIdRef);
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionIdRef.value = group.leaderSessionId;
+
+			// Simulate that a prior detection set a usage_limited restriction
+			await ctx.taskManager.updateTaskStatus(task.id, 'usage_limited', {
+				restrictions: {
+					type: 'usage_limit',
+					resetAt: Date.now() + 60_000,
+					sessionRole: 'leader',
+					reason: 'Daily/weekly usage cap in leader',
+				},
+			});
+
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Task restriction must be cleared back to in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+			expect(updatedTask!.restrictions).toBeNull();
+		});
+
+		it('does not fall through to normal completion after successful fallback switch', async () => {
+			// If the function returned early, no further processing (e.g. group completion) happens.
+			// The group should still be active (not completed) because the new model query is ongoing.
+			const leaderSessionIdRef: { value: string | null } = { value: null };
+			ctx = createFallbackCtx(leaderSessionIdRef);
+
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+			leaderSessionIdRef.value = group.leaderSessionId;
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Group must NOT be completed — the new-model query is still pending
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.completedAt).toBeNull();
+		});
+	});
 });
