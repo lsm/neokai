@@ -125,7 +125,6 @@ function seedWorkflowRun(db: BunDatabase, spaceId: string): string {
 		spaceId,
 		workflowId: workflow.id,
 		title: 'Test Run',
-		triggeredBy: 'test',
 	});
 	return run.id;
 }
@@ -356,6 +355,28 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.nodeCompletionState).toHaveLength(0);
+		for (const peer of data.peers) {
+			expect(peer.completionState).toBeNull();
+		}
+	});
+
+	test('list_peers returns null completionState when task agentName does not match any peer role', async () => {
+		// Seed a task with an agentName that doesn't match 'coder' or 'reviewer' group members
+		const nodeId = 'node-unmatched';
+		const workflowRunId = seedWorkflowRun(db, spaceId);
+		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'unknown-role', 'completed', 'Done');
+
+		const handlers = createStepAgentToolHandlers(
+			makeConfig({ workflowRunId, workflowNodeId: nodeId })
+		);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// nodeCompletionState includes the task even if it has no matching group member
+		expect(data.nodeCompletionState).toHaveLength(1);
+		expect(data.nodeCompletionState[0].agentName).toBe('unknown-role');
+		// But peers (coder, reviewer) get null completionState since no task matches their role
 		for (const peer of data.peers) {
 			expect(peer.completionState).toBeNull();
 		}
