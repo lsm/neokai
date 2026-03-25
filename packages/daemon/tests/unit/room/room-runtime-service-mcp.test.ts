@@ -8,7 +8,7 @@
  * 3. On mcp.registry.changed, all live room chat sessions are updated.
  */
 
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import {
 	RoomRuntimeService,
 	type RoomRuntimeServiceConfig,

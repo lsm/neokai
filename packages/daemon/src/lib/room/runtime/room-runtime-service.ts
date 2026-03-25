@@ -183,6 +183,9 @@ export class RoomRuntimeService {
 			}
 			this.runtimes.delete(roomId);
 			this.observers.delete(roomId);
+			// Clear the cached room-agent-tools server; createOrGetRuntime() →
+			// setupRoomAgentSession() will repopulate it for the fresh runtime.
+			this.roomAgentMcpServers.delete(roomId);
 		}
 
 		// Create a fresh runtime - autoStart=true starts it immediately
@@ -643,9 +646,13 @@ export class RoomRuntimeService {
 		const unsubMcpChanged = this.ctx.daemonHub.on(
 			'mcp.registry.changed',
 			() => {
-				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+				// Re-read both sources inside the handler (not hoisted above the loop) so
+				// that if getEnabledMcpServersConfig() ever becomes room-scoped, it will
+				// be called per-room consistently with the initial setupRoomAgentSession path.
+				// Registry configs are global and read once — the call is cheap.
 				const registryMcpServers = this.ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
 				for (const [roomId] of this.runtimes) {
+					const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
 					const roomChatSessionId = `room:chat:${roomId}`;
 					void this.ctx.sessionManager
 						.getSessionAsync(roomChatSessionId)
