@@ -32,7 +32,8 @@ import type { TaskManager } from '../room/managers/task-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../room/runtime/cron-utils';
-import { resolveGoalId } from '../id-resolution';
+import { resolveGoalId, resolveTaskId } from '../id-resolution';
+import type { TaskRepository } from '../../storage/repositories/task-repository';
 
 const log = new Logger('goal-handlers');
 
@@ -59,9 +60,10 @@ export type GoalManagerLike = Pick<
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
-export type TaskManagerFactory = (
-	roomId: string
-) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
+export type TaskManagerFactory = (roomId: string) => {
+	taskManager: Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
+	taskRepo: TaskRepository;
+};
 
 export function setupGoalHandlers(
 	messageHub: MessageHub,
@@ -518,10 +520,11 @@ export function setupGoalHandlers(
 			);
 		}
 
-		const taskManager = taskManagerFactory(params.roomId);
-		const task = await taskManager.getTask(params.taskId);
+		const { taskManager, taskRepo } = taskManagerFactory(params.roomId);
+		const taskId = resolveTaskId(params.taskId, params.roomId, taskRepo);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
+			throw new Error(`Task not found: ${taskId}`);
 		}
 		if (task.status !== 'review') {
 			throw new Error(`Task is not in review status (current: ${task.status})`);
@@ -541,16 +544,14 @@ export function setupGoalHandlers(
 				: 'Human has approved the PR. Merge it now by running `gh pr merge`. ' +
 					'After the merge completes, your work is done.';
 
-		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message, {
+		const resumed = await runtime.resumeWorkerFromHuman(taskId, message, {
 			approved: true,
 		});
 		if (!resumed) {
-			throw new Error(
-				`Failed to resume task ${params.taskId} — no submitted-for-review group found`
-			);
+			throw new Error(`Failed to resume task ${taskId} — no submitted-for-review group found`);
 		}
 
-		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);
+		log.info(`Task ${taskId} approved by human in room ${params.roomId}`);
 		return { success: true };
 	};
 

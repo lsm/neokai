@@ -42,6 +42,7 @@ import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
 import { TaskManager } from '../room/managers/task-manager';
+import { TaskRepository } from '../../storage/repositories/task-repository';
 import { setupDialogHandlers } from './dialog-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
@@ -143,12 +144,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Create factory function for per-room task managers (used by goal review handlers)
 	const goalTaskManagerFactory: GoalTaskManagerFactory = (roomId: string) => {
-		return new TaskManager(
+		const taskManager = new TaskManager(
 			deps.db.getDatabase(),
 			roomId,
 			deps.reactiveDb,
 			deps.db.getShortIdAllocator()
 		);
+		const taskRepo = new TaskRepository(deps.db.getDatabase(), deps.reactiveDb);
+		return { taskManager, taskRepo };
 	};
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
