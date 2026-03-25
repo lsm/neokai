@@ -46,9 +46,11 @@ const SEARCH_DEBOUNCE_MS = 300;
  * Rules:
  * - Find the last @ that is preceded by whitespace or start-of-string
  * - The text between that @ and the end of content must not contain any whitespace
- * - The @ itself must not be followed immediately by another @ (malformed)
  *
  * Returns the query string (may be empty if user just typed "@").
+ * Note: `@@` returns `"@"` as the query — this is intentional (the inner `@` is
+ * treated as the query text). Consumers that insert `@ref{type:id}` should append
+ * a trailing space so that the token does not re-trigger autocomplete.
  */
 export function extractActiveAtQuery(content: string): string | null {
 	if (!content.includes('@')) return null;
@@ -166,6 +168,8 @@ export function useReferenceAutocomplete({
 
 	const close = useCallback(() => {
 		setShowAutocomplete(false);
+		setResults([]);
+		setSelectedIndex(0);
 	}, []);
 
 	const handleSelect = useCallback(

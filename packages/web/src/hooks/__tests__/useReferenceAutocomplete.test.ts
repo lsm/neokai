@@ -367,8 +367,8 @@ describe('useReferenceAutocomplete', () => {
 	// -----------------------------------------------------------------------
 
 	describe('close', () => {
-		it('closes autocomplete', async () => {
-			mockRequest.mockResolvedValue({ results: makeResults() });
+		it('closes autocomplete and resets results and selectedIndex', async () => {
+			mockRequest.mockResolvedValue({ results: makeResults(3) });
 
 			const { result } = renderHook(() =>
 				useReferenceAutocomplete({ content: '@task', onSelect: vi.fn() })
@@ -380,12 +380,23 @@ describe('useReferenceAutocomplete', () => {
 			});
 
 			expect(result.current.showAutocomplete).toBe(true);
+			expect(result.current.results).toHaveLength(3);
+
+			// Navigate to second item so selectedIndex > 0
+			const e = new KeyboardEvent('keydown', { key: 'ArrowDown' });
+			Object.defineProperty(e, 'preventDefault', { value: vi.fn() });
+			act(() => {
+				result.current.handleKeyDown(e);
+			});
+			expect(result.current.selectedIndex).toBe(1);
 
 			act(() => {
 				result.current.close();
 			});
 
 			expect(result.current.showAutocomplete).toBe(false);
+			expect(result.current.results).toEqual([]);
+			expect(result.current.selectedIndex).toBe(0);
 		});
 	});
 
