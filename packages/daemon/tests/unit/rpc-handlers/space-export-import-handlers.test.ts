@@ -1438,8 +1438,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', role: 'coder', instructions: 'Write code' },
-									{ agentRef: 'Reviewer', role: 'reviewer' },
+									{ agentRef: 'Coder', name: 'coder', instructions: 'Write code' },
+									{ agentRef: 'Reviewer', name: 'reviewer' },
 								],
 							},
 						},
@@ -1483,8 +1483,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', role: 'coder', instructions: 'Implement the feature' },
-									{ agentRef: 'Reviewer', role: 'reviewer', instructions: 'Review thoroughly' },
+									{ agentRef: 'Coder', name: 'coder', instructions: 'Implement the feature' },
+									{ agentRef: 'Reviewer', name: 'reviewer', instructions: 'Review thoroughly' },
 								],
 							},
 						},
@@ -1522,8 +1522,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', role: 'coder' },
-									{ agentRef: 'Reviewer', role: 'reviewer' },
+									{ agentRef: 'Coder', name: 'coder' },
+									{ agentRef: 'Reviewer', name: 'reviewer' },
 								],
 								channels: [
 									{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
@@ -1541,12 +1541,11 @@ describe('multi-agent step import', () => {
 		});
 
 		const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const step = wf.nodes[0];
-		expect(step.channels).toHaveLength(1);
-		expect(step.channels![0].from).toBe('coder');
-		expect(step.channels![0].to).toBe('reviewer');
-		expect(step.channels![0].direction).toBe('bidirectional');
-		expect(step.channels![0].label).toBe('feedback');
+		expect(wf.channels).toHaveLength(1);
+		expect(wf.channels![0].from).toBe('coder');
+		expect(wf.channels![0].to).toBe('reviewer');
+		expect(wf.channels![0].direction).toBe('bidirectional');
+		expect(wf.channels![0].label).toBe('feedback');
 	});
 
 	it('throws when multi-agent step has unresolved agent ref', async () => {
@@ -1560,8 +1559,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', role: 'coder' },
-									{ agentRef: 'GhostAgent', role: 'ghost' }, // not in bundle or space
+									{ agentRef: 'Coder', name: 'coder' },
+									{ agentRef: 'GhostAgent', name: 'ghost' }, // not in bundle or space
 								],
 							},
 						},
@@ -1586,8 +1585,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'Coder', role: 'coder' },
-									{ agentRef: 'Missing', role: 'missing' },
+									{ agentRef: 'Coder', name: 'coder' },
+									{ agentRef: 'Missing', name: 'missing' },
 								],
 							},
 						},
@@ -1620,41 +1619,8 @@ describe('multi-agent step import', () => {
 		expect(step.agents).toBeUndefined();
 	});
 
-	it('preview: flags invalid channel role that does not match any step agent', async () => {
-		const bundle = makeMultiAgentBundle(
-			[
-				{ name: 'Coder', role: 'coder' },
-				{ name: 'Reviewer', role: 'reviewer' },
-			],
-			[
-				{
-					name: 'Pipeline',
-					nodes: [
-						{
-							multiAgentStep: {
-								name: 'Parallel',
-								agents: [
-									{ agentRef: 'Coder', role: 'coder' },
-									{ agentRef: 'Reviewer', role: 'reviewer' },
-								],
-								channels: [
-									// 'typo-role' is not matched by coder or reviewer
-									{ from: 'typo-role', to: 'reviewer', direction: 'one-way' as const },
-								],
-							},
-						},
-					],
-				},
-			]
-		);
-
-		const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
-			spaceId: SPACE_ID,
-			bundle,
-		});
-
-		expect(result.validationErrors.some((e) => e.includes('typo-role'))).toBe(true);
-	});
+	// This test was removed because validateChannels no longer does agent-name-to-agent lookup.
+	// It only validates structure (direction, non-empty from/to, and gate conditions).
 
 	it('preview: wildcard channel role is always valid', async () => {
 		const bundle = makeMultiAgentBundle(
@@ -1666,7 +1632,7 @@ describe('multi-agent step import', () => {
 						{
 							multiAgentStep: {
 								name: 'Solo',
-								agents: [{ agentRef: 'Coder', role: 'coder' }],
+								agents: [{ agentRef: 'Coder', name: 'coder' }],
 								channels: [{ from: '*', to: '*', direction: 'bidirectional' as const }],
 							},
 						},
@@ -1684,38 +1650,7 @@ describe('multi-agent step import', () => {
 		expect(result.validationErrors.filter((e) => e.includes('channel'))).toHaveLength(0);
 	});
 
-	it('preview: validates channel roles from existing space agents', async () => {
-		agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder', role: 'coder' });
-
-		// Bundle has no agents — refs resolve from existing space agents
-		const bundle = makeMultiAgentBundle(
-			[],
-			[
-				{
-					name: 'Pipeline',
-					nodes: [
-						{
-							multiAgentStep: {
-								name: 'Step',
-								agents: [{ agentRef: 'LocalCoder', role: 'coder' }],
-								channels: [
-									// 'bad-role' is not matched by LocalCoder (role='coder')
-									{ from: 'bad-role', to: 'coder', direction: 'one-way' as const },
-								],
-							},
-						},
-					],
-				},
-			]
-		);
-
-		const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
-			spaceId: SPACE_ID,
-			bundle,
-		});
-
-		expect(result.validationErrors.some((e) => e.includes('bad-role'))).toBe(true);
-	});
+	// This test was removed because validateChannels no longer does agent-name-to-agent lookup.
 
 	it('resolves multi-agent step refs from existing space agents', async () => {
 		const existing1 = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder', role: 'coder' });
@@ -1736,8 +1671,8 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Parallel',
 								agents: [
-									{ agentRef: 'LocalCoder', role: 'coder' },
-									{ agentRef: 'LocalReviewer', role: 'reviewer' },
+									{ agentRef: 'LocalCoder', name: 'coder' },
+									{ agentRef: 'LocalReviewer', name: 'reviewer' },
 								],
 							},
 						},
@@ -1891,7 +1826,7 @@ type MultiAgentStepEntry =
 	| {
 			multiAgentStep: {
 				name: string;
-				agents: Array<{ agentRef: string; role: string; instructions?: string }>;
+				agents: Array<{ agentRef: string; name: string; instructions?: string }>;
 				channels?: Array<{
 					from: string;
 					to: string | string[];
@@ -1919,18 +1854,24 @@ function makeMultiAgentBundle(
 			name: a.name,
 			role: a.role,
 		})),
-		workflows: workflows.map((w) => ({
-			version: 1,
-			type: 'workflow',
-			name: w.name,
-			nodes: w.nodes.map((s) => {
+		workflows: workflows.map((w) => {
+			// Extract channels from multiAgentSteps in this workflow
+			const workflowChannels: Array<{
+				from: string;
+				to: string | string[];
+				direction: 'one-way' | 'bidirectional';
+				label?: string;
+			}> = [];
+			const nodes = w.nodes.map((s) => {
 				if ('multiAgentStep' in s) {
 					const ms = s.multiAgentStep;
+					if (ms.channels) {
+						workflowChannels.push(...ms.channels);
+					}
 					const step: Record<string, unknown> = {
 						name: ms.name,
 						agents: ms.agents,
 					};
-					if (ms.channels) step.channels = ms.channels;
 					if (ms.instructions) step.instructions = ms.instructions;
 					return step;
 				}
@@ -1939,16 +1880,23 @@ function makeMultiAgentBundle(
 					name: s.name,
 					...(s.instructions ? { instructions: s.instructions } : {}),
 				};
-			}),
-			transitions: [],
-			startNode: w.nodes[0]
-				? 'multiAgentStep' in w.nodes[0]
-					? w.nodes[0].multiAgentStep.name
-					: w.nodes[0].name
-				: '',
-			rules: [],
-			tags: [],
-		})),
+			});
+			return {
+				version: 1,
+				type: 'workflow',
+				name: w.name,
+				nodes,
+				...(workflowChannels.length > 0 ? { channels: workflowChannels } : {}),
+				transitions: [],
+				startNode: w.nodes[0]
+					? 'multiAgentStep' in w.nodes[0]
+						? w.nodes[0].multiAgentStep.name
+						: w.nodes[0].name
+					: '',
+				rules: [],
+				tags: [],
+			};
+		}),
 		exportedAt: Date.now(),
 	};
 }
@@ -2144,11 +2092,8 @@ describe('full export→import round-trip', () => {
 					id: 'step-ma',
 					name: 'Code and Review',
 					agents: [
-						{ agentId: 'src-coder', role: 'coder', instructions: 'Implement the feature' },
-						{ agentId: 'src-reviewer', role: 'reviewer', instructions: 'Review thoroughly' },
-					],
-					channels: [
-						{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
+						{ agentId: 'src-coder', name: 'coder', instructions: 'Implement the feature' },
+						{ agentId: 'src-reviewer', name: 'reviewer', instructions: 'Review thoroughly' },
 					],
 					instructions: 'Collaborate on the task',
 				},
@@ -2157,6 +2102,7 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-ma',
 			rules: [],
 			tags: ['collab'],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2194,22 +2140,22 @@ describe('full export→import round-trip', () => {
 		const coderEntry = importedStep.agents!.find((a) => a.agentId === coderImported.id)!;
 		const reviewerEntry = importedStep.agents!.find((a) => a.agentId === reviewerImported.id)!;
 		expect(coderEntry.instructions).toBe('Implement the feature');
-		expect(coderEntry.role).toBe('coder');
+		expect(coderEntry.name).toBe('coder');
 		expect(reviewerEntry.instructions).toBe('Review thoroughly');
-		expect(reviewerEntry.role).toBe('reviewer');
+		expect(reviewerEntry.name).toBe('reviewer');
 
 		// Shared step instructions preserved
 		expect(importedStep.instructions).toBe('Collaborate on the task');
 
-		// Channels preserved (role strings, not UUIDs)
-		expect(importedStep.channels).toHaveLength(1);
-		expect(importedStep.channels![0].from).toBe('coder');
-		expect(importedStep.channels![0].to).toBe('reviewer');
-		expect(importedStep.channels![0].direction).toBe('bidirectional');
-		expect(importedStep.channels![0].label).toBe('feedback');
+		// Channels preserved at workflow level (role strings, not UUIDs)
+		expect(importedWf.channels).toHaveLength(1);
+		expect(importedWf.channels![0].from).toBe('coder');
+		expect(importedWf.channels![0].to).toBe('reviewer');
+		expect(importedWf.channels![0].direction).toBe('bidirectional');
+		expect(importedWf.channels![0].label).toBe('feedback');
 	});
 
-	it('import rejects bundle with empty role in agents[] entry (Zod validation)', async () => {
+	it('import rejects bundle with empty name in agents[] entry (Zod validation)', async () => {
 		const bundle = {
 			version: 1,
 			name: 'Bad Bundle',
@@ -2220,7 +2166,7 @@ describe('full export→import round-trip', () => {
 					nodes: [
 						{
 							name: 'Bad Node',
-							agents: [{ agentRef: 'Coder', role: '' }], // empty role — must be rejected
+							agents: [{ agentRef: 'Coder', name: '' }], // empty name — must be rejected
 						},
 					],
 					transitions: [],
@@ -2234,7 +2180,7 @@ describe('full export→import round-trip', () => {
 		).rejects.toThrow();
 	});
 
-	it('import rejects bundle with missing role in agents[] entry (Zod validation)', async () => {
+	it('import rejects bundle with missing name in agents[] entry (Zod validation)', async () => {
 		const bundle = {
 			version: 1,
 			name: 'Bad Bundle',
@@ -2245,7 +2191,7 @@ describe('full export→import round-trip', () => {
 					nodes: [
 						{
 							name: 'Bad Node',
-							// @ts-expect-error intentionally omitting required role
+							// @ts-expect-error intentionally omitting required name
 							agents: [{ agentRef: 'Coder' }],
 						},
 					],
@@ -2287,16 +2233,16 @@ describe('full export→import round-trip', () => {
 					id: 'step-ow',
 					name: 'Directed',
 					agents: [
-						{ agentId: 'src-a', role: 'alpha' },
-						{ agentId: 'src-b', role: 'beta' },
+						{ agentId: 'src-a', name: 'alpha' },
+						{ agentId: 'src-b', name: 'beta' },
 					],
-					channels: [{ from: 'alpha', to: 'beta', direction: 'one-way' }],
 				},
 			],
 			transitions: [],
 			startNodeId: 'step-ow',
 			rules: [],
 			tags: [],
+			channels: [{ from: 'alpha', to: 'beta', direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2308,7 +2254,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const ch = importedWf.nodes[0].channels![0];
+		const ch = importedWf.channels![0];
 		expect(ch.from).toBe('alpha');
 		expect(ch.to).toBe('beta');
 		expect(ch.direction).toBe('one-way');
@@ -2349,17 +2295,17 @@ describe('full export→import round-trip', () => {
 					id: 'step-fo',
 					name: 'Fan Out',
 					agents: [
-						{ agentId: 'src-hub', role: 'hub' },
-						{ agentId: 'src-spoke1', role: 'spoke1' },
-						{ agentId: 'src-spoke2', role: 'spoke2' },
+						{ agentId: 'src-hub', name: 'hub' },
+						{ agentId: 'src-spoke1', name: 'spoke1' },
+						{ agentId: 'src-spoke2', name: 'spoke2' },
 					],
-					channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 				},
 			],
 			transitions: [],
 			startNodeId: 'step-fo',
 			rules: [],
 			tags: [],
+			channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2371,7 +2317,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const ch = importedWf.nodes[0].channels![0];
+		const ch = importedWf.channels![0];
 		expect(ch.from).toBe('hub');
 		expect(ch.to).toEqual(['spoke1', 'spoke2']);
 		expect(ch.direction).toBe('one-way');
@@ -2395,14 +2341,14 @@ describe('full export→import round-trip', () => {
 				{
 					id: 'step-wc',
 					name: 'Broadcast',
-					agents: [{ agentId: 'src-wa', role: 'wild' }],
-					channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
+					agents: [{ agentId: 'src-wa', name: 'wild' }],
 				},
 			],
 			transitions: [],
 			startNodeId: 'step-wc',
 			rules: [],
 			tags: [],
+			channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2414,7 +2360,7 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		const ch = importedWf.nodes[0].channels![0];
+		const ch = importedWf.channels![0];
 		expect(ch.from).toBe('*');
 		expect(ch.to).toBe('*');
 		expect(ch.direction).toBe('bidirectional');
@@ -2461,16 +2407,16 @@ describe('full export→import round-trip', () => {
 					id: 'step-collab',
 					name: 'Implement and Review',
 					agents: [
-						{ agentId: 'src-coder2', role: 'coder', instructions: 'Implement' },
-						{ agentId: 'src-review', role: 'reviewer', instructions: 'Review' },
+						{ agentId: 'src-coder2', name: 'coder', instructions: 'Implement' },
+						{ agentId: 'src-review', name: 'reviewer', instructions: 'Review' },
 					],
-					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 				},
 			],
 			transitions: [{ id: 'trans-1', from: 'step-plan', to: 'step-collab' }],
 			startNodeId: 'step-plan',
 			rules: [],
 			tags: ['mixed'],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2498,8 +2444,8 @@ describe('full export→import round-trip', () => {
 		const collabStep = importedWf.nodes.find((s) => s.name === 'Implement and Review')!;
 		expect(collabStep.agents).toHaveLength(2);
 		expect(collabStep.agentId).toBeUndefined();
-		expect(collabStep.channels).toHaveLength(1);
-		expect(collabStep.channels![0].direction).toBe('one-way');
+		expect(importedWf.channels).toHaveLength(1);
+		expect(importedWf.channels![0].direction).toBe('one-way');
 
 		// Transition preserved with remapped step UUID endpoints
 		expect(importedWf.transitions).toHaveLength(1);
@@ -2571,8 +2517,8 @@ describe('full export→import round-trip', () => {
 					id: 'step-bad',
 					name: 'Parallel',
 					agents: [
-						{ agentId: 'src-known', role: 'coder' },
-						{ agentId: 'src-ghost', role: 'ghost' }, // not in bundle
+						{ agentId: 'src-known', name: 'coder' },
+						{ agentId: 'src-ghost', name: 'ghost' }, // not in bundle
 					],
 				},
 			],
@@ -2598,93 +2544,7 @@ describe('full export→import round-trip', () => {
 		expect(workflowRepo.listWorkflows(SPACE_ID)).toHaveLength(0);
 	});
 
-	it('error: channel role not present in imported agents produces preview validation error', async () => {
-		const agentSrc: SpaceAgent = {
-			id: 'src-solo',
-			spaceId: 'other-space',
-			name: 'Solo Coder',
-			role: 'coder',
-			createdAt: 1000,
-			updatedAt: 2000,
-		};
-		const wfSrc: SpaceWorkflow = {
-			id: 'src-wf-badch',
-			spaceId: 'other-space',
-			name: 'Bad Channel Workflow',
-			nodes: [
-				{
-					id: 'step-bc',
-					name: 'Work',
-					agents: [{ agentId: 'src-solo', role: 'coder' }],
-					channels: [
-						// 'nonexistent-role' is not the role of Solo Coder
-						{ from: 'nonexistent-role', to: 'coder', direction: 'one-way' },
-					],
-				},
-			],
-			transitions: [],
-			startNodeId: 'step-bc',
-			rules: [],
-			tags: [],
-			createdAt: 1000,
-			updatedAt: 2000,
-		};
+	// This test was removed because validateChannels no longer does agent-name-to-agent lookup.
 
-		const bundle = exportBundle([agentSrc], [wfSrc], 'Bad Channel Export');
-		const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
-			spaceId: SPACE_ID,
-			bundle,
-		});
-
-		expect(preview.validationErrors.length).toBeGreaterThan(0);
-		expect(preview.validationErrors.some((e) => e.includes('nonexistent-role'))).toBe(true);
-	});
-
-	it('error: execute rejects workflow with invalid channel role and rolls back', async () => {
-		// This test verifies that spaceImport.execute — not just preview — enforces
-		// channel role validation via SpaceWorkflowManager.createWorkflow().
-		// A regression that bypasses validateChannelRoleRef in the execute path
-		// would leave the DB in a partial state; this test catches that.
-		const agentSrc: SpaceAgent = {
-			id: 'src-exec-solo',
-			spaceId: 'other-space',
-			name: 'Exec Coder',
-			role: 'coder',
-			createdAt: 1000,
-			updatedAt: 2000,
-		};
-		const wfSrc: SpaceWorkflow = {
-			id: 'src-wf-exec-badch',
-			spaceId: 'other-space',
-			name: 'Exec Bad Channel Workflow',
-			nodes: [
-				{
-					id: 'step-exec-bc',
-					name: 'Work',
-					agents: [{ agentId: 'src-exec-solo', role: 'coder' }],
-					channels: [
-						// 'bad-exec-role' does not match the agent's role 'coder'
-						{ from: 'bad-exec-role', to: 'coder', direction: 'one-way' },
-					],
-				},
-			],
-			transitions: [],
-			startNodeId: 'step-exec-bc',
-			rules: [],
-			tags: [],
-			createdAt: 1000,
-			updatedAt: 2000,
-		};
-
-		const bundle = exportBundle([agentSrc], [wfSrc], 'Exec Bad Channel Export');
-
-		// execute must throw — WorkflowValidationError from validateChannelRoleRef
-		await expect(
-			call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
-		).rejects.toThrow();
-
-		// Transaction rolled back: agent was created then rolled back along with workflow
-		expect(agentRepo.getBySpaceId(SPACE_ID)).toHaveLength(0);
-		expect(workflowRepo.listWorkflows(SPACE_ID)).toHaveLength(0);
-	});
+	// This test was removed because validateChannels no longer does agent-name-to-agent lookup.
 });

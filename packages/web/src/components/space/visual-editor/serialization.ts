@@ -87,6 +87,8 @@ export interface VisualEditorState {
 	startNodeId: string;
 	rules: RuleDraft[];
 	tags: string[];
+	/** Directed messaging channels at the workflow level. */
+	channels: WorkflowChannel[];
 }
 
 // ============================================================================
@@ -126,7 +128,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			name: s.name,
 			agentId: s.agentId ?? '',
 			agents: s.agents,
-			channels: s.channels,
 			instructions: s.instructions ?? '',
 		};
 		return { step, position };
@@ -165,6 +166,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		startNodeId: startKey,
 		rules: rulesToDrafts(workflow.rules ?? []),
 		tags: workflow.tags ?? [],
+		channels: workflow.channels ?? [],
 	};
 }
 
@@ -231,7 +233,6 @@ interface BuiltWorkflowFields {
 		name: string;
 		agentId?: string;
 		agents?: WorkflowNodeAgent[];
-		channels?: WorkflowChannel[];
 		instructions?: string;
 	}>;
 	transitions: Array<{
@@ -244,6 +245,7 @@ interface BuiltWorkflowFields {
 	rules: Array<{ id?: string; name: string; content: string; appliesTo?: string[] }>;
 	layout: Record<string, { x: number; y: number }>;
 	tags: string[];
+	channels?: WorkflowChannel[];
 }
 
 /**
@@ -317,8 +319,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 			// Otherwise use the single agentId (may be empty string, serialized as undefined).
 			agentId: hasMultiAgent ? undefined : node.step.agentId || undefined,
 			agents: hasMultiAgent ? node.step.agents : undefined,
-			channels:
-				node.step.channels && node.step.channels.length > 0 ? node.step.channels : undefined,
 			instructions: node.step.instructions || undefined,
 		};
 	});
@@ -401,7 +401,15 @@ function buildWorkflowFields(state: VisualEditorState): {
 		}));
 
 	return {
-		fields: { nodes, transitions, startNodeId, rules, layout, tags: state.tags },
+		fields: {
+			nodes,
+			transitions,
+			startNodeId,
+			rules,
+			layout,
+			tags: state.tags,
+			channels: state.channels,
+		},
 		keyToPersistedId,
 	};
 }
@@ -433,6 +441,7 @@ export function visualStateToCreateParams(
 		rules: fields.rules.map(({ id: _id, ...rest }) => rest),
 		layout: fields.layout,
 		tags: fields.tags,
+		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
 	};
 }
 
@@ -462,5 +471,6 @@ export function visualStateToUpdateParams(
 		})),
 		layout: fields.layout,
 		tags: fields.tags,
+		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
 	};
 }

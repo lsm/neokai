@@ -323,7 +323,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// For tasks created before migration 46 (no slotRole), fall back to find-by-agentId,
 			// which always returns the first matching slot — acceptable for legacy data.
 			const agentSlot = effectiveTask.slotRole
-				? nodeAgents.find((a) => a.role === effectiveTask.slotRole)
+				? nodeAgents.find((a) => a.name === effectiveTask.slotRole)
 				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
 
 			// Extract slot-level overrides (model and systemPrompt) if present.
@@ -363,12 +363,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// should always succeed — null here would be a data inconsistency.
 			const agentForMember = agentManager.getById(effectiveTask.customAgentId!);
 
-			// Use the slot's role (WorkflowNodeAgent.role) for channel routing and group membership.
+			// Use the slot's name (WorkflowNodeAgent.name) for channel routing and group membership.
 			// This ensures that when the same agent appears multiple times in a node with different
-			// slot roles (e.g. "strict-reviewer" and "quick-reviewer"), each session is registered
-			// with its unique slot role so ChannelResolver.canSend() checks work correctly.
+			// slot names (e.g. "strict-reviewer" and "quick-reviewer"), each session is registered
+			// with its unique slot name so ChannelResolver.canSend() checks work correctly.
 			// Falls back to the base agent's role, then 'agent' if neither is available.
-			const memberRole = agentSlot?.role ?? agentForMember?.role ?? 'agent';
+			const memberRole = agentSlot?.name ?? agentForMember?.role ?? 'agent';
 
 			// Attach step agent peer communication MCP server if a factory is provided.
 			// The server is built with the slot role so it can validate channels using the
@@ -692,10 +692,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 				// Workflow advanced to the next step — resolve and store channel topology for the new step.
 				// This ensures Task Agent can send_message to agents in the new step's topology.
-				const run = workflowRunRepo.getRun(workflowRunId);
-				if (run) {
-					runtime.resolveAndStoreChannels(workflowRunId, run.spaceId, nextStep);
-				}
+				runtime.resolveAndStoreChannels(
+					workflowRunId,
+					'',
+					nextStep,
+					runtime.getWorkflowChannels(workflowRunId)
+				);
 
 				return jsonResult({
 					success: true,

@@ -1219,21 +1219,21 @@ describe('exportWorkflow — multi-agent nodes', () => {
 					id: 'node-uuid-1',
 					name: 'Parallel code+review',
 					agents: [
-						{ agentId: 'agent-uuid-1', role: 'coder', instructions: 'Write the feature' },
-						{ agentId: 'agent-uuid-3', role: 'reviewer' },
-					],
-					channels: [
-						{
-							from: 'coder',
-							to: 'reviewer',
-							direction: 'bidirectional',
-						},
+						{ agentId: 'agent-uuid-1', name: 'coder', instructions: 'Write the feature' },
+						{ agentId: 'agent-uuid-3', name: 'reviewer' },
 					],
 				},
 				{
 					id: 'node-uuid-2',
 					name: 'Single plan step',
 					agentId: 'agent-uuid-2',
+				},
+			],
+			channels: [
+				{
+					from: 'coder',
+					to: 'reviewer',
+					direction: 'bidirectional',
 				},
 			],
 			transitions: [{ id: 'trans-1', from: 'node-uuid-1', to: 'node-uuid-2' }],
@@ -1290,19 +1290,19 @@ describe('exportWorkflow — multi-agent nodes', () => {
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		const node = exported.nodes[0];
-		expect(node.channels).toHaveLength(1);
-		expect(node.channels![0].from).toBe('coder');
-		expect(node.channels![0].to).toBe('reviewer');
-		expect(node.channels![0].direction).toBe('bidirectional');
+		expect(exported.channels).toHaveLength(1);
+		expect(exported.channels![0].from).toBe('coder');
+		expect(exported.channels![0].to).toBe('reviewer');
+		expect(exported.channels![0].direction).toBe('bidirectional');
 	});
 
-	test('omits channels when node has no channels', () => {
+	test('omits channels at node level when channels are workflow-level', () => {
 		const workflow = makeMultiAgentWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// Single-agent node (node 1) has no channels
+		// Nodes don't have channels at node level (channels is workflow-level now)
+		expect(exported.nodes[0].channels).toBeUndefined();
 		expect(exported.nodes[1].channels).toBeUndefined();
 	});
 
@@ -1313,9 +1313,9 @@ describe('exportWorkflow — multi-agent nodes', () => {
 					id: 'node-uuid-1',
 					name: 'Solo with channel',
 					agentId: 'agent-uuid-1',
-					channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 				},
 			],
+			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 			startNodeId: 'node-uuid-1',
 			transitions: [],
 		});
@@ -1326,11 +1326,11 @@ describe('exportWorkflow — multi-agent nodes', () => {
 		// Should still use scalar agentRef (single-agent)
 		expect(node.agentRef).toBe('My Coder');
 		expect(node.agents).toBeUndefined();
-		// Channels should be exported as-is
-		expect(node.channels).toHaveLength(1);
-		expect(node.channels![0].from).toBe('coder');
-		expect(node.channels![0].to).toBe('*');
-		expect(node.channels![0].direction).toBe('one-way');
+		// Channels should be exported as-is at workflow level
+		expect(exported.channels).toHaveLength(1);
+		expect(exported.channels![0].from).toBe('coder');
+		expect(exported.channels![0].to).toBe('*');
+		expect(exported.channels![0].direction).toBe('one-way');
 	});
 
 	test('export produces no agentRef when node has neither agentId nor agents', () => {
@@ -1384,8 +1384,8 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			nodes: [
 				{
 					agents: [
-						{ agentRef: 'My Coder', role: 'coder', instructions: 'Code it' },
-						{ agentRef: 'Reviewer', role: 'reviewer' },
+						{ agentRef: 'My Coder', name: 'coder', instructions: 'Code it' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
 					],
 					name: 'Parallel Step',
 				},
@@ -1413,13 +1413,13 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			nodes: [
 				{
 					agents: [
-						{ agentRef: 'Coder', role: 'coder' },
-						{ agentRef: 'Reviewer', role: 'reviewer' },
+						{ agentRef: 'Coder', name: 'coder' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
 					],
-					channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 					name: 'Step',
 				},
 			],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 			transitions: [],
 			startNode: 'Step',
 			rules: [],
@@ -1428,9 +1428,9 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.value.nodes[0].channels).toHaveLength(1);
-			expect(result.value.nodes[0].channels![0].from).toBe('coder');
-			expect(result.value.nodes[0].channels![0].direction).toBe('bidirectional');
+			expect(result.value.channels).toHaveLength(1);
+			expect(result.value.channels![0].from).toBe('coder');
+			expect(result.value.channels![0].direction).toBe('bidirectional');
 		}
 	});
 
@@ -1442,14 +1442,14 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			nodes: [
 				{
 					agents: [
-						{ agentRef: 'Hub', role: 'hub' },
-						{ agentRef: 'Spoke1', role: 'spoke1' },
-						{ agentRef: 'Spoke2', role: 'spoke2' },
+						{ agentRef: 'Hub', name: 'hub' },
+						{ agentRef: 'Spoke1', name: 'spoke1' },
+						{ agentRef: 'Spoke2', name: 'spoke2' },
 					],
-					channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 					name: 'Fan-out',
 				},
 			],
+			channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 			transitions: [],
 			startNode: 'Fan-out',
 			rules: [],
@@ -1458,7 +1458,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.value.nodes[0].channels![0].to).toEqual(['spoke1', 'spoke2']);
+			expect(result.value.channels![0].to).toEqual(['spoke1', 'spoke2']);
 		}
 	});
 
@@ -1507,7 +1507,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			name: 'W',
 			nodes: [
 				{
-					agents: [{ agentRef: 'My Coder', role: 'coder', model: 'claude-haiku-4-5' }],
+					agents: [{ agentRef: 'My Coder', name: 'coder', model: 'claude-haiku-4-5' }],
 					name: 'Step',
 				},
 			],
@@ -1533,7 +1533,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 					agents: [
 						{
 							agentRef: 'My Coder',
-							role: 'coder',
+							name: 'coder',
 							systemPrompt: 'You are a strict code reviewer.',
 						},
 					],
@@ -1560,8 +1560,8 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 			nodes: [
 				{
 					agents: [
-						{ agentRef: 'My Coder', role: 'coder' },
-						{ agentRef: 'Reviewer', role: 'reviewer' },
+						{ agentRef: 'My Coder', name: 'coder' },
+						{ agentRef: 'Reviewer', name: 'reviewer' },
 					],
 					name: 'Step',
 				},
@@ -1592,13 +1592,13 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 					agents: [
 						{
 							agentRef: 'My Coder',
-							role: 'coder',
+							name: 'coder',
 							model: 'claude-opus-4-6',
 							systemPrompt: 'Write minimal code.',
 						},
 						{
 							agentRef: 'Reviewer',
-							role: 'reviewer',
+							name: 'reviewer',
 							model: 'claude-haiku-4-5',
 							systemPrompt: 'Review briefly.',
 						},
@@ -1639,11 +1639,8 @@ describe('round-trip: multi-agent + channels', () => {
 					id: 'node-1',
 					name: 'Code and Review',
 					agents: [
-						{ agentId: 'agent-uuid-1', role: 'coder', instructions: 'Implement the feature' },
-						{ agentId: 'agent-uuid-3', role: 'reviewer', instructions: 'Review the code' },
-					],
-					channels: [
-						{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
+						{ agentId: 'agent-uuid-1', name: 'coder', instructions: 'Implement the feature' },
+						{ agentId: 'agent-uuid-3', name: 'reviewer', instructions: 'Review the code' },
 					],
 					instructions: 'Collaborate on the feature',
 				},
@@ -1653,6 +1650,7 @@ describe('round-trip: multi-agent + channels', () => {
 					agentId: 'agent-uuid-2',
 				},
 			],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' }],
 			transitions: [{ id: 't-1', from: 'node-1', to: 'node-2' }],
 			startNodeId: 'node-1',
 			rules: [],
@@ -1681,12 +1679,12 @@ describe('round-trip: multi-agent + channels', () => {
 			expect(node.agents![1].instructions).toBe('Review the code');
 			// agentRef shorthand absent for multi-agent node
 			expect(node.agentRef).toBeUndefined();
-			// Channels preserved
-			expect(node.channels).toHaveLength(1);
-			expect(node.channels![0].from).toBe('coder');
-			expect(node.channels![0].to).toBe('reviewer');
-			expect(node.channels![0].direction).toBe('bidirectional');
-			expect(node.channels![0].label).toBe('feedback');
+			// Channels preserved at workflow level
+			expect(exported.channels).toHaveLength(1);
+			expect(exported.channels![0].from).toBe('coder');
+			expect(exported.channels![0].to).toBe('reviewer');
+			expect(exported.channels![0].direction).toBe('bidirectional');
+			expect(exported.channels![0].label).toBe('feedback');
 			// Shared instructions preserved
 			expect(node.instructions).toBe('Collaborate on the feature');
 		}
@@ -1731,8 +1729,8 @@ describe('round-trip: multi-agent + channels', () => {
 		const exported = exportWorkflow(workflow, agents);
 
 		const node = exported.nodes[0];
-		expect(node.agents![0].role).toBe('coder');
-		expect(node.agents![1].role).toBe('reviewer');
+		expect(node.agents![0].name).toBe('coder');
+		expect(node.agents![1].name).toBe('reviewer');
 	});
 
 	test('role field survives export → JSON → validate round-trip', () => {
@@ -1745,8 +1743,8 @@ describe('round-trip: multi-agent + channels', () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.value.nodes[0].agents![0].role).toBe('coder');
-			expect(result.value.nodes[0].agents![1].role).toBe('reviewer');
+			expect(result.value.nodes[0].agents![0].name).toBe('coder');
+			expect(result.value.nodes[0].agents![1].name).toBe('reviewer');
 		}
 	});
 
@@ -1762,12 +1760,12 @@ describe('round-trip: multi-agent + channels', () => {
 					agents: [
 						{
 							agentId: 'agent-uuid-1',
-							role: 'coder',
+							name: 'coder',
 							model: 'claude-haiku-4-5',
 						},
 						{
 							agentId: 'agent-uuid-3',
-							role: 'reviewer',
+							name: 'reviewer',
 							// no model override
 						},
 					],
@@ -1803,7 +1801,7 @@ describe('round-trip: multi-agent + channels', () => {
 					agents: [
 						{
 							agentId: 'agent-uuid-1',
-							role: 'coder',
+							name: 'coder',
 							systemPrompt: 'Always write tests first.',
 						},
 					],
@@ -1834,12 +1832,12 @@ describe('round-trip: multi-agent + channels', () => {
 					agents: [
 						{
 							agentId: 'agent-uuid-1',
-							role: 'coder',
+							name: 'coder',
 							instructions: 'Focus on the auth module only.',
 						},
 						{
 							agentId: 'agent-uuid-3',
-							role: 'reviewer',
+							name: 'reviewer',
 							// no instructions
 						},
 					],
@@ -1869,8 +1867,8 @@ describe('round-trip: multi-agent + channels', () => {
 					id: 'node-1',
 					name: 'Step',
 					agents: [
-						{ agentId: 'agent-uuid-1', role: 'coder' },
-						{ agentId: 'agent-uuid-3', role: 'reviewer' },
+						{ agentId: 'agent-uuid-1', name: 'coder' },
+						{ agentId: 'agent-uuid-3', name: 'reviewer' },
 					],
 				},
 			],
@@ -1905,13 +1903,13 @@ describe('round-trip: multi-agent + channels', () => {
 					agents: [
 						{
 							agentId: 'agent-uuid-1',
-							role: 'coder',
+							name: 'coder',
 							model: 'claude-opus-4-6',
 							systemPrompt: 'You are a strict reviewer.',
 						},
 						{
 							agentId: 'agent-uuid-3',
-							role: 'reviewer',
+							name: 'reviewer',
 							// no model/systemPrompt overrides
 						},
 					],
@@ -1943,11 +1941,11 @@ describe('round-trip: multi-agent + channels', () => {
 		if (result.ok) {
 			const node = result.value.nodes[0];
 			expect(node.agents![0].agentRef).toBe('My Coder');
-			expect(node.agents![0].role).toBe('coder');
+			expect(node.agents![0].name).toBe('coder');
 			expect(node.agents![0].model).toBe('claude-opus-4-6');
 			expect(node.agents![0].systemPrompt).toBe('You are a strict reviewer.');
 			expect(node.agents![1].agentRef).toBe('Reviewer');
-			expect(node.agents![1].role).toBe('reviewer');
+			expect(node.agents![1].name).toBe('reviewer');
 			expect(node.agents![1].model).toBeUndefined();
 			expect(node.agents![1].systemPrompt).toBeUndefined();
 		}
@@ -1965,12 +1963,12 @@ describe('round-trip: multi-agent + channels', () => {
 					agents: [
 						{
 							agentId: 'agent-uuid-1',
-							role: 'coder',
+							name: 'coder',
 							instructions: 'Focus on the auth module only.',
 						},
 						{
 							agentId: 'agent-uuid-3',
-							role: 'reviewer',
+							name: 'reviewer',
 							// no instructions override
 						},
 					],

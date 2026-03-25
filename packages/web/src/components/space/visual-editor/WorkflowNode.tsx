@@ -388,11 +388,11 @@ export function WorkflowNode({
 							const hasOverrides = !!(sa.model || sa.systemPrompt);
 							return (
 								<span
-									key={sa.role}
+									key={sa.name}
 									class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-900/40 text-amber-300' : 'bg-gray-700 text-gray-300'}`}
-									title={hasOverrides ? `${sa.role} (has overrides)` : sa.role}
+									title={hasOverrides ? `${sa.name} (has overrides)` : sa.name}
 								>
-									{sa.role}
+									{sa.name}
 									{hasOverrides && (
 										<span
 											data-testid="override-indicator"

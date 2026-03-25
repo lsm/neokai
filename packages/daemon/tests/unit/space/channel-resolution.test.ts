@@ -13,14 +13,12 @@ function makeAgent(id: string): SpaceAgent {
 function makeNode(
 	id: string,
 	name: string,
-	agents: Array<{ role: string; agentId: string }>,
-	channels?: WorkflowNode['channels']
+	agents: Array<{ name: string; agentId: string }>
 ): WorkflowNode {
 	return {
 		id,
 		name,
-		agents: agents.map((a) => ({ agentId: a.agentId, role: a.role })),
-		channels,
+		agents: agents.map((a) => ({ agentId: a.agentId, name: a.name })),
 	};
 }
 
@@ -46,16 +44,11 @@ function makeWorkflow(nodes: WorkflowNode[], channels?: SpaceWorkflow['channels'
 
 describe('resolveChannels', () => {
 	test('within-node DM: two agents in same node, one-way channel between them', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-			],
-			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: 'reviewer', direction: 'one-way' }]);
 		const result = resolveChannels(wf);
 
 		expect(result).toHaveLength(1);
@@ -72,9 +65,9 @@ describe('resolveChannels', () => {
 
 	test('within-node broadcast: agent sends to node name (fan-out, isFanOut: true)', () => {
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'hub', agentId: 'agent-hub' },
-			{ role: 'worker1', agentId: 'agent-w1' },
-			{ role: 'worker2', agentId: 'agent-w2' },
+			{ name: 'hub', agentId: 'agent-hub' },
+			{ name: 'worker1', agentId: 'agent-w1' },
+			{ name: 'worker2', agentId: 'agent-w2' },
 		]);
 		const wf = makeWorkflow([node], [{ from: 'hub', to: 'Node1', direction: 'one-way' }]);
 		const result = resolveChannels(wf);
@@ -92,8 +85,8 @@ describe('resolveChannels', () => {
 	});
 
 	test('cross-node DM: agent in node A sends to agent in node B', () => {
-		const nodeA = makeNode('n1', 'NodeA', [{ role: 'coder', agentId: 'agent-coder' }]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
+		const nodeA = makeNode('n1', 'NodeA', [{ name: 'coder', agentId: 'agent-coder' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'reviewer', agentId: 'agent-reviewer' }]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
 			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
@@ -113,10 +106,10 @@ describe('resolveChannels', () => {
 	});
 
 	test('cross-node fan-out: agent in node A sends to node B name (all agents)', () => {
-		const nodeA = makeNode('n1', 'NodeA', [{ role: 'planner', agentId: 'agent-planner' }]);
+		const nodeA = makeNode('n1', 'NodeA', [{ name: 'planner', agentId: 'agent-planner' }]);
 		const nodeB = makeNode('n2', 'NodeB', [
-			{ role: 'coder1', agentId: 'agent-coder1' },
-			{ role: 'coder2', agentId: 'agent-coder2' },
+			{ name: 'coder1', agentId: 'agent-coder1' },
+			{ name: 'coder2', agentId: 'agent-coder2' },
 		]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
@@ -134,16 +127,11 @@ describe('resolveChannels', () => {
 	});
 
 	test('bidirectional point-to-point: expands to two one-way entries', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'alice', agentId: 'agent-alice' },
-				{ role: 'bob', agentId: 'agent-bob' },
-			],
-			[{ from: 'alice', to: 'bob', direction: 'bidirectional' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'alice', agentId: 'agent-alice' },
+			{ name: 'bob', agentId: 'agent-bob' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'alice', to: 'bob', direction: 'bidirectional' }]);
 		const result = resolveChannels(wf);
 
 		expect(result).toHaveLength(2);
@@ -156,17 +144,15 @@ describe('resolveChannels', () => {
 	});
 
 	test('bidirectional hub-spoke: one sender, multiple receivers bidirectionally', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'hub', agentId: 'agent-hub' },
-				{ role: 'spoke1', agentId: 'agent-spoke1' },
-				{ role: 'spoke2', agentId: 'agent-spoke2' },
-			],
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'hub', agentId: 'agent-hub' },
+			{ name: 'spoke1', agentId: 'agent-spoke1' },
+			{ name: 'spoke2', agentId: 'agent-spoke2' },
+		]);
+		const wf = makeWorkflow(
+			[node],
 			[{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'bidirectional' }]
 		);
-		const wf = makeWorkflow([node]);
 		const result = resolveChannels(wf);
 
 		// hub→spoke1, hub→spoke2, spoke1→hub, spoke2→hub = 4 entries
@@ -181,19 +167,14 @@ describe('resolveChannels', () => {
 	});
 
 	test('self-loop skipped: from === to generates no entry', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[{ role: 'coder', agentId: 'agent-coder' }],
-			[{ from: 'coder', to: 'coder', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [{ name: 'coder', agentId: 'agent-coder' }]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: 'coder', direction: 'one-way' }]);
 		const result = resolveChannels(wf);
 		expect(result).toHaveLength(0);
 	});
 
 	test('unresolvable references silently skipped', () => {
-		const node = makeNode('n1', 'Node1', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const node = makeNode('n1', 'Node1', [{ name: 'coder', agentId: 'agent-coder' }]);
 		const wf = makeWorkflow(
 			[node],
 			[{ from: 'unknown-role', to: 'also-unknown', direction: 'one-way' }]
@@ -203,17 +184,12 @@ describe('resolveChannels', () => {
 	});
 
 	test('wildcard from/to: backward compat with * syntax', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-				{ role: 'tester', agentId: 'agent-tester' },
-			],
-			[{ from: 'coder', to: '*', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'tester', agentId: 'agent-tester' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: '*', direction: 'one-way' }]);
 		const result = resolveChannels(wf);
 
 		// coder→reviewer, coder→tester (self-loop skipped)
@@ -229,54 +205,10 @@ describe('resolveChannels', () => {
 		expect(result).toHaveLength(0);
 	});
 
-	test('workflow.channels and node.channels both combined', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-			],
-			[
-				// node-level channel
-				{ from: 'reviewer', to: 'coder', direction: 'one-way', label: 'node-channel' },
-			]
-		);
-		const wf = makeWorkflow(
-			[node],
-			[
-				// workflow-level channel
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'wf-channel' },
-			]
-		);
-		const result = resolveChannels(wf);
-
-		expect(result).toHaveLength(2);
-		const wfCh = result.find((r) => r.label === 'wf-channel');
-		const nodeCh = result.find((r) => r.label === 'node-channel');
-		expect(wfCh).toBeDefined();
-		expect(nodeCh).toBeDefined();
-	});
-
-	test('channelId is propagated from source WorkflowChannel', () => {
-		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
-		]);
-		const wf = makeWorkflow(
-			[node],
-			[{ id: 'ch-001', from: 'coder', to: 'reviewer', direction: 'one-way' }]
-		);
-		const result = resolveChannels(wf);
-
-		expect(result).toHaveLength(1);
-		expect(result[0].channelId).toBe('ch-001');
-	});
-
 	test('isCyclic is propagated from source WorkflowChannel', () => {
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow(
 			[node],
@@ -297,8 +229,8 @@ describe('validateChannels', () => {
 	test('valid channels pass: no errors', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow([node], [{ from: 'coder', to: 'reviewer', direction: 'one-way' }]);
 		const errors = validateChannels(wf, agents);
@@ -308,8 +240,8 @@ describe('validateChannels', () => {
 	test('invalid from reference: error about unknown role/node', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow(
 			[node],
@@ -323,8 +255,8 @@ describe('validateChannels', () => {
 	test('invalid to reference: error about unknown role/node', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow(
 			[node],
@@ -337,8 +269,8 @@ describe('validateChannels', () => {
 
 	test('duplicate roles across nodes: error reported', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-coder2')];
-		const nodeA = makeNode('n1', 'NodeA', [{ role: 'coder', agentId: 'agent-coder' }]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'coder', agentId: 'agent-coder2' }]);
+		const nodeA = makeNode('n1', 'NodeA', [{ name: 'coder', agentId: 'agent-coder' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'coder', agentId: 'agent-coder2' }]);
 		// Need at least one channel so validation runs
 		const wf = makeWorkflow([nodeA, nodeB], [{ from: 'coder', to: 'coder', direction: 'one-way' }]);
 		const errors = validateChannels(wf, agents);
@@ -350,8 +282,8 @@ describe('validateChannels', () => {
 	test('wildcard mixed in array to: error reported', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow(
 			[node],
@@ -365,16 +297,11 @@ describe('validateChannels', () => {
 	test('agent not in space agents: error reported', () => {
 		// Space agents list does not include agent-coder
 		const agents = [makeAgent('agent-reviewer')];
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-			],
-			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: 'reviewer', direction: 'one-way' }]);
 		const errors = validateChannels(wf, agents);
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors.some((e) => e.includes('agent-coder'))).toBe(true);
@@ -382,7 +309,7 @@ describe('validateChannels', () => {
 
 	test('empty channels: returns empty array', () => {
 		const agents = [makeAgent('agent-coder')];
-		const node = makeNode('n1', 'Node1', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const node = makeNode('n1', 'Node1', [{ name: 'coder', agentId: 'agent-coder' }]);
 		// No channels on workflow or node
 		const wf = makeWorkflow([node]);
 		const errors = validateChannels(wf, agents);
@@ -391,32 +318,22 @@ describe('validateChannels', () => {
 
 	test('node-level channel references valid role: no errors', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-			],
-			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: 'reviewer', direction: 'one-way' }]);
 		const errors = validateChannels(wf, agents);
 		expect(errors).toHaveLength(0);
 	});
 
 	test('node-level channel with invalid role: error reported', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-			],
-			[{ from: 'coder', to: 'nonexistent', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+		]);
+		const wf = makeWorkflow([node], [{ from: 'coder', to: 'nonexistent', direction: 'one-way' }]);
 		const errors = validateChannels(wf, agents);
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors.some((e) => e.includes('nonexistent'))).toBe(true);
@@ -424,8 +341,8 @@ describe('validateChannels', () => {
 
 	test('cross-node fan-out via node name: valid when node name exists', () => {
 		const agents = [makeAgent('agent-planner'), makeAgent('agent-coder')];
-		const nodeA = makeNode('n1', 'NodeA', [{ role: 'planner', agentId: 'agent-planner' }]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const nodeA = makeNode('n1', 'NodeA', [{ name: 'planner', agentId: 'agent-planner' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'coder', agentId: 'agent-coder' }]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
 			[{ from: 'planner', to: 'NodeB', direction: 'one-way' }]
@@ -437,8 +354,8 @@ describe('validateChannels', () => {
 	test('node-name/role-name collision: ambiguity error reported for from', () => {
 		// Node named "coder" and an agent with role "coder" in a different node
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
-		const nodeA = makeNode('coder', 'coder', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const nodeA = makeNode('coder', 'coder', [{ name: 'reviewer', agentId: 'agent-reviewer' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'coder', agentId: 'agent-coder' }]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
 			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
@@ -450,8 +367,8 @@ describe('validateChannels', () => {
 
 	test('node-name/role-name collision: ambiguity error reported for to', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
-		const nodeA = makeNode('n1', 'reviewer', [{ role: 'coder', agentId: 'agent-coder' }]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
+		const nodeA = makeNode('n1', 'reviewer', [{ name: 'coder', agentId: 'agent-coder' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'reviewer', agentId: 'agent-reviewer' }]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
 			[{ from: 'coder', to: 'reviewer', direction: 'one-way' }]
@@ -464,8 +381,8 @@ describe('validateChannels', () => {
 	test('invalid direction value: error reported', () => {
 		const agents = [makeAgent('agent-coder'), makeAgent('agent-reviewer')];
 		const node = makeNode('n1', 'Node1', [
-			{ role: 'coder', agentId: 'agent-coder' },
-			{ role: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
 		]);
 		const wf = makeWorkflow(
 			[node],
@@ -484,17 +401,12 @@ describe('validateChannels', () => {
 
 describe('resolveChannels edge cases', () => {
 	test('wildcard from (*): expands to all agents sending to target', () => {
-		const node = makeNode(
-			'n1',
-			'Node1',
-			[
-				{ role: 'coder', agentId: 'agent-coder' },
-				{ role: 'reviewer', agentId: 'agent-reviewer' },
-				{ role: 'tester', agentId: 'agent-tester' },
-			],
-			[{ from: '*', to: 'reviewer', direction: 'one-way' }]
-		);
-		const wf = makeWorkflow([node]);
+		const node = makeNode('n1', 'Node1', [
+			{ name: 'coder', agentId: 'agent-coder' },
+			{ name: 'reviewer', agentId: 'agent-reviewer' },
+			{ name: 'tester', agentId: 'agent-tester' },
+		]);
+		const wf = makeWorkflow([node], [{ from: '*', to: 'reviewer', direction: 'one-way' }]);
 		const result = resolveChannels(wf);
 
 		// coder→reviewer and tester→reviewer (self-loop reviewer→reviewer skipped)
@@ -506,10 +418,10 @@ describe('resolveChannels edge cases', () => {
 
 	test('from as node name: each agent in node gets a sender entry', () => {
 		const nodeA = makeNode('n1', 'Coders', [
-			{ role: 'coder1', agentId: 'agent-coder1' },
-			{ role: 'coder2', agentId: 'agent-coder2' },
+			{ name: 'coder1', agentId: 'agent-coder1' },
+			{ name: 'coder2', agentId: 'agent-coder2' },
 		]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'reviewer', agentId: 'agent-reviewer' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'reviewer', agentId: 'agent-reviewer' }]);
 		// "Coders" node as from — all agents in Coders send to reviewer
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
@@ -525,10 +437,10 @@ describe('resolveChannels edge cases', () => {
 	});
 
 	test('bidirectional with fan-out to node name: expands with isFanOut on forward entries', () => {
-		const nodeA = makeNode('n1', 'NodeA', [{ role: 'planner', agentId: 'agent-planner' }]);
+		const nodeA = makeNode('n1', 'NodeA', [{ name: 'planner', agentId: 'agent-planner' }]);
 		const nodeB = makeNode('n2', 'NodeB', [
-			{ role: 'coder1', agentId: 'agent-coder1' },
-			{ role: 'coder2', agentId: 'agent-coder2' },
+			{ name: 'coder1', agentId: 'agent-coder1' },
+			{ name: 'coder2', agentId: 'agent-coder2' },
 		]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
@@ -551,8 +463,8 @@ describe('resolveChannels edge cases', () => {
 
 	test('node-name/role-name collision: resolver prefers role over node name for to', () => {
 		// "coder" is both an agent role in nodeB and the name of nodeA
-		const nodeA = makeNode('coder', 'coder', [{ role: 'planner', agentId: 'agent-planner' }]);
-		const nodeB = makeNode('n2', 'NodeB', [{ role: 'coder', agentId: 'agent-coder' }]);
+		const nodeA = makeNode('coder', 'coder', [{ name: 'planner', agentId: 'agent-planner' }]);
+		const nodeB = makeNode('n2', 'NodeB', [{ name: 'coder', agentId: 'agent-coder' }]);
 		const wf = makeWorkflow(
 			[nodeA, nodeB],
 			[{ from: 'planner', to: 'coder', direction: 'one-way' }]

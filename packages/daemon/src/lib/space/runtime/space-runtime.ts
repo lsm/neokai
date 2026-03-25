@@ -26,6 +26,7 @@ import type {
 	SpaceWorkflowRun,
 	WorkflowRule,
 	WorkflowNode,
+	WorkflowChannel,
 } from '@neokai/shared';
 import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
@@ -343,7 +344,7 @@ export class SpaceRuntime {
 					workflowNodeId: startStep.id,
 					taskType: resolved.taskType,
 					customAgentId: resolved.customAgentId,
-					slotRole: agentEntry.role,
+					slotRole: agentEntry.name,
 					status: 'pending',
 					goalId: run.goalId,
 				});
@@ -363,7 +364,7 @@ export class SpaceRuntime {
 		// Resolve channel topology for the start step and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
-		this.resolveAndStoreChannels(run.id, space.id, startStep);
+		this.resolveAndStoreChannels(run.id, space.id, startStep, workflow.channels ?? []);
 
 		return { run, tasks };
 	}
@@ -781,7 +782,7 @@ export class SpaceRuntime {
 			} else {
 				// Resolve channel topology for the new step.
 				// TODO: Milestone 6: pass to session group creation instead of run config.
-				this.resolveAndStoreChannels(runId, meta.spaceId, newStep);
+				this.resolveAndStoreChannels(runId, meta.spaceId, newStep, meta.workflow.channels ?? []);
 			}
 		} catch (err) {
 			if (!(err instanceof WorkflowTransitionError)) {
@@ -995,27 +996,44 @@ export class SpaceRuntime {
 	 * Resolves the channel topology for a workflow step and stores it in the run's
 	 * config for use by session group creation (Milestone 6).
 	 *
-	 * Resolves channel topology using `WorkflowNodeAgent.role` entries from the step.
+	 * Resolves channel topology using `WorkflowNodeAgent.name` entries from the step
+	 * and the workflow-level channels array.
 	 * Stores the result under `run.config._resolvedChannels`.
 	 *
 	 * TODO Milestone 6: pass resolvedChannels to session group metadata in
 	 * TaskAgentManager.spawnTaskAgent() instead of storing in run config.
 	 *
-	 * Note: Task Agent channels are persisted by the frontend as WorkflowChannel
-	 * entries in the workflow data. This function only resolves and stores
-	 * user-declared channels — no runtime auto-generation.
+	 * Note: Task Agent channels are persisted as WorkflowChannel entries in the
+	 * workflow channels array. This function only resolves and stores user-declared
+	 * channels — no runtime auto-generation.
 	 */
-	resolveAndStoreChannels(runId: string, spaceId: string, step: WorkflowNode): void {
+	resolveAndStoreChannels(
+		runId: string,
+		spaceId: string,
+		step: WorkflowNode,
+		channels: WorkflowChannel[]
+	): void {
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
 
 		const config = (run.config ?? {}) as Record<string, unknown>;
 
-		// Resolve user-declared channels from workflow data (empty array if none declared)
-		const resolved = resolveNodeChannels(step);
+		// Resolve user-declared channels from workflow-level channels array
+		const resolved = resolveNodeChannels(step, channels);
 
 		this.config.workflowRunRepo.updateRun(runId, {
 			config: { ...config, _resolvedChannels: resolved },
 		});
+	}
+
+	/**
+	 * Returns the channels array for the workflow associated with the given run.
+	 * Used by task-agent-tools.ts to pass channels to resolveAndStoreChannels.
+	 */
+	getWorkflowChannels(runId: string): WorkflowChannel[] {
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return [];
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		return workflow?.channels ?? [];
 	}
 }

@@ -74,6 +74,8 @@ interface TransitionRow {
 interface WorkflowConfigJson {
 	tags?: string[];
 	rules?: WorkflowRule[];
+	/** Workflow-level channel topology declarations */
+	channels?: WorkflowChannel[];
 	extra?: Record<string, unknown>;
 }
 
@@ -82,8 +84,6 @@ interface NodeConfigJson {
 	instructions?: string;
 	/** Multi-agent array — present when the node uses the agents[] format */
 	agents?: WorkflowNodeAgent[];
-	/** Channel topology declarations — present when channels are defined */
-	channels?: WorkflowChannel[];
 }
 
 // ---------------------------------------------------------------------------
@@ -113,14 +113,12 @@ function rowToNode(row: NodeRow): WorkflowNode {
 		node.instructions = cfg.instructions;
 	}
 	if (cfg.agents && cfg.agents.length > 0) {
-		// Backfill role = agentId for rows persisted before the role field was introduced.
+		// Backfill name = agentId for rows persisted before the name field was introduced.
 		node.agents = cfg.agents.map((a: WorkflowNodeAgent) => ({
 			...a,
-			role: a.role?.trim() ? a.role : a.agentId,
+			// Support legacy data where role was stored instead of name
+			name: a.name?.trim() ? a.name : (a as unknown as { role?: string }).role?.trim() || a.agentId,
 		}));
-	}
-	if (cfg.channels && cfg.channels.length > 0) {
-		node.channels = cfg.channels;
 	}
 	return node;
 }
@@ -156,6 +154,7 @@ function rowToWorkflow(
 		startNodeId,
 		rules: cfg.rules ?? [],
 		tags: cfg.tags ?? [],
+		channels: cfg.channels && cfg.channels.length > 0 ? cfg.channels : undefined,
 		config: cfg.extra,
 		maxIterations: row.max_iterations ?? undefined,
 		layout: layout ?? undefined,
@@ -194,6 +193,7 @@ export class SpaceWorkflowRepository {
 		const cfg: WorkflowConfigJson = {
 			tags: params.tags ?? [],
 			rules: this.assignRuleIds(params.rules ?? []),
+			channels: params.channels && params.channels.length > 0 ? params.channels : undefined,
 			extra: params.config,
 		};
 
@@ -291,6 +291,10 @@ export class SpaceWorkflowRepository {
 		}
 		if (params.rules !== undefined) {
 			newCfg.rules = params.rules ?? [];
+			cfgChanged = true;
+		}
+		if (params.channels !== undefined) {
+			newCfg.channels = params.channels && params.channels.length > 0 ? params.channels : undefined;
 			cfgChanged = true;
 		}
 		if (params.config !== undefined) {
@@ -426,12 +430,9 @@ export class SpaceWorkflowRepository {
 		const nodeCfg: NodeConfigJson = {
 			instructions: input.instructions,
 		};
-		// Persist agents and channels into the JSON config column so they survive round-trips.
+		// Persist agents into the JSON config column so they survive round-trips.
 		if (input.agents && input.agents.length > 0) {
 			nodeCfg.agents = input.agents;
-		}
-		if (input.channels && input.channels.length > 0) {
-			nodeCfg.channels = input.channels;
 		}
 
 		// Store null for agent_id when using the multi-agent agents[] format.
