@@ -175,7 +175,11 @@ export class ModelSwitchHandler {
 			}
 
 			if (!queryObject) {
-				// Query hasn't been created yet - just update config, it will be used when query starts
+				// Query hasn't been created yet OR query was already completed/interrupted.
+				// In both cases, we must call restart() to ensure the new model takes effect:
+				// - restart() validates the SDK session file before starting a new query
+				// - Without this, a stale session file could cause the new query to use old state
+				// - Even if no query is running, restart() ensures clean state for the next query
 				session.config.model = resolvedModel;
 				// newProviderInstance is guaranteed non-null here (we returned early above).
 				session.config.provider = newProviderInstance.id as Provider;
@@ -198,6 +202,10 @@ export class ModelSwitchHandler {
 					source: 'model-switch',
 					session: { config: session.config },
 				});
+
+				// Always restart to ensure new model takes effect, even when queryObject is null.
+				// This validates the session file and starts a fresh query with the new model.
+				await lifecycleManager.restart();
 			} else {
 				// Query exists - always restart to apply the new model/provider.
 				// We must restart even if firstMessageReceived is false because the SDK
