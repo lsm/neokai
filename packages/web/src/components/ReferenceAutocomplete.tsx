@@ -153,6 +153,8 @@ export default function ReferenceAutocomplete({
 	return (
 		<div
 			ref={containerRef}
+			role="listbox"
+			aria-label={headerLabel}
 			class={cn(
 				`absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
 				'overflow-hidden max-h-72 overflow-y-auto',
@@ -198,6 +200,8 @@ export default function ReferenceAutocomplete({
 								key={`${result.type}:${result.id}`}
 								ref={globalIndex === selectedIndex ? selectedItemRef : null}
 								type="button"
+								role="option"
+								aria-selected={globalIndex === selectedIndex}
 								onClick={() => onSelect(result)}
 								class={cn(
 									'w-full px-3 py-2 text-left transition-colors flex items-start gap-2',

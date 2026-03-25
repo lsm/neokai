@@ -30,7 +30,8 @@ import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
-import type { ReferenceMention, ReferenceSearchResult } from '@neokai/shared';
+import type { ReferenceSearchResult } from '@neokai/shared';
+import { REFERENCE_PATTERN } from '@neokai/shared';
 
 export interface InputTextareaProps {
 	content: string;
@@ -50,7 +51,7 @@ export interface InputTextareaProps {
 	showReferenceAutocomplete?: boolean;
 	referenceResults?: ReferenceSearchResult[];
 	selectedReferenceIndex?: number;
-	onReferenceSelect?: (reference: ReferenceMention) => void;
+	onReferenceSelect?: (result: ReferenceSearchResult) => void;
 	onReferenceClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
@@ -153,8 +154,9 @@ export function InputTextarea({
 	const showStop = isAgentWorking && !hasContent && !!onStop;
 	const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
 
-	// Count @ref{} tokens in content
-	const refCount = [...content.matchAll(/@ref\{[^}:]+:[^}]+\}/g)].length;
+	// Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
+	// instance each render, avoiding stale lastIndex from the shared global-flag regex.
+	const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
 
 	return (
 		<div class="relative flex-1">
