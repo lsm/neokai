@@ -10,6 +10,7 @@ import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks';
+import type { MessageHub } from '@neokai/shared';
 
 export function createMockDaemonHub() {
 	const handlers = new Map<string, Map<string | undefined, Array<(data: unknown) => void>>>();
@@ -267,7 +268,7 @@ export interface RuntimeTestContextOptions {
 	 * trySwitchToFallbackModel uses messageHub.request('session.model.get', ...)).
 	 * When provided, this replaces the no-op messageHub used by default.
 	 */
-	messageHub?: { request: (method: string, args: unknown) => Promise<unknown> };
+	messageHub?: Pick<MessageHub, 'request'>;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -308,7 +309,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getGoal: (goalId) => goalManager.getGoal(goalId),
 		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
 		isProviderAvailable: opts?.isProviderAvailable,
-		messageHub: opts?.messageHub as never,
+		messageHub: opts?.messageHub as unknown as MessageHub,
 		daemonHub: mockHub as unknown as DaemonHub,
 	});
 

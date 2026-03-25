@@ -388,10 +388,17 @@ export class RoomRuntime {
 
 			// Check provider availability if a callback is configured
 			if (this.isProviderAvailable) {
-				const available = await this.isProviderAvailable(candidate.provider, candidate.model);
-				if (!available) {
+				try {
+					const available = await this.isProviderAvailable(candidate.provider, candidate.model);
+					if (!available) {
+						log.warn(
+							`Skipping fallback ${candidate.provider}/${candidate.model} — provider unavailable`
+						);
+						continue;
+					}
+				} catch (err) {
 					log.warn(
-						`Skipping fallback ${candidate.provider}/${candidate.model} — provider unavailable`
+						`Provider availability check failed for ${candidate.provider}/${candidate.model}: ${String(err)}`
 					);
 					continue;
 				}

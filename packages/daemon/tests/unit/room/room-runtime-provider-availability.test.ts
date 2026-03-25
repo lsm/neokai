@@ -245,6 +245,62 @@ describe('RoomRuntime - isProviderAvailable in trySwitchToFallbackModel', () => 
 		});
 	});
 
+	describe('isProviderAvailable throws — treated as unavailable', () => {
+		it('falls through to next candidate when callback throws', async () => {
+			// First candidate (haiku) throws; second candidate (glm-4) is available
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
+				getGlobalSettings: makeGlobalSettings([
+					{ model: 'haiku', provider: 'anthropic' },
+					{ model: 'glm-4', provider: 'glm' },
+				]),
+				messageHub: makeMessageHub('not-in-chain', 'other'),
+				isProviderAvailable: async (_provider, model) => {
+					if (model === 'haiku') throw new Error('network timeout');
+					return true;
+				},
+			});
+
+			const { group } = await spawnGroup();
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			const switchCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			// haiku throws → skipped, glm-4 is available → used
+			expect(switchCalls.length).toBe(1);
+			expect(switchCalls[0].args[1]).toBe('glm-4');
+		});
+
+		it('returns false (usage_limited) when all candidates throw', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
+				getGlobalSettings: makeGlobalSettings([
+					{ model: 'haiku', provider: 'anthropic' },
+					{ model: 'glm-4', provider: 'glm' },
+				]),
+				messageHub: makeMessageHub('not-in-chain', 'other'),
+				isProviderAvailable: async () => {
+					throw new Error('check service down');
+				},
+			});
+
+			const { group, task } = await spawnGroup();
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			const switchCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
+			expect(switchCalls.length).toBe(0);
+
+			// Task should be usage_limited — backoff set correctly, not aborted mid-handler
+			const updated = await ctx.taskManager.getTask(task.id);
+			expect(updated!.status).toBe('usage_limited');
+		});
+	});
+
 	describe('same-model skip guard', () => {
 		it('skips a fallback entry that matches the current model even if not via chain index', async () => {
 			// Current model is NOT in chain (index -1), but chain[0] happens to be the same model
