@@ -8,9 +8,10 @@
  * 3. The merged map is complete — neither source is dropped.
  * 4. Non-worker roles (leader, planner) do NOT get the worker MCP injection.
  * 5. appMcpManager is optional — missing it does not throw.
+ * 6. setRuntimeMcpServers is NOT called when both sources are empty (no-op guard).
  */
 
-import { describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { McpServerConfig } from '@neokai/shared';
 import type { AgentSessionInit } from '../../../src/lib/agent/agent-session';
 
@@ -61,7 +62,8 @@ function makeMinimalInit(sessionId = 'session-1'): AgentSessionInit {
 
 /**
  * Build a minimal SessionFactory that lets us observe calls to the underlying
- * AgentSession mock. Returns the factory and a collector for setRuntimeMcpServers calls.
+ * AgentSession mock. Returns the factory, a collector for setRuntimeMcpServers calls,
+ * and the spy so the caller can restore it in afterEach.
  *
  * We exercise createAndStartSession by extracting the factory from a configured
  * RoomRuntimeService instance via the private createSessionFactory() method.
@@ -76,7 +78,8 @@ async function buildSessionFactory(opts: {
 	// Capture setRuntimeMcpServers calls per session
 	const setRuntimeMcpServersCalls = new Map<string, Array<Record<string, McpServerConfig>>>();
 
-	// Mock AgentSession.fromInit to return a controllable stub
+	// Mock AgentSession.fromInit to return a controllable stub.
+	// The spy is returned so tests can restore it in afterEach even when assertions throw.
 	const agentSessionModule = await import('../../../src/lib/agent/agent-session');
 	const fromInitSpy = spyOn(agentSessionModule.AgentSession, 'fromInit').mockImplementation(((
 		init: AgentSessionInit
@@ -141,6 +144,16 @@ async function buildSessionFactory(opts: {
 // ---------------------------------------------------------------------------
 
 describe('RoomRuntimeService worker session MCP merge', () => {
+	// Track spies created in each test so we can restore them in afterEach
+	// even when a test assertion throws before the inline restore call.
+	const spies: Array<{ mockRestore: () => void }> = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) {
+			spy.mockRestore();
+		}
+	});
+
 	it('injects merged MCP map into coder sessions', async () => {
 		const fileServer: McpServerConfig = { type: 'stdio', command: 'file-cmd' };
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
@@ -149,10 +162,9 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 			fileMcpServers: { 'file-mcp': fileServer },
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s1'), 'coder');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s1') ?? [];
 		expect(calls.length).toBe(1);
@@ -168,11 +180,10 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 			fileMcpServers: { 'file-mcp': fileServer },
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
+		spies.push(fromInitSpy);
 
 		const init = { ...makeMinimalInit('s2'), type: 'general' as const };
 		await factory.createAndStartSession(init, 'general');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s2') ?? [];
 		expect(calls.length).toBe(1);
@@ -188,10 +199,9 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 			fileMcpServers: { 'shared-name': fileServer },
 			registryMcpServers: { 'shared-name': registryServer },
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s3'), 'coder');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s3') ?? [];
 		expect(calls.length).toBe(1);
@@ -209,10 +219,9 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 			fileMcpServers: { 'file-unique': fileServer },
 			registryMcpServers: { 'registry-unique': registryServer },
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s4'), 'coder');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s4') ?? [];
 		expect(calls.length).toBe(1);
@@ -229,10 +238,9 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 			fileMcpServers: { 'file-mcp': fileServer },
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s5'), 'leader');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s5') ?? [];
 		// setRuntimeMcpServers should NOT be called for leader
@@ -245,10 +253,9 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: { 'file-mcp': fileServer },
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s6'), 'planner');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s6') ?? [];
 		expect(calls.length).toBe(0);
@@ -261,29 +268,28 @@ describe('RoomRuntimeService worker session MCP merge', () => {
 			fileMcpServers: { 'file-mcp': fileServer },
 			hasAppMcpManager: false,
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s7'), 'coder');
-
-		fromInitSpy.mockRestore();
 
 		const calls = setRuntimeMcpServersCalls.get('s7') ?? [];
 		expect(calls.length).toBe(1);
 		expect(calls[0]!['file-mcp']).toEqual(fileServer);
 	});
 
-	it('injects empty map when both sources are empty (no MCP servers configured)', async () => {
+	it('does NOT call setRuntimeMcpServers when both sources are empty', async () => {
+		// When neither file-based nor registry has any servers, setRuntimeMcpServers
+		// should be skipped entirely so the SDK can use its own default discovery
+		// instead of being handed an empty map that suppresses it.
 		const { factory, setRuntimeMcpServersCalls, fromInitSpy } = await buildSessionFactory({
 			fileMcpServers: {},
 			registryMcpServers: {},
 		});
+		spies.push(fromInitSpy);
 
 		await factory.createAndStartSession(makeMinimalInit('s8'), 'coder');
 
-		fromInitSpy.mockRestore();
-
 		const calls = setRuntimeMcpServersCalls.get('s8') ?? [];
-		// setRuntimeMcpServers is still called, but with an empty map
-		expect(calls.length).toBe(1);
-		expect(Object.keys(calls[0]!)).toHaveLength(0);
+		expect(calls.length).toBe(0);
 	});
 });

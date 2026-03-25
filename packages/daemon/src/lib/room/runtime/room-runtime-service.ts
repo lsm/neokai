@@ -250,13 +250,27 @@ export class RoomRuntimeService {
 				agentSessions.set(init.sessionId, session);
 
 				// Inject merged MCP servers for worker sessions (coder / general).
-				// File-based servers take precedence over registry servers on name collision
-				// because local project config is considered more specific than the global
-				// application-level registry.
 				//
-				// Hot-reload for worker sessions is intentionally skipped: workers are
-				// short-lived (one task per session) so a registry change mid-task would
-				// not be useful. The updated map is applied on the next session creation.
+				// Precedence (highest to lowest): file-based > registry.
+				// File-based servers are project-local config (.mcp.json / settings.json) and are
+				// considered more specific than the global application-level registry. When the same
+				// server name appears in both sources, the project's local definition wins.
+				//
+				// Note: Room chat sessions use the OPPOSITE precedence (registry > file-based) because
+				// room chat does not use project-local tools and the app-level registry is intended to
+				// extend the room chat experience. Worker sessions operate in the project workspace, so
+				// the project's local config should take priority.
+				//
+				// Hot-reload for worker sessions is intentionally skipped: workers are short-lived
+				// (one task per session) so a registry change mid-task would not be useful. The
+				// updated map is applied on the next session creation.
+				//
+				// Known limitation after daemon restart: recovered worker sessions re-created by
+				// restoreSession() will NOT have the merged (file + registry) MCP map reapplied —
+				// restoreMcpServersForGroup() only restores role-specific in-process tools
+				// (planner-tools, leader-agent-tools). Workers resumed from a crash will therefore
+				// run without user-configured MCP servers for the remainder of their task. This is
+				// accepted given the short-lived nature of worker sessions.
 				if (role === 'coder' || role === 'general') {
 					const fileMcpServers = ctx.settingsManager.getEnabledMcpServersConfig();
 					const registryMcpServers = ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
@@ -271,12 +285,17 @@ export class RoomRuntimeService {
 						}
 					}
 
-					// Merge: registry first, then file-based overwrites on collision
+					// Merge: registry first, then file-based overwrites on collision.
+					// Only call setRuntimeMcpServers when there is at least one server to inject —
+					// an undefined config lets the SDK use its own default discovery, while an
+					// empty map would suppress it entirely with no benefit.
 					const merged: Record<string, McpServerConfig> = {
 						...registryMcpServers,
 						...fileMcpServers,
 					};
-					session.setRuntimeMcpServers(merged);
+					if (Object.keys(merged).length > 0) {
+						session.setRuntimeMcpServers(merged);
+					}
 				}
 
 				// Leader sessions are started lazily: injectMessage() calls ensureQueryStarted()
@@ -585,9 +604,15 @@ export class RoomRuntimeService {
 				//   2. Registry-based servers (application-level entries from AppMcpLifecycleManager)
 				//   3. room-agent-tools (in-process server for room coordination)
 				//
-				// Merge order: file-based first, registry-based second (wins over file-based on
-				// name collision), then room-agent-tools last so it ALWAYS takes precedence.
-				// This guarantees room coordination tools are never shadowed by user-configured servers.
+				// Precedence (highest to lowest): room-agent-tools > registry > file-based.
+				// Registry wins over file-based here because the room chat session does not operate
+				// inside a specific project workspace — the app-level registry is intended to
+				// enrich the room chat experience and takes precedence over project-local config.
+				// room-agent-tools is always last so it can never be shadowed.
+				//
+				// Note: Worker sessions (coder/general) use the OPPOSITE file vs. registry precedence
+				// because they run inside the project workspace where local config is more specific.
+				// See createSessionFactory() for the worker merge logic.
 				//
 				// Note: setRuntimeMcpServers() replaces the config used for the NEXT query; it does
 				// NOT restart any in-flight query. This is intentional — MCP server changes between
@@ -795,7 +820,12 @@ export class RoomRuntimeService {
 						// message is injected (rate-limit detection and compatibility hooks).
 						runtime.restoreRecoveredGroupMirroring(group);
 
-						// Restore MCP servers (planner-tools, leader-agent-tools)
+						// Restore role-specific in-process MCP servers (planner-tools, leader-agent-tools).
+						// Note: file-based and registry-sourced MCP servers are NOT restored here for
+						// worker sessions (coder/general). This is a known limitation — recovered workers
+						// run without user-configured MCP servers for the remainder of their task.
+						// Workers are short-lived (one task per session) so this is accepted behaviour;
+						// the merged map is applied on the next session creation via createSessionFactory().
 						await runtime.restoreMcpServersForGroup(group);
 
 						if (!resumeAgents) {
