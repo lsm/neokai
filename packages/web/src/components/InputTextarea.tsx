@@ -25,6 +25,7 @@
  */
 
 import type { ComponentChildren } from 'preact';
+import type { MutableRef } from 'preact/hooks';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -61,6 +62,8 @@ export interface InputTextareaProps {
 	leadingElement?: ComponentChildren;
 	/** Left padding class used when leadingElement is present */
 	leadingPaddingClass?: string;
+	/** Optional ref forwarded to the underlying textarea element */
+	textareaRef?: MutableRef<HTMLTextAreaElement | null>;
 }
 
 /**
@@ -89,8 +92,10 @@ export function InputTextarea({
 	onPaste,
 	leadingElement,
 	leadingPaddingClass,
+	textareaRef: externalTextareaRef,
 }: InputTextareaProps) {
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
+	const textareaRef = externalTextareaRef ?? internalTextareaRef;
 	const [isMultiline, setIsMultiline] = useState(false);
 
 	// Detect if device is mobile (touch-based)
