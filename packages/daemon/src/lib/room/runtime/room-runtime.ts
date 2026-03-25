@@ -2718,8 +2718,12 @@ export class RoomRuntime {
 				continue;
 			}
 
-			// Construct a continuation message summarising the last worker output
-			let continuationMessage = '[Auto-recovery] Resuming leader review after rate limit expired.';
+			// Construct a continuation message summarising the last worker output.
+			// Note: in the normal case lastForwardedMessageId is already updated by
+			// routeWorkerToLeader (~line 933), so getWorkerMessages returns an empty array
+			// here. That is fine — the leader's conversation context already contains the
+			// full worker envelope; the generic message alone is sufficient to resume review.
+			let continuationMessage = `[Auto-recovery] Resuming leader review after rate limit expired (iteration ${group.feedbackIteration}).`;
 			if (this.getWorkerMessages) {
 				const workerMessages = this.getWorkerMessages(
 					group.workerSessionId,
@@ -2741,7 +2745,9 @@ export class RoomRuntime {
 
 			// Clear the expired rate limit and any task restriction
 			this.groupRepo.clearRateLimit(group.id);
-			void this.clearTaskRestriction(group.taskId);
+			void this.clearTaskRestriction(group.taskId).catch((err) => {
+				log.error(`[StuckLeader] Group ${group.id}: clearTaskRestriction threw:`, err);
+			});
 
 			this.appendGroupEvent(group.id, 'status', {
 				text: 'Leader recovered from expired rate limit. Re-injecting worker message.',

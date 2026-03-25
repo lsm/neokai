@@ -87,6 +87,25 @@ describe('recoverStuckLeaders', () => {
 		expect(updated.rateLimit).toBeNull();
 	});
 
+	it('restores task status to in_progress via clearTaskRestriction', async () => {
+		const { groupId, taskId, leaderSessionId } = await createTaskWithGroup(ctx);
+
+		// Set the task to usage_limited (simulating what persistTaskRestriction does)
+		await ctx.taskManager.updateTaskStatus(taskId, 'usage_limited');
+
+		ctx.groupRepo.setRateLimit(groupId, expiredLeaderBackoff());
+		ctx.sessionFactory.processingStates.set(leaderSessionId, 'idle');
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Allow the async clearTaskRestriction to complete
+		await new Promise((r) => setTimeout(r, 10));
+
+		const task = await ctx.taskManager.getTask(taskId);
+		expect(task!.status).toBe('in_progress');
+	});
+
 	it('does not inject when the rate limit is still active (resetsAt in the future)', async () => {
 		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx);
 
@@ -132,6 +151,38 @@ describe('recoverStuckLeaders', () => {
 
 		ctx.groupRepo.setRateLimit(groupId, expiredLeaderBackoff());
 		ctx.sessionFactory.processingStates.set(leaderSessionId, 'processing');
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const injectCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
+		);
+		expect(injectCalls).toHaveLength(0);
+	});
+
+	it('injects when the leader session is interrupted (treated same as idle)', async () => {
+		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx);
+
+		ctx.groupRepo.setRateLimit(groupId, expiredLeaderBackoff());
+		ctx.sessionFactory.processingStates.set(leaderSessionId, 'interrupted');
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const injectCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
+		);
+		expect(injectCalls).toHaveLength(1);
+		expect(injectCalls[0].args[1]).toContain('[Auto-recovery]');
+	});
+
+	it('does not inject when the group has waitingForQuestion=true', async () => {
+		const { groupId, leaderSessionId, workerSessionId } = await createTaskWithGroup(ctx);
+
+		ctx.groupRepo.setRateLimit(groupId, expiredLeaderBackoff());
+		ctx.groupRepo.setWaitingForQuestion(groupId, true, workerSessionId);
+		ctx.sessionFactory.processingStates.set(leaderSessionId, 'idle');
 
 		ctx.runtime.start();
 		await ctx.runtime.tick();
@@ -208,6 +259,36 @@ describe('recoverStuckLeaders', () => {
 			(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
 		);
 		expect(injectCalls).toHaveLength(0);
+	});
+
+	it('sends generic continuation message when getWorkerMessages returns empty (normal case after routing)', async () => {
+		// In the normal case, lastForwardedMessageId is already up-to-date after routeWorkerToLeader,
+		// so getWorkerMessages returns an empty array. The generic message alone should be sent.
+		const ctxEmpty = createRuntimeTestContext({
+			getWorkerMessages: () => [],
+		});
+		ctx.runtime.stop();
+
+		const { task } = await createGoalAndTask(ctxEmpty);
+		const group = ctxEmpty.groupRepo.createGroup(task.id, `worker:${task.id}`, `leader:${task.id}`);
+		await ctxEmpty.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+		ctxEmpty.groupRepo.setRateLimit(group.id, expiredLeaderBackoff());
+		ctxEmpty.sessionFactory.processingStates.set(group.leaderSessionId, 'idle');
+
+		ctxEmpty.runtime.start();
+		await ctxEmpty.runtime.tick();
+
+		const injectCalls = ctxEmpty.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
+		);
+		expect(injectCalls).toHaveLength(1);
+		const msg = injectCalls[0].args[1] as string;
+		expect(msg).toContain('[Auto-recovery]');
+		expect(msg).not.toContain('Last worker output');
+
+		ctxEmpty.runtime.stop();
+		ctxEmpty.db.close();
 	});
 
 	it('includes excerpt of worker output in the injected continuation message', async () => {
