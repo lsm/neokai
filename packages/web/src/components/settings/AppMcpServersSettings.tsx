@@ -95,6 +95,8 @@ export function AppMcpServersSettings() {
 			// sse or http
 			if (!formData.url.trim()) {
 				errors.url = 'URL is required for SSE/HTTP servers';
+			} else if (!/^https?:\/\//i.test(formData.url.trim())) {
+				errors.url = 'URL must start with http:// or https://';
 			}
 		}
 
@@ -555,32 +557,30 @@ export function AppMcpServersSettings() {
 						</>
 					)}
 
-					{/* Env Vars (for stdio) */}
-					{formData.sourceType === 'stdio' && (
-						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-1">
-								Environment Variables
-							</label>
-							<textarea
-								value={formData.envVars}
-								onChange={(e) =>
-									setFormData({ ...formData, envVars: (e.target as HTMLTextAreaElement).value })
-								}
-								class={cn(
-									'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-									'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
-									formErrors.envVars ? 'border-red-500' : 'border-dark-700'
-								)}
-								rows={3}
-								placeholder="e.g., BRAVE_API_KEY=BRAVE_API_KEY"
-							/>
-							{formErrors.envVars && <p class="text-xs text-red-400 mt-1">{formErrors.envVars}</p>}
-							<p class="text-xs text-gray-500 mt-1">
-								One env var per line in key=value format. For secrets, set the value in your system
-								environment and reference the env var name here.
-							</p>
-						</div>
-					)}
+					{/* Env Vars (for all source types) */}
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-1">
+							Environment Variables
+						</label>
+						<textarea
+							value={formData.envVars}
+							onChange={(e) =>
+								setFormData({ ...formData, envVars: (e.target as HTMLTextAreaElement).value })
+							}
+							class={cn(
+								'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
+								'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
+								formErrors.envVars ? 'border-red-500' : 'border-dark-700'
+							)}
+							rows={3}
+							placeholder="e.g., BRAVE_API_KEY=BRAVE_API_KEY"
+						/>
+						{formErrors.envVars && <p class="text-xs text-red-400 mt-1">{formErrors.envVars}</p>}
+						<p class="text-xs text-gray-500 mt-1">
+							One env var per line in key=value format. For secrets, set the value in your system
+							environment and reference the env var name here.
+						</p>
+					</div>
 
 					{/* Form Actions */}
 					<div class="flex items-center justify-end gap-3 pt-2">
