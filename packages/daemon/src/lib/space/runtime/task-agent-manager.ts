@@ -319,6 +319,10 @@ export class TaskAgentManager {
 			// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
 			// in-process task-agent server. The task-agent server always wins on collision
 			// since it provides the core orchestration tools required for task management.
+			//
+			// Note: task agent sessions are short-lived (one per task), so there is no
+			// mcp.registry.changed subscription here. Registry changes during a running task
+			// are not hot-reloaded; they take effect when the next task agent is spawned.
 			const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
 			for (const name of Object.keys(registryMcpServers)) {
 				if (name === 'task-agent') {
@@ -1154,7 +1158,20 @@ export class TaskAgentManager {
 				) as unknown as McpServerConfig,
 		});
 
+		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
+		// mirroring the same logic in spawnTaskAgent() so rehydrated sessions have the
+		// same MCP configuration as freshly spawned ones.
+		const rehydrateRegistryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		for (const name of Object.keys(rehydrateRegistryMcpServers)) {
+			if (name === 'task-agent') {
+				log.warn(
+					`Rehydrating task agent session ${sessionId}: MCP server name collision on 'task-agent' — ` +
+						`in-process task-agent server takes precedence over registry entry.`
+				);
+			}
+		}
 		agentSession.setRuntimeMcpServers({
+			...rehydrateRegistryMcpServers,
 			'task-agent': mcpServer as unknown as McpServerConfig,
 		});
 

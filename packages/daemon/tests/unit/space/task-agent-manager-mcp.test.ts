@@ -12,7 +12,7 @@
  * 5. Multiple registry servers are all included in the merged map.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
+import { describe, test, expect, afterEach, spyOn, beforeEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
@@ -155,6 +155,8 @@ function buildManager(opts: {
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
 	space: Space;
+	/** Seed a session in the mock DB (used to simulate sessions that existed before restart). */
+	seedSession: (id: string, type: string) => void;
 } {
 	const { registryMcpServers = {}, hasAppMcpManager = true } = opts;
 	const { db: bunDb, dir } = makeDb();
@@ -238,7 +240,19 @@ function buildManager(opts: {
 		appMcpManager: appMcpManager as never,
 	});
 
-	return { manager, createdSessions, fromInitSpy, bunDb, dir, taskRepo, taskManager, space };
+	return {
+		manager,
+		createdSessions,
+		fromInitSpy,
+		bunDb,
+		dir,
+		taskRepo,
+		taskManager,
+		space,
+		seedSession: (id: string, type: string) => {
+			mockDb.createSession({ id, type });
+		},
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -382,5 +396,69 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 		expect(mcpServers['task-agent']).toBeDefined();
 		// Only the task-agent server should be present
 		expect(Object.keys(mcpServers)).toEqual(['task-agent']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rehydration tests — registry MCP merge on daemon restart (P1 fix)
+// ---------------------------------------------------------------------------
+
+describe('TaskAgentManager.rehydrate — registry MCP merge (Task 3.4)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				/* best-effort */
+			}
+		}
+	});
+
+	test('rehydrated task agent session receives registry MCP servers alongside task-agent server', async () => {
+		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
+		const { manager, createdSessions, fromInitSpy, bunDb, dir, taskManager, space, seedSession } =
+			buildManager({ registryMcpServers: { 'registry-mcp': registryServer } });
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		// Create a task that was in progress before the daemon restart
+		const task = await taskManager.createTask({
+			title: 'Rehydration task',
+			description: 'desc',
+			taskType: 'coding',
+			status: 'in_progress',
+		});
+		const agentSessionId = `space:${space.id}:task:${task.id}`;
+
+		// Persist session ID on task (simulates state after first spawnTaskAgent)
+		bunDb
+			.prepare(`UPDATE space_tasks SET task_agent_session_id = ?, updated_at = ? WHERE id = ?`)
+			.run(agentSessionId, Date.now(), task.id);
+
+		// Seed a mock DB record for the session so rehydrate filter passes type check
+		seedSession(agentSessionId, 'space_task_agent');
+
+		// Spy on AgentSession.restore (used by rehydrateTaskAgent, unlike spawnTaskAgent)
+		const agentSessionModule = await import('../../../src/lib/agent/agent-session.ts');
+		const restoreSpy = spyOn(agentSessionModule.AgentSession, 'restore').mockImplementation(
+			(sessionId: string) => {
+				const mockSession = makeMockSession(sessionId);
+				createdSessions.set(sessionId, mockSession);
+				return mockSession as unknown as AgentSession;
+			}
+		);
+		spies.push(restoreSpy);
+
+		await manager.rehydrate();
+
+		const session = createdSessions.get(agentSessionId);
+		expect(session).toBeDefined();
+		const mcpServers = session!._mcpServers;
+		expect(mcpServers['registry-mcp']).toBeDefined();
+		expect(mcpServers['task-agent']).toBeDefined();
 	});
 });

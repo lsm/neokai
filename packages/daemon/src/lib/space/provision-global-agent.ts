@@ -155,6 +155,13 @@ export async function provisionGlobalSpacesAgent(
 	// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
 	// in-process global-spaces-tools server. The in-process server always wins on collision
 	// since it provides the core space management tools required for the global agent.
+	//
+	// Note: unlike RoomRuntimeService, this function does NOT subscribe to mcp.registry.changed
+	// events. The global spaces agent is a daemon-lifetime singleton provisioned once at startup.
+	// Registry changes while it is running will NOT be hot-reloaded; they take effect only on
+	// the next daemon restart. This is a deliberate omission: the hot-reload complexity is not
+	// warranted for a singleton session, and the room module pattern (room-runtime-service.ts)
+	// covers the more common per-room case.
 	const registryMcpServers = appMcpManager?.getEnabledMcpConfigs() ?? {};
 	for (const name of Object.keys(registryMcpServers)) {
 		if (name === 'global-spaces-tools') {
