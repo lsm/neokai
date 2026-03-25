@@ -138,22 +138,32 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    - Within-node (group chat — posting to own node): `target: 'coder'` (plain string, existing behavior)
    - Cross-node to all agents in a node: `target: { node: 'review' }` (like posting to another node's group chat)
    - Cross-node to specific role in a node: `target: { node: 'review', role: 'senior_reviewer' }` (like posting to a role within another node)
-   - Cross-node DM to a specific agent: `target: { node: 'review', agent: 2 }` (like a DM to agent index 2)
+   - Cross-node DM to a specific agent: `target: { node: 'review', agent: 2 }` (like a DM; agent index is 1-based, matching the order agents were spawned)
 4. Update `SendMessageSchema` in `step-agent-tool-schemas.ts`:
    ```
    target: z.union([
      z.string(),                                              // within-node: 'coder'
      z.object({ node: z.string() }),                         // cross-node to all agents in node
      z.object({ node: z.string(), role: z.string() }),       // cross-node to specific role
-     z.object({ node: z.string(), agent: z.number() }),      // cross-node DM by agent index
+     z.object({ node: z.string(), agent: z.number().int().min(1) }),  // cross-node DM by 1-based index
    ])
    ```
-5. The router matches the target against `CrossNodeChannel` policies at delivery time and evaluates gates
+5. **Policy-to-target matching algorithm**: When `send_message` receives a cross-node target, the router resolves it to a delivery as follows:
+   1. **Find matching policies**: Scan all `CrossNodeChannel` entries where `fromNode` = sender's node and `toNode` = target's `node`
+   2. **Filter by specificity**:
+      - If target has `agent` index: only match policies with the same `toAgent` (most specific)
+      - Else if target has `role`: match policies where `toRole` includes that role or `toRole` is `'*'`
+      - Else (target is `{ node }` only): match any policy for that node (wildcard)
+   3. **Pick most specific policy**: agent-index > role > wildcard. If multiple policies match at the same specificity level, all are candidates
+   4. **Evaluate gate**: For each candidate policy, evaluate its `gate`. If allowed, deliver. If blocked, collect the reason
+   5. **Resolve recipients**: Based on the matching policy and target, resolve to concrete agent sessions. Wildcard targets expand to all agents on the target node that match the policy's `toRole`
+   6. **No match = denied**: If no policy matches the target, return `{ delivered: false, reason: 'No channel policy found for this target' }`
 
 **Acceptance Criteria**:
 - `send_message` can deliver messages within a node (existing behavior) and across nodes (new)
 - Cross-node delivery is gated — blocked if gate condition fails
 - All four target forms work correctly
+- Agent index in `{ node, agent }` is 1-based (matching spawn order)
 - Plain role strings still work for within-node delivery
 - Clear error messages when cross-node delivery is blocked by a gate
 
@@ -267,6 +277,9 @@ The agent-facing API uses a **Slack-like addressing model**: nodes are like grou
    - Cross-node delivery with open gate succeeds
    - Cross-node delivery with closed gate returns reason
    - Mixed within-node and cross-node routing
+   - Policy-to-target matching: most-specific policy wins (agent > role > wildcard)
+   - No matching policy returns "no channel policy found" error
+   - Multiple policies at same specificity: all evaluated, message delivered to all matching recipients
 
 **Acceptance Criteria**:
 - All tests pass

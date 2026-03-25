@@ -42,6 +42,10 @@ The target system treats workflows as collaboration graphs of agents:
    - The **channel configuration** (`CrossNodeChannel`) defines the policy; the **target addressing** (`send_message` parameter) defines who the agent wants to reach
    - The router matches addressing to policy at delivery time and evaluates gates
 
+   **Policy-to-target matching**: When an agent calls `send_message({ node: 'review', role: 'senior_reviewer' })`, the router scans all `CrossNodeChannel` policies where `fromNode` matches the sender's node and `toNode` matches the target node. It then checks whether the policy's `toRole` includes the requested role (or `'*'`). If a matching policy exists and its gate evaluates to allowed, the message is delivered. If multiple policies match, the most specific one wins (agent-index > role > wildcard). If no policy matches, delivery is denied with a "no channel policy" error.
+
+   **Note on earlier iterations**: Previous plan iterations used a simpler `{ role, node }` two-field target syntax. This was superseded by the Slack-like model which supports four target forms (`string`, `{ node }`, `{ node, role }`, `{ node, agent }`) and treats policy and addressing as separate layers.
+
 2. **Agents are primary execution units**
    - Each agent has its own session and decides what to do based on intelligence
    - The system provides guardrails (rules = behavioral prompts) and enforcement (gates = policy checks)

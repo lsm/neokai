@@ -29,7 +29,7 @@ Think of `CrossNodeChannel` as channel configuration (like Slack channel setting
      fromRole: string | '*';              // source role in the from-node
      toNode: string;                      // target node ID
      toRole: string | string[] | '*';     // target role(s) in the to-node
-     toAgent?: number;                    // target specific agent by index (for DM addressing)
+     toAgent?: number;                    // target specific agent by 1-based index (for DM addressing)
      direction: 'one-way' | 'bidirectional';
      gate?: WorkflowCondition;            // policy enforcement
      label?: string;                      // human-readable label
