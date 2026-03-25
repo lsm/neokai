@@ -20,6 +20,8 @@ import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useTaskViewData } from '../../hooks/useTaskViewData';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { currentRoomTabSignal } from '../../lib/signals';
+import { resetSessionQuery } from '../../lib/api-helpers';
+import { toast } from '../../lib/toast';
 import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 import { RejectModal } from '../ui/RejectModal';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
@@ -317,18 +319,56 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									setStatusModal.open();
 								}
 							: undefined,
+					onResetWorkerAgent: workerSession
+						? async () => {
+								setIsInfoPanelOpen(false);
+								try {
+									const result = await resetSessionQuery(workerSession.id);
+									if (result.success) {
+										toast.success('Worker agent reset successfully.');
+									} else {
+										toast.error(result.error || 'Failed to reset worker agent');
+									}
+								} catch (error) {
+									toast.error(
+										error instanceof Error ? error.message : 'Failed to reset worker agent'
+									);
+								}
+							}
+						: undefined,
+					onResetLeaderAgent: leaderSession
+						? async () => {
+								setIsInfoPanelOpen(false);
+								try {
+									const result = await resetSessionQuery(leaderSession.id);
+									if (result.success) {
+										toast.success('Leader agent reset successfully.');
+									} else {
+										toast.error(result.error || 'Failed to reset leader agent');
+									}
+								} catch (error) {
+									toast.error(
+										error instanceof Error ? error.message : 'Failed to reset leader agent'
+									);
+								}
+							}
+						: undefined,
 				}}
 				visibleActions={{
 					complete: canComplete && task.status !== 'review',
 					cancel: canCancel,
 					archive: canArchive,
 					setStatus: task.status !== 'archived',
+					resetWorkerAgent: !!workerSession,
+					resetLeaderAgent: !!leaderSession,
 				}}
 				disabledActions={{
 					complete: interrupting,
 					cancel: interrupting,
 					archive: false,
 					setStatus: false,
+					resetWorkerAgent: interrupting,
+					resetLeaderAgent: interrupting,
 				}}
 			/>
 

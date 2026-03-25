@@ -194,6 +194,10 @@ export class QueryLifecycleManager {
 				}
 			}
 
+			// Clear models cache to ensure the new model is fetched fresh from DB
+			// This is critical for model switch to pick up the correct model
+			await this.ctx.clearModelsCache();
+
 			await this.ctx.startStreamingQuery();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -223,6 +227,8 @@ export class QueryLifecycleManager {
 			this.ctx.pendingRestartReason = null;
 			messageHandler.resetCircuitBreaker();
 			await stateManager.setIdle();
+			// Clear models cache to ensure fresh model info is fetched from DB
+			await this.ctx.clearModelsCache();
 			return { success: true };
 		}
 
@@ -254,6 +260,10 @@ export class QueryLifecycleManager {
 			// Post-stop: Reset state
 			this.ctx.firstMessageReceived = false;
 			await stateManager.setIdle();
+
+			// Clear models cache to ensure fresh model info is fetched from DB
+			// This is critical for model switch to pick up the new model
+			await this.ctx.clearModelsCache();
 
 			// Optionally restart
 			if (restartAfter) {
@@ -337,6 +347,10 @@ export class QueryLifecycleManager {
 				db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 		}
+
+		// Clear models cache to ensure fresh model info is fetched from DB
+		// This handles the edge case where model was changed in DB directly
+		await this.ctx.clearModelsCache();
 
 		await this.ctx.startStreamingQuery();
 	}
