@@ -7,7 +7,11 @@
  */
 
 import { renderHook, act } from '@testing-library/preact';
-import { useReferenceAutocomplete, extractActiveAtQuery } from '../useReferenceAutocomplete.ts';
+import {
+	useReferenceAutocomplete,
+	extractActiveAtQuery,
+	insertReferenceMention,
+} from '../useReferenceAutocomplete.ts';
 
 // --------------------------------------------------------------------------
 // Mocks
@@ -89,6 +93,55 @@ describe('extractActiveAtQuery', () => {
 
 	it('returns empty string for trailing @', () => {
 		expect(extractActiveAtQuery('hello @')).toBe('');
+	});
+});
+
+// --------------------------------------------------------------------------
+// insertReferenceMention unit tests
+// --------------------------------------------------------------------------
+
+describe('insertReferenceMention', () => {
+	it('replaces @query at end of content with @ref token', () => {
+		const mention = { type: 'task' as const, id: 't-42', displayText: 'Fix bug' };
+		const result = insertReferenceMention('fix @bug', 'bug', mention);
+		expect(result).toBe('fix @ref{task:t-42} ');
+	});
+
+	it('replaces empty query (just @) with @ref token', () => {
+		const mention = { type: 'goal' as const, id: 'g-7', displayText: 'Goal' };
+		const result = insertReferenceMention('hello @', '', mention);
+		expect(result).toBe('hello @ref{goal:g-7} ');
+	});
+
+	it('returns content unchanged when @query is not at end', () => {
+		const mention = { type: 'task' as const, id: 't-1', displayText: 'Task' };
+		const result = insertReferenceMention('hello world', 'world', mention);
+		expect(result).toBe('hello world');
+	});
+
+	it('appends trailing space after token', () => {
+		const mention = { type: 'file' as const, id: 'src/foo.ts', displayText: 'foo.ts' };
+		const result = insertReferenceMention('@foo', 'foo', mention);
+		expect(result).toBe('@ref{file:src/foo.ts} ');
+	});
+
+	it('handles file references with path as id', () => {
+		const mention = { type: 'folder' as const, id: 'src/components', displayText: 'components' };
+		const result = insertReferenceMention('look at @comp', 'comp', mention);
+		expect(result).toBe('look at @ref{folder:src/components} ');
+	});
+
+	it('handles content with existing @ref tokens before the active query', () => {
+		const mention = { type: 'task' as const, id: 't-5', displayText: 'Task 5' };
+		const result = insertReferenceMention('@ref{task:t-1} fix @bug', 'bug', mention);
+		expect(result).toBe('@ref{task:t-1} fix @ref{task:t-5} ');
+	});
+
+	it('returns unchanged content when suffix does not match', () => {
+		const mention = { type: 'task' as const, id: 't-1', displayText: 'Task' };
+		// content ends with @query but query string doesn't match (different text)
+		const result = insertReferenceMention('hello @world', 'xyz', mention);
+		expect(result).toBe('hello @world');
 	});
 });
 

@@ -29,6 +29,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
+import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
+import type { ReferenceMention, ReferenceSearchResult } from '@neokai/shared';
 
 export interface InputTextareaProps {
 	content: string;
@@ -44,6 +46,12 @@ export interface InputTextareaProps {
 	selectedCommandIndex?: number;
 	onCommandSelect?: (command: string) => void;
 	onCommandClose?: () => void;
+	// Reference autocomplete
+	showReferenceAutocomplete?: boolean;
+	referenceResults?: ReferenceSearchResult[];
+	selectedReferenceIndex?: number;
+	onReferenceSelect?: (reference: ReferenceMention) => void;
+	onReferenceClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
 	onStop?: () => void;
@@ -70,6 +78,11 @@ export function InputTextarea({
 	selectedCommandIndex = 0,
 	onCommandSelect,
 	onCommandClose,
+	showReferenceAutocomplete = false,
+	referenceResults,
+	selectedReferenceIndex,
+	onReferenceSelect,
+	onReferenceClose,
 	isAgentWorking = false,
 	onStop,
 	onPaste,
@@ -140,16 +153,30 @@ export function InputTextarea({
 	const showStop = isAgentWorking && !hasContent && !!onStop;
 	const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
 
+	// Count @ref{} tokens in content
+	const refCount = [...content.matchAll(/@ref\{[^}:]+:[^}]+\}/g)].length;
+
 	return (
 		<div class="relative flex-1">
-			{/* Command Autocomplete */}
-			{showCommandAutocomplete && onCommandSelect && onCommandClose && (
-				<CommandAutocomplete
-					commands={filteredCommands}
-					selectedIndex={selectedCommandIndex}
-					onSelect={onCommandSelect}
-					onClose={onCommandClose}
+			{/* Autocomplete menus — only one shown at a time; reference takes priority */}
+			{showReferenceAutocomplete && onReferenceSelect && onReferenceClose ? (
+				<ReferenceAutocomplete
+					results={referenceResults ?? []}
+					selectedIndex={selectedReferenceIndex ?? 0}
+					onSelect={onReferenceSelect}
+					onClose={onReferenceClose}
 				/>
+			) : (
+				showCommandAutocomplete &&
+				onCommandSelect &&
+				onCommandClose && (
+					<CommandAutocomplete
+						commands={filteredCommands}
+						selectedIndex={selectedCommandIndex}
+						onSelect={onCommandSelect}
+						onClose={onCommandClose}
+					/>
+				)
 			)}
 
 			<div
@@ -205,6 +232,31 @@ export function InputTextarea({
 						)}
 					>
 						{charCount}/{maxChars}
+					</div>
+				)}
+
+				{/* Reference Badge — shows count of @ref{} tokens in content */}
+				{refCount > 0 && (
+					<div
+						class="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-gray-400"
+						data-testid="reference-badge"
+					>
+						<svg
+							class="w-3 h-3"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width={2}
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+							/>
+						</svg>
+						<span>
+							{refCount} {refCount === 1 ? 'reference' : 'references'}
+						</span>
 					</div>
 				)}
 

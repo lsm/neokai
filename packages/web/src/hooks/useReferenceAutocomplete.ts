@@ -77,6 +77,24 @@ export function extractActiveAtQuery(content: string): string | null {
 }
 
 /**
+ * Replace the active @query at the end of content with an @ref{type:id} token.
+ *
+ * Finds the suffix "@" + query at the end of content and replaces it with
+ * the formatted token followed by a space so the token does not re-trigger
+ * autocomplete. Returns content unchanged if the suffix is not found.
+ */
+export function insertReferenceMention(
+	content: string,
+	query: string,
+	mention: ReferenceMention
+): string {
+	const atQuery = '@' + query;
+	if (!content.endsWith(atQuery)) return content;
+	const token = `@ref{${mention.type}:${mention.id}} `;
+	return content.slice(0, content.length - atQuery.length) + token;
+}
+
+/**
  * Hook for managing @ reference autocomplete
  */
 export function useReferenceAutocomplete({
