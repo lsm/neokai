@@ -68,7 +68,11 @@ describe('ResolvedReference variants', () => {
 	});
 
 	it('ResolvedFileReference has type file', () => {
-		const ref: ResolvedFileReference = { type: 'file', id: 'src/app.ts', data: 'content' };
+		const ref: ResolvedFileReference = {
+			type: 'file',
+			id: 'src/app.ts',
+			data: { path: 'src/app.ts', content: 'export {}' },
+		};
 		expect(ref.type).toBe('file');
 	});
 
@@ -76,7 +80,7 @@ describe('ResolvedReference variants', () => {
 		const ref: ResolvedFolderReference = {
 			type: 'folder',
 			id: 'src/',
-			data: ['app.ts', 'index.ts'],
+			data: { path: 'src/', entries: [{ name: 'app.ts', type: 'file' }] },
 		};
 		expect(ref.type).toBe('folder');
 	});

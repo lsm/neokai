@@ -206,13 +206,13 @@ export function useReferenceAutocomplete({
 				return true;
 			} else if (e.key === 'Escape') {
 				e.preventDefault();
-				setShowAutocomplete(false);
+				close();
 				return true;
 			}
 
 			return false;
 		},
-		[showAutocomplete, results, selectedIndex, handleSelect]
+		[showAutocomplete, results, selectedIndex, handleSelect, close]
 	);
 
 	return {

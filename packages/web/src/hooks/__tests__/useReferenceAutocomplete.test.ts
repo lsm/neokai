@@ -614,8 +614,8 @@ describe('useReferenceAutocomplete', () => {
 			expect(onSelect).not.toHaveBeenCalled();
 		});
 
-		it('closes autocomplete with Escape', async () => {
-			mockRequest.mockResolvedValue({ results: makeResults() });
+		it('closes autocomplete with Escape and resets results and selectedIndex', async () => {
+			mockRequest.mockResolvedValue({ results: makeResults(3) });
 
 			const { result } = renderHook(() =>
 				useReferenceAutocomplete({ content: '@task', onSelect: vi.fn() })
@@ -627,6 +627,15 @@ describe('useReferenceAutocomplete', () => {
 			});
 
 			expect(result.current.showAutocomplete).toBe(true);
+			expect(result.current.results).toHaveLength(3);
+
+			// Navigate to second item so selectedIndex > 0
+			const down = new KeyboardEvent('keydown', { key: 'ArrowDown' });
+			Object.defineProperty(down, 'preventDefault', { value: vi.fn() });
+			act(() => {
+				result.current.handleKeyDown(down);
+			});
+			expect(result.current.selectedIndex).toBe(1);
 
 			const event = new KeyboardEvent('keydown', { key: 'Escape' });
 			const preventDefault = vi.fn();
@@ -638,6 +647,8 @@ describe('useReferenceAutocomplete', () => {
 			});
 
 			expect(result.current.showAutocomplete).toBe(false);
+			expect(result.current.results).toEqual([]);
+			expect(result.current.selectedIndex).toBe(0);
 			expect(preventDefault).toHaveBeenCalled();
 		});
 	});
