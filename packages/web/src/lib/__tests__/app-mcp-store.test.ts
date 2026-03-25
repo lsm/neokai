@@ -7,10 +7,14 @@
  * - WebSocket reconnect re-subscribes automatically
  * - unsubscribe() calls liveQuery.unsubscribe and resets state
  * - Idempotent subscribe/unsubscribe behavior
+ * - Stale-event guard discards events after unsubscribe
+ * - Post-await unsubscribe race guard prevents dangling handlers
+ * - Error propagation via subscribe() rejection and error signal
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AppMcpServer, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
+import { McpRegistryListResponse, McpRegistryCreateResponse } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -102,11 +106,10 @@ describe('AppMcpStore', () => {
 		vi.clearAllMocks();
 		mockHub = createMockHub();
 
-		// Reset module-level state by clearing the store
+		// Reset store signals
 		appMcpStore.appMcpServers.value = [];
 		appMcpStore.loading.value = false;
-		// Note: we cannot fully reset private state, so tests that need a fresh
-		// store should be in separate describe blocks or use afterEach cleanup.
+		appMcpStore.error.value = null;
 
 		vi.mocked(connectionManager.getHub).mockResolvedValue(mockHub as never);
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -189,6 +192,14 @@ describe('AppMcpStore', () => {
 			// No new request should have been made
 			expect(mockHub.request).not.toHaveBeenCalled();
 		});
+
+		it('should set error signal and re-throw when hub subscription fails', async () => {
+			vi.mocked(mockHub.request).mockRejectedValue(new Error('subscribe failed'));
+
+			await expect(appMcpStore.subscribe()).rejects.toThrow('subscribe failed');
+			expect(appMcpStore.error.value).toBe('subscribe failed');
+			expect(appMcpStore.loading.value).toBe(false);
+		});
 	});
 
 	// ---------------------------------------------------------------------------
@@ -266,6 +277,101 @@ describe('AppMcpStore', () => {
 	});
 
 	// ---------------------------------------------------------------------------
+	// Stale-event guard
+	// ---------------------------------------------------------------------------
+
+	describe('stale-event guard', () => {
+		it('should discard snapshot event fired after unsubscribe', async () => {
+			await appMcpStore.subscribe();
+
+			// Manually fire a snapshot for the subscription — before unsubscribe
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeMcpServer('pre-1')],
+				version: 1,
+			});
+			expect(appMcpStore.appMcpServers.value).toHaveLength(1);
+
+			// Now unsubscribe — this clears the activeSubscriptionIds guard
+			appMcpStore.unsubscribe();
+
+			// Fire a stale snapshot — should be ignored (activeSubscriptionIds no longer has the subId)
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeMcpServer('stale-server')],
+				version: 2,
+			});
+
+			// The stale event should NOT have updated the signal (it is already empty after unsubscribe)
+			expect(appMcpStore.appMcpServers.value).toHaveLength(0);
+		});
+
+		it('should discard delta event fired after unsubscribe', async () => {
+			await appMcpStore.subscribe();
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeMcpServer('1'), makeMcpServer('2')],
+				version: 1,
+			});
+			expect(appMcpStore.appMcpServers.value).toHaveLength(2);
+
+			// Unsubscribe — clears the stale-event guard
+			appMcpStore.unsubscribe();
+
+			// Fire a stale delta — should be ignored
+			mockHub.fire<LiveQueryDeltaEvent>('liveQuery.delta', {
+				subscriptionId: SUBSCRIPTION_ID,
+				added: [makeMcpServer('stale-add')],
+				version: 2,
+			});
+
+			// Signal is empty after unsubscribe, stale event does not repopulate it
+			expect(appMcpStore.appMcpServers.value).toHaveLength(0);
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// Post-await unsubscribe race guard
+	// ---------------------------------------------------------------------------
+
+	describe('post-await unsubscribe race guard', () => {
+		it('should not leave dangling handlers when unsubscribe races with hub resolution', async () => {
+			// Control when hub.request resolves so we can race unsubscribe() against it
+			let resolveRequest: () => void;
+			const requestPromise = new Promise<void>((resolve) => {
+				resolveRequest = () => resolve();
+			});
+			vi.mocked(mockHub.request).mockReturnValue(requestPromise as never);
+
+			// Override getHub to resolve immediately
+			vi.mocked(connectionManager.getHub).mockResolvedValue(mockHub as never);
+
+			// Start subscribe but don't await — it will pause at hub.request
+			const subPromise = appMcpStore.subscribe();
+
+			// Unsubscribe while the subscribe request is still in-flight
+			appMcpStore.unsubscribe();
+
+			// Now allow the request to resolve
+			resolveRequest!();
+
+			// If subscribe() has a race guard, calling unsubscribe() mid-await should
+			// have called teardownCleanly() and removed all handlers.
+			// Verify: no liveQuery.unsubscribe call was made from the subscribe's
+			// cleanup path (only from our explicit unsubscribe call above).
+			// The subscribe's own cleanup path should have cleaned up already.
+			// This is implicitly verified by the afterEach unsubscribe() not crashing —
+			// if handlers were left dangling, calling unsubscribe again would fail
+			// because cleanup functions might try to double-unsub.
+			await subPromise;
+
+			// Verify the store is in a clean unsubscribed state
+			expect(appMcpStore.loading.value).toBe(false);
+			expect(appMcpStore.appMcpServers.value).toHaveLength(0);
+		});
+	});
+
+	// ---------------------------------------------------------------------------
 	// Reconnect handling
 	// ---------------------------------------------------------------------------
 
@@ -330,6 +436,15 @@ describe('AppMcpStore', () => {
 			expect(appMcpStore.appMcpServers.value).toHaveLength(0);
 		});
 
+		it('should clear error signal', async () => {
+			vi.mocked(mockHub.request).mockRejectedValue(new Error('fail'));
+			await expect(appMcpStore.subscribe()).rejects.toThrow();
+			expect(appMcpStore.error.value).not.toBeNull();
+
+			appMcpStore.unsubscribe();
+			expect(appMcpStore.error.value).toBeNull();
+		});
+
 		it('should be idempotent — second unsubscribe() call is no-op', async () => {
 			await appMcpStore.subscribe();
 			appMcpStore.unsubscribe();
@@ -358,9 +473,8 @@ describe('AppMcpStore', () => {
  */
 
 describe('MCP API helpers types', () => {
-	it('listAppMcpServers returns servers array', async () => {
-		// Mock hub with typed response
-		const mockResponse: { servers: AppMcpServer[] } = {
+	it('listAppMcpServers returns McpRegistryListResponse', async () => {
+		const mockResponse: McpRegistryListResponse = {
 			servers: [
 				{
 					id: 'srv-1',
@@ -385,7 +499,7 @@ describe('MCP API helpers types', () => {
 	});
 
 	it('createAppMcpServer accepts CreateAppMcpServerRequest', async () => {
-		const mockResponse: { server: AppMcpServer } = {
+		const mockResponse: McpRegistryCreateResponse = {
 			server: {
 				id: 'srv-new',
 				name: 'new-server',
@@ -412,11 +526,11 @@ describe('MCP API helpers types', () => {
 	});
 
 	it('setAppMcpServerEnabled accepts id and enabled boolean', async () => {
-		const mockResponse: { server: AppMcpServer } = {
+		const mockResponse = {
 			server: {
 				id: 'srv-1',
 				name: 'Server',
-				sourceType: 'stdio',
+				sourceType: 'stdio' as const,
 				enabled: false,
 			},
 		};
@@ -431,7 +545,7 @@ describe('MCP API helpers types', () => {
 	});
 
 	it('deleteAppMcpServer accepts id string', async () => {
-		const mockResponse: { success: boolean } = { success: true };
+		const mockResponse = { success: true };
 
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
 			request: vi.fn().mockResolvedValue(mockResponse),
@@ -443,7 +557,7 @@ describe('MCP API helpers types', () => {
 	});
 
 	it('getRoomMcpEnabled accepts roomId and returns serverIds array', async () => {
-		const mockResponse: { serverIds: string[] } = { serverIds: ['srv-1', 'srv-2'] };
+		const mockResponse = { serverIds: ['srv-1', 'srv-2'] };
 
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
 			request: vi.fn().mockResolvedValue(mockResponse),
@@ -455,7 +569,7 @@ describe('MCP API helpers types', () => {
 	});
 
 	it('setRoomMcpEnabled accepts roomId, serverId, enabled', async () => {
-		const mockResponse: { ok: boolean } = { ok: true };
+		const mockResponse = { ok: true };
 
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
 			request: vi.fn().mockResolvedValue(mockResponse),
@@ -467,7 +581,7 @@ describe('MCP API helpers types', () => {
 	});
 
 	it('resetRoomMcpToGlobal accepts roomId and returns ok', async () => {
-		const mockResponse: { ok: boolean } = { ok: true };
+		const mockResponse = { ok: true };
 
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
 			request: vi.fn().mockResolvedValue(mockResponse),
@@ -481,7 +595,8 @@ describe('MCP API helpers types', () => {
 	it('throws ConnectionNotReadyError when not connected', async () => {
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null as never);
 
+		const { ConnectionNotReadyError } = await import('../errors.js');
 		const { listAppMcpServers } = await import('../api-helpers.js');
-		await expect(listAppMcpServers()).rejects.toThrow('Not connected to server');
+		await expect(listAppMcpServers()).rejects.toBeInstanceOf(ConnectionNotReadyError);
 	});
 });

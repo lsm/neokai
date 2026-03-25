@@ -27,8 +27,19 @@ class AppMcpStore {
 	/** Loading state */
 	readonly loading = signal<boolean>(false);
 
+	/** Error state — set when subscribe() fails */
+	readonly error = signal<string | null>(null);
+
 	/** Cleanup functions registered during subscribe() */
 	private cleanups: Array<() => void> = [];
+
+	/**
+	 * Stale-event guard: set of currently active subscriptionIds.
+	 * Cleared immediately in unsubscribe() before handler teardown so that
+	 * any in-flight events (queued in the JS event loop between unsubscribe and
+	 * handler removal) are discarded rather than applied to the wrong state.
+	 */
+	private activeSubscriptionIds = new Set<string>();
 
 	/** Guard: true once subscribe() has been called and not yet torn down */
 	private subscribed = false;
@@ -38,6 +49,8 @@ class AppMcpStore {
 	 *
 	 * Idempotent: safe to call multiple times; subsequent calls are no-ops
 	 * until unsubscribe() is called.
+	 *
+	 * Re-throws errors so callers can handle failures (e.g., show a toast).
 	 */
 	async subscribe(): Promise<void> {
 		if (this.subscribed) return;
@@ -46,19 +59,26 @@ class AppMcpStore {
 		try {
 			const hub = await connectionManager.getHub();
 
+			// Guard: unsubscribe() was called before hub became available
+			if (!this.subscribed) return;
+
 			this.loading.value = true;
+			this.activeSubscriptionIds.add(SUBSCRIPTION_ID);
 
 			// --- Snapshot handler ---
 			const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
 				if (event.subscriptionId !== SUBSCRIPTION_ID) return;
+				if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return; // stale-event guard
 				this.appMcpServers.value = event.rows as AppMcpServer[];
 				this.loading.value = false;
 			});
 			this.cleanups.push(unsubSnapshot);
+			this.cleanups.push(() => this.activeSubscriptionIds.delete(SUBSCRIPTION_ID));
 
 			// --- Delta handler ---
 			const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 				if (event.subscriptionId !== SUBSCRIPTION_ID) return;
+				if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return; // stale-event guard
 				let current = this.appMcpServers.value;
 				if (event.removed?.length) {
 					const removedIds = new Set((event.removed as AppMcpServer[]).map((r) => r.id));
@@ -80,6 +100,7 @@ class AppMcpStore {
 			// after the WebSocket reconnects.
 			const unsubReconnect = hub.onConnection((state) => {
 				if (state !== 'connected') return;
+				if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return;
 				this.loading.value = true;
 				hub
 					.request('liveQuery.subscribe', {
@@ -100,11 +121,37 @@ class AppMcpStore {
 				params: [],
 				subscriptionId: SUBSCRIPTION_ID,
 			});
+
+			// Guard: abort if unsubscribed while the subscribe request was in flight
+			if (!this.subscribed) {
+				this.teardownCleanly();
+				return;
+			}
 		} catch (err) {
 			this.subscribed = false;
 			this.loading.value = false;
+			this.error.value = err instanceof Error ? err.message : 'Failed to subscribe to MCP registry';
 			logger.error('Failed to subscribe AppMcpStore LiveQuery:', err);
+			throw err;
 		}
+	}
+
+	/**
+	 * Run all cleanup functions and reset state — used after subscribe() races
+	 * with unsubscribe().
+	 */
+	private teardownCleanly(): void {
+		this.activeSubscriptionIds.delete(SUBSCRIPTION_ID);
+		for (const fn of this.cleanups) {
+			try {
+				fn();
+			} catch {
+				/* ignore */
+			}
+		}
+		this.cleanups = [];
+		this.loading.value = false;
+		this.error.value = null;
 	}
 
 	/**
@@ -114,17 +161,19 @@ class AppMcpStore {
 	 * Safe to call even if subscribe() was never called.
 	 */
 	unsubscribe(): void {
-		if (!this.subscribed) return;
+		if (!this.subscribed) {
+			// Still reset error signal even if we were never subscribed
+			// (e.g., subscribe() failed and set this.subscribed = false in its catch block)
+			this.error.value = null;
+			return;
+		}
 		this.subscribed = false;
 
-		for (const fn of this.cleanups) {
-			try {
-				fn();
-			} catch {
-				/* ignore */
-			}
-		}
-		this.cleanups = [];
+		// Stale-event guard: clear activeSubscriptionIds immediately so any events
+		// already queued in the JS event loop are discarded before handlers are removed.
+		this.activeSubscriptionIds.delete(SUBSCRIPTION_ID);
+
+		this.teardownCleanly();
 
 		// Tell the server to dispose the subscription.
 		const hub = connectionManager.getHubIfConnected();
@@ -133,7 +182,6 @@ class AppMcpStore {
 		}
 
 		this.appMcpServers.value = [];
-		this.loading.value = false;
 	}
 }
 
