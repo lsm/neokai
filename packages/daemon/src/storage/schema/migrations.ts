@@ -214,6 +214,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// WorkflowChannel[]). Existing rows that have channels embedded in config are migrated
 	// in-place so no data is lost.
 	runMigration53(db);
+
+	// Migration 54: Add unique partial index on space_tasks (workflow_run_id, workflow_node_id,
+	// slot_role) to enforce at-most-one task per agent slot per workflow node per run.
+	// Prevents duplicate tasks from concurrent ChannelRouter.activateNode() calls.
+	runMigration54(db);
 }
 
 /**
@@ -3263,4 +3268,44 @@ export function runMigration53(db: BunDatabase): void {
 			);
 		}
 	}
+}
+
+/**
+ * Migration 54: Add unique partial index on space_tasks for lazy node activation.
+ *
+ * Enforces at-most-one in-flight task per (workflow_run_id, workflow_node_id, slot_role)
+ * tuple, preventing duplicate tasks when multiple concurrent ChannelRouter.activateNode()
+ * calls race to activate the same node.
+ *
+ * The partial WHERE clause restricts the uniqueness guarantee to "active" statuses only
+ * (pending, in_progress, review, rate_limited, usage_limited). Terminal statuses
+ * (completed, cancelled, needs_attention, archived, draft) are excluded so that:
+ * - Cyclic workflows can re-activate a node after its tasks complete
+ * - Failed/cancelled activations can be retried without hitting the constraint
+ *
+ * The NULL exclusions preserve backward-compat with legacy tasks that predate the
+ * channel/slot system (agentId-shorthand tasks with NULL workflow_node_id or slot_role).
+ *
+ * Idempotent via CREATE UNIQUE INDEX IF NOT EXISTS.
+ */
+export function runMigration54(db: BunDatabase): void {
+	// Guard: only create the index when the required columns exist.
+	// `workflow_node_id` may still be named `workflow_step_id` on DBs whose migration 39
+	// rebuild ran after migration 45's rename (an uncommon but valid test-fixture path).
+	// `slot_role` was added by migration 46; guard prevents failure on older DB states.
+	if (
+		!tableExists(db, 'space_tasks') ||
+		!tableHasColumn(db, 'space_tasks', 'workflow_node_id') ||
+		!tableHasColumn(db, 'space_tasks', 'slot_role')
+	) {
+		return;
+	}
+	db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_space_tasks_run_node_agent
+    ON space_tasks (workflow_run_id, workflow_node_id, slot_role)
+    WHERE workflow_run_id IS NOT NULL
+      AND workflow_node_id IS NOT NULL
+      AND slot_role IS NOT NULL
+      AND status IN ('pending', 'in_progress', 'review', 'rate_limited', 'usage_limited')
+  `);
 }

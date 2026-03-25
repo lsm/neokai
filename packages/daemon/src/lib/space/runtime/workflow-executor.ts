@@ -449,7 +449,19 @@ export class WorkflowExecutor {
 		// Create one pending SpaceTask per agent. All tasks share the same workflowRunId
 		// and workflowNodeId so SpaceRuntime can track them as a group.
 		// Per-agent instructions override step-level instructions when present.
+		//
+		// Idempotency: if the target node already has active tasks for a given agent slot
+		// (detected via UNIQUE constraint violation on workflow_run_id+workflow_node_id+slot_role),
+		// reuse the existing task. This handles both cyclic re-activation and concurrent
+		// activateNode() calls racing with followTransition().
 		const tasks: SpaceTask[] = [];
+		const ACTIVE_STATUSES = new Set([
+			'pending',
+			'in_progress',
+			'review',
+			'rate_limited',
+			'usage_limited',
+		]);
 		for (const agentEntry of stepAgents) {
 			// Resolve task metadata per agent so each task is created complete in one DB write.
 			// When a taskTypeResolver is provided it fully controls taskType AND customAgentId —
@@ -457,17 +469,36 @@ export class WorkflowExecutor {
 			// Without a resolver (backward-compat), fall back to agentEntry.agentId.
 			const resolved = this.taskTypeResolver?.(nextStep, agentEntry);
 
-			const task = await this.taskManager.createTask({
-				title: nextStep.name,
-				description: agentEntry.instructions ?? nextStep.instructions ?? '',
-				workflowRunId: this.run.id,
-				workflowNodeId: nextStep.id,
-				taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
-				customAgentId: resolved !== undefined ? resolved.customAgentId : agentEntry.agentId,
-				slotRole: agentEntry.name,
-				status: 'pending',
-				goalId: this.run.goalId,
-			});
+			let task: SpaceTask;
+			try {
+				task = await this.taskManager.createTask({
+					title: nextStep.name,
+					description: agentEntry.instructions ?? nextStep.instructions ?? '',
+					workflowRunId: this.run.id,
+					workflowNodeId: nextStep.id,
+					taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
+					customAgentId: resolved !== undefined ? resolved.customAgentId : agentEntry.agentId,
+					slotRole: agentEntry.name,
+					status: 'pending',
+					goalId: this.run.goalId,
+				});
+			} catch (err) {
+				// UNIQUE constraint violation: another writer already created a task for this slot.
+				// Re-read and return the existing active task rather than failing.
+				if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+					const existingTasks = (await this.taskManager.listTasksByWorkflowRun(this.run.id)).filter(
+						(t) =>
+							t.workflowNodeId === nextStep.id &&
+							t.slotRole === agentEntry.name &&
+							ACTIVE_STATUSES.has(t.status)
+					);
+					if (existingTasks.length > 0) {
+						tasks.push(existingTasks[0]);
+						continue;
+					}
+				}
+				throw err;
+			}
 
 			tasks.push(task);
 		}

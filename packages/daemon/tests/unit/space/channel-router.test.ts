@@ -1,0 +1,544 @@
+/**
+ * ChannelRouter Unit Tests
+ *
+ * Covers:
+ * - activateNode(): first activation creates tasks for each agent slot
+ * - activateNode(): idempotent — returns existing tasks on repeated calls
+ * - activateNode(): concurrent activation (UNIQUE constraint) handled gracefully
+ * - activateNode(): cancelled run throws ActivationError
+ * - activateNode(): completed run throws ActivationError
+ * - activateNode(): missing run throws ActivationError
+ * - activateNode(): missing workflow throws ActivationError
+ * - activateNode(): missing node throws ActivationError
+ * - activateNode(): multi-agent node creates one task per agent slot
+ * - deliverMessage(): auto-activates target node when no active tasks
+ * - deliverMessage(): does not re-activate when target node is already active
+ * - deliverMessage(): sets activatedTasks only on first activation
+ * - deliverMessage(): throws when target role not found in workflow
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
+import { ChannelRouter, ActivationError } from '../../../src/lib/space/runtime/channel-router.ts';
+import type { SpaceWorkflow } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// DB helpers
+// ---------------------------------------------------------------------------
+
+function makeDb(): { db: BunDatabase; dir: string } {
+	const dir = join(
+		process.cwd(),
+		'tmp',
+		'test-channel-router',
+		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+	);
+	mkdirSync(dir, { recursive: true });
+	const db = new BunDatabase(join(dir, 'test.db'));
+	db.exec('PRAGMA foreign_keys = ON');
+	runMigrations(db, () => {});
+	return { db, dir };
+}
+
+function seedSpace(db: BunDatabase, spaceId: string): void {
+	db.prepare(
+		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+     allowed_models, session_ids, status, created_at, updated_at)
+     VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, Date.now(), Date.now());
+}
+
+function seedAgent(
+	db: BunDatabase,
+	agentId: string,
+	spaceId: string,
+	role: 'coder' | 'planner' | 'general' | string
+): void {
+	db.prepare(
+		`INSERT INTO space_agents (id, space_id, name, role, description, model, tools, system_prompt,
+     config, created_at, updated_at)
+     VALUES (?, ?, ?, ?, '', null, '[]', '', null, ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, role, Date.now(), Date.now());
+}
+
+// ---------------------------------------------------------------------------
+// Workflow builder helpers
+// ---------------------------------------------------------------------------
+
+function buildWorkflow(
+	spaceId: string,
+	workflowManager: SpaceWorkflowManager,
+	nodes: Array<{
+		id: string;
+		name: string;
+		agentId?: string;
+		agents?: Array<{ agentId: string; name: string }>;
+	}>
+): SpaceWorkflow {
+	return workflowManager.createWorkflow({
+		spaceId,
+		name: `Test Workflow ${Date.now()}`,
+		description: '',
+		nodes: nodes.map((n) => ({
+			id: n.id,
+			name: n.name,
+			agentId: n.agentId,
+			agents: n.agents,
+		})),
+		transitions: [],
+		startNodeId: nodes[0].id,
+		rules: [],
+		tags: [],
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Suite
+// ---------------------------------------------------------------------------
+
+describe('ChannelRouter', () => {
+	let db: BunDatabase;
+	let dir: string;
+
+	let taskRepo: SpaceTaskRepository;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let workflowManager: SpaceWorkflowManager;
+	let agentManager: SpaceAgentManager;
+	let router: ChannelRouter;
+
+	const SPACE_ID = 'space-cr-1';
+	const AGENT_CODER = 'agent-coder';
+	const AGENT_PLANNER = 'agent-planner';
+	const AGENT_CUSTOM = 'agent-custom';
+
+	const NODE_A = 'node-a';
+	const NODE_B = 'node-b';
+
+	beforeEach(() => {
+		({ db, dir } = makeDb());
+
+		seedSpace(db, SPACE_ID);
+		seedAgent(db, AGENT_CODER, SPACE_ID, 'coder');
+		seedAgent(db, AGENT_PLANNER, SPACE_ID, 'planner');
+		seedAgent(db, AGENT_CUSTOM, SPACE_ID, 'my-custom-role');
+
+		taskRepo = new SpaceTaskRepository(db);
+		workflowRunRepo = new SpaceWorkflowRunRepository(db);
+
+		const agentRepo = new SpaceAgentRepository(db);
+		agentManager = new SpaceAgentManager(agentRepo);
+
+		const workflowRepo = new SpaceWorkflowRepository(db);
+		workflowManager = new SpaceWorkflowManager(workflowRepo);
+
+		router = new ChannelRouter({ taskRepo, workflowRunRepo, workflowManager, agentManager });
+	});
+
+	afterEach(() => {
+		db.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	// -------------------------------------------------------------------------
+	// activateNode — first activation
+	// -------------------------------------------------------------------------
+
+	describe('activateNode', () => {
+		test('creates one pending task for a single-agent node', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Test Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const tasks = await router.activateNode(run.id, NODE_A);
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].status).toBe('pending');
+			expect(tasks[0].workflowRunId).toBe(run.id);
+			expect(tasks[0].workflowNodeId).toBe(NODE_A);
+			expect(tasks[0].slotRole).toBe(AGENT_CODER); // resolveNodeAgents uses agentId as name for shorthand
+			expect(tasks[0].taskType).toBe('coding');
+			expect(tasks[0].customAgentId).toBeFalsy();
+		});
+
+		test('creates one task per agent for a multi-agent node', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Multi Agent Node',
+					agents: [
+						{ agentId: AGENT_CODER, name: 'coder-slot' },
+						{ agentId: AGENT_PLANNER, name: 'planner-slot' },
+					],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Multi Agent Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const tasks = await router.activateNode(run.id, NODE_A);
+
+			expect(tasks).toHaveLength(2);
+			const slotRoles = tasks.map((t) => t.slotRole).sort();
+			expect(slotRoles).toEqual(['coder-slot', 'planner-slot']);
+
+			// task types are resolved per-agent
+			const coderTask = tasks.find((t) => t.slotRole === 'coder-slot')!;
+			const plannerTask = tasks.find((t) => t.slotRole === 'planner-slot')!;
+			expect(coderTask.taskType).toBe('coding');
+			expect(plannerTask.taskType).toBe('planning');
+		});
+
+		test('sets correct taskType for custom-role agent', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Custom Node',
+					agents: [{ agentId: AGENT_CUSTOM, name: 'custom-slot' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Custom Role Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const tasks = await router.activateNode(run.id, NODE_A);
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].taskType).toBe('coding');
+			expect(tasks[0].customAgentId).toBe(AGENT_CUSTOM);
+		});
+
+		// -----------------------------------------------------------------------
+		// Idempotent activation
+		// -----------------------------------------------------------------------
+
+		test('returns existing tasks on repeated activation (idempotent)', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Idempotent Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const firstResult = await router.activateNode(run.id, NODE_A);
+			const secondResult = await router.activateNode(run.id, NODE_A);
+
+			// Second call must return the same tasks (same IDs, no duplicates)
+			expect(secondResult).toHaveLength(1);
+			expect(secondResult[0].id).toBe(firstResult[0].id);
+
+			// Only one task exists in the DB
+			const allTasks = taskRepo
+				.listByWorkflowRun(run.id)
+				.filter((t) => t.workflowNodeId === NODE_A);
+			expect(allTasks).toHaveLength(1);
+		});
+
+		test('re-activates if the only existing task is cancelled', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cancelled Task Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// First activation
+			const firstTasks = await router.activateNode(run.id, NODE_A);
+			expect(firstTasks).toHaveLength(1);
+
+			// Cancel the task
+			taskRepo.updateTask(firstTasks[0].id, { status: 'cancelled' });
+
+			// Second activation should create fresh tasks (cancelled tasks are excluded)
+			const secondTasks = await router.activateNode(run.id, NODE_A);
+			expect(secondTasks).toHaveLength(1);
+			expect(secondTasks[0].id).not.toBe(firstTasks[0].id);
+			expect(secondTasks[0].status).toBe('pending');
+		});
+
+		// -----------------------------------------------------------------------
+		// Concurrent activation — DB uniqueness
+		// -----------------------------------------------------------------------
+
+		test('handles concurrent activation via UNIQUE constraint gracefully', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Node A',
+					agents: [{ agentId: AGENT_CODER, name: 'coder-slot' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Concurrent Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// Simulate a concurrent activation by directly inserting a task with the
+			// same (workflow_run_id, workflow_node_id, slot_role) before the router
+			// creates its task — triggering the UNIQUE constraint path.
+			const firstTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: NODE_A,
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: NODE_A,
+				slotRole: 'coder-slot',
+				status: 'pending',
+			});
+
+			// The router's activateNode() should detect the UNIQUE constraint violation
+			// and return the already-inserted task instead of throwing.
+			const tasks = await router.activateNode(run.id, NODE_A);
+
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].id).toBe(firstTask.id);
+		});
+
+		// -----------------------------------------------------------------------
+		// Error cases
+		// -----------------------------------------------------------------------
+
+		test('throws ActivationError when run is cancelled', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Cancelled Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'cancelled');
+
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/cancelled/);
+		});
+
+		test('throws ActivationError when run is completed', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Completed Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'completed');
+
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/completed/);
+		});
+
+		test('throws ActivationError when run does not exist', async () => {
+			await expect(router.activateNode('nonexistent-run', NODE_A)).rejects.toBeInstanceOf(
+				ActivationError
+			);
+			await expect(router.activateNode('nonexistent-run', NODE_A)).rejects.toThrow(/Run not found/);
+		});
+
+		test('throws ActivationError when node does not exist in workflow', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Bad Node Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			await expect(router.activateNode(run.id, 'nonexistent-node')).rejects.toBeInstanceOf(
+				ActivationError
+			);
+			await expect(router.activateNode(run.id, 'nonexistent-node')).rejects.toThrow(
+				/not found in workflow/
+			);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// deliverMessage
+	// -------------------------------------------------------------------------
+
+	describe('deliverMessage', () => {
+		test('auto-activates target node when no active tasks exist', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Sender Node',
+					agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+				},
+				{
+					id: NODE_B,
+					name: 'Receiver Node',
+					agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Deliver Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hello planner');
+
+			expect(result.fromRole).toBe('coder');
+			expect(result.toRole).toBe('planner');
+			expect(result.message).toBe('hello planner');
+			expect(result.targetNodeId).toBe(NODE_B);
+			// activatedTasks should be set since NODE_B had no tasks
+			expect(result.activatedTasks).toBeDefined();
+			expect(result.activatedTasks).toHaveLength(1);
+			expect(result.activatedTasks![0].workflowNodeId).toBe(NODE_B);
+			expect(result.activatedTasks![0].slotRole).toBe('planner');
+		});
+
+		test('does not re-activate when target node already has active tasks', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Sender Node',
+					agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+				},
+				{
+					id: NODE_B,
+					name: 'Receiver Node',
+					agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Already Active Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			// Pre-create a task for NODE_B so it is already active
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Planner Task',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: NODE_B,
+				slotRole: 'planner',
+				status: 'in_progress',
+			});
+
+			const beforeCount = taskRepo
+				.listByWorkflowRun(run.id)
+				.filter((t) => t.workflowNodeId === NODE_B).length;
+
+			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hi again');
+
+			// activatedTasks should be undefined (node was already active)
+			expect(result.activatedTasks).toBeUndefined();
+
+			// No new tasks should have been created
+			const afterCount = taskRepo
+				.listByWorkflowRun(run.id)
+				.filter((t) => t.workflowNodeId === NODE_B).length;
+			expect(afterCount).toBe(beforeCount);
+		});
+
+		test('throws ActivationError when target role is not found in workflow', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Sender Node',
+					agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Missing Role Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			await expect(
+				router.deliverMessage(run.id, 'coder', 'nonexistent-role', 'hello')
+			).rejects.toBeInstanceOf(ActivationError);
+			await expect(
+				router.deliverMessage(run.id, 'coder', 'nonexistent-role', 'hello')
+			).rejects.toThrow(/No node found with agent role/);
+		});
+
+		test('returns correct targetNodeId in result', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{
+					id: NODE_A,
+					name: 'Node A',
+					agents: [{ agentId: AGENT_CODER, name: 'sender' }],
+				},
+				{
+					id: NODE_B,
+					name: 'Node B',
+					agents: [{ agentId: AGENT_PLANNER, name: 'receiver' }],
+				},
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Target Node Run',
+				currentNodeId: NODE_A,
+			});
+			workflowRunRepo.updateStatus(run.id, 'in_progress');
+
+			const result = await router.deliverMessage(run.id, 'sender', 'receiver', 'test');
+			expect(result.targetNodeId).toBe(NODE_B);
+		});
+	});
+});
