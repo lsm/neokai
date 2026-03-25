@@ -1316,6 +1316,152 @@ describe('SpaceRuntime', () => {
 			const stepBTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.workflowNodeId === STEP_B);
 			expect(stepBTask).toBeDefined();
 		});
+
+		test('rehydrates pending run with tasks: transitions to in_progress and builds executor', async () => {
+			// Simulates a crash between updateStatus('in_progress') and task creation completing.
+			// Tasks exist in DB, so the run should be promoted to in_progress and rehydrated.
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+				{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+			]);
+
+			// Create a 'pending' run (as if createRun() succeeded but updateStatus('in_progress') never ran)
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Interrupted Run',
+				currentNodeId: STEP_A,
+			});
+			expect(pendingRun.status).toBe('pending');
+
+			// Create the start step task as if task creation completed before the crash
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Plan',
+				description: '',
+				workflowRunId: pendingRun.id,
+				workflowNodeId: STEP_A,
+				status: 'pending',
+			});
+
+			// Fresh runtime should recover the pending run
+			const freshRuntime = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+			});
+
+			await freshRuntime.executeTick();
+
+			// Run should be promoted to in_progress
+			const recoveredRun = workflowRunRepo.getRun(pendingRun.id)!;
+			expect(recoveredRun.status).toBe('in_progress');
+
+			// Executor should be registered
+			expect(freshRuntime.getExecutor(pendingRun.id)).toBeDefined();
+
+			// Subsequent tick should process the existing task normally
+			const tasks = taskRepo.listByWorkflowRun(pendingRun.id);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].status).toBe('pending');
+		});
+
+		test('rehydrates pending run without tasks: transitions to cancelled', async () => {
+			// Simulates a crash between createRun() and task creation.
+			// No tasks exist, so the run cannot be safely resumed — cancel it.
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+
+			// Create a 'pending' run with no tasks (crash happened before task creation)
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Orphaned Pending Run',
+				currentNodeId: STEP_A,
+			});
+			expect(pendingRun.status).toBe('pending');
+
+			// No tasks created — simulating crash before task creation
+
+			// Fresh runtime should cancel the orphaned pending run
+			const freshRuntime = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+			});
+
+			await freshRuntime.executeTick();
+
+			// Run should be cancelled
+			const cancelledRun = workflowRunRepo.getRun(pendingRun.id)!;
+			expect(cancelledRun.status).toBe('cancelled');
+
+			// No executor should be registered
+			expect(freshRuntime.getExecutor(pendingRun.id)).toBeUndefined();
+			expect(freshRuntime.executorCount).toBe(0);
+		});
+
+		test('pending run recovery: pending run with tasks can advance on subsequent tick', async () => {
+			// Verify that a recovered pending run (with tasks) can actually advance.
+			const workflow = buildLinearWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+					{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+				],
+				[{ type: 'always' }]
+			);
+
+			// Create pending run with one task (simulating mid-creation crash)
+			const pendingRun = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recoverable Run',
+				currentNodeId: STEP_A,
+			});
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Plan',
+				description: '',
+				workflowRunId: pendingRun.id,
+				workflowNodeId: STEP_A,
+				status: 'completed', // task was already done when crash happened
+			});
+
+			// Fresh runtime rehydrates and promotes the run
+			const freshRuntime = new SpaceRuntime({
+				db,
+				spaceManager,
+				spaceAgentManager: agentManager,
+				spaceWorkflowManager: workflowManager,
+				workflowRunRepo,
+				taskRepo,
+			});
+
+			// First tick: rehydrates executor and transitions pending → in_progress
+			await freshRuntime.executeTick();
+
+			const runAfterRehydrate = workflowRunRepo.getRun(pendingRun.id)!;
+			expect(runAfterRehydrate.status).toBe('in_progress');
+			expect(freshRuntime.getExecutor(pendingRun.id)).toBeDefined();
+
+			// Second tick: should advance to step B since task is completed
+			await freshRuntime.executeTick();
+
+			const stepBTask = taskRepo
+				.listByWorkflowRun(pendingRun.id)
+				.find((t) => t.workflowNodeId === STEP_B);
+			expect(stepBTask).toBeDefined();
+			expect(stepBTask!.status).toBe('pending');
+		});
 	});
 
 	// -------------------------------------------------------------------------

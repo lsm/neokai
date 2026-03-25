@@ -94,18 +94,22 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * List runs that need an executor on startup: in_progress and needs_attention.
+	 * List runs that need an executor on startup: pending, in_progress, and needs_attention.
 	 *
 	 * This superset of getActiveRuns() is used exclusively by rehydrateExecutors()
 	 * so that runs blocked at a human gate (needs_attention) get an executor
 	 * reloaded on restart. Without this, a run waiting for human approval would
 	 * be permanently stuck after a process restart.
 	 *
-	 * `pending` is still excluded for the same reason as in getActiveRuns().
+	 * `pending` runs are included because a crash between createRun() and
+	 * updateStatus('in_progress') leaves a 'pending' run with no tasks. On restart,
+	 * rehydrateExecutors() checks whether tasks exist for the run:
+	 *   - Tasks exist  → transition to in_progress and build the executor
+	 *   - No tasks     → transition to cancelled (was interrupted before task creation)
 	 */
 	getRehydratableRuns(spaceId: string): SpaceWorkflowRun[] {
 		const stmt = this.db.prepare(
-			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('in_progress', 'needs_attention') ORDER BY created_at ASC`
+			`SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('pending', 'in_progress', 'needs_attention') ORDER BY created_at ASC`
 		);
 		const rows = stmt.all(spaceId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToRun(r));

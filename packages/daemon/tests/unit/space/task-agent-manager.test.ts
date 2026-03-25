@@ -1921,18 +1921,18 @@ describe('TaskAgentManager', () => {
 			void stepTask;
 		});
 
-		test('does not restart streaming for sub-sessions during rehydration', async () => {
-			// Sub-sessions in the map after rehydration should NOT have _startCalled = true
-			// (they are stubs that the Task Agent will re-spawn as needed)
-			const wfId = 'wf-rehydrate-no-start';
+		test('restarts streaming for sub-sessions during rehydration', async () => {
+			// After rehydration, sub-sessions should have startStreamingQuery called
+			// so they can resume streaming immediately.
+			const wfId = 'wf-rehydrate-sub-start';
 			const now = Date.now();
 			ctx.bunDb
 				.prepare(
 					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
            VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
 				)
-				.run(wfId, ctx.spaceId, 'WF Sub No Start', now, now);
-			const wfRunId = 'run-rehydrate-no-start';
+				.run(wfId, ctx.spaceId, 'WF Sub Start', now, now);
+			const wfRunId = 'run-rehydrate-sub-start';
 			ctx.bunDb
 				.prepare(
 					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_node_id, created_at, updated_at)
@@ -1941,7 +1941,7 @@ describe('TaskAgentManager', () => {
 				.run(wfRunId, ctx.spaceId, wfId, now, now);
 
 			const mainTask = await ctx.taskManager.createTask({
-				title: 'Main task no-start',
+				title: 'Main task sub-start',
 				description: '',
 				taskType: 'coding',
 				status: 'in_progress',
@@ -1951,7 +1951,7 @@ describe('TaskAgentManager', () => {
 			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
 			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
 
-			const subSessionId = '550e8400-e29b-41d4-a716-nostart-sub-01';
+			const subSessionId = '550e8400-e29b-41d4-a716-sub-start-01';
 			await ctx.taskManager.createTask({
 				title: 'Sub task',
 				description: '',
@@ -1970,11 +1970,76 @@ describe('TaskAgentManager', () => {
 
 			await ctx.manager.rehydrate();
 
-			// The sub-session stub should NOT have startStreamingQuery called
+			// The sub-session should have startStreamingQuery called on rehydration
 			const subSession = ctx.createdSessions.get(subSessionId);
-			if (subSession) {
-				expect(subSession._startCalled).toBe(false);
-			}
+			expect(subSession).toBeDefined();
+			expect(subSession!._startCalled).toBe(true);
+
+			restoreSpy.mockRestore();
+		});
+
+		test('streaming restart failure for sub-session is non-fatal during rehydration', async () => {
+			// If startStreamingQuery throws for a sub-session, rehydration should
+			// continue without failing the entire task.
+			const wfId = 'wf-rehydrate-sub-error';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, config, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '{}', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Sub Error', now, now);
+			const wfRunId = 'run-rehydrate-sub-error';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, current_node_id, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', null, ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const mainTask = await ctx.taskManager.createTask({
+				title: 'Main task sub-error',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			const mainSessionId = `space:${ctx.spaceId}:task:${mainTask.id}`;
+			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
+			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
+
+			const subSessionId = '550e8400-e29b-41d4-a716-sub-error-01';
+			await ctx.taskManager.createTask({
+				title: 'Sub task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+				taskAgentSessionId: subSessionId,
+			});
+			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+			// First restore call returns a session whose startStreamingQuery throws
+			const failingSession = makeMockSession(subSessionId);
+			failingSession.startStreamingQuery = async () => {
+				throw new Error('streaming restart failed');
+			};
+
+			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+				if (sessionId === subSessionId) {
+					ctx.createdSessions.set(sessionId, failingSession);
+					return failingSession as unknown as AgentSession;
+				}
+				const session = makeMockSession(sessionId);
+				ctx.createdSessions.set(sessionId, session);
+				return session as unknown as AgentSession;
+			});
+
+			// rehydrate() should not throw even though the sub-session streaming fails
+			await expect(ctx.manager.rehydrate()).resolves.toBeUndefined();
+
+			// The sub-session should still be in the map despite the error
+			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
 
 			restoreSpy.mockRestore();
 		});

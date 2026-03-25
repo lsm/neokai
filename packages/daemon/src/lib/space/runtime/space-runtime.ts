@@ -497,8 +497,11 @@ export class SpaceRuntime {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 
 		for (const space of spaces) {
-			// getRehydratableRuns returns 'in_progress' AND 'needs_attention' runs.
-			// 'pending' is still excluded — it's transient (task creation may have failed).
+			// getRehydratableRuns returns 'pending', 'in_progress' AND 'needs_attention' runs.
+			// 'pending' runs may exist if the daemon crashed between createRun() and
+			// updateStatus('in_progress'). We check whether tasks were already created:
+			//   - Tasks exist  → transition to in_progress and build executor normally
+			//   - No tasks     → transition to cancelled (task creation never happened)
 			// 'needs_attention' runs are included so a human-gate-blocked run gets its
 			// executor reloaded on restart, allowing it to advance once the gate is resolved.
 			const activeRuns = this.config.workflowRunRepo.getRehydratableRuns(space.id);
@@ -514,6 +517,30 @@ export class SpaceRuntime {
 					continue;
 				}
 
+				// Handle 'pending' runs that were interrupted before updateStatus('in_progress').
+				// We need to determine whether task creation completed before the crash.
+				if (run.status === 'pending') {
+					const existingTasks = this.config.taskRepo.listByWorkflowRun(run.id);
+					if (existingTasks.length === 0) {
+						// No tasks exist — the crash happened before task creation started.
+						// Cancel the run since we cannot safely resume without knowing what
+						// was supposed to be created.
+						log.info(
+							`SpaceRuntime: recovering orphaned 'pending' run ${run.id} — ` +
+								`no tasks found, cancelling run`
+						);
+						this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
+						continue;
+					}
+					// Tasks exist — the crash happened after task creation but before
+					// updateStatus('in_progress'). Complete the transition now.
+					log.info(
+						`SpaceRuntime: recovering 'pending' run ${run.id} — ` +
+							`${existingTasks.length} task(s) found, promoting to in_progress`
+					);
+					this.config.workflowRunRepo.updateStatus(run.id, 'in_progress');
+				}
+
 				const meta: ExecutorMeta = {
 					workflow,
 					spaceId: space.id,
@@ -521,7 +548,9 @@ export class SpaceRuntime {
 				};
 				this.executorMeta.set(run.id, meta);
 
-				const executor = this.buildExecutor(workflow, run, space.id, space.workspacePath);
+				// Re-read the run from DB to pick up the status transition above
+				const freshRun = this.config.workflowRunRepo.getRun(run.id)!;
+				const executor = this.buildExecutor(workflow, freshRun, space.id, space.workspacePath);
 				this.executors.set(run.id, executor);
 			}
 		}

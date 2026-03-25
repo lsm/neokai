@@ -638,6 +638,59 @@ export class GoalRepository {
 	}
 
 	// =========================================================================
+	// Space Goal Progress
+	// =========================================================================
+
+	/**
+	 * Recalculate goal progress from Space tasks (not Room tasks).
+	 *
+	 * Uses the same algorithm as GoalManager.calculateProgressFromTasks():
+	 * - completed → 100%
+	 * - needs_attention/cancelled → 0% (terminal, no contribution)
+	 * - otherwise → task.progress ?? 0
+	 * - Average of all tasks
+	 *
+	 * Returns the calculated progress value (0-100).
+	 */
+	recalculateProgressFromSpaceTasks(
+		goalId: string,
+		spaceTaskRepo: {
+			findByGoalId(goalId: string): Array<{ status: string; progress?: number | null }>;
+		}
+	): number {
+		const tasks = spaceTaskRepo.findByGoalId(goalId);
+
+		if (tasks.length === 0) {
+			this.updateGoal(goalId, { progress: 0 });
+			return 0;
+		}
+
+		let totalProgress = 0;
+		let taskCount = 0;
+
+		for (const task of tasks) {
+			if (task.status === 'completed') {
+				totalProgress += 100;
+			} else if (task.status === 'needs_attention' || task.status === 'cancelled') {
+				// Terminal tasks don't contribute to progress
+				totalProgress += 0;
+			} else {
+				totalProgress += task.progress ?? 0;
+			}
+			taskCount++;
+		}
+
+		if (taskCount === 0) {
+			this.updateGoal(goalId, { progress: 0 });
+			return 0;
+		}
+
+		const progress = Math.round(totalProgress / taskCount);
+		this.updateGoal(goalId, { progress });
+		return progress;
+	}
+
+	// =========================================================================
 	// Private helpers
 	// =========================================================================
 

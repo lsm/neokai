@@ -70,6 +70,8 @@ import { createStepAgentMcpServer } from '../tools/step-agent-tools';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import { GoalRepository } from '../../../storage/repositories/goal-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 
 const log = new Logger('task-agent-manager');
 
@@ -905,6 +907,22 @@ export class TaskAgentManager {
 				if (spaceId) {
 					const taskManager = new SpaceTaskManager(this.config.db.getDatabase(), spaceId);
 					await taskManager.setTaskStatus(stepTask.id, 'completed');
+
+					// Recalculate goal progress if this task is linked to a goal
+					if (stepTask.goalId) {
+						try {
+							const goalRepo = new GoalRepository(
+								this.config.db.getDatabase(),
+								this.config.db as unknown as ReactiveDatabase
+							);
+							goalRepo.recalculateProgressFromSpaceTasks(stepTask.goalId, this.config.taskRepo);
+						} catch (err) {
+							log.warn(
+								`TaskAgentManager: failed to recalculate goal progress for goal ${stepTask.goalId}:`,
+								err
+							);
+						}
+					}
 				}
 			} catch (err) {
 				log.warn(`TaskAgentManager: failed to mark step task ${stepTask.id} as completed:`, err);
@@ -1216,6 +1234,16 @@ export class TaskAgentManager {
 					this.subSessions.set(taskId, new Map());
 				}
 				this.subSessions.get(taskId)!.set(subSessionId, subSession);
+
+				// Restart streaming for the restored sub-session.
+				// Errors are non-fatal — log a warning and continue.
+				try {
+					await subSession.startStreamingQuery();
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager.rehydrate: startStreamingQuery failed for sub-session ${subSessionId}: ${err}`
+					);
+				}
 			}
 		}
 
