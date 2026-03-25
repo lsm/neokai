@@ -25,6 +25,7 @@ import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
 import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
+import { FileIndex } from './lib/file-index';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -74,6 +75,8 @@ export interface DaemonAppContext {
 	jobProcessor: JobQueueProcessor;
 	/** Application-level MCP lifecycle manager — converts registry entries to SDK configs */
 	appMcpManager: AppMcpLifecycleManager;
+	/** Workspace file index for fast fuzzy file/folder search */
+	fileIndex: FileIndex;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -268,6 +271,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Seed default MCP entries (idempotent — skips entries that already exist)
 	seedDefaultMcpEntries(db);
+
+	// Initialize workspace file index (non-blocking — init runs in the background)
+	const fileIndex = new FileIndex(config.workspaceRoot);
+	void fileIndex.init();
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
@@ -512,6 +519,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				providerRegistry.getAll().flatMap((p) => (p.shutdown ? [p.shutdown()] : []))
 			);
 
+			// Stop workspace file index polling
+			fileIndex.dispose();
+
 			// Close database
 			db.close();
 
@@ -542,6 +552,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobQueue,
 		jobProcessor,
 		appMcpManager,
+		fileIndex,
 		cleanup,
 	};
 }
