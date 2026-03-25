@@ -31,6 +31,8 @@ export interface PreprocessedMessage {
 	text: string;
 	/** Resolved reference data, keyed by @ref{type:id} token */
 	referenceMetadata: ReferenceMetadata;
+	/** Full resolved reference objects, keyed by @ref{type:id} token (used for agent context injection) */
+	resolvedReferences: Record<string, ResolvedReference>;
 }
 
 export interface ReferenceResolverDeps {
