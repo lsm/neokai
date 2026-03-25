@@ -11,7 +11,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { ResolvedChannel, WorkflowCondition } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -275,5 +275,52 @@ describe('ChannelResolver.isEmpty', () => {
 
 	test('false when at least one channel', () => {
 		expect(new ChannelResolver([oneWayChannel('a', 'b')]).isEmpty()).toBe(false);
+	});
+});
+
+// ===========================================================================
+// gate field
+// ===========================================================================
+
+describe('ChannelResolver — gate field', () => {
+	const gate: WorkflowCondition = { type: 'condition', expression: 'ci-passing' };
+
+	function gatedChannel(fromRole: string, toRole: string, g: WorkflowCondition): ResolvedChannel {
+		return {
+			fromRole,
+			toRole,
+			fromAgentId: `agent-${fromRole}`,
+			toAgentId: `agent-${toRole}`,
+			direction: 'one-way',
+			isHubSpoke: false,
+			gate: g,
+		};
+	}
+
+	test('gate field is preserved through getResolvedChannels()', () => {
+		const ch = gatedChannel('coder', 'reviewer', gate);
+		const resolver = new ChannelResolver([ch]);
+		const [result] = resolver.getResolvedChannels();
+		expect(result.gate).toEqual(gate);
+	});
+
+	test('channel with gate passes structural validation in fromRunConfig()', () => {
+		const ch = gatedChannel('coder', 'reviewer', gate);
+		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: [ch] });
+		expect(resolver.isEmpty()).toBe(false);
+		expect(resolver.getResolvedChannels()[0].gate).toEqual(gate);
+	});
+
+	test('channel without gate has undefined gate field', () => {
+		const ch = oneWayChannel('coder', 'reviewer');
+		const resolver = new ChannelResolver([ch]);
+		expect(resolver.getResolvedChannels()[0].gate).toBeUndefined();
+	});
+
+	test('canSend still works correctly for channels with gate', () => {
+		// canSend checks routing permission only — gate evaluation is a separate concern
+		const resolver = new ChannelResolver([gatedChannel('coder', 'reviewer', gate)]);
+		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
+		expect(resolver.canSend('reviewer', 'coder')).toBe(false);
 	});
 });
