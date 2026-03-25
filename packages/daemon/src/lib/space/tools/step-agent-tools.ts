@@ -6,6 +6,7 @@
  *
  *   list_peers   — discover other group members with roles and permitted channels
  *   send_message — primary channel-validated direct messaging tool
+ *   report_done  — signal that this agent has completed its step task
  *
  * Communication model:
  * - Step agents communicate via declared channel topology (`send_message`).
