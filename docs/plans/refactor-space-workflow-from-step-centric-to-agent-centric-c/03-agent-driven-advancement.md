@@ -38,7 +38,7 @@ One `ChannelRouter` handles everything — within-node and cross-node, DM and fa
 
 **Acceptance Criteria**:
 - `deliverMessage()` automatically activates the target node if no active tasks exist
-- `activateNode()` creates tasks and session groups correctly
+- `activateNode()` creates tasks correctly with `agent_name`
 - Duplicate activation attempts are handled idempotently
 - Unit tests cover: first activation, idempotent re-activation, concurrent activation, activation of cancelled run
 

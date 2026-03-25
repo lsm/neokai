@@ -98,11 +98,11 @@ Add explicit agent completion signaling. Agents will explicitly report when they
    - Query `space_tasks` WHERE `workflow_run_id = ? AND workflow_node_id = ?` to get all tasks on the current node
    - For each task, include: `agent_name`, `status`, `completion_summary`, `completed_at`
 2. Optionally add `status` to the peer response (already partially there)
-3. Ensure the Task Agent's `list_group_members` tool also exposes completion state (query `space_tasks` by workflow run ID)
+3. Ensure the Task Agent's `list_peers` tool also exposes completion state (query `space_tasks` by workflow run ID)
 
 **Acceptance Criteria**:
 - `list_peers` shows which peers have reported done
-- Task Agent's `list_group_members` shows completion state
+- Task Agent's `list_peers` shows completion state
 - Completion state is queryable by any agent
 - All queries use `space_tasks` directly (no session group traversal)
 
