@@ -1814,11 +1814,11 @@ export class RoomRuntime {
 	 * back to `in_progress` so that stale rate-limit state doesn't block the next worker
 	 * iteration from forwarding its output to the leader.
 	 *
-	 * Returns `true` if a group was found and cleared, `false` if no group exists.
+	 * Returns `true` if an active group was found and cleared, `false` otherwise.
 	 */
 	async clearGroupRateLimit(taskId: string): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group) return false;
+		if (!group || group.completedAt !== null) return false;
 
 		this.groupRepo.clearRateLimit(group.id);
 		await this.clearTaskRestriction(taskId);

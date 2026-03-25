@@ -298,6 +298,20 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			expect(result).toBe(false);
 		});
 
+		it('returns false when the group is already completed', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// Mark the group as completed
+			ctx.groupRepo.completeGroup(group.id, group.version);
+
+			const result = await ctx.runtime.clearGroupRateLimit(task.id);
+			expect(result).toBe(false);
+		});
+
 		it('clears group rateLimit and task restriction, returns true', async () => {
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => makeWorkerMessages(RATE_LIMIT_MSG),
