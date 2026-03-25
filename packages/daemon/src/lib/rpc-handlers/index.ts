@@ -74,6 +74,7 @@ import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
 import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
 import { setupReferenceHandlers } from './reference-handlers';
+import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
 import type { AppMcpLifecycleManager } from '../mcp';
 
@@ -266,20 +267,28 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
+	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
+	const fileIndex = new FileIndex(deps.config.workspaceRoot);
+	fileIndex.init().catch((err) => {
+		log.warn('FileIndex init failed:', err);
+	});
+	setupReferenceHandlers(deps.messageHub, {
+		db: deps.db.getDatabase(),
+		reactiveDb: deps.reactiveDb,
+		shortIdAllocator: deps.db.getShortIdAllocator(),
+		sessionManager: deps.sessionManager,
+		taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
+		goalRepo: deps.db.getGoalRepo(),
+		workspaceRoot: deps.config.workspaceRoot,
+		fileIndex,
+	});
+
 	// LiveQuery subscribe/unsubscribe handlers
 	const unsubLiveQuery = setupLiveQueryHandlers(
 		deps.messageHub,
 		deps.liveQueries,
 		deps.db.getDatabase()
 	);
-
-	// Reference handlers (@ mention system — resolve tasks, goals, files, folders)
-	setupReferenceHandlers(deps.messageHub, {
-		sessionManager: deps.sessionManager,
-		taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
-		goalRepo: deps.db.getGoalRepo(),
-		workspaceRoot: deps.config.workspaceRoot,
-	});
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
@@ -460,6 +469,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			unsubLiveQuery();
 			roomRuntimeService.stop();
 			spaceRuntimeService.stop();
+			fileIndex.dispose();
 		},
 		spaceRuntimeService,
 		taskAgentManager,
