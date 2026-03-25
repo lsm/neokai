@@ -152,7 +152,10 @@ export default function MessageInput({
 	// Reference autocomplete
 	const handleReferenceSelect = useCallback(
 		(reference: ReferenceMention) => {
-			setContent(replaceActiveAtQuery(content, reference.type, reference.id));
+			const updated = replaceActiveAtQuery(content, reference.type, reference.id);
+			// No active @query — nothing to replace; skip the setContent call to avoid spurious re-renders
+			if (updated === content) return;
+			setContent(updated);
 			// Restore focus to textarea after selection
 			textareaInputRef.current?.focus();
 		},
