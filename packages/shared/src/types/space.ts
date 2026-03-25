@@ -292,11 +292,6 @@ export interface UpdateSpaceTaskParams {
 	 * Set when spawning a Task Agent; null to clear the reference.
 	 */
 	taskAgentSessionId?: string | null;
-	/**
-	 * Brief human-readable summary written by the agent at task completion.
-	 * Null to clear.
-	 */
-	completionSummary?: string | null;
 }
 
 // ============================================================================

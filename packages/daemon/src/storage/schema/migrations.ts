@@ -209,7 +209,6 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
 	runMigration52(db);
 
-
 	// Migration 53: Add channels column to space_workflows for unified channel topology storage.
 	// Channels move from the config JSON blob to a dedicated TEXT column (JSON-serialized
 	// WorkflowChannel[]). Existing rows that have channels embedded in config are migrated

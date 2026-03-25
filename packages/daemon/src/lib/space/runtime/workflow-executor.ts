@@ -469,7 +469,6 @@ export class WorkflowExecutor {
 			// Without a resolver (backward-compat), fall back to agentEntry.agentId.
 			const resolved = this.taskTypeResolver?.(nextStep, agentEntry);
 
-
 			let task: SpaceTask;
 			try {
 				task = await this.taskManager.createTask({
