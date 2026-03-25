@@ -347,14 +347,19 @@ describe('MessageInput reference autocomplete', () => {
 				{ type: 'task', id: 't-2', displayText: 'Second task' },
 			];
 
-			const { getAllByRole } = renderInput();
+			const { container } = renderInput();
 
-			const buttons = getAllByRole('button');
-			const taskButtons = buttons.filter(
+			// The grouped component renders buttons with type="button"
+			const resultButtons = container.querySelectorAll('button[type="button"]');
+			// Exclude the send/stop button (last one, inside the pill border)
+			// The reference buttons are the first N buttons rendered by ReferenceAutocomplete
+			const refButtons = Array.from(resultButtons).filter(
 				(b) => b.textContent?.includes('First task') || b.textContent?.includes('Second task')
 			);
-			expect(taskButtons[1].className).toContain('border-blue-500');
-			expect(taskButtons[0].className).not.toContain('border-blue-500');
+			// selectedIndex=1 → second result is highlighted
+			expect(refButtons).toHaveLength(2);
+			expect(refButtons[1].className).toContain('border-blue-500');
+			expect(refButtons[0].className).not.toContain('border-blue-500');
 		});
 	});
 });
