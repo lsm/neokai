@@ -555,9 +555,7 @@ test.describe('Reference Autocomplete - Edge Cases: Token Error States', () => {
 		await expect(popover).toContainText('Not found');
 	});
 
-	test('mention token for deleted task shows "Not found" after room deletion', async ({
-		page,
-	}) => {
+	test('mention token for deleted task shows "Not found" after room deletion', async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
