@@ -76,6 +76,10 @@ export interface WorkflowCanvasProps {
 	onEdgeSelect?: (transitionId: string | null) => void;
 	/** Called when Delete/Backspace is pressed with an edge selected. */
 	onDeleteEdge?: (transitionId: string) => void;
+	/** Called when a channel edge is clicked. Receives the channel's id. */
+	onChannelSelect?: (channelId: string | null) => void;
+	/** Currently selected channel ID for highlighting. */
+	selectedChannelId?: string | null;
 }
 
 // ---- Ghost edge rendering ----
@@ -262,6 +266,8 @@ export function WorkflowCanvas({
 	onCreateTransition,
 	onEdgeSelect,
 	onDeleteEdge,
+	onChannelSelect,
+	selectedChannelId,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -437,6 +443,8 @@ export function WorkflowCanvas({
 					onEdgeSelect={handleEdgeSelect}
 					onEdgeDelete={handleEdgeDelete}
 					channels={effectiveChannels}
+					selectedChannelId={selectedChannelId}
+					onChannelSelect={onChannelSelect ?? undefined}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
@@ -451,6 +459,8 @@ export function WorkflowCanvas({
 			handleEdgeSelect,
 			handleEdgeDelete,
 			dragState,
+			selectedChannelId,
+			onChannelSelect,
 		]
 	);
 

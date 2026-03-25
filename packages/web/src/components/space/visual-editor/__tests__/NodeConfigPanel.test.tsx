@@ -467,7 +467,7 @@ describe('NodeConfigPanel', () => {
 			expect(select.textContent).toContain('Coder');
 		});
 
-		it('auto-creates task-agent channels when adding an agent in multi-agent mode', () => {
+		it('does not auto-create channels when adding an agent (channels are managed at workflow level)', () => {
 			const onUpdate = vi.fn();
 			const step = makeStep({
 				agentId: '',
@@ -476,145 +476,9 @@ describe('NodeConfigPanel', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			// Should have 2 agents and 2 task-agent channels (one per agent)
+			// 2 agents added, but no auto-created channels (channels are workflow-level now)
 			expect(updatedStep.agents).toHaveLength(2);
-			expect(updatedStep.channels?.length).toBe(2);
-			expect(
-				updatedStep.channels?.every(
-					(c: { from: string; direction: string }) =>
-						c.from === 'task-agent' && c.direction === 'bidirectional'
-				)
-			).toBe(true);
-		});
-
-		it('preserves existing channels when adding an agent if channels are already set', () => {
-			const onUpdate = vi.fn();
-			const step = makeStep({
-				agentId: '',
-				agents: [{ agentId: 'agent-1', name: 'planner' }],
-				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
-			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			// Should have 2 agents, and existing channels should be preserved
-			expect(updatedStep.agents).toHaveLength(2);
-			expect(updatedStep.channels?.length).toBe(1);
-			expect(updatedStep.channels?.[0].from).toBe('coder');
-		});
-
-		it('shows channels section in multi-agent mode', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [
-					{ agentId: 'agent-1', name: 'planner' },
-					{ agentId: 'agent-2', name: 'coder' },
-				],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(getByTestId('channels-section')).toBeTruthy();
-		});
-
-		it('shows channels section for single-agent node with agent', () => {
-			// Channels section is always shown so users can manage Task Agent channels.
-			const { queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(queryByTestId('channels-section')).toBeTruthy();
-		});
-
-		it('renders existing channels in channels list', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [
-					{ agentId: 'agent-1', name: 'planner' },
-					{ agentId: 'agent-2', name: 'coder' },
-				],
-				channels: [
-					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
-					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
-				],
-			});
-			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			expect(getAllByTestId('channel-entry')).toHaveLength(2);
-		});
-
-		it('remove channel button calls onUpdate without that channel', () => {
-			const onUpdate = vi.fn();
-			const step = makeStep({
-				agentId: '',
-				agents: [
-					{ agentId: 'agent-1', name: 'planner' },
-					{ agentId: 'agent-2', name: 'coder' },
-				],
-				channels: [
-					{ from: 'coder', to: 'reviewer', direction: 'one-way' },
-					{ from: 'reviewer', to: 'coder', direction: 'bidirectional' },
-				],
-			});
-			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			fireEvent.click(getAllByTestId('remove-channel-button')[0]);
-			const updatedStep = onUpdate.mock.calls[0][0];
-			expect(updatedStep.channels).toHaveLength(1);
-			expect(updatedStep.channels[0].from).toBe('reviewer');
-		});
-
-		it('add channel button is disabled when from or to is empty', () => {
-			const step = makeStep({
-				agentId: '',
-				agents: [
-					{ agentId: 'agent-1', name: 'planner' },
-					{ agentId: 'agent-2', name: 'coder' },
-				],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			const addBtn = getByTestId('add-channel-button');
-			expect(addBtn.hasAttribute('disabled')).toBe(true);
-		});
-
-		it('add channel adds a new channel entry', () => {
-			const onUpdate = vi.fn();
-			const step = makeStep({
-				agentId: '',
-				agents: [
-					{ agentId: 'agent-1', name: 'planner' },
-					{ agentId: 'agent-2', name: 'coder' },
-				],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-			// Set from
-			act(() => {
-				fireEvent.change(getByTestId('channel-from-select'), { target: { value: 'coder' } });
-			});
-			// Set to
-			act(() => {
-				fireEvent.input(getByTestId('channel-to-input'), { target: { value: 'reviewer' } });
-			});
-			// Click add
-			act(() => {
-				fireEvent.click(getByTestId('add-channel-button'));
-			});
-			expect(onUpdate).toHaveBeenCalled();
-			const updatedStep = onUpdate.mock.calls[0][0];
-			expect(updatedStep.channels).toHaveLength(1);
-			expect(updatedStep.channels[0].from).toBe('coder');
-			expect(updatedStep.channels[0].to).toBe('reviewer');
-			expect(updatedStep.channels[0].direction).toBe('one-way');
-		});
-
-		it('channel-from-select dropdown options are slot roles (WorkflowNodeAgent.role), not SpaceAgent.role', () => {
-			// When the same agent is added twice with roles "coder" and "coder-2",
-			// both slot roles must appear as distinct options in the channel dropdown.
-			const step = makeStep({
-				agentId: '',
-				agents: [
-					{ agentId: 'agent-2', name: 'coder' },
-					{ agentId: 'agent-2', name: 'coder-2' },
-				],
-			});
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-			const fromSelect = getByTestId('channel-from-select');
-			// Both slot-specific roles must be present as options
-			expect(fromSelect.textContent).toContain('coder');
-			expect(fromSelect.textContent).toContain('coder-2');
+			expect(updatedStep.channels).toBeUndefined();
 		});
 
 		it('adding the same agent twice generates a unique slot role with numeric suffix', () => {

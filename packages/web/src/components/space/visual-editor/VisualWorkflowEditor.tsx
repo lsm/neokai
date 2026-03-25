@@ -49,6 +49,7 @@ import { computeFitToView } from './CanvasToolbar';
 import { autoLayout, TASK_AGENT_INITIAL_POSITION } from './layout';
 import type { NodePosition } from './types';
 import { NodeConfigPanel } from './NodeConfigPanel';
+import { ChannelEditor } from '../ChannelEditor';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 
 // ============================================================================
@@ -114,7 +115,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [rules, setRules] = useState<RuleDraft[]>(() => initState?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
-	const [channels, _setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
+	const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -128,6 +129,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	// colons, so the first ':' unambiguously splits from/to.
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
+	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+	const [showChannels, setShowChannels] = useState(true);
+
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showRules, setShowRules] = useState(false);
@@ -138,23 +142,23 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const agents = filterAgents(spaceStore.agents.value);
 
+	// Collect all agent slot names from nodes for ChannelEditor from/to suggestions
+	const agentRoles = useMemo(() => {
+		const roles = new Set<string>();
+		for (const node of nodes) {
+			if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
+			if (node.step.agents) {
+				for (const agent of node.step.agents) {
+					if (agent.name) roles.add(agent.name);
+				}
+			}
+		}
+		return Array.from(roles);
+	}, [nodes]);
+
 	// ------------------------------------------------------------------
 	// Key-resolution maps
 	// ------------------------------------------------------------------
-
-	/**
-	 * Maps step.id or step.localId -> step.localId.
-	 * Used when converting VisualEdge (keyed by step.id for existing steps) to
-	 * WorkflowTransition (keyed by localId, which is what WorkflowCanvas uses).
-	 */
-	const stepKeyToLocalId = useMemo(() => {
-		const map = new Map<string, string>();
-		for (const node of nodes) {
-			if (node.step.id) map.set(node.step.id, node.step.localId);
-			map.set(node.step.localId, node.step.localId);
-		}
-		return map;
-	}, [nodes]);
 
 	/** Maps step.localId -> step key used in VisualEdge (step.id ?? step.localId). */
 	const localIdToStepKey = useMemo(() => {
@@ -166,63 +170,97 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	}, [nodes]);
 
 	// ------------------------------------------------------------------
-	// Derived: WorkflowTransition[] for WorkflowCanvas
-	// WorkflowCanvas / EdgeRenderer use localIds as node keys, so we re-map
-	// VisualEdge's step.id-based keys to localIds here.
-	// ------------------------------------------------------------------
-
-	const transitions = useMemo<WorkflowTransition[]>(() => {
-		return edges.map((e, i) => {
-			const fromLocalId = stepKeyToLocalId.get(e.fromStepKey) ?? e.fromStepKey;
-			const toLocalId = stepKeyToLocalId.get(e.toStepKey) ?? e.toStepKey;
-			return {
-				id: `${fromLocalId}:${toLocalId}`,
-				from: fromLocalId,
-				to: toLocalId,
-				condition: e.condition ?? { type: 'always' },
-				order: i,
-			};
-		});
-	}, [edges, stepKeyToLocalId]);
-
-	// ------------------------------------------------------------------
-	// Derived: ResolvedWorkflowChannel[] for Task Agent channel connections
-	// Task Agent channels are stored at the workflow level (channels).
-	// We extract edges from task-agent to each connected step.
+	// Derived: ResolvedWorkflowChannel[] for workflow-level channel connections.
+	// Resolves channel from/to agent role names to node localIds so EdgeRenderer
+	// can render the edges. Includes gate type and ID for visual distinction + selection.
 	// ------------------------------------------------------------------
 
 	const channelEdges = useMemo<
-		{ fromStepId: string; toStepId: string; direction: 'one-way' | 'bidirectional' }[]
+		{
+			fromStepId: string;
+			toStepId: string;
+			direction: 'one-way' | 'bidirectional';
+			gateType?: 'human' | 'condition' | 'task_result';
+			id?: string;
+			label?: string;
+		}[]
 	>(() => {
 		const result: {
 			fromStepId: string;
 			toStepId: string;
 			direction: 'one-way' | 'bidirectional';
+			gateType?: 'human' | 'condition' | 'task_result';
+			id?: string;
+			label?: string;
 		}[] = [];
-		// Build a localId lookup from step.localId to the actual step localId
-		// (for new unsaved steps, step.localId === step.id; for saved steps, step.localId may differ)
-		const _nodeLocalIds = new Set(nodes.map((n) => n.step.localId));
-		for (const channel of channels) {
-			// Only include channels where task-agent is the source
+
+		// Build agent name -> node localId lookup for cross-node channel resolution
+		const nameToNodeId = new Map<string, string>();
+		for (const node of nodes) {
+			if (node.step.id === TASK_AGENT_NODE_ID || node.step.localId === TASK_AGENT_NODE_ID) continue;
+			// Map agent slot names (from WorkflowNodeAgent.name)
+			if (node.step.agents) {
+				for (const agent of node.step.agents) {
+					if (agent.name) nameToNodeId.set(agent.name, node.step.localId);
+				}
+			}
+			// Also map node name itself for convenience
+			if (node.step.name) nameToNodeId.set(node.step.name, node.step.localId);
+		}
+
+		const nodeLocalIds = new Set(nodes.map((n) => n.step.localId));
+
+		channels.forEach((channel, i) => {
+			const channelId = String(i);
+			const gateType =
+				channel.gate && channel.gate.type !== 'always'
+					? (channel.gate.type as 'human' | 'condition' | 'task_result')
+					: undefined;
+
 			if (channel.from === 'task-agent') {
-				// The 'to' field may be a step localId or id - find the matching node
-				const toStr = Array.isArray(channel.to) ? channel.to[0] : channel.to;
-				// Find a node whose localId or id matches the to field
-				const targetNode = nodes.find(
-					(n) =>
-						n.step.localId === toStr ||
-						n.step.id === toStr ||
-						(n.step.localId === n.step.id && n.step.localId === toStr)
-				);
-				if (targetNode) {
+				// task-agent -> node channel: resolve 'to' to a node localId
+				const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
+				for (const toStr of toTargets) {
+					const targetNode = nodes.find(
+						(n) =>
+							n.step.localId === toStr ||
+							n.step.id === toStr ||
+							nameToNodeId.get(toStr) === n.step.localId
+					);
+					if (targetNode) {
+						result.push({
+							fromStepId: 'task-agent',
+							toStepId: targetNode.step.localId,
+							direction: channel.direction,
+							gateType,
+							id: channelId,
+							label: channel.label,
+						});
+					}
+				}
+			} else {
+				// Cross-node channel: resolve from agent name to node localId
+				const fromNodeId =
+					nameToNodeId.get(channel.from) ?? (nodeLocalIds.has(channel.from) ? channel.from : null);
+				if (!fromNodeId) return;
+
+				const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
+				for (const toStr of toTargets) {
+					if (toStr === '*') continue; // wildcard: no specific edge to render
+					const toNodeId = nameToNodeId.get(toStr) ?? (nodeLocalIds.has(toStr) ? toStr : null);
+					if (!toNodeId || toNodeId === fromNodeId) continue;
 					result.push({
-						fromStepId: 'task-agent',
-						toStepId: targetNode.step.localId,
+						fromStepId: fromNodeId,
+						toStepId: toNodeId,
 						direction: channel.direction,
+						gateType,
+						id: channelId,
+						label: channel.label,
 					});
 				}
 			}
-		}
+		});
+
 		return result;
 	}, [channels, nodes]);
 
@@ -429,7 +467,20 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const handleEdgeSelect = useCallback((edgeId: string | null) => {
 		setSelectedEdgeId(edgeId);
-		if (edgeId) setSelectedNodeId(null);
+		if (edgeId) {
+			setSelectedNodeId(null);
+			setSelectedChannelId(null);
+		}
+	}, []);
+
+	const handleChannelSelect = useCallback((channelId: string | null) => {
+		setSelectedChannelId(channelId);
+		if (channelId) {
+			setSelectedNodeId(null);
+			setSelectedEdgeId(null);
+			// Auto-expand the Channels section when a channel is selected via canvas
+			setShowChannels(true);
+		}
 	}, []);
 
 	const handleCreateTransition = useCallback(
@@ -838,7 +889,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					nodes={nodeData}
 					viewportState={viewportState}
 					onViewportChange={setViewportState}
-					transitions={transitions}
+					transitions={[]}
 					channels={channelEdges}
 					onNodeSelect={handleNodeSelect}
 					onDeleteNode={handleDeleteNode}
@@ -846,6 +897,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					onCreateTransition={handleCreateTransition}
 					onEdgeSelect={handleEdgeSelect}
 					onDeleteEdge={handleDeleteEdge}
+					onChannelSelect={handleChannelSelect}
+					selectedChannelId={selectedChannelId}
 				/>
 
 				{/* NodeConfigPanel — anchored to the right of the canvas.
@@ -949,6 +1002,43 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							))}
 						</div>
 					</div>
+				</div>
+
+				{/* Channels — collapsible section for workflow-level channel management */}
+				<div class="px-4 py-2 border-b border-dark-800">
+					<button
+						onClick={() => setShowChannels((v) => !v)}
+						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+						data-testid="toggle-channels-button"
+					>
+						<svg
+							class={`w-3 h-3 transition-transform ${showChannels ? 'rotate-90' : ''}`}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9 5l7 7-7 7"
+							/>
+						</svg>
+						<span class="font-semibold uppercase tracking-wider">
+							Channels {channels.length > 0 ? `(${channels.length})` : ''}
+						</span>
+					</button>
+
+					{showChannels && (
+						<div class="mt-3" data-testid="channels-section">
+							<ChannelEditor
+								channels={channels}
+								onChange={setChannels}
+								agentRoles={agentRoles}
+								highlightIndex={selectedChannelId != null ? parseInt(selectedChannelId, 10) : null}
+							/>
+						</div>
+					)}
 				</div>
 
 				{/* Rules — collapsible */}

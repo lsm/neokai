@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceAgent } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceAgent, WorkflowChannel } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowNodeCard } from './WorkflowNodeCard';
@@ -20,6 +20,7 @@ import type { NodeDraft, ConditionDraft } from './WorkflowNodeCard';
 import { WorkflowRulesEditor } from './WorkflowRulesEditor';
 import type { RuleDraft } from './WorkflowRulesEditor';
 import { rulesToDrafts } from './WorkflowRulesEditor';
+import { ChannelEditor } from './ChannelEditor';
 
 // ============================================================================
 // Tags constants
@@ -101,6 +102,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	transitions: ConditionDraft[];
 	rules: RuleDraft[];
 	tags: string[];
+	channels: WorkflowChannel[];
 } {
 	const stepMap = new Map(wf.nodes.map((s) => [s.id, s]));
 	const ordered: NodeDraft[] = [];
@@ -154,6 +156,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 		transitions: conditions,
 		rules: rulesToDrafts(wf.rules ?? []),
 		tags: wf.tags ?? [],
+		channels: wf.channels ?? [],
 	};
 }
 
@@ -177,6 +180,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [description, setDescription] = useState(workflow?.description ?? '');
 	const [steps, setSteps] = useState<NodeDraft[]>(initial?.steps ?? [makeEmptyStep()]);
 	const [transitions, setTransitions] = useState<ConditionDraft[]>(initial?.transitions ?? []);
+	const [channels, setChannels] = useState<WorkflowChannel[]>(initial?.channels ?? []);
 	const [rules, setRules] = useState<RuleDraft[]>(initial?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
 	const [tagInput, setTagInput] = useState('');
@@ -377,6 +381,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					startNodeId: stepIds[0],
 					rules: updateRules,
 					tags,
+					channels: channels.length > 0 ? channels : [],
 				});
 			} else {
 				// Create uses WorkflowRuleInput (no id)
@@ -394,6 +399,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					startNodeId: stepIds[0],
 					rules: createRules,
 					tags,
+					channels: channels.length > 0 ? channels : undefined,
 				});
 			}
 
@@ -556,6 +562,16 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						</svg>
 						Add Step
 					</button>
+				</div>
+
+				{/* Channels */}
+				<div class="space-y-3">
+					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Channels</h2>
+					<ChannelEditor
+						channels={channels}
+						onChange={setChannels}
+						agentRoles={agents.map((a) => a.role).filter(Boolean)}
+					/>
 				</div>
 
 				{/* Tags */}
