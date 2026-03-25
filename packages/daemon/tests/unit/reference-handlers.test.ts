@@ -11,9 +11,10 @@
  * - Relevance sorting (exact > starts-with > contains)
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
+import { REFERENCE_PATTERN } from '@neokai/shared';
 import { setupReferenceHandlers } from '../../src/lib/rpc-handlers/reference-handlers';
 import type { ReferenceHandlerDeps } from '../../src/lib/rpc-handlers/reference-handlers';
 import type { FileIndex, FileIndexEntry } from '../../src/lib/file-index';
@@ -188,6 +189,11 @@ function buildReactiveDb(): ReactiveDatabase {
 	return { notifyChange: () => {} } as unknown as ReactiveDatabase;
 }
 
+/** Build a no-op ShortIdAllocator stub (read-only tests don't need real allocation). */
+function buildShortIdAllocator() {
+	return { allocate: () => null } as never;
+}
+
 /** Build a mock SessionManager that returns sessions by ID. */
 function buildSessionManager(sessionMap: Map<string, { roomId?: string }>) {
 	return {
@@ -247,6 +253,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -270,6 +277,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -290,6 +298,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -310,6 +319,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -335,6 +345,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -356,6 +367,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -383,6 +395,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -412,6 +425,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(entries),
 			});
@@ -433,6 +447,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -457,6 +472,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -477,6 +493,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -495,6 +512,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -519,6 +537,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -540,6 +559,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -553,29 +573,38 @@ describe('reference.search handler', () => {
 			expect(result.results).toHaveLength(0);
 		});
 
-		it('still returns task/goal results when file query is traversal but types include task', async () => {
-			insertTask(db, roomId, 'task-1', 'Fix traversal bug', 't-1');
+		it('traversal guard is in the file/folder branch — task search is unaffected', async () => {
+			// Add tasks whose titles match a normal (non-traversal) query
+			insertTask(db, roomId, 'task-1', 'traversal fix', 't-1');
+			insertTask(db, roomId, 'task-2', 'other task', 't-2');
 
 			const sessions = new Map([['sess-1', { roomId }]]);
 			const { hub, call } = buildMessageHub();
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
 
-			// Note: traversal check only skips file results, not task/goal results
-			const result = (await call('reference.search', {
+			// A normal task query still works
+			const resultTask = (await call('reference.search', {
 				sessionId: 'sess-1',
-				query: '../../Fix traversal',
+				query: 'traversal',
 				types: ['task'],
-			})) as { results: Array<{ type: string }> };
+			})) as { results: Array<{ type: string; id: string }> };
+			expect(resultTask.results.filter((r) => r.type === 'task')).toHaveLength(1);
+			expect(resultTask.results[0].id).toBe('task-1');
 
-			// Tasks should be searched normally; query contains '..' but type=task
-			// The traversal guard is inside file/folder branch only
-			expect(result.results.filter((r) => r.type === 'task')).toHaveLength(0);
-			// Empty because query doesn't match title with '..' prefix
+			// The same query with file type included but no FileIndex entries returns no files
+			const resultMixed = (await call('reference.search', {
+				sessionId: 'sess-1',
+				query: 'traversal',
+				types: ['task', 'file'],
+			})) as { results: Array<{ type: string }> };
+			expect(resultMixed.results.filter((r) => r.type === 'task')).toHaveLength(1);
+			expect(resultMixed.results.filter((r) => r.type === 'file')).toHaveLength(0);
 		});
 	});
 
@@ -592,6 +621,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -618,6 +648,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -644,6 +675,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(files),
 			});
@@ -673,6 +705,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(sessions) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -697,6 +730,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(new Map()) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -711,6 +745,7 @@ describe('reference.search handler', () => {
 			setupReferenceHandlers(hub, {
 				db: db as never,
 				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
 				sessionManager: buildSessionManager(new Map()) as never,
 				fileIndex: buildFileIndex(),
 			});
@@ -719,5 +754,82 @@ describe('reference.search handler', () => {
 				'query must be a string'
 			);
 		});
+
+		it('returns empty results for whitespace-only query', async () => {
+			insertTask(db, roomId, 'task-1', 'Some task', 't-1');
+
+			const sessions = new Map([['sess-1', { roomId }]]);
+			const { hub, call } = buildMessageHub();
+			setupReferenceHandlers(hub, {
+				db: db as never,
+				reactiveDb: buildReactiveDb(),
+				shortIdAllocator: buildShortIdAllocator(),
+				sessionManager: buildSessionManager(sessions) as never,
+				fileIndex: buildFileIndex(),
+			});
+
+			const result = (await call('reference.search', {
+				sessionId: 'sess-1',
+				query: '   ',
+			})) as { results: unknown[] };
+
+			expect(result.results).toHaveLength(0);
+		});
+	});
+});
+
+// ─── REFERENCE_PATTERN tests ──────────────────────────────────────────────────
+
+describe('REFERENCE_PATTERN', () => {
+	it('matches @ref{task:t-42}', () => {
+		REFERENCE_PATTERN.lastIndex = 0;
+		const match = REFERENCE_PATTERN.exec('@ref{task:t-42}');
+		expect(match).not.toBeNull();
+		expect(match![1]).toBe('task');
+		expect(match![2]).toBe('t-42');
+	});
+
+	it('matches @ref{goal:g-7}', () => {
+		REFERENCE_PATTERN.lastIndex = 0;
+		const match = REFERENCE_PATTERN.exec('@ref{goal:g-7}');
+		expect(match).not.toBeNull();
+		expect(match![1]).toBe('goal');
+		expect(match![2]).toBe('g-7');
+	});
+
+	it('matches @ref{file:src/index.ts}', () => {
+		REFERENCE_PATTERN.lastIndex = 0;
+		const match = REFERENCE_PATTERN.exec('@ref{file:src/index.ts}');
+		expect(match).not.toBeNull();
+		expect(match![1]).toBe('file');
+		expect(match![2]).toBe('src/index.ts');
+	});
+
+	it('matches @ref{folder:packages/daemon}', () => {
+		REFERENCE_PATTERN.lastIndex = 0;
+		const match = REFERENCE_PATTERN.exec('@ref{folder:packages/daemon}');
+		expect(match).not.toBeNull();
+		expect(match![1]).toBe('folder');
+		expect(match![2]).toBe('packages/daemon');
+	});
+
+	it('does not match plain @mentions', () => {
+		REFERENCE_PATTERN.lastIndex = 0;
+		const match = REFERENCE_PATTERN.exec('@username');
+		expect(match).toBeNull();
+	});
+
+	it('does not match markdown links', () => {
+		REFERENCE_PATTERN.lastIndex = 0;
+		const match = REFERENCE_PATTERN.exec('[link](https://example.com)');
+		expect(match).toBeNull();
+	});
+
+	it('matches multiple references in a string via matchAll', () => {
+		const text = 'Fix @ref{task:t-1} related to @ref{goal:g-2}';
+		const matches = [...text.matchAll(/@ref\{([^}:]+):([^}]+)\}/g)];
+		expect(matches).toHaveLength(2);
+		expect(matches[0][1]).toBe('task');
+		expect(matches[1][1]).toBe('goal');
 	});
 });
