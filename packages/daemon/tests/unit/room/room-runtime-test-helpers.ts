@@ -10,12 +10,32 @@ import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks';
+import type { MessageHub } from '@neokai/shared';
 
 export function createMockDaemonHub() {
 	const handlers = new Map<string, Map<string | undefined, Array<(data: unknown) => void>>>();
 	const emittedEvents: Array<{ event: string; data: unknown }> = [];
+
+	/** Dispatch an event synchronously to all registered handlers for that event/sessionId. */
+	function fire(event: string, data: Record<string, unknown> & { sessionId?: string }): void {
+		const eventHandlers = handlers.get(event);
+		if (!eventHandlers) return;
+		// Call handlers registered with no sessionId filter (wildcard)
+		for (const handler of eventHandlers.get(undefined) ?? []) {
+			handler(data);
+		}
+		// Call handlers registered for this specific sessionId
+		if (data.sessionId) {
+			for (const handler of eventHandlers.get(data.sessionId) ?? []) {
+				handler(data);
+			}
+		}
+	}
+
 	return {
 		emittedEvents,
+		/** Fire event to registered handlers (for testing real-time callbacks like mirroring). */
+		fire,
 		on(
 			event: string,
 			handler: (data: unknown) => void,
@@ -53,6 +73,16 @@ export function createMockSessionFactory() {
 	>();
 	/** Session IDs that should appear missing from cache — configurable in tests */
 	let missingSessionIds: Set<string> | undefined;
+	/** Override for switchModel — tests can replace this to control fallback behavior */
+	let switchModelImpl: (
+		sessionId: string,
+		model: string,
+		provider: string
+	) => Promise<{ success: boolean; model: string; error?: string }> = async (
+		_sessionId,
+		model,
+		_provider
+	) => ({ success: true, model });
 	return {
 		calls,
 		processingStates,
@@ -61,6 +91,14 @@ export function createMockSessionFactory() {
 		},
 		set missingSessionIds(v: Set<string> | undefined) {
 			missingSessionIds = v;
+		},
+		/** Override to control switchModel responses in tests */
+		set switchModelImpl(fn: (
+			sessionId: string,
+			model: string,
+			provider: string
+		) => Promise<{ success: boolean; model: string; error?: string }>) {
+			switchModelImpl = fn;
 		},
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
@@ -109,7 +147,7 @@ export function createMockSessionFactory() {
 		},
 		async switchModel(sessionId: string, model: string, provider: string) {
 			calls.push({ method: 'switchModel', args: [sessionId, model, provider] });
-			return { success: true, model };
+			return switchModelImpl(sessionId, model, provider);
 		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
@@ -260,8 +298,8 @@ export interface RuntimeTestContextOptions {
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
 	/** Get global settings for testing fallback model logic */
 	getGlobalSettings?: () => GlobalSettings;
-	/** Optional mock messageHub for testing fallback model switch logic */
-	messageHub?: { request: (method: string, data?: unknown) => Promise<unknown> };
+	/** Optional MessageHub mock for testing trySwitchToFallbackModel (session.model.get RPC) */
+	messageHub?: MessageHub;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -302,7 +340,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getGoal: (goalId) => goalManager.getGoal(goalId),
 		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
 		daemonHub: mockHub as unknown as DaemonHub,
-		messageHub: opts?.messageHub as never,
+		messageHub: opts?.messageHub,
 	});
 
 	return {
