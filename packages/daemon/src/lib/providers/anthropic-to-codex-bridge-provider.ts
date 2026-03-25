@@ -496,12 +496,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		};
 	}
 
-	/** Stop all bridge servers. Called at provider shutdown (e.g. tests). */
+	/** Stop all bridge servers and reset cached auth state. Called at provider shutdown (e.g. tests). */
 	stopAllBridgeServers(): void {
 		for (const server of this.bridgeServers.values()) {
 			server.stop();
 		}
 		this.bridgeServers.clear();
+		// Reset cached auth so a new provider instance starts with a clean slate.
+		// Without this, cachedBridgeAuth=null from a previous run would cause
+		// isAvailable() to return false even when valid credentials are present.
+		this.cachedBridgeAuth = undefined;
+		this.cachedApiKey = undefined;
 	}
 
 	/** @deprecated Use stopAllBridgeServers(). */
