@@ -27,10 +27,30 @@ import {
 	useModal,
 	useCommandAutocomplete,
 	useReferenceAutocomplete,
-	extractActiveAtQuery,
 	useFileAttachments,
 	useInterrupt,
 } from '../hooks';
+
+/**
+ * Replace the active @query at the end of `content` with a formatted reference token.
+ *
+ * Scans for the last word-boundary `@\S*` at the end of the string (matching
+ * the same logic as `extractActiveAtQuery` in `useReferenceAutocomplete`), then
+ * replaces it with `@ref{type:id} ` (trailing space prevents re-triggering).
+ *
+ * Returns the updated content, or the original string if no active @query is found.
+ */
+export function replaceActiveAtQuery(content: string, type: string, id: string): string {
+	const replacement = `@ref{${type}:${id}} `;
+	// Match the last word-boundary @ and the non-whitespace characters following it.
+	// Group 1 captures the leading whitespace (or empty string at start) so we can
+	// preserve it in the replacement.
+	const match = content.match(/((?:^|\s))@(\S*)$/);
+	if (!match) return content;
+	const prefix = match[1];
+	const matchStart = content.length - match[0].length;
+	return content.slice(0, matchStart) + prefix + replacement;
+}
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
 	switch (sessionType) {
@@ -79,6 +99,13 @@ export default function MessageInput({
 	rewindMode,
 	onExitRewindMode,
 }: MessageInputProps) {
+	// Cache touch device detection — computed once on first render, stable thereafter.
+	// Using useRef (not a module constant) so tests can mock matchMedia before render.
+	const isTouchDeviceRef = useRef(
+		window.matchMedia('(pointer: coarse)').matches ||
+			('ontouchstart' in window && window.innerWidth < 768)
+	);
+
 	// Drag and drop state
 	const [isDragging, setIsDragging] = useState(false);
 
@@ -125,15 +152,7 @@ export default function MessageInput({
 	// Reference autocomplete
 	const handleReferenceSelect = useCallback(
 		(reference: ReferenceMention) => {
-			const query = extractActiveAtQuery(content);
-			if (query === null) return;
-
-			// The @ token starts at (content.length - query.length - 1)
-			const atPos = content.length - query.length - 1;
-			const refToken = `@ref{${reference.type}:${reference.id}} `;
-			const newContent = content.slice(0, atPos) + refToken;
-			setContent(newContent);
-
+			setContent(replaceActiveAtQuery(content, reference.type, reference.id));
 			// Restore focus to textarea after selection
 			textareaInputRef.current?.focus();
 		},
@@ -269,11 +288,7 @@ export default function MessageInput({
 				}
 
 				// Desktop: Enter submits, Shift+Enter for newline
-				const isTouchDevice =
-					window.matchMedia('(pointer: coarse)').matches ||
-					('ontouchstart' in window && window.innerWidth < 768);
-
-				if (!isTouchDevice && !e.shiftKey) {
+				if (!isTouchDeviceRef.current && !e.shiftKey) {
 					e.preventDefault();
 					void handleSubmit('immediate');
 				}
