@@ -60,3 +60,9 @@ export {
 	type RuntimeMessage,
 	type TurnBlockItem,
 } from './useTurnBlocks';
+export {
+	useReferenceAutocomplete,
+	extractActiveAtQuery,
+	type UseReferenceAutocompleteOptions,
+	type UseReferenceAutocompleteResult,
+} from './useReferenceAutocomplete';
