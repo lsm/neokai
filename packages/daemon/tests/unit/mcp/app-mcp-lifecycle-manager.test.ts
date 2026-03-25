@@ -493,15 +493,17 @@ describe('AppMcpLifecycleManager', () => {
 				command: 'valid',
 				enabled: true,
 			});
-			repo.create({
+			const brokenServer = repo.create({
 				name: 'broken-server',
 				sourceType: 'stdio',
 				// missing command — invalid
 				enabled: true,
 			});
 
+			// Enable both servers for the room so validation is actually invoked on broken-server
+			// within the per-room loop (getEnabledServers returns both, broken-server is filtered out)
 			db.roomMcpEnablement.setEnabled('room-invalid', validServer.id, true);
-			// broken-server has no per-room override but is globally invalid
+			db.roomMcpEnablement.setEnabled('room-invalid', brokenServer.id, true);
 
 			const roomConfigs = manager.getEnabledMcpConfigsForRoom('room-invalid');
 
