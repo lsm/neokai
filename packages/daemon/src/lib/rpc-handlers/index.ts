@@ -73,6 +73,7 @@ import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import type { GlobalSpacesState } from '../space/tools/global-spaces-tools';
 import { setupSpaceSessionGroupHandlers } from './space-session-group-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
+import { setupReferenceHandlers } from './reference-handlers';
 import { LiveQueryEngine } from '../../storage/live-query';
 import type { AppMcpLifecycleManager } from '../mcp';
 
@@ -271,6 +272,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.liveQueries,
 		deps.db.getDatabase()
 	);
+
+	// Reference handlers (@ mention system — resolve tasks, goals, files, folders)
+	setupReferenceHandlers(deps.messageHub, {
+		sessionManager: deps.sessionManager,
+		taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
+		goalRepo: deps.db.getGoalRepo(),
+		workspaceRoot: deps.config.workspaceRoot,
+	});
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
