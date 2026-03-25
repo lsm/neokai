@@ -1,170 +1,122 @@
-# Space Workflow System: End-to-End Execution Build-Out
+# Space Workflow System -- End-to-End Delivery Plan
 
-## Executive Summary
+> **Design revalidation notice:** This plan was written against commit `81970139c` on `main`. Before executing any task, revalidate the file paths, function signatures, and architectural assumptions against the tip of `main` -- they may have drifted.
 
-The Space system is a workflow-graph-based multi-agent orchestration engine. It already has a solid foundation: a visual workflow editor, a directed-graph executor with four condition types (always, human, condition, task_result), a Task Agent architecture that drives workflow advancement via MCP tools, channel-based messaging topology, and notification infrastructure. The core question this plan answers is:
+## Goal Summary
 
-**What does it take for a human to define a multi-agent workflow in Space and have it execute flawlessly on a real task?**
+Answer the question: "What are ALL the pieces needed for a human to define a multi-agent workflow in Space, save it, run it on a real task, and watch it complete end-to-end?"
 
-The answer requires hardening the runtime so it never silently loses work, adding error detection so failures are caught and recovered automatically, providing real-time observability so humans can monitor execution, and building lifecycle quality gates so coding tasks produce verifiable outputs.
+The Space workflow system already has substantial infrastructure. This plan focuses on the **gaps that prevent a user from successfully defining, running, and observing a workflow to completion** -- not on Room parity.
 
-This plan is organized into milestones that deliver minimum viable workflow execution first, then progressively expand capability. Room system feature parity is covered in a brief appendix; the main body focuses exclusively on what Space needs to work end-to-end.
+## What Already Works (Codebase Baseline)
 
-> **Design Revalidation Notice:** This codebase is under active development. File paths, interfaces, and implementation patterns referenced in this plan may have changed since the analysis date (2026-03-24). **Agents working on tasks must revalidate the design against the current code before implementing.** This includes verifying that referenced files still exist, interfaces still match, and integration points are still correct. If you encounter discrepancies, update the task specification accordingly and flag the change in the PR description.
+The following are confirmed implemented and working:
 
----
+| Layer | Component | Key File(s) |
+|-------|-----------|-------------|
+| **Definition** | Workflow type system (nodes, transitions, conditions, channels, rules, layout) | `packages/shared/src/types/space.ts` |
+| **Definition** | Repository CRUD with JSON columns for agents/channels | `packages/daemon/src/storage/repositories/space-workflow-repository.ts` |
+| **Definition** | Manager validation (unique name, agent refs, graph integrity, channel refs) | `packages/daemon/src/lib/space/managers/space-workflow-manager.ts` |
+| **Definition** | 3 built-in templates (Coding 4-node, Research 2-node, Review-Only 1-node) | `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` |
+| **Definition** | Visual drag-drop editor with canvas, serialization, layout | `packages/web/src/components/space/visual-editor/` |
+| **Definition** | Export/import (`SpaceExportBundle`, agent + workflow portability) | `packages/daemon/src/lib/space/export-format.ts` |
+| **Execution** | `WorkflowExecutor` -- graph nav, 4 condition types, iteration cap, retry | `packages/daemon/src/lib/space/runtime/workflow-executor.ts` |
+| **Execution** | `SpaceRuntime` -- tick loop, executor rehydration, task spawning | `packages/daemon/src/lib/space/runtime/space-runtime.ts` |
+| **Execution** | `TaskAgentManager` -- session hierarchy, spawn/rehydrate/cleanup | `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` |
+| **Execution** | 7 MCP tools: spawn_step_agent, check_step_status, advance_workflow, report_result, request_human_input, list_group_members, send_message | `packages/daemon/src/lib/space/tools/task-agent-tools.ts` |
+| **Execution** | `ChannelResolver` -- per-step channel topology validation | `packages/daemon/src/lib/space/runtime/channel-resolver.ts` |
+| **Execution** | `SessionNotificationSink` -- deferred event delivery to Space Agent | `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` |
+| **Persistence** | Tables: space_workflows, space_workflow_runs, space_tasks, space_session_groups, space_session_group_members | `packages/daemon/src/storage/schema/migrations.ts` |
+| **Frontend** | SpaceStore with workflow/workflowRun signals, DaemonHub events | `packages/web/src/lib/space-store.ts` |
+| **Frontend** | WorkflowEditor, WorkflowList, WorkflowNodeCard, WorkflowRulesEditor | `packages/web/src/components/space/` |
+| **RPC** | spaceWorkflow.*, spaceWorkflowRun.*, spaceTask.*, spaceTaskMessage.* | `packages/daemon/src/lib/rpc-handlers/space-*-handlers.ts` |
 
-## What Already Works
+## Identified Real Gaps
 
-The Space system has substantial working infrastructure. Here is what is in place today:
+### Critical (blocks basic end-to-end execution)
 
-| Primitive | Status | Implementation |
-|-----------|--------|----------------|
-| Workflow definition (graph model) | Working | `SpaceWorkflow` with `WorkflowNode[]`, `WorkflowTransition[]`, `WorkflowRule[]` |
-| Visual workflow editor | Working | `VisualWorkflowEditor` with drag-drop canvas, node config, edge conditions |
-| Workflow execution (advance) | Working | `WorkflowExecutor` with condition evaluation, cyclic iteration cap |
-| Task Agent orchestration | Working | `TaskAgentManager` spawns Task Agent + sub-sessions per step |
-| Condition types | Working | `always`, `human`, `condition` (shell), `task_result` (prefix match) |
-| Multi-agent parallel steps | Working | `agents[]` on nodes, `resolveNodeAgents()` normalization |
-| Channel topology | Working | `ChannelResolver` validates `canSend(fromRole, toRole)` |
-| Notification sink | Working | `NotificationSink` interface, `SessionNotificationSink` with defer delivery |
-| Built-in templates | Working | Coding (4-node cycle), Research (2-node), Review-Only (1-node) |
-| Export/Import | Working | Full agent + workflow export/import system |
-| Agent management | Working | Custom agents with roles, prompts, models; seed agents on creation |
-| Session groups | Working | `SpaceSessionGroup` with member tracking and DaemonHub events |
+1. **No "Run Workflow" UI trigger** -- `spaceWorkflowRun.start` RPC exists, `SpaceStore.startWorkflowRun()` exists, but no button or flow in the frontend to start a workflow run.
+2. **No workflow run detail view** -- `workflowRuns` signal exists in SpaceStore but no component to display a run's current step, status, tasks, or history.
+3. **No task detail/conversation view** -- SpaceTaskPane shows a task list but no detail panel with agent output, logs, or error messages.
+4. **Tick loop not persistent across daemon restarts** -- Uses `setInterval`; workflows stall if SpaceRuntimeService fails to recreate all runtimes after restart.
+5. **No dead loop detection beyond `maxIterations`** -- Cycles without `isCyclic` flag or repeated gate failures cause repeated `needs_attention` notification loops.
+6. **Rate/usage limit errors not handled at workflow level** -- Step agent errors mark group member as `failed` but no automatic retry or `rate_limited` status at run level.
 
-## What Needs to Be Built
+### High (blocks reliable real-world usage)
 
-The gaps below are ordered by impact on end-to-end workflow execution. Each gap maps to a task in the milestones.
+7. **No workflow run history inspection** -- Data exists in DB but no UI for reviewing past runs.
+8. **Human gate approval not in frontend** -- `human` condition type exists, `request_human_input` tool exists, but no UI surface to approve gates or answer questions.
+9. **No workflow pause/resume** -- Only cancel exists; no pause-and-inspect capability.
+10. **Task Agent re-orientation after restart is fragile** -- Depends on model correctly interpreting re-orientation message.
 
-| Gap | Impact | Milestone |
-|-----|--------|-----------|
-| `in_progress` cannot transition to `rate_limited`/`usage_limited` | Cannot detect or handle API rate limits | M1 |
-| Pending workflow runs lost on daemon crash | Data loss for mid-creation runs | M1 |
-| No dead loop detection on condition gates | Infinite bounce loops burn API credits | M2 |
-| Tick loop uses `setInterval` (lost on restart) | Workflow runs stall after daemon restart | M2 |
-| No error classification pipeline | All API errors treated equally, no auto-recovery | M2 |
-| No task conversation view | Humans cannot see what agents are doing | M3 |
-| No review/approval UI for `review` status tasks | No structured human feedback on work product | M3 |
-| No real-time DaemonHub events for task/run state changes | Frontend polls, stale UI | M3 |
-| No exit hooks (PR checks on step completion) | Agents can complete without creating verifiable work | M4 |
-| No advance hooks (gate enforcement) | Workflows can advance past quality checkpoints | M4 |
-| No human message routing to step agents | Cannot provide guidance mid-execution | M5 |
-| No goal/mission integration | Workflow runs disconnected from progress tracking | M6 |
-| No cron scheduling | Cannot run recurring workflows | M6 |
-| No workflow run history / activity feed | No post-hoc review of what happened | M6 |
+### Medium (blocks advanced usage)
 
----
-
-## Dependency Graph
-
-```
-M1 Tasks (Foundation)
-  Task 1: Transition map fix ──────────────────────────────────────┐
-  Task 2: Pending run rehydration ─────────────────────────────────┤
-  Task 3: Notification dedup validation ──────────────────────────┤
-                                                                  │
-M2 Tasks (Runtime Reliability)                                    │
-  Task 4: Dead loop detection ─────────────────────────────────────┤
-  Task 5: JobQueue tick persistence ──────────────────────────────┤
-  Task 6: Error classification pipeline ─────────┬─── depends on Task 1
-                                                  │
-M3 Tasks (Monitoring & Debugging)                 │
-  Task 7: Task conversation view ─────────────────┤
-  Task 8: Review/approval UI ─────────────────────┤
-  Task 9: DaemonHub real-time events ─────────────┤
-                                                  │
-M4 Tasks (Lifecycle & Quality Gates)              │
-  Task 10: Lifecycle hook design ──────── depends on Task 4
-  Task 11: Exit hooks ────────────────── depends on Task 10
-  Task 12: Advance hooks + bypass ────── depends on Task 10, 11
-                                                  │
-M5 Tasks (Human-in-the-Loop)                     │
-  Task 13: Human message routing ────── depends on Task 8
-                                                  │
-M6 Tasks (Advanced Features)                      │
-  Task 14: Goal/mission bridge design ────────────┤
-  Task 15: Goal progress wiring ─────── depends on Task 14
-  Task 16: Cron scheduling ──────────── depends on Task 5
-  Task 17: Dashboard + activity feed ─ depends on Task 15
-```
-
-**Parallelization opportunities:**
-- Tasks 1, 2, 3, 4, 5, 7, 8, 9, 14 can all start immediately (no dependencies).
-- Task 6 depends on Task 1.
-- Task 10 depends on Task 4.
-- Task 11 depends on Task 10.
-- Task 12 depends on Tasks 10, 11.
-- Task 13 depends on Task 8.
-- Task 15 depends on Task 14.
-- Task 16 depends on Task 5.
-- Task 17 depends on Task 15.
-
----
+11. **No workflow versioning** -- Editing a definition while a run is active can break the run.
+12. **No cron scheduling** -- Workflows can only be started manually.
+13. **No goal/mission integration** -- `goalId` field exists but is write-only; no bidirectional link.
+14. **No dynamic reconfiguration** -- Cannot modify running workflows.
 
 ## Milestones
 
-| # | Milestone | Tasks | Theme |
-|---|-----------|-------|-------|
-| 1 | Workflow Execution Foundation | 1, 2, 3 | Fix data model holes so workflows never silently lose state |
-| 2 | Runtime Reliability | 4, 5, 6 | Detect failures automatically, persist ticks, recover from errors |
-| 3 | Workflow Monitoring & Debugging | 7, 8, 9 | Let humans see what is happening and intervene when needed |
-| 4 | Lifecycle & Quality Gates | 10, 11, 12 | Enforce that coding work meets quality standards before advancing |
-| 5 | Human-in-the-Loop | 13 | Enable real-time guidance to step agents during execution |
-| 6 | Advanced Features | 14, 15, 16, 17 | Goal integration, recurring workflows, dashboard polish |
+| # | Milestone | Goal | Tasks |
+|---|-----------|------|-------|
+| 1 | **Workflow Execution MVP** | User can define, save, and run a workflow to completion from the UI | 6 |
+| 2 | **Workflow Reliability** | Workflows survive errors, restarts, and edge cases | 5 |
+| 3 | **Workflow Monitoring and Debugging** | Users can see what workflows are doing in real time | 5 |
+| 4 | **Human-in-the-Loop** | Humans can approve gates and interact with running workflows | 4 |
+| 5 | **Advanced Workflow Features** | Versioning, scheduling, goal integration, templates | 5 |
 
----
+**Total: 25 tasks across 5 milestones. Estimated 22 coder sessions + 3 general/design sessions.**
 
-## Total Task Count
+## Cross-Milestone Dependencies
 
-**17 tasks** across 6 milestones. Estimated **8 coder sessions + 1 general session** (Task 10 is design-only).
+```
+M1 (MVP)
+  +--> M2 (Reliability)  -- can start after MVP is working
+  +--> M3 (Monitoring)   -- can start after MVP is working (in parallel with M2)
+        +--> M4 (Human-in-the-Loop) -- needs monitoring to be useful
+M2 +--> M5 (Advanced)     -- needs reliability to be stable
+M4 +--> M5 (Advanced)
+```
 
----
+## Key Sequencing Decisions
 
-## Milestone Files
+1. **Task 1.1 (Run trigger) is THE most important task** -- without it, nothing can be tested end-to-end.
+2. **Task 1.2 (Run detail view) before Task 1.3 (Task detail view)** -- users need to see run progress first.
+3. **Dead loop detection (Task 2.1) before rate limit handling (Task 2.2)** -- dead loops are more common and damaging.
+4. **Notification events (Task 3.1) before run history (Task 3.3)** -- real-time is more valuable for debugging.
 
-Each milestone has its own detailed task specification file. Agents working on tasks must **revalidate the design against the current codebase** before implementing -- file paths, interfaces, and integration points may have changed since the analysis date.
-
-- [`01-workflow-execution-foundation.md`](01-workflow-execution-foundation.md) -- M1: Fix data model holes (Tasks 1, 2, 3)
-- [`02-runtime-reliability.md`](02-runtime-reliability.md) -- M2: Error detection + persistent ticks (Tasks 4, 5, 6)
-- [`03-monitoring-debugging.md`](03-monitoring-debugging.md) -- M3: Task views + review UI + real-time events (Tasks 7, 8, 9)
-- [`04-lifecycle-quality-gates.md`](04-lifecycle-quality-gates.md) -- M4: Exit hooks + advance hooks (Tasks 10, 11, 12)
-- [`05-human-in-the-loop.md`](05-human-in-the-loop.md) -- M5: Human message routing (Task 13)
-- [`06-advanced-features.md`](06-advanced-features.md) -- M6: Goals + cron + dashboard (Tasks 14, 15, 16, 17)
-- [`07-room-parity-reference.md`](07-room-parity-reference.md) -- Appendix: Room parity analysis for reference
-
----
-
-## Architecture Overview
+## Architecture Diagram
 
 ```
 Human (browser)
   |
   v
 Space UI (Preact + Signals)
-  |-- VisualWorkflowEditor  (define workflows)
-  |-- SpaceDashboard        (monitor execution)
-  |-- SpaceTaskPane         (inspect tasks)
-  |-- SpaceTaskReviewBar    (approve/reject work)
+  |-- VisualWorkflowEditor  (define workflows -- WORKS)
+  |-- [NEW] WorkflowRunView (monitor execution -- Task 1.2)
+  |-- [NEW] TaskDetailView   (inspect agent output -- Task 1.3)
+  |-- [NEW] HumanGateDialog  (approve gates -- Task 4.2)
   |
   v  (MessageHub RPC + pub/sub)
 Daemon
   |
-  |-- SpaceRuntimeService  (lifecycle: start/stop shared runtime)
-  |     |
-  |     |-- SpaceRuntime   (tick loop, executor management)
-  |     |     |-- WorkflowExecutor   (graph navigation, condition eval)
-  |     |     |-- NotificationSink   (event delivery to Space Agent)
-  |     |
-  |     |-- TaskAgentManager  (spawn Task Agent + sub-sessions)
-  |     |     |-- Task Agent session  (orchestrates via MCP tools)
-  |     |     |     |-- Sub-session (step agent: planner/coder/general/custom)
-  |     |     |-- ChannelResolver  (messaging permissions)
-  |     |
-  |     |-- SpaceTaskManager   (task CRUD, status transitions)
-  |     |-- SpaceWorkflowManager (workflow definition CRUD)
-  |     |-- SpaceAgentManager  (agent definition CRUD)
+  |-- SpaceRuntimeService  (lifecycle management)
+  |     |-- SpaceRuntime     (tick loop, executor management)
+  |     |     |-- WorkflowExecutor   (graph navigation)
+  |     |     |-- NotificationSink   (event delivery)
+  |     |-- TaskAgentManager  (Task Agent + sub-sessions)
+  |     |-- ChannelResolver   (messaging permissions)
   |
-  |-- DaemonHub  (event bus: session.updated, spaceSessionGroup.*, etc.)
-  |-- MessageHub  (WebSocket RPC + pub/sub to web client)
+  |-- DaemonHub  (event bus)
+  |-- MessageHub  (WebSocket RPC)
 ```
+
+## Milestone Files
+
+- [`01-workflow-execution-mvp.md`](01-workflow-execution-mvp.md) -- M1: Run trigger + views + basic e2e
+- [`02-workflow-reliability.md`](02-workflow-reliability.md) -- M2: Dead loops, persistence, rate limits, error handling
+- [`03-workflow-monitoring-debugging.md`](03-workflow-monitoring-debugging.md) -- M3: Real-time events, run history, task inspection
+- [`04-human-in-the-loop.md`](04-human-in-the-loop.md) -- M4: Gate approval, message routing, pause/resume
+- [`05-advanced-workflow-features.md`](05-advanced-workflow-features.md) -- M5: Versioning, cron, goals, templates
+- [`06-room-parity-reference.md`](06-room-parity-reference.md) -- Appendix: Room parity brief reference
