@@ -10,6 +10,7 @@
 
 import type { Room, McpServerConfig, RuntimeState, GlobalSettings } from '@neokai/shared';
 import type { SettingsManager } from '../../settings-manager';
+import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../../storage/job-queue-processor';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -53,6 +54,8 @@ export interface RoomRuntimeServiceConfig {
 	getGlobalSettings: () => GlobalSettings;
 	/** Settings manager for reading project-configured MCP servers */
 	settingsManager: SettingsManager;
+	/** Application-level MCP lifecycle manager — provides registry-sourced MCP configs */
+	appMcpManager?: AppMcpLifecycleManager;
 	/** Reactive database wrapper for change event emission */
 	reactiveDb: ReactiveDatabase;
 	/**
@@ -72,6 +75,8 @@ export class RoomRuntimeService {
 	private observers = new Map<string, SessionObserver>();
 	private agentSessions = new Map<string, AgentSession>();
 	private unsubscribers: Array<() => void> = [];
+	/** Stores the room-agent-tools McpServerConfig per room for hot-reload on registry changes */
+	private roomAgentMcpServers = new Map<string, McpServerConfig>();
 
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
 
@@ -157,6 +162,7 @@ export class RoomRuntimeService {
 		runtime.stop();
 		this.runtimes.delete(roomId);
 		this.observers.delete(roomId);
+		this.roomAgentMcpServers.delete(roomId);
 		this.persistRuntimePreference(roomId, 'stopped');
 		return true;
 	}
@@ -177,6 +183,9 @@ export class RoomRuntimeService {
 			}
 			this.runtimes.delete(roomId);
 			this.observers.delete(roomId);
+			// Clear the cached room-agent-tools server; createOrGetRuntime() →
+			// setupRoomAgentSession() will repopulate it for the fresh runtime.
+			this.roomAgentMcpServers.delete(roomId);
 		}
 
 		// Create a fresh runtime - autoStart=true starts it immediately
@@ -192,6 +201,7 @@ export class RoomRuntimeService {
 		this.runtimes.clear();
 		this.observers.clear();
 		this.agentSessions.clear();
+		this.roomAgentMcpServers.clear();
 
 		for (const unsub of this.unsubscribers) {
 			unsub();
@@ -505,6 +515,10 @@ export class RoomRuntimeService {
 			runtimeService: this,
 		}) as unknown as McpServerConfig;
 
+		// Cache the room-agent-tools server so the mcp.registry.changed handler can
+		// include it when re-applying MCP configs to live sessions.
+		this.roomAgentMcpServers.set(room.id, roomAgentMcpServer);
+
 		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate
 		// DaemonHub subscriptions and duplicate query execution.
 		void this.ctx.sessionManager
@@ -535,12 +549,23 @@ export class RoomRuntimeService {
 					}
 				}
 
-				// Merge user/project-configured MCP servers with the room-agent-tools server so the
-				// room agent can use GitHub MCP, etc. for coordination tasks.
-				// room-agent-tools is placed last to ensure it always takes precedence.
-				const enabledMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+				// Merge MCP servers from three sources into a single map for the room chat session:
+				//   1. File-based servers (from .mcp.json / settings.json via SettingsManager)
+				//   2. Registry-based servers (application-level entries from AppMcpLifecycleManager)
+				//   3. room-agent-tools (in-process server for room coordination)
+				//
+				// Merge order: file-based first, registry-based second (wins over file-based on
+				// name collision), then room-agent-tools last so it ALWAYS takes precedence.
+				// This guarantees room coordination tools are never shadowed by user-configured servers.
+				//
+				// Note: setRuntimeMcpServers() replaces the config used for the NEXT query; it does
+				// NOT restart any in-flight query. This is intentional — MCP server changes between
+				// queries are the expected use case, and disrupting an active query is not safe.
+				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+				const registryMcpServers = this.ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
 				roomChatSession.setRuntimeMcpServers({
-					...enabledMcpServers,
+					...fileMcpServers,
+					...registryMcpServers,
 					'room-agent-tools': roomAgentMcpServer,
 				});
 				// Inject the room chat system prompt so the agent knows the proper
@@ -611,6 +636,48 @@ export class RoomRuntimeService {
 			this.runtimes.get(event.roomId)?.onTaskStatusChanged(event.task.id);
 		});
 		this.unsubscribers.push(unsubTaskUpdate);
+
+		// mcp.registry.changed — re-apply MCP configs to all live room chat sessions when the
+		// application-level registry changes (entry created/updated/deleted/toggled).
+		//
+		// Note: setRuntimeMcpServers() updates the config used for subsequent queries only;
+		// it does NOT interrupt a query that is already in-flight. This is sufficient because
+		// MCP server changes between queries are the expected use case.
+		const unsubMcpChanged = this.ctx.daemonHub.on(
+			'mcp.registry.changed',
+			() => {
+				// Re-read both sources inside the handler (not hoisted above the loop) so
+				// that if getEnabledMcpServersConfig() ever becomes room-scoped, it will
+				// be called per-room consistently with the initial setupRoomAgentSession path.
+				// Registry configs are global and read once — the call is cheap.
+				const registryMcpServers = this.ctx.appMcpManager?.getEnabledMcpConfigs() ?? {};
+				for (const [roomId] of this.runtimes) {
+					const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
+					const roomChatSessionId = `room:chat:${roomId}`;
+					void this.ctx.sessionManager
+						.getSessionAsync(roomChatSessionId)
+						.then((session) => {
+							if (!session) return;
+							// Merge: file-based, then registry (wins on collision), then
+							// room-agent-tools last so it ALWAYS takes precedence.
+							const merged: Record<string, McpServerConfig> = {
+								...fileMcpServers,
+								...registryMcpServers,
+							};
+							const roomAgentMcpServer = this.roomAgentMcpServers.get(roomId);
+							if (roomAgentMcpServer) {
+								merged['room-agent-tools'] = roomAgentMcpServer;
+							}
+							session.setRuntimeMcpServers(merged);
+						})
+						.catch((error) => {
+							log.warn(`Failed to re-apply MCP servers for room ${roomId}:`, error);
+						});
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubMcpChanged);
 	}
 
 	private async initializeExistingRooms(): Promise<void> {
