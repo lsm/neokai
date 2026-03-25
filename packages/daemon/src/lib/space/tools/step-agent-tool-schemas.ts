@@ -87,6 +87,20 @@ export const ReportDoneSchema = z.object({
 export type ReportDoneInput = z.infer<typeof ReportDoneSchema>;
 
 // ---------------------------------------------------------------------------
+// list_reachable_agents
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_reachable_agents` input.
+ * Lists all agents and nodes this agent can reach, grouped by within-node peers
+ * and cross-node targets. Includes gate status for cross-node targets.
+ * No arguments — the reachability graph is inferred from the agent's context.
+ */
+export const ListReachableAgentsSchema = z.object({});
+
+export type ListReachableAgentsInput = z.infer<typeof ListReachableAgentsSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -97,6 +111,7 @@ export const STEP_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
 	report_done: ReportDoneSchema,
+	list_reachable_agents: ListReachableAgentsSchema,
 } as const;
 
 export type StepAgentToolName = keyof typeof STEP_AGENT_TOOL_SCHEMAS;
