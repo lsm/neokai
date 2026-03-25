@@ -8,7 +8,13 @@
  * - `validateNodeChannels` checks that channel role references are valid.
  */
 
-import type { SpaceAgent, WorkflowChannel, WorkflowNode, WorkflowNodeAgent } from './space.ts';
+import type {
+	SpaceAgent,
+	SpaceWorkflow,
+	WorkflowChannel,
+	WorkflowNode,
+	WorkflowNodeAgent,
+} from './space.ts';
 
 // ============================================================================
 // ResolvedChannel
@@ -21,6 +27,8 @@ import type { SpaceAgent, WorkflowChannel, WorkflowNode, WorkflowNodeAgent } fro
  * Wildcard and array `to` declarations are expanded into one entry per resolved pair.
  */
 export interface ResolvedChannel {
+	/** ID of the source WorkflowChannel, if provided */
+	channelId?: string;
 	/** Role of the sending agent (matches WorkflowNodeAgent.role) */
 	fromRole: string;
 	/** Role of the receiving agent (matches WorkflowNodeAgent.role) */
@@ -31,8 +39,15 @@ export interface ResolvedChannel {
 	toAgentId: string;
 	/** Always `'one-way'` after resolution — bidirectional is split into two entries */
 	direction: 'one-way';
+	/**
+	 * True when this channel fans out to all agents in a target node
+	 * (i.e. `to` in the source WorkflowChannel was a node name, not an agent role).
+	 */
+	isFanOut?: boolean;
 	/** Optional label inherited from the source WorkflowChannel */
 	label?: string;
+	/** Inherited from the source WorkflowChannel */
+	isCyclic?: boolean;
 	/**
 	 * True when this channel belongs to a hub-spoke topology
 	 * (bidirectional source with an array `to` containing more than one role).
@@ -113,6 +128,8 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  * @returns Array of concrete `ResolvedChannel` routing rules. Empty when no channels are defined.
  * @throws {Error} When neither `agentId` nor `agents` is provided on the node
  *   (propagated from `resolveNodeAgents`). Callers should validate nodes before calling this.
+ * @deprecated Use `resolveChannels()` instead, which operates at the workflow level
+ *   and handles all channel types uniformly. This function will be removed in a future milestone.
  */
 export function resolveNodeChannels(node: WorkflowNode): ResolvedChannel[] {
 	if (!node.channels || node.channels.length === 0) return [];
@@ -213,6 +230,8 @@ function expandChannel(
  * @param agents - All `SpaceAgent` records in the Space (used to verify agentId existence).
  * @returns Array of human-readable error strings. Empty array means no errors.
  * @public
+ * @deprecated Use `validateChannels()` instead, which operates at the workflow level
+ *   and handles all channel types uniformly. This function will be removed in a future milestone.
  */
 export function validateNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): string[] {
 	const errors: string[] = [];
@@ -276,6 +295,272 @@ export function validateNodeChannels(node: WorkflowNode, agents: SpaceAgent[]): 
 				errors.push(
 					`channels[${i}].to "${toRole}" does not match any agent role in node "${node.name}". ` +
 						`Known roles: [${[...knownRoles].join(', ')}].`
+				);
+			}
+		}
+	}
+
+	return errors;
+}
+
+// ============================================================================
+// resolveChannels
+// ============================================================================
+
+/**
+ * Unified workflow-level channel resolver.
+ *
+ * Resolves all channels in the workflow (from both `workflow.channels` and
+ * `workflow.nodes[].channels`) into concrete, directional `ResolvedChannel` entries.
+ *
+ * This is the single resolution path for all channel types — within-node,
+ * cross-node, DM, and fan-out. There is no separate resolveNodeChannels call needed.
+ *
+ * Addressing semantics:
+ * - `from`/`to` values are looked up globally against `WorkflowNodeAgent.role` strings
+ *   (which must be unique across all nodes in the workflow for correct routing).
+ * - When `to` matches a **node name** (from `WorkflowNode.name`), the channel
+ *   fans out to all agents in that node (`isFanOut: true`).
+ * - When `to` matches an **agent role**, the channel is a point-to-point DM (`isFanOut: false`).
+ * - The wildcard `'*'` for `from` or `to` (as sole element) expands to all agent roles,
+ *   preserving backward compatibility with node-level channel declarations.
+ * - Bidirectional channels expand to two one-way entries.
+ * - Self-loops are skipped.
+ * - Unresolvable references are silently skipped; use `validateChannels` to surface them.
+ *
+ * @param workflow - The workflow whose channels are to be resolved.
+ * @param _agents  - Space agents (reserved for future gate/context use; not used by resolver).
+ * @returns Array of concrete `ResolvedChannel` routing rules.
+ */
+export function resolveChannels(
+	workflow: SpaceWorkflow,
+	_agents?: SpaceAgent[]
+): ResolvedChannel[] {
+	// Collect channels from workflow-level and node-level
+	const allChannels: WorkflowChannel[] = [
+		...(workflow.channels ?? []),
+		...workflow.nodes.flatMap((n) => n.channels ?? []),
+	];
+	if (allChannels.length === 0) return [];
+
+	// Build global role → agent info map and node name → agents map
+	const roleToAgent = new Map<string, { agentId: string }>();
+	const nodeNameToAgents = new Map<string, Array<{ role: string; agentId: string }>>();
+
+	for (const node of workflow.nodes) {
+		let nodeAgents: WorkflowNodeAgent[];
+		try {
+			nodeAgents = resolveNodeAgents(node);
+		} catch {
+			continue; // invalid node — validateChannels handles this
+		}
+
+		const nodeAgentList: Array<{ role: string; agentId: string }> = [];
+		for (const na of nodeAgents) {
+			roleToAgent.set(na.role, { agentId: na.agentId });
+			nodeAgentList.push({ role: na.role, agentId: na.agentId });
+		}
+		nodeNameToAgents.set(node.name, nodeAgentList);
+	}
+
+	const allRoles = [...roleToAgent.keys()];
+	const results: ResolvedChannel[] = [];
+
+	for (const channel of allChannels) {
+		expandUnifiedChannel(channel, allRoles, roleToAgent, nodeNameToAgents, results);
+	}
+
+	return results;
+}
+
+function expandUnifiedChannel(
+	channel: WorkflowChannel,
+	allRoles: string[],
+	roleToAgent: Map<string, { agentId: string }>,
+	nodeNameToAgents: Map<string, Array<{ role: string; agentId: string }>>,
+	out: ResolvedChannel[]
+): void {
+	const { from, to, direction, label } = channel;
+	const channelId = channel.id;
+	const isCyclic = channel.isCyclic;
+
+	// Resolve from-agents
+	const fromAgents = resolveAgentRef(from, allRoles, roleToAgent, nodeNameToAgents);
+
+	// Resolve to-agents and determine isFanOut
+	const toList: string[] = Array.isArray(to) ? to : [to];
+	let isFanOut = false;
+	let toAgents: Array<{ role: string; agentId: string }>;
+
+	if (toList.length === 1 && toList[0] === '*') {
+		// Wildcard: all roles (backward compat with node-level channels)
+		toAgents = allRoles.map((r) => ({ role: r, agentId: roleToAgent.get(r)!.agentId }));
+	} else if (
+		toList.length === 1 &&
+		nodeNameToAgents.has(toList[0]) &&
+		!roleToAgent.has(toList[0])
+	) {
+		// Node name (not an agent role): fan-out to all agents in that node
+		toAgents = nodeNameToAgents.get(toList[0])!;
+		isFanOut = true;
+	} else {
+		// Explicit role(s) or array: look up each individually
+		toAgents = toList.flatMap((t) => resolveAgentRef(t, allRoles, roleToAgent, nodeNameToAgents));
+	}
+
+	// Hub-spoke: single named from-agent + multiple to-agents + bidirectional
+	const isHubSpoke =
+		direction === 'bidirectional' && fromAgents.length === 1 && toAgents.length > 1;
+
+	for (const fromAgent of fromAgents) {
+		for (const toAgent of toAgents) {
+			if (fromAgent.role === toAgent.role) continue; // skip self-loops
+
+			out.push({
+				channelId,
+				fromRole: fromAgent.role,
+				toRole: toAgent.role,
+				fromAgentId: fromAgent.agentId,
+				toAgentId: toAgent.agentId,
+				direction: 'one-way',
+				label,
+				isFanOut,
+				isCyclic,
+				isHubSpoke,
+			});
+
+			if (direction === 'bidirectional') {
+				out.push({
+					channelId,
+					fromRole: toAgent.role,
+					toRole: fromAgent.role,
+					fromAgentId: toAgent.agentId,
+					toAgentId: fromAgent.agentId,
+					direction: 'one-way',
+					label,
+					isFanOut,
+					isCyclic,
+					isHubSpoke,
+				});
+			}
+		}
+	}
+}
+
+function resolveAgentRef(
+	ref: string,
+	allRoles: string[],
+	roleToAgent: Map<string, { agentId: string }>,
+	nodeNameToAgents: Map<string, Array<{ role: string; agentId: string }>>
+): Array<{ role: string; agentId: string }> {
+	if (ref === '*') {
+		return allRoles.map((r) => ({ role: r, agentId: roleToAgent.get(r)!.agentId }));
+	}
+	const agentInfo = roleToAgent.get(ref);
+	if (agentInfo) {
+		return [{ role: ref, agentId: agentInfo.agentId }];
+	}
+	const nodeAgents = nodeNameToAgents.get(ref);
+	if (nodeAgents) {
+		return [...nodeAgents];
+	}
+	return []; // unresolvable — validateChannels handles this
+}
+
+// ============================================================================
+// validateChannels
+// ============================================================================
+
+/**
+ * Validates all channel declarations in a workflow.
+ *
+ * Checks both `workflow.channels` (workflow-level) and each node's `channels` (node-level).
+ *
+ * Checks:
+ * - All node agents have `agentId` values present in the provided `agents` list.
+ * - All `WorkflowNodeAgent.role` values are globally unique across the workflow
+ *   (required for unambiguous cross-node channel routing).
+ * - `from`/`to` role strings reference either a known agent role, a known node name,
+ *   or the wildcard `'*'`.
+ * - `'*'` is not mixed with other roles in an array `to`.
+ *
+ * @param workflow - The workflow to validate.
+ * @param agents   - All `SpaceAgent` records in the Space (used to verify agentId existence).
+ * @returns Array of human-readable error strings. Empty array means no errors.
+ */
+export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]): string[] {
+	const errors: string[] = [];
+
+	const workflowChannels = workflow.channels ?? [];
+	const nodeChannels = workflow.nodes.flatMap((n) => n.channels ?? []);
+	if (workflowChannels.length === 0 && nodeChannels.length === 0) return errors;
+
+	const agentIdSet = new Set(agents.map((a) => a.id));
+	const knownRoles = new Set<string>();
+	const seenRoles = new Set<string>();
+	const knownNodeNames = new Set<string>();
+
+	for (const node of workflow.nodes) {
+		knownNodeNames.add(node.name);
+
+		let nodeAgents: WorkflowNodeAgent[];
+		try {
+			nodeAgents = resolveNodeAgents(node);
+		} catch (err) {
+			errors.push((err as Error).message);
+			continue;
+		}
+
+		for (const na of nodeAgents) {
+			if (!agentIdSet.has(na.agentId)) {
+				errors.push(
+					`Agent with id "${na.agentId}" in node "${node.name}" not found in space agents.`
+				);
+			}
+			if (seenRoles.has(na.role)) {
+				errors.push(
+					`Agent role "${na.role}" appears in multiple workflow nodes. ` +
+						'Roles must be globally unique across the workflow for unambiguous channel routing.'
+				);
+			} else {
+				seenRoles.add(na.role);
+				knownRoles.add(na.role);
+			}
+		}
+	}
+
+	const allChannels: Array<{ ch: WorkflowChannel; loc: string }> = [
+		...workflowChannels.map((ch, i) => ({ ch, loc: `workflow.channels[${i}]` })),
+		...workflow.nodes.flatMap((n, ni) =>
+			(n.channels ?? []).map((ch, ci) => ({
+				ch,
+				loc: `workflow.nodes[${ni}].channels[${ci}]`,
+			}))
+		),
+	];
+
+	for (const { ch, loc } of allChannels) {
+		if (ch.from !== '*' && !knownRoles.has(ch.from) && !knownNodeNames.has(ch.from)) {
+			errors.push(
+				`${loc}.from "${ch.from}" does not match any agent role or node name in the workflow. ` +
+					`Known roles: [${[...knownRoles].join(', ')}]. Known nodes: [${[...knownNodeNames].join(', ')}].`
+			);
+		}
+
+		const toList: string[] = Array.isArray(ch.to) ? ch.to : [ch.to];
+
+		if (toList.length > 1 && toList.includes('*')) {
+			errors.push(
+				`${loc}.to mixes wildcard '*' with explicit roles. ` +
+					"Use a plain '*' string (not an array) to target all agents."
+			);
+		}
+
+		for (const toRef of toList) {
+			if (toRef !== '*' && !knownRoles.has(toRef) && !knownNodeNames.has(toRef)) {
+				errors.push(
+					`${loc}.to "${toRef}" does not match any agent role or node name in the workflow. ` +
+						`Known roles: [${[...knownRoles].join(', ')}]. Known nodes: [${[...knownNodeNames].join(', ')}].`
 				);
 			}
 		}
