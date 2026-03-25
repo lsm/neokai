@@ -33,6 +33,7 @@ import type { SpaceSessionGroupRepository } from '../../../storage/repositories/
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
+import type { SessionChannelRouter } from '../runtime/session-channel-router';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -96,6 +97,13 @@ export interface StepAgentToolsConfig {
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
 	daemonHub?: DaemonHub;
+	/**
+	 * Optional SessionChannelRouter for unified message delivery.
+	 * When provided, send_message delegates all routing to SessionChannelRouter.
+	 * When absent, legacy topology-based routing is used directly.
+	 * TODO: Remove legacy path once TaskAgentManager injects SessionChannelRouter for all sub-sessions.
+	 */
+	channelRouter?: SessionChannelRouter;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +130,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		messageInjector,
 		taskManager,
 		daemonHub,
+		channelRouter,
 	} = config;
 
 	type GroupLoaded = {
@@ -245,43 +254,78 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		},
 
 		/**
-		 * Send a message directly to one or more peer agents.
+		 * Send a message to a peer agent by name (DM), a node by name (fan-out),
+		 * or broadcast to all permitted targets.
 		 *
-		 * Validates the requested direction(s) against the declared channel topology
-		 * before routing.
+		 * When a SessionChannelRouter is configured, delegates all routing to it.
+		 * Otherwise uses legacy topology-based routing directly.
 		 *
-		 * Target forms:
-		 *   - `target: 'coder'` — point-to-point to a single role
-		 *   - `target: '*'` — broadcast to all permitted targets
-		 *   - `target: ['coder', 'reviewer']` — multicast to multiple roles
-		 *
-		 * Fan-out one-way and hub-spoke enforcement:
-		 *   - Spokes can only send to roles where canSend(myRole, targetRole) is true
-		 *   - Hub-spoke isolation is enforced by channel topology (spoke→spoke channels
-		 *     are not declared; spokes can only reply to hub)
+		 * Validates against declared channel topology — returns an error with
+		 * available targets if not permitted.
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message } = args;
 
+			// --- New path: delegate to SessionChannelRouter when available ---
+			if (channelRouter) {
+				const result = await channelRouter.deliverMessage({
+					fromRole: myRole,
+					fromSessionId: mySessionId,
+					target,
+					message,
+				});
+
+				if (!result.success) {
+					return jsonResult({
+						success: false,
+						error: result.reason ?? 'Message delivery failed.',
+						delivered: result.delivered.length > 0 ? result.delivered : undefined,
+						failed: result.failed.length > 0 ? result.failed : undefined,
+						unauthorizedRoles: result.unauthorizedRoles,
+						permittedTargets: result.permittedTargets,
+						notFoundRoles: result.notFoundRoles,
+					});
+				}
+
+				if (result.success === 'partial') {
+					return jsonResult({
+						success: 'partial',
+						delivered: result.delivered,
+						failed: result.failed,
+						notFoundRoles: result.notFoundRoles,
+						message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
+					});
+				}
+
+				return jsonResult({
+					success: true,
+					delivered: result.delivered,
+					notFoundRoles: result.notFoundRoles,
+					message:
+						`Message delivered to ${result.delivered.length} peer(s): ` +
+						result.delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
+						'.',
+				});
+			}
+
+			// --- Legacy path: direct topology-based routing (no ChannelRouter injected) ---
 			const loaded = loadGroupAndResolver();
 			if (!loaded.ok) return loaded.error;
 			const { group, resolver } = loaded;
 
-			// When no channel topology is declared for this step, all send_message calls fail.
 			if (resolver.isEmpty()) {
 				return jsonResult({
 					success: false,
 					error:
-						`No channel topology declared for this step. ` +
-						`Direct messaging via send_message is not available.`,
+						'No channel topology declared for this step. ' +
+						'Direct messaging via send_message is not available.',
 				});
 			}
 
-			// Resolve target roles from the target argument
+			// Resolve target roles
 			let targetRoles: string[];
 
 			if (target === '*') {
-				// Broadcast: expand to all permitted targets
 				const permitted = resolver.getPermittedTargets(myRole);
 				if (permitted.length === 0) {
 					return jsonResult({
@@ -293,15 +337,11 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 					});
 				}
 				targetRoles = permitted;
-			} else if (Array.isArray(target)) {
-				// Multicast: validate each requested role
-				targetRoles = target;
 			} else {
-				// Point-to-point: single role
 				targetRoles = [target];
 			}
 
-			// Validate all requested target roles against channel topology
+			// Validate authorization
 			const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend(myRole, role));
 			if (unauthorizedRoles.length > 0) {
 				const permittedTargets = resolver.getPermittedTargets(myRole);
@@ -315,7 +355,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 				});
 			}
 
-			// Find peer sessions for each target role (exclude self and task-agent)
+			// Find peer sessions
 			const peers = group.members.filter(
 				(m) => m.sessionId !== mySessionId && m.role !== 'task-agent'
 			);
@@ -323,10 +363,6 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
 
-			// Best-effort delivery: attempt all targets, aggregate errors.
-			// This avoids the partial-delivery / stop-on-first-error problem where
-			// some peers receive the message while others don't, and the caller gets
-			// success: false despite partial delivery having already occurred.
 			for (const targetRole of targetRoles) {
 				const targetSessions = peers.filter((m) => m.role === targetRole);
 				if (targetSessions.length === 0) {
@@ -356,7 +392,6 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 			}
 
 			if (failed.length > 0) {
-				// Partial or total delivery failure — report what was and was not delivered.
 				return jsonResult({
 					success: delivered.length > 0 ? 'partial' : false,
 					delivered,
@@ -544,9 +579,9 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 		),
 		tool(
 			'send_message',
-			'Send a message directly to one or more peer agents via declared channel topology. ' +
-				"Supports point-to-point ('coder'), broadcast ('*'), and multicast (['coder','reviewer']). " +
-				'Validates against declared channels — returns an error with available channels if unauthorized.',
+			'Send a message to a peer agent by name (DM), a node by name (fan-out), or broadcast to all permitted targets. ' +
+				"Use agent role name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
+				'Validates against declared channel topology — returns an error with available targets if not permitted.',
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
 		),

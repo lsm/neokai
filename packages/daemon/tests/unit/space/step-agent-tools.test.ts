@@ -466,59 +466,6 @@ describe('step-agent-tools: send_message', () => {
 		expect(data.error).toContain('No channel topology declared');
 	});
 
-	test('multicast delivers to all specified target roles', async () => {
-		// Add a third member (security) to the group
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
-			role: 'security',
-			status: 'active',
-		});
-
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('coder', 'security'),
-		]);
-		const injected: string[] = [];
-		const config = makeConfig(ctx, {
-			workflowRunId,
-			messageInjector: async (sid) => {
-				injected.push(sid);
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_message({
-			target: ['reviewer', 'security'],
-			message: 'multicast!',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(data.delivered).toHaveLength(2);
-		expect(injected).toContain(ctx.reviewerSessionId);
-		expect(injected).toContain('session-security');
-	});
-
-	test('multicast partial authorization fails with full error', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			// no coder → security channel
-		]);
-		// Add security member
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
-			role: 'security',
-			status: 'active',
-		});
-		const config = makeConfig(ctx, { workflowRunId });
-		const handlers = createStepAgentToolHandlers(config);
-		const result = await handlers.send_message({
-			target: ['reviewer', 'security'],
-			message: 'msg',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(false);
-		expect(data.unauthorizedRoles).toContain('security');
-	});
-
 	test('hub-spoke: spoke cannot send to other spokes', async () => {
 		// Hub-spoke topology: hub ↔ coder, hub ↔ reviewer (coder cannot send to reviewer directly)
 		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
@@ -679,62 +626,6 @@ describe('step-agent-tools: send_message', () => {
 		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(false);
 		expect(data.error).toMatch(/not found/);
-	});
-
-	test('best-effort multicast: first delivery succeeds, second fails — partial success', async () => {
-		// Add security member so we can send to two different non-task-agent roles
-		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security', {
-			role: 'security',
-			status: 'active',
-		});
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('coder', 'security'),
-		]);
-
-		let callCount = 0;
-		const config = makeConfig(ctx, {
-			workflowRunId,
-			messageInjector: async (_sid, _msg) => {
-				callCount++;
-				if (callCount === 2) throw new Error('session not available');
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-
-		const result = await handlers.send_message({
-			target: ['reviewer', 'security'],
-			message: 'Hello',
-		});
-		const data = JSON.parse(result.content[0].text);
-
-		// Should NOT return success: false for total failure — it's partial
-		expect(data.success).toBe('partial');
-		expect(data.delivered).toHaveLength(1);
-		expect(data.failed).toHaveLength(1);
-		expect(data.failed[0].error).toContain('session not available');
-		// Both targets were attempted (best-effort, not stop-on-first-error)
-		expect(callCount).toBe(2);
-	});
-
-	test('best-effort multicast: all deliveries fail — success: false', async () => {
-		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-		]);
-		const config = makeConfig(ctx, {
-			workflowRunId,
-			messageInjector: async () => {
-				throw new Error('all sessions unavailable');
-			},
-		});
-		const handlers = createStepAgentToolHandlers(config);
-
-		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(false);
-		expect(data.delivered).toHaveLength(0);
-		expect(data.failed).toHaveLength(1);
 	});
 });
 
