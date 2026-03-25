@@ -24,8 +24,8 @@ const AUTOCOMPLETE_ITEM_SELECTOR = '[role="option"]';
 /**
  * Type text in the chat input field.
  *
- * Uses `fill` for plain text and `pressSequentially` for sequences that include
- * the `@` trigger character so the React-like signal-based onChange fires.
+ * Uses `pressSequentially` to dispatch individual keydown/input/keyup events,
+ * which is necessary for the @ trigger detection in useReferenceAutocomplete.
  */
 export async function typeInChatInput(page: Page, text: string): Promise<void> {
 	const textarea = page.locator(CHAT_INPUT_SELECTOR).first();
@@ -59,16 +59,16 @@ export function getReferenceAutocompleteItems(page: Page): Locator {
  * Navigate to an autocomplete item by index using keyboard and select it with Enter.
  *
  * Index is 0-based and maps to the global order of items across all groups.
- * Pressing ArrowDown `index + 1` times from the initial position selects the
- * desired item (the hook starts at index -1 / no selection before the first key).
+ * The hook initializes `selectedIndex` to `0`, so index 0 is already selected
+ * when the dropdown opens. Pressing ArrowDown N times moves to index N.
  *
  * @param page - Playwright page
  * @param index - 0-based index of the item to select
  */
 export async function selectReferenceByIndex(page: Page, index: number): Promise<void> {
 	const textarea = page.locator(CHAT_INPUT_SELECTOR).first();
-	// Press ArrowDown (index + 1) times to reach the target item
-	for (let i = 0; i <= index; i++) {
+	// Press ArrowDown `index` times — selectedIndex starts at 0, so N presses reaches index N.
+	for (let i = 0; i < index; i++) {
 		await textarea.press('ArrowDown');
 	}
 	await textarea.press('Enter');
@@ -144,15 +144,16 @@ export async function getMentionTokenText(page: Page, refId: string): Promise<st
 }
 
 /**
- * Hover over a mention token in the chat textarea.
+ * Hover over the chat textarea after verifying a mention token is present.
  *
- * Because `<textarea>` renders plain text without child DOM nodes, this helper
- * hovers over the textarea element itself (the only interactive target available).
- * Tests that need to verify tooltip/popover behaviour on tokens should use the
- * MentionToken component (M4) once it exists and renders rich DOM nodes.
+ * NOTE: This hovers over the entire `<textarea>` element, NOT a specific token
+ * position. Plain `<textarea>` elements render text as a single node with no
+ * per-token child elements, so per-token hover targeting is not possible here.
+ * Once the MentionToken component (M4) renders `@ref` tokens as rich DOM nodes,
+ * this helper should be updated to target those nodes instead.
  *
  * @param page - Playwright page
- * @param refId - Reference identifier (used to verify the token is present first)
+ * @param refId - Reference identifier verified to be present before hovering
  */
 export async function hoverMentionToken(page: Page, refId: string): Promise<void> {
 	await waitForMentionToken(page, refId);

@@ -108,18 +108,63 @@ export async function createGoal(
 	);
 }
 
+// ─── Delete Helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Delete a task via RPC. Best-effort — silently ignores errors so it can be
+ * used safely in afterEach without masking test failures.
+ */
+export async function deleteTask(page: Page, roomId: string, taskId: string): Promise<void> {
+	if (!taskId) return;
+	try {
+		await page.evaluate(
+			async ({ rId, tId }) => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub?.request) return;
+				await hub.request('task.delete', { roomId: rId, taskId: tId });
+			},
+			{ rId: roomId, tId: taskId }
+		);
+	} catch {
+		// Best-effort cleanup
+	}
+}
+
+/**
+ * Delete a goal via RPC. Best-effort — silently ignores errors so it can be
+ * used safely in afterEach without masking test failures.
+ */
+export async function deleteGoal(page: Page, roomId: string, goalId: string): Promise<void> {
+	if (!goalId) return;
+	try {
+		await page.evaluate(
+			async ({ rId, gId }) => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub?.request) return;
+				await hub.request('goal.delete', { roomId: rId, goalId: gId });
+			},
+			{ rId: roomId, gId: goalId }
+		);
+	} catch {
+		// Best-effort cleanup
+	}
+}
+
 // ─── Composite Setup Helpers ──────────────────────────────────────────────────
 
 /**
  * Create a room with a task via RPC. Returns both IDs.
  * For use in beforeEach setup only.
+ *
+ * @param roomName - Optional explicit room name; defaults to `"${taskTitle} Room"`
  */
 export async function createRoomWithTask(
 	page: Page,
 	taskTitle: string,
-	taskDesc = ''
+	taskDesc = '',
+	roomName?: string
 ): Promise<{ roomId: string; taskId: string }> {
-	const roomId = await createRoom(page, `${taskTitle} Room`);
+	const roomId = await createRoom(page, roomName ?? `${taskTitle} Room`);
 	const taskId = await createTask(page, roomId, taskTitle, taskDesc);
 	return { roomId, taskId };
 }
@@ -127,13 +172,16 @@ export async function createRoomWithTask(
 /**
  * Create a room with a goal via RPC. Returns both IDs.
  * For use in beforeEach setup only.
+ *
+ * @param roomName - Optional explicit room name; defaults to `"${goalTitle} Room"`
  */
 export async function createRoomWithGoal(
 	page: Page,
 	goalTitle: string,
-	goalDesc = ''
+	goalDesc = '',
+	roomName?: string
 ): Promise<{ roomId: string; goalId: string }> {
-	const roomId = await createRoom(page, `${goalTitle} Room`);
+	const roomId = await createRoom(page, roomName ?? `${goalTitle} Room`);
 	const goalId = await createGoal(page, roomId, goalTitle, goalDesc);
 	return { roomId, goalId };
 }
@@ -141,15 +189,18 @@ export async function createRoomWithGoal(
 /**
  * Create a room with both a task and a goal via RPC. Returns all IDs.
  * For use in beforeEach setup only.
+ *
+ * @param roomName - Optional explicit room name; defaults to `"${taskTitle}-${goalTitle} Room"`
  */
 export async function createRoomWithTaskAndGoal(
 	page: Page,
 	taskTitle: string,
 	goalTitle: string,
 	taskDesc = '',
-	goalDesc = ''
+	goalDesc = '',
+	roomName?: string
 ): Promise<{ roomId: string; taskId: string; goalId: string }> {
-	const roomId = await createRoom(page, `${taskTitle} Room`);
+	const roomId = await createRoom(page, roomName ?? `${taskTitle}-${goalTitle} Room`);
 	const taskId = await createTask(page, roomId, taskTitle, taskDesc);
 	const goalId = await createGoal(page, roomId, goalTitle, goalDesc);
 	return { roomId, taskId, goalId };
@@ -210,22 +261,36 @@ export async function cleanupRoom(page: Page, roomId: string): Promise<void> {
 
 /**
  * Entity IDs collected during a test for bulk cleanup.
+ *
+ * - `roomIds`: Rooms to delete. Cascades to all tasks/goals inside them.
+ * - `tasks`: Standalone tasks created in an existing room (not covered by room cascade).
+ * - `goals`: Standalone goals created in an existing room (not covered by room cascade).
+ * - `filePaths`: Workspace-relative file paths created by `createTestFile`.
  */
 export interface CreatedEntities {
 	roomIds?: string[];
+	tasks?: Array<{ roomId: string; taskId: string }>;
+	goals?: Array<{ roomId: string; goalId: string }>;
 	filePaths?: string[];
 }
 
 /**
  * Bulk cleanup of all created entities.
- * Deletes rooms (and their tasks/goals) and workspace files.
- * Best-effort — silently ignores errors.
+ *
+ * Deletes rooms (cascades tasks/goals), individual tasks/goals in existing rooms,
+ * and workspace files. Best-effort — silently ignores errors.
  */
 export async function cleanupAllCreatedEntities(
 	page: Page,
 	entities: CreatedEntities
 ): Promise<void> {
 	const roomCleanups = (entities.roomIds ?? []).map((id) => cleanupRoom(page, id));
+	const taskCleanups = (entities.tasks ?? []).map(({ roomId, taskId }) =>
+		deleteTask(page, roomId, taskId)
+	);
+	const goalCleanups = (entities.goals ?? []).map(({ roomId, goalId }) =>
+		deleteGoal(page, roomId, goalId)
+	);
 	const fileCleanups = (entities.filePaths ?? []).map((fp) => deleteTestFile(page, fp));
-	await Promise.allSettled([...roomCleanups, ...fileCleanups]);
+	await Promise.allSettled([...roomCleanups, ...taskCleanups, ...goalCleanups, ...fileCleanups]);
 }
