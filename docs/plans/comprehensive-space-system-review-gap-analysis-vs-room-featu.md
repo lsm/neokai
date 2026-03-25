@@ -468,12 +468,21 @@ Task 9 (Dedup Validation)       │
 
 - **Files to modify:**
   - `packages/daemon/src/lib/job-queue-constants.ts` -- add `SPACE_TICK = 'space.tick'`
-  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `start()` and `stop()` methods
-  - `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- handler registration
+  - `packages/daemon/src/lib/space/runtime/space-runtime.ts` -- `start()` and `stop()` methods, add `scheduleImmediateTick()` method
+  - `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` -- handler registration, config interface, `start()` method
   - `packages/daemon/src/lib/rpc-handlers/index.ts` -- bootstrap seeding
 
 - **Implementation approach:**
-  1. **Handler pattern** -- Follow `packages/daemon/src/lib/job-handlers/room-tick.handler.ts` exactly:
+  1. **Config interface change** -- Add `jobQueue` and `jobProcessor` to `SpaceRuntimeServiceConfig` (at `space-runtime-service.ts:25`). Currently the interface has `db`, `spaceManager`, `spaceAgentManager`, `spaceWorkflowManager`, `workflowRunRepo`, `taskRepo`, `taskAgentManager?`, `tickIntervalMs?`, `notificationSink?`. Add:
+     ```ts
+     export interface SpaceRuntimeServiceConfig {
+       // ... existing fields ...
+       jobQueue?: JobQueueRepository;       // NEW: for persistent tick scheduling
+       jobProcessor?: JobQueueProcessor;     // NEW: for handler registration
+     }
+     ```
+     Both fields are optional to maintain backward compatibility during migration. The `start()` method should only register the JobQueue handler when `jobQueue` and `jobProcessor` are provided.
+  2. **Handler pattern** -- Follow `packages/daemon/src/lib/job-handlers/room-tick.handler.ts` exactly:
      ```ts
      // space-tick.handler.ts
      export const DEFAULT_SPACE_TICK_INTERVAL_MS = 10_000; // 10s (Space uses faster ticks than Room's 30s)
@@ -1016,28 +1025,33 @@ Task 9 (Dedup Validation)       │
 
 - **Acceptance Criteria:** Users can create and manage goals from the Space UI.
 
-### Task 14: Space Dashboard with Goal/Task Overview
+### Task 14: Enhance Existing Space Dashboard with Goal/Task Overview
 
 - **Priority:** LOW
 - **Agent Type:** coder
 - **Dependencies:** Task 1, Task 13
-- **Description:** Create a comprehensive Space dashboard.
+- **Description:** Enhance the existing `SpaceDashboard.tsx` (already shows space overview, active run progress, and quick-action cards) with goal progress, task status summary, and recent activity feed.
 
-- **Files to create:**
-  - `packages/web/src/components/space/SpaceOverviewDashboard.tsx`
+- **Files to modify:**
+  - `packages/web/src/components/space/SpaceDashboard.tsx` -- add goal progress section, task status counts, activity feed
+  - `packages/web/src/lib/space-store.ts` -- add goal-related computed signals if needed
 
 - **Implementation approach:**
-  1. Show goal progress bars (reuse `GoalsEditor`'s progress bar component).
-  2. Show active workflow runs with status indicators.
-  3. Show task status counts (in_progress, needs_attention, completed).
-  4. Show recent activity feed (task completions, workflow transitions).
-  5. Integrate into Space navigation panel.
+  1. **Goal progress section** -- Add a collapsible "Mission Progress" panel below the existing quick-action cards. Reuse the progress bar component from `GoalsEditor.tsx` (or extract to a shared component). Show each active goal with its title, progress percentage bar, and linked Space task count.
+  2. **Task status summary** -- Add a task status breakdown row (in_progress: N, needs_attention: N, completed: N) using `spaceStore.activeTasks`, `spaceStore.standaloneTasks` computed signals.
+  3. **Recent activity feed** -- Add a compact activity feed showing the last 10 task status changes (completed, failed, needs_attention). Source from `spaceStore.tasks` sorted by `updatedAt` descending.
+  4. **Conditional rendering** -- Only show the goal section when `Task 1` integration is available (goals exist for the space's associated room). Show a placeholder "Associate a Room to track mission progress" if no goals.
+
+- **Edge cases:**
+  - Space has no associated room/goals -- show informative placeholder, not an empty section.
+  - Large number of goals -- show top 3 with "Show all" link to GoalsEditor.
+  - Dashboard already has substantial content -- new sections should be collapsible to avoid overwhelming the view.
 
 - **Testing:**
-  - Unit test: dashboard data aggregation logic.
-  - Test file: `packages/web/tests/space/SpaceOverviewDashboard.test.ts`
+  - Unit test: verify goal progress section renders when goals exist, hides when no goals.
+  - Test file: `packages/web/tests/space/SpaceDashboard.test.ts` (create or extend)
 
-- **Acceptance Criteria:** Users can see at a glance the status of all goals, workflows, and tasks within a Space.
+- **Acceptance Criteria:** Users can see at a glance the status of all goals, workflows, and tasks within a Space. Goal progress, task counts, and recent activity are visible on the existing dashboard.
 
 ---
 
