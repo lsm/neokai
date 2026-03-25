@@ -616,8 +616,8 @@ describe('ChannelRouter', () => {
 			// Both agents in NODE_B should be activated
 			expect(result.activatedTasks).toBeDefined();
 			expect(result.activatedTasks).toHaveLength(2);
-			const roles = result.activatedTasks!.map((t) => t.slotRole).sort();
-			expect(roles).toEqual(['coder-b', 'planner-b']);
+			const agentNames = result.activatedTasks!.map((t) => t.agentName).sort();
+			expect(agentNames).toEqual(['coder-b', 'planner-b']);
 		});
 
 		test('fan-out: isFanOut is false when targeting by agent role', async () => {
