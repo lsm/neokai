@@ -1,0 +1,487 @@
+/**
+ * Tests for AppMcpStore and MCP API helpers
+ *
+ * AppMcpStore tests verify:
+ * - LiveQuery snapshot populates appMcpServers signal
+ * - LiveQuery delta (added/removed/updated) updates signal correctly
+ * - WebSocket reconnect re-subscribes automatically
+ * - unsubscribe() calls liveQuery.unsubscribe and resets state
+ * - Idempotent subscribe/unsubscribe behavior
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { AppMcpServer, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
+
+type EventHandler<T = unknown> = (data: T) => void;
+
+interface MockHub {
+	_handlers: Map<string, EventHandler[]>;
+	_connectionHandlers: EventHandler[];
+	onEvent: <T>(method: string, handler: EventHandler<T>) => () => void;
+	onConnection: (handler: EventHandler<string>) => () => void;
+	request: ReturnType<typeof vi.fn>;
+	fire: <T>(method: string, data: T) => void;
+	fireConnection: (state: string) => void;
+}
+
+function createMockHub(): MockHub {
+	const _handlers = new Map<string, EventHandler[]>();
+	const _connectionHandlers: EventHandler[] = [];
+	return {
+		_handlers,
+		_connectionHandlers,
+		onEvent: <T>(method: string, handler: EventHandler<T>) => {
+			if (!_handlers.has(method)) _handlers.set(method, []);
+			_handlers.get(method)!.push(handler as EventHandler);
+			return () => {
+				const list = _handlers.get(method);
+				if (list) {
+					const i = list.indexOf(handler as EventHandler);
+					if (i >= 0) list.splice(i, 1);
+				}
+			};
+		},
+		onConnection: (handler: EventHandler<string>) => {
+			_connectionHandlers.push(handler as EventHandler);
+			return () => {
+				const i = _connectionHandlers.indexOf(handler as EventHandler);
+				if (i >= 0) _connectionHandlers.splice(i, 1);
+			};
+		},
+		request: vi.fn(),
+		fire: <T>(method: string, data: T) => {
+			for (const h of _handlers.get(method) ?? []) h(data);
+		},
+		fireConnection: (state: string) => {
+			for (const h of _connectionHandlers) h(state);
+		},
+	};
+}
+
+vi.mock('../connection-manager.ts', () => ({
+	connectionManager: {
+		getHub: vi.fn(),
+		getHubIfConnected: vi.fn(),
+	},
+}));
+
+import { connectionManager } from '../connection-manager.js';
+import { appMcpStore } from '../app-mcp-store.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeMcpServer(id: string, overrides: Partial<AppMcpServer> = {}): AppMcpServer {
+	return {
+		id,
+		name: `Server ${id}`,
+		sourceType: 'stdio',
+		command: 'npx',
+		args: ['-y', '@some/server'],
+		env: {},
+		enabled: true,
+		...overrides,
+	};
+}
+
+const SUBSCRIPTION_ID = 'mcpServers-global';
+
+// ---------------------------------------------------------------------------
+// AppMcpStore Tests
+// ---------------------------------------------------------------------------
+
+describe('AppMcpStore', () => {
+	let mockHub: MockHub;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockHub = createMockHub();
+
+		// Reset module-level state by clearing the store
+		appMcpStore.appMcpServers.value = [];
+		appMcpStore.loading.value = false;
+		// Note: we cannot fully reset private state, so tests that need a fresh
+		// store should be in separate describe blocks or use afterEach cleanup.
+
+		vi.mocked(connectionManager.getHub).mockResolvedValue(mockHub as never);
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+		vi.mocked(mockHub.request).mockResolvedValue({ ok: true });
+	});
+
+	afterEach(() => {
+		appMcpStore.unsubscribe();
+	});
+
+	// ---------------------------------------------------------------------------
+	// subscribe()
+	// ---------------------------------------------------------------------------
+
+	describe('subscribe()', () => {
+		it('should send liveQuery.subscribe request with mcpServers.global query', async () => {
+			await appMcpStore.subscribe();
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+				queryName: 'mcpServers.global',
+				params: [],
+				subscriptionId: SUBSCRIPTION_ID,
+			});
+		});
+
+		it('should set loading true while awaiting snapshot', async () => {
+			// Override getHub to control when it resolves
+			let resolveHub: (hub: MockHub) => void;
+			const hubPromise = new Promise<MockHub>((resolve) => {
+				resolveHub = (hub) => resolve(hub);
+			});
+			vi.mocked(connectionManager.getHub).mockReturnValue(hubPromise as never);
+
+			const loadingValues: boolean[] = [];
+			const unsub = appMcpStore.loading.subscribe((v) => loadingValues.push(v));
+
+			// Start subscribe but don't await yet — it will pause at getHub()
+			const subPromise = appMcpStore.subscribe();
+
+			// Resolve the hub — this schedules the continuation as a microtask
+			resolveHub!(mockHub);
+
+			// Flush microtasks so the continuation (loading.value = true) runs
+			await Promise.resolve();
+
+			// Now loading should be true (set after hub resolves but before snapshot)
+			expect(appMcpStore.loading.value).toBe(true);
+
+			// Fire snapshot to complete
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [],
+				version: 1,
+			});
+
+			await subPromise;
+			expect(appMcpStore.loading.value).toBe(false);
+
+			unsub();
+		});
+
+		it('should populate appMcpServers from snapshot rows', async () => {
+			const servers = [makeMcpServer('1'), makeMcpServer('2')];
+
+			await appMcpStore.subscribe();
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: servers,
+				version: 1,
+			});
+
+			expect(appMcpStore.appMcpServers.value).toHaveLength(2);
+			expect(appMcpStore.appMcpServers.value[0].id).toBe('1');
+			expect(appMcpStore.appMcpServers.value[1].id).toBe('2');
+		});
+
+		it('should be idempotent — second subscribe() call is no-op', async () => {
+			await appMcpStore.subscribe();
+			mockHub.request.mockClear();
+			await appMcpStore.subscribe();
+			// No new request should have been made
+			expect(mockHub.request).not.toHaveBeenCalled();
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// liveQuery.delta handling
+	// ---------------------------------------------------------------------------
+
+	describe('delta handling', () => {
+		beforeEach(async () => {
+			await appMcpStore.subscribe();
+			// Populate initial state
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeMcpServer('1'), makeMcpServer('2')],
+				version: 1,
+			});
+			expect(appMcpStore.appMcpServers.value).toHaveLength(2);
+		});
+
+		it('should add new servers from delta.added', () => {
+			mockHub.fire<LiveQueryDeltaEvent>('liveQuery.delta', {
+				subscriptionId: SUBSCRIPTION_ID,
+				added: [makeMcpServer('3')],
+				version: 2,
+			});
+
+			expect(appMcpStore.appMcpServers.value).toHaveLength(3);
+			expect(appMcpStore.appMcpServers.value.find((s) => s.id === '3')).toBeDefined();
+		});
+
+		it('should remove servers from delta.removed', () => {
+			mockHub.fire<LiveQueryDeltaEvent>('liveQuery.delta', {
+				subscriptionId: SUBSCRIPTION_ID,
+				removed: [
+					{ id: '1', name: 'Server 1', sourceType: 'stdio', enabled: true } as AppMcpServer,
+				],
+				version: 2,
+			});
+
+			expect(appMcpStore.appMcpServers.value).toHaveLength(1);
+			expect(appMcpStore.appMcpServers.value.find((s) => s.id === '1')).toBeUndefined();
+		});
+
+		it('should update existing servers from delta.updated', () => {
+			mockHub.fire<LiveQueryDeltaEvent>('liveQuery.delta', {
+				subscriptionId: SUBSCRIPTION_ID,
+				updated: [makeMcpServer('1', { name: 'Updated Server 1', enabled: false })],
+				version: 2,
+			});
+
+			const server1 = appMcpStore.appMcpServers.value.find((s) => s.id === '1');
+			expect(server1?.name).toBe('Updated Server 1');
+			expect(server1?.enabled).toBe(false);
+		});
+
+		it('should ignore delta with wrong subscriptionId', () => {
+			mockHub.fire<LiveQueryDeltaEvent>('liveQuery.delta', {
+				subscriptionId: 'other-subscription',
+				added: [makeMcpServer('99')],
+				version: 2,
+			});
+
+			expect(appMcpStore.appMcpServers.value).toHaveLength(2);
+			expect(appMcpStore.appMcpServers.value.find((s) => s.id === '99')).toBeUndefined();
+		});
+
+		it('should ignore snapshot with wrong subscriptionId', () => {
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: 'other-subscription',
+				rows: [makeMcpServer('99')],
+				version: 2,
+			});
+
+			expect(appMcpStore.appMcpServers.value).toHaveLength(2);
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// Reconnect handling
+	// ---------------------------------------------------------------------------
+
+	describe('WebSocket reconnect', () => {
+		it('should re-subscribe with same subscriptionId on reconnect', async () => {
+			await appMcpStore.subscribe();
+
+			// Simulate reconnect
+			mockHub.fireConnection('connected');
+
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+				queryName: 'mcpServers.global',
+				params: [],
+				subscriptionId: SUBSCRIPTION_ID,
+			});
+		});
+
+		it('should set loading true before re-subscribe on reconnect', async () => {
+			await appMcpStore.subscribe();
+			// Clear the request mock so we can check the loading state during reconnect
+			mockHub.request.mockClear();
+
+			const loadingValues: boolean[] = [];
+			const unsub = appMcpStore.loading.subscribe((v) => loadingValues.push(v));
+
+			mockHub.fireConnection('connected');
+
+			// Loading should have been set to true during reconnect
+			expect(loadingValues).toContain(true);
+
+			unsub();
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// unsubscribe()
+	// ---------------------------------------------------------------------------
+
+	describe('unsubscribe()', () => {
+		it('should call liveQuery.unsubscribe', async () => {
+			await appMcpStore.subscribe();
+			mockHub.request.mockClear();
+
+			appMcpStore.unsubscribe();
+
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+				subscriptionId: SUBSCRIPTION_ID,
+			});
+		});
+
+		it('should clear appMcpServers signal', async () => {
+			await appMcpStore.subscribe();
+			mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
+				subscriptionId: SUBSCRIPTION_ID,
+				rows: [makeMcpServer('1')],
+				version: 1,
+			});
+			expect(appMcpStore.appMcpServers.value).toHaveLength(1);
+
+			appMcpStore.unsubscribe();
+
+			expect(appMcpStore.appMcpServers.value).toHaveLength(0);
+		});
+
+		it('should be idempotent — second unsubscribe() call is no-op', async () => {
+			await appMcpStore.subscribe();
+			appMcpStore.unsubscribe();
+			mockHub.request.mockClear();
+
+			appMcpStore.unsubscribe();
+
+			// No request should have been made
+			expect(mockHub.request).not.toHaveBeenCalled();
+		});
+
+		it('should be safe to call before subscribe()', () => {
+			// Should not throw
+			expect(() => appMcpStore.unsubscribe()).not.toThrow();
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// API Helper Type Tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Type-level tests verifying that API helpers accept and return the correct types.
+ * These are compile-time checks expressed as runtime assertions using typed mocks.
+ */
+
+describe('MCP API helpers types', () => {
+	it('listAppMcpServers returns servers array', async () => {
+		// Mock hub with typed response
+		const mockResponse: { servers: AppMcpServer[] } = {
+			servers: [
+				{
+					id: 'srv-1',
+					name: 'fetch-mcp',
+					sourceType: 'stdio',
+					command: 'npx',
+					args: ['-y', '@tokenizin/mcp-npx-fetch'],
+					env: {},
+					enabled: true,
+				},
+			],
+		};
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { listAppMcpServers } = await import('../api-helpers.js');
+		const result = await listAppMcpServers();
+		expect(result.servers).toHaveLength(1);
+		expect(result.servers[0].id).toBe('srv-1');
+	});
+
+	it('createAppMcpServer accepts CreateAppMcpServerRequest', async () => {
+		const mockResponse: { server: AppMcpServer } = {
+			server: {
+				id: 'srv-new',
+				name: 'new-server',
+				sourceType: 'stdio',
+				command: 'npx',
+				args: ['-y', '@some/server'],
+				env: {},
+				enabled: true,
+			},
+		};
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { createAppMcpServer } = await import('../api-helpers.js');
+		const result = await createAppMcpServer({
+			name: 'new-server',
+			sourceType: 'stdio',
+			command: 'npx',
+			args: ['-y', '@some/server'],
+		});
+		expect(result.server.id).toBe('srv-new');
+	});
+
+	it('setAppMcpServerEnabled accepts id and enabled boolean', async () => {
+		const mockResponse: { server: AppMcpServer } = {
+			server: {
+				id: 'srv-1',
+				name: 'Server',
+				sourceType: 'stdio',
+				enabled: false,
+			},
+		};
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { setAppMcpServerEnabled } = await import('../api-helpers.js');
+		const result = await setAppMcpServerEnabled('srv-1', false);
+		expect(result.server.enabled).toBe(false);
+	});
+
+	it('deleteAppMcpServer accepts id string', async () => {
+		const mockResponse: { success: boolean } = { success: true };
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { deleteAppMcpServer } = await import('../api-helpers.js');
+		const result = await deleteAppMcpServer('srv-1');
+		expect(result.success).toBe(true);
+	});
+
+	it('getRoomMcpEnabled accepts roomId and returns serverIds array', async () => {
+		const mockResponse: { serverIds: string[] } = { serverIds: ['srv-1', 'srv-2'] };
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { getRoomMcpEnabled } = await import('../api-helpers.js');
+		const result = await getRoomMcpEnabled('room-1');
+		expect(result.serverIds).toEqual(['srv-1', 'srv-2']);
+	});
+
+	it('setRoomMcpEnabled accepts roomId, serverId, enabled', async () => {
+		const mockResponse: { ok: boolean } = { ok: true };
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { setRoomMcpEnabled } = await import('../api-helpers.js');
+		const result = await setRoomMcpEnabled('room-1', 'srv-1', true);
+		expect(result.ok).toBe(true);
+	});
+
+	it('resetRoomMcpToGlobal accepts roomId and returns ok', async () => {
+		const mockResponse: { ok: boolean } = { ok: true };
+
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+			request: vi.fn().mockResolvedValue(mockResponse),
+		} as never);
+
+		const { resetRoomMcpToGlobal } = await import('../api-helpers.js');
+		const result = await resetRoomMcpToGlobal('room-1');
+		expect(result.ok).toBe(true);
+	});
+
+	it('throws ConnectionNotReadyError when not connected', async () => {
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null as never);
+
+		const { listAppMcpServers } = await import('../api-helpers.js');
+		await expect(listAppMcpServers()).rejects.toThrow('Not connected to server');
+	});
+});

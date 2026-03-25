@@ -29,6 +29,9 @@ import type {
 	UpdateSessionRequest,
 	ArchiveSessionResponse,
 	GetAuthStatusResponse,
+	AppMcpServer,
+	CreateAppMcpServerRequest,
+	UpdateAppMcpServerRequest,
 } from '@neokai/shared';
 import type {
 	ProviderAuthResponse,
@@ -244,4 +247,70 @@ export async function executeSelectiveRewind(
 		'rewind.executeSelective',
 		{ sessionId, messageIds, mode }
 	);
+}
+
+// ==================== App MCP Registry Operations ====================
+
+/** List all application-level MCP servers */
+export async function listAppMcpServers(): Promise<{ servers: AppMcpServer[] }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ servers: AppMcpServer[] }>('mcp.registry.list');
+}
+
+/** Create a new application-level MCP server */
+export async function createAppMcpServer(
+	req: CreateAppMcpServerRequest
+): Promise<{ server: AppMcpServer }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ server: AppMcpServer }>('mcp.registry.create', req);
+}
+
+/** Update an application-level MCP server */
+export async function updateAppMcpServer(
+	id: string,
+	updates: UpdateAppMcpServerRequest['id'] extends string
+		? Omit<UpdateAppMcpServerRequest, 'id'>
+		: never
+): Promise<{ server: AppMcpServer }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ server: AppMcpServer }>('mcp.registry.update', { id, ...updates });
+}
+
+/** Delete an application-level MCP server */
+export async function deleteAppMcpServer(id: string): Promise<{ success: boolean }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ success: boolean }>('mcp.registry.delete', { id });
+}
+
+/** Enable or disable an application-level MCP server */
+export async function setAppMcpServerEnabled(
+	id: string,
+	enabled: boolean
+): Promise<{ server: AppMcpServer }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ server: AppMcpServer }>('mcp.registry.setEnabled', { id, enabled });
+}
+
+// ==================== Per-Room MCP Enablement Operations ====================
+
+/** Get MCP servers explicitly enabled for a room (returns IDs with per-room overrides) */
+export async function getRoomMcpEnabled(roomId: string): Promise<{ serverIds: string[] }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ serverIds: string[] }>('mcp.room.getEnabled', { roomId });
+}
+
+/** Enable or disable a specific MCP server for a room */
+export async function setRoomMcpEnabled(
+	roomId: string,
+	serverId: string,
+	enabled: boolean
+): Promise<{ ok: boolean }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ ok: boolean }>('mcp.room.setEnabled', { roomId, serverId, enabled });
+}
+
+/** Reset room MCP settings to global defaults (removes all per-room overrides) */
+export async function resetRoomMcpToGlobal(roomId: string): Promise<{ ok: boolean }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ ok: boolean }>('mcp.room.resetToGlobal', { roomId });
 }
