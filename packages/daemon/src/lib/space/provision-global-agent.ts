@@ -10,6 +10,7 @@
 
 import type { McpServerConfig } from '@neokai/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
+import type { AppMcpLifecycleManager } from '../mcp/app-mcp-lifecycle-manager';
 import type { SessionManager } from '../session-manager';
 import type { SpaceManager } from './managers/space-manager';
 import type { SpaceAgentManager } from './managers/space-agent-manager';
@@ -66,6 +67,13 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	 * message includes the spaceId and taskId so the agent can act on specific tasks.
 	 */
 	daemonHub?: DaemonHub;
+	/**
+	 * Application-level MCP lifecycle manager.
+	 * When provided, registry-sourced MCP servers are merged into the global spaces agent
+	 * session's MCP map. The in-process global-spaces-tools server takes precedence over
+	 * registry entries on name collision.
+	 */
+	appMcpManager?: AppMcpLifecycleManager;
 }
 
 /**
@@ -90,6 +98,7 @@ export async function provisionGlobalSpacesAgent(
 		db,
 		state,
 		daemonHub,
+		appMcpManager,
 	} = deps;
 
 	// Get the shared runtime (no specific space context needed for the global agent)
@@ -143,7 +152,20 @@ export async function provisionGlobalSpacesAgent(
 		state
 	);
 
+	// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
+	// in-process global-spaces-tools server. The in-process server always wins on collision
+	// since it provides the core space management tools required for the global agent.
+	const registryMcpServers = appMcpManager?.getEnabledMcpConfigs() ?? {};
+	for (const name of Object.keys(registryMcpServers)) {
+		if (name === 'global-spaces-tools') {
+			log.warn(
+				`Global spaces agent: MCP server name collision on 'global-spaces-tools' — ` +
+					`in-process server takes precedence over registry entry.`
+			);
+		}
+	}
 	existingSession.setRuntimeMcpServers({
+		...registryMcpServers,
 		'global-spaces-tools': mcpServer as unknown as McpServerConfig,
 	});
 	existingSession.setRuntimeSystemPrompt(buildGlobalSpacesAgentPrompt());

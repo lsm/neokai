@@ -46,6 +46,7 @@ import type {
 	MessageHub,
 	McpServerConfig,
 } from '@neokai/shared';
+import type { AppMcpLifecycleManager } from '../../mcp/app-mcp-lifecycle-manager';
 import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
@@ -104,6 +105,13 @@ export interface TaskAgentManagerConfig {
 	defaultModel: string;
 	/** Session group repository — used to persist SpaceSessionGroup records per task */
 	sessionGroupRepo: SpaceSessionGroupRepository;
+	/**
+	 * Application-level MCP lifecycle manager.
+	 * When provided, registry-sourced MCP servers are merged into the Task Agent session's
+	 * MCP map via setRuntimeMcpServers(). The in-process task-agent server takes precedence
+	 * over registry entries on name collision.
+	 */
+	appMcpManager?: AppMcpLifecycleManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +315,21 @@ export class TaskAgentManager {
 			// the `server` property for the live Server instance. The cast is safe because
 			// createTaskAgentMcpServer returns { server, cleanup } which satisfies the
 			// runtime shape used inside AgentSession.setRuntimeMcpServers().
+			//
+			// Merge registry-sourced MCP servers from AppMcpLifecycleManager alongside the
+			// in-process task-agent server. The task-agent server always wins on collision
+			// since it provides the core orchestration tools required for task management.
+			const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+			for (const name of Object.keys(registryMcpServers)) {
+				if (name === 'task-agent') {
+					log.warn(
+						`Task agent session ${sessionId}: MCP server name collision on 'task-agent' — ` +
+							`in-process task-agent server takes precedence over registry entry.`
+					);
+				}
+			}
 			agentSession.setRuntimeMcpServers({
+				...registryMcpServers,
 				'task-agent': mcpServer as unknown as McpServerConfig,
 			});
 
