@@ -59,6 +59,7 @@ export type SettingsSection =
 	| 'general'
 	| 'providers'
 	| 'mcp-servers'
+	| 'app-mcp-servers'
 	| 'fallback-models'
 	| 'usage'
 	| 'about';
