@@ -334,6 +334,70 @@ describe('FileIndex (Unit)', () => {
 			expect(idx.search('file.tmp')).toEqual([]);
 			expect(idx.search('keep.ts').length).toBeGreaterThan(0);
 		});
+
+		it('respects ** double-star pattern: build/**', async () => {
+			await writeFile(join(workspace, '.gitignore'), 'build/**\n');
+			await mkdir(join(workspace, 'build', 'assets'), { recursive: true });
+			await writeFile(join(workspace, 'build', 'assets', 'app.js'), '');
+			await writeFile(join(workspace, 'build', 'index.html'), '');
+			await mkdir(join(workspace, 'src'), { recursive: true });
+			await writeFile(join(workspace, 'src', 'main.ts'), '');
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			// Files inside build/ should be excluded
+			expect(idx.search('app.js')).toEqual([]);
+			expect(idx.search('index.html')).toEqual([]);
+		});
+
+		it('respects **/prefix double-star pattern at root depth', async () => {
+			// **/tests should match "tests" at root AND nested paths
+			await writeFile(join(workspace, '.gitignore'), '**/tests\n');
+			await mkdir(join(workspace, 'tests'), { recursive: true });
+			await writeFile(join(workspace, 'tests', 'foo.spec.ts'), '');
+			await mkdir(join(workspace, 'src', 'tests'), { recursive: true });
+			await writeFile(join(workspace, 'src', 'tests', 'bar.spec.ts'), '');
+			await writeFile(join(workspace, 'src', 'app.ts'), '');
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			// "tests" directories at both root and nested should be excluded
+			expect(idx.search('foo.spec.ts')).toEqual([]);
+			expect(idx.search('bar.spec.ts')).toEqual([]);
+			// Unrelated files should still be indexed
+			expect(idx.search('app.ts').length).toBeGreaterThan(0);
+		});
+
+		it('respects **/prefix double-star pattern at nested depths', async () => {
+			await writeFile(join(workspace, '.gitignore'), '**/coverage\n');
+			await mkdir(join(workspace, 'packages', 'web', 'coverage'), { recursive: true });
+			await writeFile(join(workspace, 'packages', 'web', 'coverage', 'lcov.info'), '');
+			await writeFile(join(workspace, 'packages', 'web', 'index.ts'), '');
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			expect(idx.search('lcov.info')).toEqual([]);
+			expect(idx.search('index.ts').length).toBeGreaterThan(0);
+		});
+
+		it('respects ? single-character wildcard patterns', async () => {
+			await writeFile(join(workspace, '.gitignore'), 'file?.ts\n');
+			await writeFile(join(workspace, 'file1.ts'), '');
+			await writeFile(join(workspace, 'file2.ts'), '');
+			await writeFile(join(workspace, 'fileAB.ts'), ''); // two chars — should NOT match
+			await writeFile(join(workspace, 'keep.ts'), '');
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			expect(idx.search('file1.ts')).toEqual([]);
+			expect(idx.search('file2.ts')).toEqual([]);
+			expect(idx.search('fileAB.ts').length).toBeGreaterThan(0);
+			expect(idx.search('keep.ts').length).toBeGreaterThan(0);
+		});
 	});
 
 	// ─── setIgnorePatterns ───────────────────────────────────────────────────
@@ -349,6 +413,39 @@ describe('FileIndex (Unit)', () => {
 
 			expect(idx.search('secret.key')).toEqual([]);
 			expect(idx.search('app.ts').length).toBeGreaterThan(0);
+		});
+
+		it('immediately re-filters cache when called after init', async () => {
+			await writeFile(join(workspace, 'secret.key'), '');
+			await writeFile(join(workspace, 'app.ts'), '');
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			// Both files are in the cache before pattern update
+			expect(idx.search('secret.key').length).toBeGreaterThan(0);
+			expect(idx.search('app.ts').length).toBeGreaterThan(0);
+
+			// Adding the pattern should purge matching entries immediately
+			idx.setIgnorePatterns(['*.key']);
+
+			expect(idx.search('secret.key')).toEqual([]);
+			expect(idx.search('app.ts').length).toBeGreaterThan(0);
+		});
+
+		it('refresh also removes entries matching patterns set after init', async () => {
+			await writeFile(join(workspace, 'secret.key'), '');
+			await writeFile(join(workspace, 'app.ts'), '');
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			idx.setIgnorePatterns(['*.key']);
+
+			// Trigger refresh — should not re-add the secret.key entry
+			await (idx as unknown as { runRefresh(): Promise<void> }).runRefresh();
+
+			expect(idx.search('secret.key')).toEqual([]);
 		});
 	});
 
@@ -495,6 +592,39 @@ describe('FileIndex (Unit)', () => {
 
 			// 100 searches should complete well under 1 second
 			expect(elapsed).toBeLessThan(1000);
+		});
+
+		it('indexes symlinked files', async () => {
+			const { symlink } = await import('node:fs/promises');
+			const target = join(workspace, 'real.ts');
+			const link = join(workspace, 'linked.ts');
+			await writeFile(target, '');
+			await symlink(target, link);
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			const results = idx.search('linked.ts');
+			expect(results.length).toBeGreaterThan(0);
+			expect(results[0].type).toBe('file');
+		});
+
+		it('indexes symlinked directories as folders without recursing', async () => {
+			const { symlink } = await import('node:fs/promises');
+			const targetDir = join(workspace, 'real-dir');
+			await mkdir(targetDir, { recursive: true });
+			await writeFile(join(targetDir, 'inside.ts'), '');
+
+			const linkDir = join(workspace, 'linked-dir');
+			await symlink(targetDir, linkDir);
+
+			idx = new FileIndex(workspace, NO_POLL);
+			await idx.init();
+
+			// The symlinked directory itself should appear as a folder entry
+			const results = idx.search('linked-dir');
+			expect(results.length).toBeGreaterThan(0);
+			expect(results[0].type).toBe('folder');
 		});
 	});
 });

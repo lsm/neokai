@@ -1,13 +1,19 @@
 /**
- * File Index — Workspace file tree cache with polling-based refresh.
+ * File Index -- Workspace file tree cache with polling-based refresh.
  *
  * Scans the workspace once on init(), maintains an in-memory cache of all
  * file and folder entries, and refreshes the cache incrementally via polling.
  * Designed for fast fuzzy search without recursive directory listing on every query.
+ *
+ * Notes:
+ * - Symbolic links are indexed (as file or folder depending on their target type)
+ *   but symlinked directories are NOT recursed into, to prevent infinite loops.
+ * - Calling setIgnorePatterns() immediately re-filters the cache.
+ * - The polling interval is configurable via NEOKAI_FILE_INDEX_POLL_MS (default 10000 ms).
  */
 
 import { join, normalize, relative } from 'node:path';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 
 export interface FileIndexEntry {
@@ -19,7 +25,7 @@ export interface FileIndexEntry {
 }
 
 interface IgnorePattern {
-	/** Glob pattern string (after stripping `!` prefix and `/` suffix) */
+	/** Glob pattern string (after stripping negation prefix and dir suffix) */
 	pattern: string;
 	negated: boolean;
 	/** True if the pattern only applies to directories */
@@ -52,19 +58,29 @@ function parseGitignoreLines(lines: string[]): IgnorePattern[] {
 }
 
 /**
- * Match a single path segment against a simple glob pattern.
- * Supports: `*` (any chars except `/`), `**` (any sequence), `?` (one char).
+ * Build a regex string from a glob pattern (without anchors).
+ *
+ * Supported wildcards:
+ *   "**" followed by "/" -- matches any depth including zero (e.g. tests at root or nested)
+ *   "**" elsewhere       -- matches any character sequence
+ *   "*"                  -- matches any characters except "/"
+ *   "?"                  -- matches exactly one character except "/"
+ *   other chars          -- matched literally
  */
-function matchSegment(pattern: string, segment: string): boolean {
-	// Build a regex from the glob pattern
-	let rx = '^';
+function buildGlobRegex(pattern: string): string {
+	let rx = '';
 	let i = 0;
 	while (i < pattern.length) {
 		const ch = pattern[i];
 		if (ch === '*' && pattern[i + 1] === '*') {
-			rx += '.*';
 			i += 2;
-			if (pattern[i] === '/') i++;
+			if (pattern[i] === '/') {
+				i++;
+				// "**/prefix" matches at any depth including root -- use optional group
+				rx += '(?:.*/)?';
+			} else {
+				rx += '.*';
+			}
 		} else if (ch === '*') {
 			rx += '[^/]*';
 			i++;
@@ -72,42 +88,43 @@ function matchSegment(pattern: string, segment: string): boolean {
 			rx += '[^/]';
 			i++;
 		} else {
-			// Escape regex metacharacters
-			rx += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+			// Escape standard regex metacharacters one by one (avoids regex inside regex)
+			let esc = ch;
+			if (ch === '.') esc = '\\.';
+			else if (ch === '+') esc = '\\+';
+			else if (ch === '^') esc = '\\^';
+			else if (ch === '$') esc = '\\$';
+			else if (ch === '{') esc = '\\{';
+			else if (ch === '}') esc = '\\}';
+			else if (ch === '(') esc = '\\(';
+			else if (ch === ')') esc = '\\)';
+			else if (ch === '|') esc = '\\|';
+			else if (ch === '[') esc = '\\[';
+			else if (ch === ']') esc = '\\]';
+			else if (ch === '\\') esc = '\\\\';
+			rx += esc;
 			i++;
 		}
 	}
-	rx += '$';
-	return new RegExp(rx, 'i').test(segment);
+	return rx;
 }
 
 /**
- * Match a full relative path (with `/` separators) against a glob pattern.
- * Used when the pattern itself contains a `/`.
+ * Match a single path segment against a glob pattern (no "/" in segment).
+ * Used for floating patterns that apply to any path component.
+ */
+function matchSegment(pattern: string, segment: string): boolean {
+	const rx = new RegExp('^' + buildGlobRegex(pattern) + '$', 'i');
+	return rx.test(segment);
+}
+
+/**
+ * Match a full relative path against a glob pattern.
+ * Used for anchored patterns that contain "/".
  */
 function matchFullPath(pattern: string, relPath: string): boolean {
-	let rx = '^';
-	let i = 0;
-	while (i < pattern.length) {
-		const ch = pattern[i];
-		if (ch === '*' && pattern[i + 1] === '*') {
-			rx += '.*';
-			i += 2;
-			if (pattern[i] === '/') i++;
-		} else if (ch === '*') {
-			rx += '[^/]*';
-			i++;
-		} else if (ch === '?') {
-			rx += '[^/]';
-			i++;
-		} else {
-			rx += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-			i++;
-		}
-	}
-	rx += '$';
-	const regex = new RegExp(rx, 'i');
-	return regex.test(relPath);
+	const rx = new RegExp('^' + buildGlobRegex(pattern) + '$', 'i');
+	return rx.test(relPath);
 }
 
 function shouldIgnore(relPath: string, isDirectory: boolean, patterns: IgnorePattern[]): boolean {
@@ -143,12 +160,12 @@ function shouldIgnore(relPath: string, isDirectory: boolean, patterns: IgnorePat
 
 /**
  * Score a search result. Higher is better.
- *  100 — exact name match (case-insensitive)
- *   80 — name starts with query
- *   60 — name contains query
- *   40 — any path segment contains query
- *   20 — full path contains query
- *    0 — no match
+ *  100 -- exact name match (case-insensitive)
+ *   80 -- name starts with query
+ *   60 -- name contains query (name-level matches always beat path-level)
+ *   40 -- any path segment contains query
+ *   20 -- full path contains query
+ *    0 -- no match
  */
 function scoreEntry(entry: FileIndexEntry, lowerQuery: string): number {
 	const lowerName = entry.name.toLowerCase();
@@ -226,7 +243,7 @@ export class FileIndex {
 		try {
 			entries = await readdir(absDir, { withFileTypes: true });
 		} catch {
-			// Permission errors or missing dirs — skip silently
+			// Permission errors or missing dirs -- skip silently
 			return;
 		}
 
@@ -236,17 +253,28 @@ export class FileIndex {
 
 			if (!isSafePath(this.workspacePath, relPath)) continue;
 
-			const isDir = entry.isDirectory();
+			// Resolve symlinks: stat() follows the link to get the target type.
+			// Symlinked directories are NOT recursed into to prevent infinite loops.
+			if (entry.isSymbolicLink()) {
+				try {
+					const targetStat = await stat(absPath);
+					const symType = targetStat.isDirectory() ? 'folder' : 'file';
+					if (shouldIgnore(relPath, symType === 'folder', this.allPatterns)) continue;
+					this.cache.set(relPath, { path: relPath, name: entry.name, type: symType });
+				} catch {
+					// Broken symlink -- skip
+				}
+				continue;
+			}
 
+			const isDir = entry.isDirectory();
 			if (shouldIgnore(relPath, isDir, this.allPatterns)) continue;
 
-			const indexEntry: FileIndexEntry = {
+			this.cache.set(relPath, {
 				path: relPath,
 				name: entry.name,
 				type: isDir ? 'folder' : 'file',
-			};
-
-			this.cache.set(relPath, indexEntry);
+			});
 
 			if (isDir) {
 				await this.scanDirectory(absPath);
@@ -256,8 +284,8 @@ export class FileIndex {
 
 	/**
 	 * Incremental refresh: walk the workspace and sync the cache.
-	 * Adds new entries and removes stale ones for a single directory pass.
-	 * Uses readdir with withFileTypes (no stat calls) for speed.
+	 * Adds new entries, removes stale ones, and re-evaluates existing entries
+	 * against the current ignore patterns (handles setIgnorePatterns calls).
 	 */
 	private async refreshDirectory(absDir: string, seen: Set<string>): Promise<void> {
 		let entries;
@@ -273,8 +301,23 @@ export class FileIndex {
 
 			if (!isSafePath(this.workspacePath, relPath)) continue;
 
-			const isDir = entry.isDirectory();
+			// Resolve symlinks: stat() follows the link; do NOT recurse into symlinked dirs.
+			if (entry.isSymbolicLink()) {
+				try {
+					const targetStat = await stat(absPath);
+					const symType = targetStat.isDirectory() ? 'folder' : 'file';
+					if (shouldIgnore(relPath, symType === 'folder', this.allPatterns)) continue;
+					seen.add(relPath);
+					if (!this.cache.has(relPath)) {
+						this.cache.set(relPath, { path: relPath, name: entry.name, type: symType });
+					}
+				} catch {
+					// Broken symlink -- skip
+				}
+				continue;
+			}
 
+			const isDir = entry.isDirectory();
 			if (shouldIgnore(relPath, isDir, this.allPatterns)) continue;
 
 			seen.add(relPath);
@@ -302,9 +345,17 @@ export class FileIndex {
 			const seen = new Set<string>();
 			await this.refreshDirectory(this.workspacePath, seen);
 
-			// Remove entries that no longer exist
+			// Remove entries that no longer exist on disk
 			for (const key of this.cache.keys()) {
 				if (!seen.has(key)) {
+					this.cache.delete(key);
+				}
+			}
+
+			// Re-evaluate remaining entries against current patterns.
+			// This ensures entries added before a setIgnorePatterns() call are purged.
+			for (const [key, entry] of this.cache) {
+				if (shouldIgnore(entry.path, entry.type === 'folder', this.allPatterns)) {
 					this.cache.delete(key);
 				}
 			}
@@ -315,7 +366,7 @@ export class FileIndex {
 
 	/**
 	 * Perform the initial workspace scan.
-	 * Must be called before `search()`. Starts the background polling timer.
+	 * Must be called before search(). Starts the background polling timer.
 	 */
 	async init(): Promise<void> {
 		await this.loadGitignore();
@@ -337,7 +388,7 @@ export class FileIndex {
 	 */
 	search(query: string, limit = 50): FileIndexEntry[] {
 		if (!query) {
-			// Return first `limit` entries when query is empty
+			// Return first entries when query is empty
 			const results: FileIndexEntry[] = [];
 			for (const entry of this.cache.values()) {
 				results.push(entry);
@@ -387,9 +438,18 @@ export class FileIndex {
 	/**
 	 * Set additional ignore patterns at runtime.
 	 * These are layered on top of .gitignore patterns.
+	 *
+	 * Immediately re-filters the cache: entries that now match the updated patterns
+	 * are removed from the cache right away, without waiting for the next poll.
 	 */
 	setIgnorePatterns(patterns: string[]): void {
 		this.extraPatterns = parseGitignoreLines(patterns);
+		// Re-filter the cache immediately against the updated patterns
+		for (const [key, entry] of this.cache) {
+			if (shouldIgnore(entry.path, entry.type === 'folder', this.allPatterns)) {
+				this.cache.delete(key);
+			}
+		}
 	}
 
 	/**
