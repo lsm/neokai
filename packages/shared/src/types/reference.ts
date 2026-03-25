@@ -1,20 +1,20 @@
 /**
- * Types for the @ reference system.
+ * Reference Types
  *
- * Users can type @ in chat inputs to reference tasks, goals, files, and folders.
- * References are serialized as `@ref{type:id}` in message content.
+ * Core type definitions for the @ reference system.
+ * References allow users to mention tasks, goals, files, and folders
+ * in chat inputs using @ref{type:id} syntax.
  */
 
-// ============================================================================
-// Core Types
-// ============================================================================
-
-/** The type of entity being referenced */
+/**
+ * The type of entity being referenced.
+ * Union type (not enum) following existing codebase patterns like `SessionType`.
+ */
 export type ReferenceType = 'task' | 'goal' | 'file' | 'folder';
 
 /**
- * A parsed @ mention from user input.
- * Represents a reference that has been inserted into the input field.
+ * A mention of a reference in text, as inserted by the autocomplete.
+ * Stored in message content as @ref{type:id}.
  */
 export interface ReferenceMention {
 	type: ReferenceType;
@@ -23,31 +23,28 @@ export interface ReferenceMention {
 }
 
 /**
- * A search result returned by the reference search RPC.
+ * A single result returned from the reference.search RPC.
  */
 export interface ReferenceSearchResult {
 	type: ReferenceType;
 	id: string;
-	/** Short human-readable identifier (e.g. "t-42" for tasks) */
+	/** Short human-readable ID (e.g. "t-42", "g-7") for tasks and goals */
 	shortId?: string;
+	/** Primary display text shown in the autocomplete menu */
 	displayText: string;
-	/** Secondary line shown in the autocomplete menu */
+	/** Secondary text shown below displayText (e.g. task status, file path) */
 	subtitle?: string;
 }
 
 /**
- * A resolved reference — the raw entity data retrieved for a given id.
- * The shape of `data` is polymorphic based on `type`.
+ * A resolved reference with full entity data.
  */
 export interface ResolvedReference {
 	type: ReferenceType;
 	id: string;
+	/** Polymorphic — cast based on `type` */
 	data: unknown;
 }
-
-// ============================================================================
-// Resolved Reference Variants
-// ============================================================================
 
 export interface ResolvedTaskReference extends ResolvedReference {
 	type: 'task';
@@ -59,45 +56,38 @@ export interface ResolvedGoalReference extends ResolvedReference {
 
 export interface ResolvedFileReference extends ResolvedReference {
 	type: 'file';
+	data: {
+		path: string;
+		content: string;
+	};
 }
 
 export interface ResolvedFolderReference extends ResolvedReference {
 	type: 'folder';
+	data: {
+		path: string;
+		entries: Array<{ name: string; type: 'file' | 'folder' }>;
+	};
 }
 
-// ============================================================================
-// Message Persistence
-// ============================================================================
-
 /**
- * Reference metadata stored in a message blob alongside the message text.
- * Keyed by the serialized reference string (e.g. "@ref{task:t-42}").
+ * Metadata stored in a message blob for all @ references within that message.
+ * Uses Record (not Map) because this is serialized to JSON in the sdk_message column.
  *
- * Uses `Record` rather than `Map` because this is serialized to JSON in the
- * `sdk_message` column.
+ * Key is the raw @ref{type:id} token string.
  */
 export type ReferenceMetadata = Record<
 	string,
-	{
-		type: ReferenceType;
-		id: string;
-		displayText: string;
-		/** Optional status snapshot at the time the message was sent */
-		status?: string;
-	}
+	{ type: ReferenceType; id: string; displayText: string; status?: string }
 >;
 
-// ============================================================================
-// Parsing
-// ============================================================================
-
 /**
- * Regex that matches serialized @ references in message text.
+ * Regex for parsing @ref{type:id} tokens from text.
  *
- * Format: `@ref{type:id}`
- * Example: `@ref{task:t-42}`, `@ref{goal:g-abc}`, `@ref{file:src/index.ts}`
+ * Matches: @ref{task:t-42}, @ref{goal:g-7}, @ref{file:src/foo.ts}, @ref{folder:src}
+ * Does NOT match: normal @mentions, markdown links
  *
- * Note: This regex uses the `g` flag — reset `lastIndex` or use `matchAll`
- * to avoid stale state between calls.
+ * NOTE: This regex uses the 'g' flag, so it is stateful.
+ * Always reset lastIndex to 0 (or use .exec() in a loop) before reuse.
  */
 export const REFERENCE_PATTERN = /@ref\{([^}:]+):([^}]+)\}/g;
