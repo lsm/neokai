@@ -297,6 +297,7 @@ describe('visualStateToCreateParams', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 			...overrides,
 		};
 	}
@@ -438,6 +439,7 @@ describe('visualStateToCreateParams', () => {
 			startNodeId: 'local-new',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.nodes![0].id).toBeTruthy();
@@ -451,6 +453,7 @@ describe('visualStateToCreateParams', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.nodes).toHaveLength(0);
@@ -485,6 +488,7 @@ describe('dangling edge handling', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.transitions).toHaveLength(1);
@@ -503,6 +507,7 @@ describe('dangling edge handling', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.transitions).toHaveLength(0);
@@ -539,6 +544,7 @@ describe('transition ordering', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		const t = params.transitions!;
@@ -570,6 +576,7 @@ describe('transition ordering', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		expect(params.transitions![0].order).toBe(0);
@@ -755,6 +762,7 @@ describe('visualStateToUpdateParams', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToUpdateParams(state, {
 			name: 'Updated Name',
@@ -778,6 +786,7 @@ describe('visualStateToUpdateParams', () => {
 				{ localId: 'lr1', id: undefined, name: 'New Rule', content: 'Content', appliesTo: [] },
 			],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToUpdateParams(state);
 		expect(params.rules![0].id).toBeTruthy();
@@ -859,6 +868,7 @@ describe('multi-agent step serialization', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		const step = params.nodes![0];
@@ -888,6 +898,7 @@ describe('multi-agent step serialization', () => {
 			startNodeId: 's1',
 			rules: [],
 			tags: [],
+			channels: [],
 		};
 		const params = visualStateToCreateParams(state, 'space-1', 'WF');
 		// Channels are not yet supported in visualStateToCreateParams output
@@ -939,8 +950,18 @@ describe('multi-agent step serialization', () => {
 		expect(step.agents![1].instructions).toBeUndefined();
 		// agentId should be absent for multi-agent steps
 		expect(step.agentId).toBeUndefined();
-		// Note: channels are not currently preserved through serialization
-		expect(params.channels).toBeUndefined();
+		// Workflow-level channels are preserved through serialization
+		expect(params.channels).toHaveLength(2);
+		expect(params.channels![0]).toMatchObject({
+			from: 'coder',
+			to: 'reviewer',
+			direction: 'one-way',
+		});
+		expect(params.channels![1]).toMatchObject({
+			from: 'reviewer',
+			to: ['coder', 'qa'],
+			direction: 'bidirectional',
+		});
 	});
 });
 
@@ -1212,7 +1233,7 @@ describe('per-slot agent overrides round-trip', () => {
 
 	it('role rename in visual state is reflected in serialized output', () => {
 		// Simulates the user renaming a slot role via the role input field and then saving.
-		// Channels are NOT automatically updated when a role is renamed — that is intentional.
+		// Workflow-level channels are preserved through serialization (user must update them manually).
 		const wf = makeWorkflow({
 			channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' as const }],
 			nodes: [
@@ -1240,7 +1261,12 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(node.agents![0].name).toBe('lead-coder');
 		// Override fields are preserved through the rename
 		expect(node.agents![0].model).toBe('claude-haiku-4-5-20251001');
-		// Note: channels are not currently preserved through serialization
-		expect(params.channels).toBeUndefined();
+		// Workflow-level channels are preserved through serialization
+		expect(params.channels).toHaveLength(1);
+		expect(params.channels![0]).toMatchObject({
+			from: 'task-agent',
+			to: 'coder',
+			direction: 'bidirectional',
+		});
 	});
 });

@@ -90,8 +90,8 @@ const makeOkRunner = (): CommandRunner => async () => ({ exitCode: 0 });
 // Shared agent fixtures for resolveNodeChannels tests
 // ---------------------------------------------------------------------------
 
-function makeSpaceAgent(id: string, role: string): SpaceAgent {
-	return { id, spaceId: 'space-1', name: `${role} agent`, role, createdAt: 0, updatedAt: 0 };
+function makeSpaceAgent(id: string, name: string): SpaceAgent {
+	return { id, spaceId: 'space-1', name: `${name} agent`, role: name, createdAt: 0, updatedAt: 0 };
 }
 
 // ===========================================================================
@@ -152,8 +152,8 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					id: STEP_MULTI,
 					name: 'Parallel Step',
 					agents: [
-						{ agentId: AGENT_A, role: 'coder' },
-						{ agentId: AGENT_B, role: 'reviewer' },
+						{ agentId: AGENT_A, name: 'coder' },
+						{ agentId: AGENT_B, name: 'reviewer' },
 					],
 				},
 			],
@@ -191,8 +191,8 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					id: STEP_MULTI,
 					name: 'Parallel',
 					agents: [
-						{ agentId: AGENT_A, role: 'coder' },
-						{ agentId: AGENT_B, role: 'reviewer' },
+						{ agentId: AGENT_A, name: 'coder' },
+						{ agentId: AGENT_B, name: 'reviewer' },
 					],
 				},
 			],
@@ -234,8 +234,8 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					name: 'Parallel',
 					instructions: 'Shared fallback',
 					agents: [
-						{ agentId: AGENT_A, role: 'coder', instructions: 'Agent A specific' },
-						{ agentId: AGENT_B, role: 'reviewer' }, // no per-agent instructions → uses step.instructions
+						{ agentId: AGENT_A, name: 'coder', instructions: 'Agent A specific' },
+						{ agentId: AGENT_B, name: 'reviewer' }, // no per-agent instructions → uses step.instructions
 					],
 				},
 			],
@@ -277,9 +277,9 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					id: STEP_MULTI,
 					name: 'Triple Parallel',
 					agents: [
-						{ agentId: AGENT_A, role: 'coder' },
-						{ agentId: AGENT_B, role: 'reviewer' },
-						{ agentId: AGENT_C, role: 'planner' },
+						{ agentId: AGENT_A, name: 'coder' },
+						{ agentId: AGENT_B, name: 'reviewer' },
+						{ agentId: AGENT_C, name: 'planner' },
 					],
 				},
 			],
@@ -358,8 +358,8 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					name: 'Both Present',
 					agentId: AGENT_A, // should be ignored
 					agents: [
-						{ agentId: AGENT_B, role: 'reviewer' },
-						{ agentId: AGENT_C, role: 'planner' },
+						{ agentId: AGENT_B, name: 'reviewer' },
+						{ agentId: AGENT_C, name: 'planner' },
 					], // wins
 				},
 			],
@@ -399,8 +399,8 @@ describe('WorkflowExecutor — advance() multi-agent', () => {
 					id: STEP_MULTI,
 					name: 'Parallel',
 					agents: [
-						{ agentId: AGENT_A, role: 'coder' },
-						{ agentId: AGENT_B, role: 'reviewer' },
+						{ agentId: AGENT_A, name: 'coder' },
+						{ agentId: AGENT_B, name: 'reviewer' },
 					],
 				},
 			],
@@ -507,8 +507,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Start',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder', instructions: 'Write code' },
-						{ agentId: AGENT_PLANNER, role: 'planner', instructions: 'Plan it' },
+						{ agentId: AGENT_CODER, name: 'coder', instructions: 'Write code' },
+						{ agentId: AGENT_PLANNER, name: 'planner', instructions: 'Plan it' },
 					],
 				},
 			],
@@ -537,8 +537,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Start',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder', instructions: 'Coder task' },
-						{ agentId: AGENT_PLANNER, role: 'planner', instructions: 'Planner task' },
+						{ agentId: AGENT_CODER, name: 'coder', instructions: 'Coder task' },
+						{ agentId: AGENT_PLANNER, name: 'planner', instructions: 'Planner task' },
 					],
 				},
 			],
@@ -563,8 +563,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Mixed Start',
 					agents: [
-						{ agentId: AGENT_PLANNER, role: 'planner' },
-						{ agentId: AGENT_CODER, role: 'coder' },
+						{ agentId: AGENT_PLANNER, name: 'planner' },
+						{ agentId: AGENT_CODER, name: 'coder' },
 					],
 				},
 			],
@@ -595,8 +595,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Custom Start',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_CUSTOM, role: 'my-custom-role' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_CUSTOM, name: 'my-custom-role' },
 					],
 				},
 			],
@@ -632,8 +632,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel A',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_PLANNER, role: 'planner' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_PLANNER, name: 'planner' },
 					],
 				},
 				{ id: STEP_B, name: 'Next Step', agentId: AGENT_CODER },
@@ -672,8 +672,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel A',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_PLANNER, role: 'planner' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_PLANNER, name: 'planner' },
 					],
 				},
 				{ id: STEP_B, name: 'Next Step', agentId: AGENT_CODER },
@@ -712,8 +712,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Waiting',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_PLANNER, role: 'planner' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_PLANNER, name: 'planner' },
 					],
 				},
 			],
@@ -749,8 +749,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Parallel Fail',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_PLANNER, role: 'planner' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_PLANNER, name: 'planner' },
 					],
 				},
 			],
@@ -785,9 +785,9 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 					id: STEP_A,
 					name: 'Triple Parallel',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_PLANNER, role: 'planner' },
-						{ agentId: AGENT_EXTRA, role: 'extra-role' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_PLANNER, name: 'planner' },
+						{ agentId: AGENT_EXTRA, name: 'extra-role' },
 					],
 				},
 			],
@@ -843,7 +843,7 @@ describe('resolveNodeAgents()', () => {
 	test('returns single-element array when only agentId is set', () => {
 		const step = makeStep({ agentId: 'agent-a', instructions: 'do the thing' });
 		const result = resolveNodeAgents(step);
-		expect(result).toEqual([{ agentId: 'agent-a', role: 'agent-a', instructions: 'do the thing' }]);
+		expect(result).toEqual([{ agentId: 'agent-a', name: 'agent-a', instructions: 'do the thing' }]);
 	});
 
 	test('returns agents array when agents is set and non-empty', () => {
@@ -880,10 +880,10 @@ describe('resolveNodeAgents()', () => {
 
 	test('single-element agents array works correctly', () => {
 		const step = makeStep({
-			agents: [{ agentId: 'agent-a', role: 'agent-a', instructions: 'custom' }],
+			agents: [{ agentId: 'agent-a', name: 'agent-a', instructions: 'custom' }],
 		});
 		expect(resolveNodeAgents(step)).toEqual([
-			{ agentId: 'agent-a', role: 'agent-a', instructions: 'custom' },
+			{ agentId: 'agent-a', name: 'agent-a', instructions: 'custom' },
 		]);
 	});
 
@@ -910,24 +910,24 @@ describe('resolveNodeChannels()', () => {
 
 	test('returns empty array when no channels defined', () => {
 		const step = makeStep({ agentId: 'agent-coder-id' });
-		expect(resolveNodeChannels(step)).toEqual([]);
+		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
 	});
 
 	test('returns empty array when channels is an empty array', () => {
 		const step = makeStep({ agentId: 'agent-coder-id', channels: [] });
-		expect(resolveNodeChannels(step)).toEqual([]);
+		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
 	});
 
 	// A → B one-way
 	test('A→B one-way: resolves to single directed channel', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id', role: 'coder' },
-				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(1);
 		expect(result[0]).toMatchObject({
 			fromRole: 'coder',
@@ -943,12 +943,12 @@ describe('resolveNodeChannels()', () => {
 	test('A↔B bidirectional point-to-point: resolves to two directed channels (A→B and B→A)', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id', role: 'coder' },
-				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 			],
 			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(2);
 
 		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
@@ -967,13 +967,13 @@ describe('resolveNodeChannels()', () => {
 	test('A→[B,C,D] fan-out one-way: resolves to three directed channels, no reverse', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id', role: 'coder' },
-				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
-				{ agentId: 'agent-security-id', role: 'security' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+				{ agentId: 'agent-security-id', name: 'security' },
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(2);
 
 		// All originate from coder
@@ -988,13 +988,13 @@ describe('resolveNodeChannels()', () => {
 	test('A↔[B,C,D] hub-spoke: resolves to A→B, A→C, A→D, B→A, C→A, D→A; B cannot send to C', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id', role: 'coder' },
-				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
-				{ agentId: 'agent-security-id', role: 'security' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+				{ agentId: 'agent-security-id', name: 'security' },
 			],
 			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 
 		// 2 spokes × 2 directions = 4 channels
 		expect(result).toHaveLength(4);
@@ -1019,13 +1019,13 @@ describe('resolveNodeChannels()', () => {
 	test('*→B wildcard from: resolves to channels from all agents to B', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id', role: 'coder' },
-				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
-				{ agentId: 'agent-security-id', role: 'security' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+				{ agentId: 'agent-security-id', name: 'security' },
 			],
 			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 
 		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -1037,13 +1037,13 @@ describe('resolveNodeChannels()', () => {
 	test('A→* wildcard to: resolves to channels from A to all other agents', () => {
 		const step = makeStep({
 			agents: [
-				{ agentId: 'agent-coder-id', role: 'coder' },
-				{ agentId: 'agent-reviewer-id', role: 'reviewer' },
-				{ agentId: 'agent-security-id', role: 'security' },
+				{ agentId: 'agent-coder-id', name: 'coder' },
+				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+				{ agentId: 'agent-security-id', name: 'security' },
 			],
 			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 
 		// coder→reviewer and coder→security (coder→coder self-loop skipped)
 		expect(result).toHaveLength(2);
@@ -1054,10 +1054,10 @@ describe('resolveNodeChannels()', () => {
 	// Invalid role reference → skipped silently
 	test('invalid role reference is skipped silently (does not throw)', () => {
 		const step = makeStep({
-			agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
+			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
 			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
-		const result = resolveNodeChannels(step);
+		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(0);
 	});
 });
@@ -1065,150 +1065,6 @@ describe('resolveNodeChannels()', () => {
 // ===========================================================================
 // Subtask 11: Channel validation in persistence (SpaceWorkflowManager)
 // ===========================================================================
-
-describe('Channel validation in SpaceWorkflowManager persistence', () => {
-	let db: BunDatabase;
-	let dir: string;
-	let repo: SpaceWorkflowRepository;
-
-	beforeEach(() => {
-		({ db, dir } = makeDb());
-		// Seed space so FK constraint on space_workflows.space_id is satisfied
-		seedSpace(db, 'space-1');
-		repo = new SpaceWorkflowRepository(db);
-	});
-
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			/* ignore */
-		}
-		try {
-			rmSync(dir, { recursive: true, force: true });
-		} catch {
-			/* ignore */
-		}
-	});
-
-	test('rejects channels with non-existent role references when agentLookup is provided', () => {
-		const lookup: SpaceAgentLookup = {
-			getAgentById: (_spaceId, id) => {
-				if (id === 'agent-coder-id') return { id, name: 'Coder', role: 'coder' };
-				return null;
-			},
-		};
-		const mgr = new SpaceWorkflowManager(repo, lookup);
-
-		expect(() =>
-			mgr.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad Role Ref',
-				nodes: [
-					{
-						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
-						channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('accepts valid channel role references when agentLookup is provided', () => {
-		const lookup: SpaceAgentLookup = {
-			getAgentById: (_spaceId, id) => {
-				if (id === 'agent-coder-id') return { id, name: 'Coder', role: 'coder' };
-				if (id === 'agent-reviewer-id') return { id, name: 'Reviewer', role: 'reviewer' };
-				return null;
-			},
-		};
-		const mgr = new SpaceWorkflowManager(repo, lookup);
-
-		const wf = mgr.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Valid Channel Refs',
-			nodes: [
-				{
-					name: 'Step',
-					agents: [
-						{ agentId: 'agent-coder-id', role: 'coder' },
-						{ agentId: 'agent-reviewer-id', role: 'reviewer' },
-					],
-					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
-				},
-			],
-		});
-
-		expect(wf.nodes[0].channels).toHaveLength(1);
-		expect(wf.nodes[0].channels![0]).toMatchObject({ from: 'coder', to: 'reviewer' });
-	});
-
-	test('rejects channels on single-agent steps (channels require agents[])', () => {
-		const mgr = new SpaceWorkflowManager(repo);
-
-		expect(() =>
-			mgr.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Single Agent With Channels',
-				nodes: [
-					{
-						name: 'Step',
-						agentId: 'agent-coder-id',
-						channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('rejects channel from referencing unknown role', () => {
-		const lookup: SpaceAgentLookup = {
-			getAgentById: (_spaceId, id) => {
-				if (id === 'agent-coder-id') return { id, name: 'Coder', role: 'coder' };
-				return null;
-			},
-		};
-		const mgr = new SpaceWorkflowManager(repo, lookup);
-
-		expect(() =>
-			mgr.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Bad From Role',
-				nodes: [
-					{
-						name: 'Step',
-						agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
-						channels: [{ from: 'nonexistent', to: 'coder', direction: 'one-way' }],
-					},
-				],
-			})
-		).toThrow(WorkflowValidationError);
-	});
-
-	test('accepts * wildcard in channel roles even with agentLookup', () => {
-		const lookup: SpaceAgentLookup = {
-			getAgentById: (_spaceId, id) => {
-				if (id === 'agent-coder-id') return { id, name: 'Coder', role: 'coder' };
-				return null;
-			},
-		};
-		const mgr = new SpaceWorkflowManager(repo, lookup);
-
-		const wf = mgr.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Wildcard OK',
-			nodes: [
-				{
-					name: 'Step',
-					agents: [{ agentId: 'agent-coder-id', role: 'coder' }],
-					channels: [{ from: '*', to: 'coder', direction: 'one-way' }],
-				},
-			],
-		});
-		expect(wf.nodes[0].channels).toHaveLength(1);
-	});
-});
 
 // ===========================================================================
 // Subtask 12: Mixed workflows (single-agent + multi-agent + channels)
@@ -1281,8 +1137,8 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 					id: STEP_B,
 					name: 'Implement (multi)',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_REVIEWER, name: 'reviewer' },
 					],
 				},
 				{ id: STEP_C, name: 'Finalize (single)', agentId: AGENT_PLANNER },
@@ -1330,6 +1186,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 	});
 
 	test('channels for start step are stored in run config after startWorkflowRun()', async () => {
+		// Channels are now at workflow level, not node level
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Channel Start Step ${Date.now()}`,
@@ -1338,14 +1195,12 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 					id: STEP_A,
 					name: 'Parallel With Channels',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_REVIEWER, role: 'reviewer' },
-					],
-					channels: [
-						{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'review-request' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_REVIEWER, name: 'reviewer' },
 					],
 				},
 			],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'review-request' }],
 			transitions: [],
 			startNodeId: STEP_A,
 			rules: [],
@@ -1357,14 +1212,14 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		// Two tasks for the multi-agent start step
 		expect(tasks).toHaveLength(2);
 
-		// storeResolvedChannels called for start step (space-runtime.ts:365)
+		// resolveAndStoreChannels called for start step (space-runtime.ts:367)
 		// User-declared channels are stored; no auto-generated task-agent channels
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
 		const config = (updatedRun.config ?? {}) as Record<string, unknown>;
 		const resolvedChannels = config._resolvedChannels as Array<Record<string, unknown>> | undefined;
 
 		expect(resolvedChannels).toBeDefined();
-		// User-declared channel: coder → reviewer
+		// User-declared channel: coder → reviewer (resolved from workflow-level channels)
 		const userChannel = resolvedChannels!.find(
 			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
 		);
@@ -1382,6 +1237,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 	});
 
 	test('channels for non-start step are stored in run config after executeTick() advances', async () => {
+		// Channels are now at workflow level, not node level
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Channel Non-Start Step ${Date.now()}`,
@@ -1391,12 +1247,12 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 					id: STEP_B,
 					name: 'Parallel With Channels',
 					agents: [
-						{ agentId: AGENT_CODER, role: 'coder' },
-						{ agentId: AGENT_REVIEWER, role: 'reviewer' },
+						{ agentId: AGENT_CODER, name: 'coder' },
+						{ agentId: AGENT_REVIEWER, name: 'reviewer' },
 					],
-					channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'feedback' }],
 				},
 			],
+			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'feedback' }],
 			transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
 			startNodeId: STEP_A,
 			rules: [],
@@ -1405,7 +1261,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks: startTasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Step A has no user-declared channels — no channels stored
+		// Step A has no agents with matching channel names — resolved channels will be empty
 		const runAfterStart = workflowRunRepo.getRun(run.id)!;
 		const configAfterStart = (runAfterStart.config ?? {}) as Record<string, unknown>;
 		const channelsAfterStart = configAfterStart._resolvedChannels as
@@ -1414,11 +1270,11 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		// No channels auto-generated (M3 auto-generation removed)
 		expect(channelsAfterStart.length).toBe(0);
 
-		// Advance to Step B (which has channels)
+		// Advance to Step B (which has agents matching the workflow-level channels)
 		taskRepo.updateTask(startTasks[0].id, { status: 'completed' });
 		await runtime.executeTick();
 
-		// storeResolvedChannels called for step B (space-runtime.ts:783)
+		// resolveAndStoreChannels called for step B (space-runtime.ts:785)
 		// User-declared channels are stored; no auto-generated task-agent channels
 		const runAfterAdvance = workflowRunRepo.getRun(run.id)!;
 		const configAfterAdvance = (runAfterAdvance.config ?? {}) as Record<string, unknown>;
@@ -1427,7 +1283,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			| undefined;
 
 		expect(resolvedChannels).toBeDefined();
-		// User-declared channel: coder → reviewer
+		// User-declared channel: coder → reviewer (resolved from workflow-level channels)
 		const userChannel = resolvedChannels!.find(
 			(ch: Record<string, unknown>) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
 		);

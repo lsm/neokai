@@ -88,19 +88,19 @@ function makeWorkflowWithOverrides(): SpaceWorkflow {
 				agents: [
 					{
 						agentId: 'agent-1',
-						role: 'strict-reviewer',
+						name: 'strict-reviewer',
 						model: 'claude-opus-4-6',
 						systemPrompt: 'Review with extreme care.',
 					},
 					{
 						agentId: 'agent-2',
-						role: 'quick-reviewer',
+						name: 'quick-reviewer',
 						model: 'claude-haiku-4-5',
 						systemPrompt: 'Review quickly.',
 					},
 					{
 						agentId: 'agent-1',
-						role: 'coder',
+						name: 'coder',
 						// no overrides — uses agent defaults
 					},
 				],
@@ -125,8 +125,8 @@ function makeWorkflowWithoutOverrides(): SpaceWorkflow {
 				id: 'node-1',
 				name: 'Code Step',
 				agents: [
-					{ agentId: 'agent-1', role: 'coder' },
-					{ agentId: 'agent-2', role: 'reviewer' },
+					{ agentId: 'agent-1', name: 'coder' },
+					{ agentId: 'agent-2', name: 'reviewer' },
 				],
 			},
 		],
@@ -171,17 +171,17 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		expect(nodeAgents).toHaveLength(3);
 
 		// strict-reviewer slot has model override
-		const strictReviewer = nodeAgents.find((a) => a.role === 'strict-reviewer');
+		const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
 		expect(strictReviewer).toBeDefined();
 		expect(strictReviewer!.model).toBe('claude-opus-4-6');
 
 		// quick-reviewer slot has model override
-		const quickReviewer = nodeAgents.find((a) => a.role === 'quick-reviewer');
+		const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
 		expect(quickReviewer).toBeDefined();
 		expect(quickReviewer!.model).toBe('claude-haiku-4-5');
 
 		// coder slot has no model override
-		const coder = nodeAgents.find((a) => a.role === 'coder');
+		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder).toBeDefined();
 		expect(coder!.model).toBeUndefined();
 	});
@@ -206,13 +206,13 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 
 		const nodeAgents = params.nodes[0].agents!;
 
-		const strictReviewer = nodeAgents.find((a) => a.role === 'strict-reviewer');
+		const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
 		expect(strictReviewer!.systemPrompt).toBe('Review with extreme care.');
 
-		const quickReviewer = nodeAgents.find((a) => a.role === 'quick-reviewer');
+		const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
 		expect(quickReviewer!.systemPrompt).toBe('Review quickly.');
 
-		const coder = nodeAgents.find((a) => a.role === 'coder');
+		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder!.systemPrompt).toBeUndefined();
 	});
 
@@ -263,7 +263,7 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 			existingNameToId
 		);
 
-		const roles = params.nodes[0].agents!.map((a) => a.role);
+		const roles = params.nodes[0].agents!.map((a) => a.name);
 		expect(roles).toContain('strict-reviewer');
 		expect(roles).toContain('quick-reviewer');
 		expect(roles).toContain('coder');
@@ -310,12 +310,12 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 					agents: [
 						{
 							agentId: 'agent-1',
-							role: 'coder',
+							name: 'coder',
 							instructions: 'Focus on auth module only.',
 						},
 						{
 							agentId: 'agent-2',
-							role: 'reviewer',
+							name: 'reviewer',
 							// no instructions
 						},
 					],
@@ -347,10 +347,10 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
 		expect(warnings).toHaveLength(0);
 		const nodeAgents = params.nodes[0].agents!;
 
-		const coder = nodeAgents.find((a) => a.role === 'coder');
+		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder!.instructions).toBe('Focus on auth module only.');
 
-		const reviewer = nodeAgents.find((a) => a.role === 'reviewer');
+		const reviewer = nodeAgents.find((a) => a.name === 'reviewer');
 		expect(reviewer!.instructions).toBeUndefined();
 	});
 
@@ -443,17 +443,17 @@ describe('full round-trip: export → import → DB read-back', () => {
 		const nodeAgents = readBack!.nodes[0].agents!;
 		expect(nodeAgents).toHaveLength(3);
 
-		const strictReviewer = nodeAgents.find((a) => a.role === 'strict-reviewer');
+		const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
 		expect(strictReviewer).toBeDefined();
 		expect(strictReviewer!.model).toBe('claude-opus-4-6');
 		expect(strictReviewer!.systemPrompt).toBe('Review with extreme care.');
 
-		const quickReviewer = nodeAgents.find((a) => a.role === 'quick-reviewer');
+		const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
 		expect(quickReviewer).toBeDefined();
 		expect(quickReviewer!.model).toBe('claude-haiku-4-5');
 		expect(quickReviewer!.systemPrompt).toBe('Review quickly.');
 
-		const coder = nodeAgents.find((a) => a.role === 'coder');
+		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder).toBeDefined();
 		expect(coder!.model).toBeUndefined();
 		expect(coder!.systemPrompt).toBeUndefined();
@@ -522,13 +522,13 @@ describe('full round-trip: export → import → DB read-back', () => {
 					agents: [
 						{
 							agentId: 'agent-1',
-							role: 'strict-coder',
+							name: 'strict-coder',
 							model: 'claude-opus-4-6',
 							systemPrompt: 'Write perfect code.',
 						},
 						{
 							agentId: 'agent-1',
-							role: 'fast-coder',
+							name: 'fast-coder',
 							model: 'claude-haiku-4-5',
 							systemPrompt: 'Write quick code.',
 						},
@@ -549,10 +549,10 @@ describe('full round-trip: export → import → DB read-back', () => {
 		const exportedAgents = exported.nodes[0].agents!;
 		expect(exportedAgents).toHaveLength(2);
 		expect(exportedAgents[0].agentRef).toBe('Coder Agent');
-		expect(exportedAgents[0].role).toBe('strict-coder');
+		expect(exportedAgents[0].name).toBe('strict-coder');
 		expect(exportedAgents[0].model).toBe('claude-opus-4-6');
 		expect(exportedAgents[1].agentRef).toBe('Coder Agent');
-		expect(exportedAgents[1].role).toBe('fast-coder');
+		expect(exportedAgents[1].name).toBe('fast-coder');
 		expect(exportedAgents[1].model).toBe('claude-haiku-4-5');
 
 		// Build import params and persist
@@ -575,12 +575,12 @@ describe('full round-trip: export → import → DB read-back', () => {
 		const nodeAgents = readBack!.nodes[0].agents!;
 		expect(nodeAgents).toHaveLength(2);
 
-		const strictCoder = nodeAgents.find((a) => a.role === 'strict-coder');
+		const strictCoder = nodeAgents.find((a) => a.name === 'strict-coder');
 		expect(strictCoder!.agentId).toBe('agent-1');
 		expect(strictCoder!.model).toBe('claude-opus-4-6');
 		expect(strictCoder!.systemPrompt).toBe('Write perfect code.');
 
-		const fastCoder = nodeAgents.find((a) => a.role === 'fast-coder');
+		const fastCoder = nodeAgents.find((a) => a.name === 'fast-coder');
 		expect(fastCoder!.agentId).toBe('agent-1');
 		expect(fastCoder!.model).toBe('claude-haiku-4-5');
 		expect(fastCoder!.systemPrompt).toBe('Write quick code.');
@@ -602,12 +602,12 @@ describe('full round-trip: export → import → DB read-back', () => {
 					agents: [
 						{
 							agentId: 'agent-1',
-							role: 'coder',
+							name: 'coder',
 							instructions: 'Focus on auth module only.',
 						},
 						{
 							agentId: 'agent-2',
-							role: 'reviewer',
+							name: 'reviewer',
 							// no instructions
 						},
 					],
@@ -643,10 +643,10 @@ describe('full round-trip: export → import → DB read-back', () => {
 		expect(readBack).not.toBeNull();
 
 		const nodeAgents = readBack!.nodes[0].agents!;
-		const coder = nodeAgents.find((a) => a.role === 'coder');
+		const coder = nodeAgents.find((a) => a.name === 'coder');
 		expect(coder!.instructions).toBe('Focus on auth module only.');
 
-		const reviewer = nodeAgents.find((a) => a.role === 'reviewer');
+		const reviewer = nodeAgents.find((a) => a.name === 'reviewer');
 		expect(reviewer!.instructions).toBeUndefined();
 	});
 });

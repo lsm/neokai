@@ -87,6 +87,8 @@ export interface VisualEditorState {
 	startNodeId: string;
 	rules: RuleDraft[];
 	tags: string[];
+	/** Directed messaging channels at the workflow level. */
+	channels: WorkflowChannel[];
 }
 
 // ============================================================================
@@ -164,6 +166,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		startNodeId: startKey,
 		rules: rulesToDrafts(workflow.rules ?? []),
 		tags: workflow.tags ?? [],
+		channels: workflow.channels ?? [],
 	};
 }
 
@@ -398,7 +401,15 @@ function buildWorkflowFields(state: VisualEditorState): {
 		}));
 
 	return {
-		fields: { nodes, transitions, startNodeId, rules, layout, tags: state.tags },
+		fields: {
+			nodes,
+			transitions,
+			startNodeId,
+			rules,
+			layout,
+			tags: state.tags,
+			channels: state.channels,
+		},
 		keyToPersistedId,
 	};
 }
@@ -430,6 +441,7 @@ export function visualStateToCreateParams(
 		rules: fields.rules.map(({ id: _id, ...rest }) => rest),
 		layout: fields.layout,
 		tags: fields.tags,
+		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
 	};
 }
 
@@ -459,5 +471,6 @@ export function visualStateToUpdateParams(
 		})),
 		layout: fields.layout,
 		tags: fields.tags,
+		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
 	};
 }

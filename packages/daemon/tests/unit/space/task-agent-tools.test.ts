@@ -1932,7 +1932,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 					agents: [
 						{
 							agentId,
-							role: 'strict-reviewer', // slot role differs from SpaceAgent.role ('coder')
+							name: 'strict-reviewer', // slot name differs from SpaceAgent.role ('coder')
 						},
 					],
 				},
@@ -1995,7 +1995,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 					agents: [
 						{
 							agentId,
-							role: 'fast-coder',
+							name: 'fast-coder',
 							model: overrideModel, // slot-level model override
 						},
 					],
@@ -2041,7 +2041,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 					agents: [
 						{
 							agentId,
-							role: 'security-reviewer',
+							name: 'security-reviewer',
 							systemPrompt: overridePrompt, // slot-level systemPrompt override
 						},
 					],
@@ -2090,8 +2090,8 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 					id: stepId,
 					name: 'Dual Instance Step',
 					agents: [
-						{ agentId, role: 'strict-reviewer' },
-						{ agentId, role: 'quick-reviewer' },
+						{ agentId, name: 'strict-reviewer' },
+						{ agentId, name: 'quick-reviewer' },
 					],
 				},
 			],
@@ -2147,7 +2147,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 				{
 					id: stepId,
 					name: 'Single Agent Step',
-					agents: [{ agentId, role: 'reviewer', model: 'claude-opus-4-6' }],
+					agents: [{ agentId, name: 'reviewer', model: 'claude-opus-4-6' }],
 				},
 			],
 			transitions: [],

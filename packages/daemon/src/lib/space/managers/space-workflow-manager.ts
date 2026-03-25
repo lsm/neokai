@@ -281,6 +281,11 @@ export class SpaceWorkflowManager {
 					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
 				}
 			}
+
+			// Validate gate condition if present
+			if (ch.gate) {
+				this.validateCondition(ch.gate, `${loc}.gate`);
+			}
 		}
 	}
 

@@ -26,6 +26,7 @@ import type {
 	WorkflowNode,
 	WorkflowTransition,
 	WorkflowConditionType,
+	WorkflowChannel,
 } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -113,6 +114,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [rules, setRules] = useState<RuleDraft[]>(() => initState?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
+	const [channels, _setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -185,7 +187,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	// ------------------------------------------------------------------
 	// Derived: ResolvedWorkflowChannel[] for Task Agent channel connections
-	// Task Agent channels are stored on individual steps (step.channels).
+	// Task Agent channels are stored at the workflow level (channels).
 	// We extract edges from task-agent to each connected step.
 	// ------------------------------------------------------------------
 
@@ -197,24 +199,32 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			toStepId: string;
 			direction: 'one-way' | 'bidirectional';
 		}[] = [];
-		for (const node of nodes) {
-			const channels = node.step.channels;
-			if (!channels) continue;
-			for (const channel of channels) {
-				// Only include channels where task-agent is the source, and use the actual
-				// channel.direction (not hardcoded bidirectional).
-				if (channel.from === 'task-agent') {
+		// Build a localId lookup from step.localId to the actual step localId
+		// (for new unsaved steps, step.localId === step.id; for saved steps, step.localId may differ)
+		const _nodeLocalIds = new Set(nodes.map((n) => n.step.localId));
+		for (const channel of channels) {
+			// Only include channels where task-agent is the source
+			if (channel.from === 'task-agent') {
+				// The 'to' field may be a step localId or id - find the matching node
+				const toStr = Array.isArray(channel.to) ? channel.to[0] : channel.to;
+				// Find a node whose localId or id matches the to field
+				const targetNode = nodes.find(
+					(n) =>
+						n.step.localId === toStr ||
+						n.step.id === toStr ||
+						(n.step.localId === n.step.id && n.step.localId === toStr)
+				);
+				if (targetNode) {
 					result.push({
 						fromStepId: 'task-agent',
-						toStepId: node.step.localId,
+						toStepId: targetNode.step.localId,
 						direction: channel.direction,
 					});
-					break;
 				}
 			}
 		}
 		return result;
-	}, [nodes]);
+	}, [channels, nodes]);
 
 	// ------------------------------------------------------------------
 	// Helpers
@@ -629,7 +639,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			}
 		}
 
-		const visualState: VisualEditorState = { nodes, edges, startNodeId, rules, tags };
+		const visualState: VisualEditorState = { nodes, edges, startNodeId, rules, tags, channels };
 
 		setSaving(true);
 		setError(null);
