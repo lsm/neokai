@@ -107,6 +107,10 @@ export function createMockSessionFactory() {
 			calls.push({ method: 'startSession', args: [sessionId] });
 			return true;
 		},
+		async switchModel(sessionId: string, model: string, provider: string) {
+			calls.push({ method: 'switchModel', args: [sessionId, model, provider] });
+			return { success: true, model };
+		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
 		processingStates: Map<
@@ -256,6 +260,14 @@ export interface RuntimeTestContextOptions {
 	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
 	/** Get global settings for testing fallback model logic */
 	getGlobalSettings?: () => GlobalSettings;
+	/** Optional provider availability check for testing fallback chain skipping */
+	isProviderAvailable?: (provider: string, model: string) => Promise<boolean>;
+	/**
+	 * Optional MessageHub mock for tests that exercise RPC-dependent paths (e.g.,
+	 * trySwitchToFallbackModel uses messageHub.request('session.model.get', ...)).
+	 * When provided, this replaces the no-op messageHub used by default.
+	 */
+	messageHub?: { request: (method: string, args: unknown) => Promise<unknown> };
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -295,6 +307,8 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getTask: (taskId) => taskManager.getTask(taskId),
 		getGoal: (goalId) => goalManager.getGoal(goalId),
 		getGlobalSettings: opts?.getGlobalSettings ?? (() => ({}) as GlobalSettings),
+		isProviderAvailable: opts?.isProviderAvailable,
+		messageHub: opts?.messageHub as never,
 		daemonHub: mockHub as unknown as DaemonHub,
 	});
 
