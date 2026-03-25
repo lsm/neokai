@@ -10,6 +10,7 @@ import type {
 	ResolvedTaskReference,
 	ReferenceType,
 } from '../src/types/reference.ts';
+import type { NeoTask, RoomGoal } from '../src/types/neo.ts';
 import { REFERENCE_PATTERN } from '../src/types/reference.ts';
 
 describe('ReferenceType', () => {
@@ -58,12 +59,20 @@ describe('ReferenceSearchResult', () => {
 
 describe('ResolvedReference variants', () => {
 	it('ResolvedTaskReference has type task', () => {
-		const ref: ResolvedTaskReference = { type: 'task', id: 't-1', data: { title: 'A task' } };
+		const ref: ResolvedTaskReference = {
+			type: 'task',
+			id: 't-1',
+			data: { title: 'A task' } as unknown as NeoTask,
+		};
 		expect(ref.type).toBe('task');
 	});
 
 	it('ResolvedGoalReference has type goal', () => {
-		const ref: ResolvedGoalReference = { type: 'goal', id: 'g-1', data: {} };
+		const ref: ResolvedGoalReference = {
+			type: 'goal',
+			id: 'g-1',
+			data: {} as unknown as RoomGoal,
+		};
 		expect(ref.type).toBe('goal');
 	});
 
