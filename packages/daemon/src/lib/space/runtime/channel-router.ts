@@ -1,12 +1,17 @@
 /**
- * ChannelRouter — lazy node activation for agent-centric workflow execution.
+ * ChannelRouter — message delivery with gate enforcement and lazy node activation.
  *
- * When a message arrives for a target agent role whose node has no active tasks,
- * the router creates pending SpaceTask records on-demand (lazy activation).
- * This replaces the step-centric model where the executor always pre-created
- * tasks for the next node eagerly.
+ * Handles all message delivery within a workflow run:
+ * - Within-node DMs (same node, agent-to-agent)
+ * - Cross-node DMs (target resolved by agent role)
+ * - Fan-out (target resolved by node name → all agents in that node)
  *
- * Key design decisions:
+ * Gate enforcement:
+ * - canDeliver() evaluates gates and iteration caps without side effects
+ * - deliverMessage() performs gate evaluation, cyclic iteration tracking,
+ *   and lazy node activation in one atomic operation
+ *
+ * Lazy node activation:
  * - activateNode() is idempotent: if tasks already exist for the node the
  *   existing tasks are returned unchanged.
  * - Concurrency is handled via a DB UNIQUE partial index on
@@ -17,12 +22,24 @@
  *   ChannelRouter only creates SpaceTask DB records.
  */
 
-import type { SpaceTask, SpaceTaskType, SpaceWorkflow, WorkflowNode } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceTaskType,
+	SpaceWorkflow,
+	WorkflowChannel,
+	WorkflowNode,
+} from '@neokai/shared';
 import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import { ChannelGateEvaluator, ChannelGateBlockedError } from './channel-gate-evaluator';
+import type { ChannelGateContext, GateResult } from './channel-gate-evaluator';
+
+// Re-export for callers that only need to import from channel-router
+export { ChannelGateBlockedError };
+export type { ChannelGateContext, GateResult };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,12 +60,20 @@ export interface DeliveredMessage {
 	runId: string;
 	/** Role of the sending agent */
 	fromRole: string;
-	/** Role of the receiving agent */
+	/**
+	 * Role of the receiving agent, or node name for fan-out deliveries.
+	 * When isFanOut is true this is the node name, not an individual agent role.
+	 */
 	toRole: string;
 	/** The message content */
 	message: string;
 	/** Node ID of the target agent */
 	targetNodeId: string;
+	/**
+	 * True when the delivery targeted a node name (fan-out to all agents in the
+	 * node) rather than a specific agent role (point-to-point DM).
+	 */
+	isFanOut: boolean;
 	/**
 	 * Tasks created by lazy activation, or undefined when the node was already active.
 	 * An empty array is never returned — either undefined (already active) or ≥1 tasks.
@@ -64,6 +89,9 @@ export interface DeliveredMessage {
  * Thrown by activateNode() for unrecoverable problems such as a missing run
  * or workflow, a node that does not exist, or an attempted activation on a
  * run that has already reached a terminal state.
+ *
+ * Also thrown by deliverMessage() when the iteration cap is exceeded on a
+ * cyclic channel (an unrecoverable limit — not a retryable gate block).
  */
 export class ActivationError extends Error {
 	constructor(
@@ -88,6 +116,11 @@ export interface ChannelRouterConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Agent manager for resolving agent roles → task types */
 	agentManager: SpaceAgentManager;
+	/**
+	 * Injectable gate evaluator — omit to use the real evaluator (Bun.spawn).
+	 * Inject a mock in tests to avoid real subprocess calls.
+	 */
+	gateEvaluator?: ChannelGateEvaluator;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +128,11 @@ export interface ChannelRouterConfig {
 // ---------------------------------------------------------------------------
 
 export class ChannelRouter {
-	constructor(private readonly config: ChannelRouterConfig) {}
+	private readonly gateEvaluator: ChannelGateEvaluator;
+
+	constructor(private readonly config: ChannelRouterConfig) {
+		this.gateEvaluator = config.gateEvaluator ?? new ChannelGateEvaluator();
+	}
 
 	// -------------------------------------------------------------------------
 	// Public API
@@ -197,24 +234,94 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Deliver a message from one agent role to another within a workflow run.
+	 * Check whether delivery of a message from `fromRole` to `toTarget` is currently
+	 * permitted — without performing any delivery or state mutations.
 	 *
-	 * If the target role's node has no active tasks the node is lazily activated
-	 * (pending SpaceTask records created) before returning.
+	 * Evaluation order:
+	 * 1. **Open topology** — when no channel is declared for the pair, delivery is
+	 *    always allowed (no restriction).
+	 * 2. **Iteration cap** — for cyclic channels, blocks when
+	 *    `run.iterationCount >= run.maxIterations`.
+	 * 3. **Gate condition** — evaluates the channel's gate using the provided context.
+	 *
+	 * @param runId     - Workflow run ID
+	 * @param fromRole  - Sending agent role name
+	 * @param toTarget  - Receiving agent role name, or node name for fan-out
+	 * @param context   - Gate evaluation context (workspace path, human approval, task result)
+	 * @returns GateResult — `{ allowed: true }` or `{ allowed: false, reason }` when blocked
+	 * @throws ActivationError when the run or workflow is not found
+	 */
+	async canDeliver(
+		runId: string,
+		fromRole: string,
+		toTarget: string,
+		context: ChannelGateContext
+	): Promise<GateResult> {
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) throw new ActivationError(`Run not found: ${runId}`);
+
+		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+		if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
+
+		const channel = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+		if (!channel) {
+			// Open topology — no declared channel for this pair; delivery is unrestricted
+			return { allowed: true };
+		}
+
+		// ── Iteration cap check ──────────────────────────────────────────────
+		if (channel.isCyclic && run.iterationCount >= run.maxIterations) {
+			return {
+				allowed: false,
+				reason: `Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum iteration count (${run.iterationCount}/${run.maxIterations}). Increase maxIterations to allow more cycles.`,
+			};
+		}
+
+		// ── Gate condition evaluation ────────────────────────────────────────
+		if (!channel.gate) return { allowed: true };
+		return this.gateEvaluator.evaluateCondition(channel.gate, context);
+	}
+
+	/**
+	 * Deliver a message from one agent role to another (or to a node for fan-out)
+	 * within a workflow run.
+	 *
+	 * **Target resolution:**
+	 * - `toTarget` is an agent role name → DM to the agent's node (lazy-activated
+	 *   if not already active)
+	 * - `toTarget` is a node name → fan-out to the node; all agent slots are
+	 *   activated (lazy-activated if not already active)
+	 *
+	 * **Gate evaluation (when `context` is provided):**
+	 * - Locates the matching `WorkflowChannel` for the from/to pair
+	 * - Throws `ChannelGateBlockedError` if the gate blocks delivery
+	 * - When no context is given, gates are not evaluated (backward-compatible)
+	 *
+	 * **Cyclic iteration tracking:**
+	 * - If the matching channel has `isCyclic: true`, `run.iterationCount` is
+	 *   incremented after successful delivery, regardless of whether `context` is
+	 *   provided.
+	 * - If the iteration cap has already been reached, throws `ActivationError`
+	 *   (unrecoverable hard limit, not a retryable gate condition).
 	 *
 	 * @param runId    - Workflow run ID
 	 * @param fromRole - Role name of the sending agent (WorkflowNodeAgent.name)
-	 * @param toRole   - Role name of the receiving agent (WorkflowNodeAgent.name)
+	 * @param toTarget - Role name of the receiving agent, or node name for fan-out
 	 * @param message  - Message content to deliver
+	 * @param context  - Optional gate evaluation context; omit to skip gate checks
 	 * @returns DeliveredMessage descriptor; `activatedTasks` is set when the
 	 *   target node was lazily activated, undefined when it was already active
-	 * @throws ActivationError when the run, workflow, or target role is not found
+	 * @throws ActivationError when the run, workflow, or target role/node is not
+	 *   found, or the cyclic iteration cap is exceeded
+	 * @throws ChannelGateBlockedError when a gate condition blocks delivery
+	 *   (only when `context` is provided)
 	 */
 	async deliverMessage(
 		runId: string,
 		fromRole: string,
-		toRole: string,
-		message: string
+		toTarget: string,
+		message: string,
+		context?: ChannelGateContext
 	): Promise<DeliveredMessage> {
 		// ── 1. Load the run and workflow ───────────────────────────────────────
 		const run = this.config.workflowRunRepo.getRun(runId);
@@ -227,15 +334,47 @@ export class ChannelRouter {
 			throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 		}
 
-		// ── 2. Locate the node that owns the target role ───────────────────────
-		const targetNode = this.findNodeByAgentRole(workflow, toRole);
-		if (!targetNode) {
-			throw new ActivationError(
-				`No node found with agent role "${toRole}" in workflow "${run.workflowId}"`
-			);
+		// ── 2. Gate evaluation and iteration cap ───────────────────────────────
+		const channel = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
+
+		if (channel) {
+			// Always enforce the iteration cap for cyclic channels (even without context)
+			if (channel.isCyclic && run.iterationCount >= run.maxIterations) {
+				throw new ActivationError(
+					`Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum iteration count (${run.iterationCount}/${run.maxIterations}). Increase maxIterations to allow more cycles.`
+				);
+			}
+
+			// Gate evaluation — only when the caller supplies evaluation context
+			if (context && channel.gate) {
+				const gateResult = await this.gateEvaluator.evaluateCondition(channel.gate, context);
+				if (!gateResult.allowed) {
+					throw new ChannelGateBlockedError(
+						gateResult.reason ?? `Gate blocked delivery from "${fromRole}" to "${toTarget}"`,
+						channel.gate.type
+					);
+				}
+			}
 		}
 
-		// ── 3. Lazy activation ─────────────────────────────────────────────────
+		// ── 3. Target resolution: agent role → DM, node name → fan-out ────────
+		let targetNode = this.findNodeByAgentRole(workflow, toTarget);
+		let isFanOut = false;
+
+		if (!targetNode) {
+			// Try node name for fan-out delivery
+			const byName = workflow.nodes.find((n) => n.name === toTarget);
+			if (byName) {
+				targetNode = byName;
+				isFanOut = true;
+			} else {
+				throw new ActivationError(
+					`No node found with agent role or node name "${toTarget}" in workflow "${run.workflowId}"`
+				);
+			}
+		}
+
+		// ── 4. Lazy activation ─────────────────────────────────────────────────
 		const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
 		let activatedTasks: SpaceTask[] | undefined;
 
@@ -243,7 +382,31 @@ export class ChannelRouter {
 			activatedTasks = await this.activateNode(runId, targetNode.id);
 		}
 
-		return { runId, fromRole, toRole, message, targetNodeId: targetNode.id, activatedTasks };
+		// ── 5. Increment iteration count for cyclic channels ──────────────────
+		// Use the atomic incrementIterationCount() which runs a single SQL UPDATE
+		// with a WHERE guard (iteration_count < max_iterations), eliminating any
+		// TOCTOU race between the cap check above and this write. If another
+		// concurrent delivery already pushed the count to the cap, the atomic
+		// increment will return false — we throw to surface the cap violation even
+		// though message delivery already succeeded at this point.
+		if (channel?.isCyclic) {
+			const incremented = this.config.workflowRunRepo.incrementIterationCount(runId);
+			if (!incremented) {
+				throw new ActivationError(
+					`Cyclic channel from "${fromRole}" to "${toTarget}" reached the maximum iteration count during delivery (cap enforced atomically). Message was delivered but the cycle was not counted.`
+				);
+			}
+		}
+
+		return {
+			runId,
+			fromRole,
+			toRole: toTarget,
+			message,
+			targetNodeId: targetNode.id,
+			isFanOut,
+			activatedTasks,
+		};
 	}
 
 	// -------------------------------------------------------------------------
@@ -295,6 +458,37 @@ export class ChannelRouter {
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * Finds the first WorkflowChannel in the workflow that matches the given
+	 * fromRole → toTarget pair.
+	 *
+	 * Matching rules:
+	 * - `channel.from` must equal `fromRole` (wildcard `'*'` matches any sender)
+	 * - `channel.to` must equal `toTarget`, or contain it in an array
+	 *   (wildcard `'*'` matches any target)
+	 *
+	 * `toTarget` may be either an agent role name or a node name — the raw
+	 * WorkflowChannel declaration is not resolved; the caller is responsible for
+	 * knowing the target type.
+	 *
+	 * Returns undefined when no channel is found (open topology).
+	 */
+	private findMatchingWorkflowChannel(
+		workflow: SpaceWorkflow,
+		fromRole: string,
+		toTarget: string
+	): WorkflowChannel | undefined {
+		const channels = workflow.channels ?? [];
+		return channels.find((ch) => {
+			// Match the from side
+			if (ch.from !== '*' && ch.from !== fromRole) return false;
+			// Match the to side
+			if (ch.to === '*' || ch.to === toTarget) return true;
+			if (Array.isArray(ch.to)) return ch.to.includes(toTarget);
+			return false;
+		});
 	}
 
 	/**
