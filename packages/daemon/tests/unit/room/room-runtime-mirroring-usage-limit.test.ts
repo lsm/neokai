@@ -20,11 +20,6 @@ import type { GlobalSettings } from '@neokai/shared';
 
 const USAGE_LIMIT_MSG = "You've hit your limit · resets 11pm (America/New_York)";
 
-/** Wrap a message in a JSON string the way the SDK serializes it to sdk.message events */
-function makeSdkMessage(text: string, uuid = 'msg-uuid-1') {
-	return JSON.stringify({ uuid, type: 'text', text });
-}
-
 /** Build a minimal MessageHub mock that responds to session.model.get */
 function makeMessageHubMock(opts: {
 	model?: string;
@@ -176,8 +171,9 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 				.prepare(`SELECT kind, payload_json FROM task_group_events WHERE group_id = ? ORDER BY id`)
 				.all(group.id) as Array<{ kind: string; payload_json: string }>;
 
-			const fallbackEvent = events.find((e) => e.kind === 'model_fallback');
-			expect(fallbackEvent).toBeDefined();
+			const fallbackEvents = events.filter((e) => e.kind === 'model_fallback');
+			// Exactly one model_fallback event — synchronous guard prevents duplicates
+			expect(fallbackEvents).toHaveLength(1);
 		});
 
 		it('does NOT set group.rateLimit on successful switch', async () => {
@@ -254,7 +250,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 			expect(switchCalls).toHaveLength(1);
 		});
 
-		it('does not attempt fallback twice for different UUIDs but after fallbackAttempted is set', async () => {
+		it('does not attempt fallback twice for different UUIDs (race condition: both fired before .then() resolves)', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
 				messageHub: makeMessageHubMock({}),
@@ -262,16 +258,14 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 
 			const { group } = await spawnGroup();
 
-			// First message triggers fallback
+			// Fire both messages SYNCHRONOUSLY before any await — simulates the race where
+			// two distinct usage_limit messages arrive before the first .then() resolves.
+			// The guard must be set synchronously (not inside .then()) to prevent both from
+			// passing through.
 			ctx.hub.fire('sdk.message', {
 				sessionId: group.workerSessionId,
 				message: { uuid: 'msg-1', type: 'text', text: USAGE_LIMIT_MSG },
 			});
-
-			await new Promise((r) => setTimeout(r, 10));
-
-			// Second message with different UUID (not deduped by mirroredUuids)
-			// but fallbackAttempted should guard against it
 			ctx.hub.fire('sdk.message', {
 				sessionId: group.workerSessionId,
 				message: { uuid: 'msg-2', type: 'text', text: USAGE_LIMIT_MSG },
@@ -279,7 +273,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 
 			await new Promise((r) => setTimeout(r, 10));
 
-			// Only one switchModel call total
+			// Only one switchModel call total — synchronous guard blocked the second
 			const switchCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'switchModel');
 			expect(switchCalls).toHaveLength(1);
 		});
@@ -389,7 +383,7 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 	});
 
 	describe('cleanup', () => {
-		it('clears fallbackAttempted set when mirroring is cleaned up', async () => {
+		it('resetting mirroring clears fallbackAttempted so a new setup can attempt fallback again', async () => {
 			ctx = createRuntimeTestContext({
 				getGlobalSettings: withFallbackModel(),
 				messageHub: makeMessageHubMock({}),
@@ -397,19 +391,38 @@ describe('setupMirroring - usage_limit real-time detection', () => {
 
 			const { group } = await spawnGroup();
 
-			// Trigger fallback
+			// First detection triggers fallback and marks fallbackAttempted
 			ctx.hub.fire('sdk.message', {
 				sessionId: group.workerSessionId,
 				message: { uuid: 'msg-1', type: 'text', text: USAGE_LIMIT_MSG },
 			});
-
 			await new Promise((r) => setTimeout(r, 10));
 
-			// Cleanup mirroring (normally done when group is completed)
-			ctx.runtime.stop();
+			const switchCallsAfterFirst = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'switchModel'
+			).length;
+			expect(switchCallsAfterFirst).toBe(1);
 
-			// No errors thrown — cleanup ran successfully
-			expect(true).toBe(true);
+			// Simulate cleanup + re-setup of mirroring (as happens when a group is
+			// restarted). Access via any to call private methods.
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const runtimeAny = ctx.runtime as any;
+			runtimeAny.cleanupMirroring(group.id);
+			runtimeAny.setupMirroring(group);
+
+			// After re-setup, the fresh fallbackAttempted set allows a new attempt
+			ctx.hub.fire('sdk.message', {
+				sessionId: group.workerSessionId,
+				// Different UUID so mirroredUuids doesn't deduplicate it
+				message: { uuid: 'msg-2', type: 'text', text: USAGE_LIMIT_MSG },
+			});
+			await new Promise((r) => setTimeout(r, 10));
+
+			// Should have triggered a second switch attempt
+			const switchCallsAfterSecond = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'switchModel'
+			).length;
+			expect(switchCallsAfterSecond).toBe(2);
 		});
 	});
 });

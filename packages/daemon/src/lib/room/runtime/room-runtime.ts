@@ -2328,8 +2328,12 @@ export class RoomRuntime {
 						if (!freshGroup) return;
 						if (freshGroup.rateLimit !== null) return;
 
-						// Duplicate fallback guard: only attempt once per session per detection cycle
+						// Duplicate fallback guard: added synchronously BEFORE the async call so
+						// that two distinct messages arriving before the first .then() resolves
+						// cannot both pass the guard and trigger duplicate trySwitchToFallbackModel
+						// calls.
 						if (fallbackAttempted.has(fallbackKey)) return;
+						fallbackAttempted.add(fallbackKey);
 
 						log.info(
 							`Usage limit detected in ${role} message for group ${group.id} (real-time). ` +
@@ -2343,7 +2347,6 @@ export class RoomRuntime {
 										`Fallback model switch succeeded for ${sessionRole} session ${sessionId} ` +
 											`in group ${group.id} (mirroring).`
 									);
-									fallbackAttempted.add(fallbackKey);
 									// Clear any stale task restriction so the UI reflects the new model
 									this.clearTaskRestriction(freshGroup.taskId).catch((err: unknown) => {
 										log.error(
@@ -2354,9 +2357,8 @@ export class RoomRuntime {
 									// No fallback available — apply backoff and restrict the task
 									log.info(
 										`No fallback model available for ${sessionRole} session ${sessionId}. ` +
-											`Applying usage limit backoff for group ${group.id}.`
+											`Applying usage limit backoff for group ${freshGroup.id}.`
 									);
-									fallbackAttempted.add(fallbackKey);
 									const rateLimitBackoff = msgErrorClass.resetsAt
 										? createRateLimitBackoff(messageContent, sessionRole)
 										: null;
@@ -2365,8 +2367,8 @@ export class RoomRuntime {
 										resetsAt: Date.now() + 60 * 1000,
 										sessionRole,
 									};
-									this.groupRepo.setRateLimit(group.id, backoff);
-									this.appendGroupEvent(group.id, 'rate_limited', {
+									this.groupRepo.setRateLimit(freshGroup.id, backoff);
+									this.appendGroupEvent(freshGroup.id, 'rate_limited', {
 										text: `Usage limit reached. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
 										resetsAt: backoff.resetsAt,
 										sessionRole,
@@ -2381,10 +2383,12 @@ export class RoomRuntime {
 											`Failed to persist usage limit restriction for task ${freshGroup.taskId}: ${String(err)}`
 										);
 									});
-									this.scheduleTickAfterRateLimitReset(group.id);
+									this.scheduleTickAfterRateLimitReset(freshGroup.id);
 								}
 							})
 							.catch((err: unknown) => {
+								// fallbackAttempted was already set synchronously above, so even
+								// unexpected throws won't leave the guard open for retry loops.
 								log.error(
 									`Error attempting fallback model switch for session ${sessionId}: ${String(err)}`
 								);
