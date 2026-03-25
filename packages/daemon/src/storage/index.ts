@@ -34,6 +34,7 @@ import {
 } from './repositories/goal-repository';
 import { JobQueueRepository } from './repositories/job-queue-repository';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
+import { TaskRepository } from './repositories/task-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -53,6 +54,7 @@ export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor
 // @public - Library export
 // Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
+export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 
@@ -72,6 +74,7 @@ export class Database {
 	private goalRepo!: GoalRepository;
 	private jobQueueRepo!: JobQueueRepository;
 	private appMcpServerRepo!: AppMcpServerRepository;
+	private taskRepo!: TaskRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -91,6 +94,7 @@ export class Database {
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
 		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
+		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
 		this.jobQueueRepo = new JobQueueRepository(db);
 		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
 	}
@@ -411,6 +415,14 @@ export class Database {
 	 */
 	getGoalRepo(): GoalRepository {
 		return this.goalRepo;
+	}
+
+	/**
+	 * Get the task repository
+	 * Used by ReferenceResolver for task lookups during message preprocessing
+	 */
+	getTaskRepo(): TaskRepository {
+		return this.taskRepo;
 	}
 
 	/**

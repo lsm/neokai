@@ -34,6 +34,7 @@ import {
 } from './session-lifecycle';
 import { ToolsConfigManager } from './tools-config';
 import { MessagePersistence } from './message-persistence';
+import { ReferenceResolver } from './reference-resolver';
 
 /**
  * Cleanup state machine for SessionManager
@@ -106,8 +107,18 @@ export class SessionManager {
 			createAgentSession
 		);
 
-		// Initialize message persistence
-		this.messagePersistence = new MessagePersistence(this.sessionCache, db, messageHub, eventBus);
+		// Initialize message persistence with @ reference resolver
+		const referenceResolver = new ReferenceResolver({
+			taskRepo: db.getTaskRepo(),
+			goalRepo: db.getGoalRepo(),
+		});
+		this.messagePersistence = new MessagePersistence(
+			this.sessionCache,
+			db,
+			messageHub,
+			eventBus,
+			referenceResolver
+		);
 
 		// Setup EventBus subscribers for async message processing
 		this.setupEventSubscriptions();
