@@ -37,9 +37,10 @@ Key files:
 The target system treats workflows as collaboration graphs of agents:
 
 1. **Workflow = collaboration graph of agents with gated communication channels**
-   - Nodes become "agent pools" -- groups of agents that collaborate
-   - Transitions are replaced by "gated channels" between agent pools
-   - Channels carry gates (condition policies) that enforce when messages can flow
+   - Nodes become "agent pools" — groups of agents that collaborate (like a Slack channel)
+   - Transitions are replaced by cross-node channels that carry gates (policies on who can talk to whom)
+   - The **channel configuration** (`CrossNodeChannel`) defines the policy; the **target addressing** (`send_message` parameter) defines who the agent wants to reach
+   - The router matches addressing to policy at delivery time and evaluates gates
 
 2. **Agents are primary execution units**
    - Each agent has its own session and decides what to do based on intelligence
@@ -47,8 +48,10 @@ The target system treats workflows as collaboration graphs of agents:
    - Multiple agents can fill the same role (e.g., 3 coders working in parallel)
 
 3. **Gates on WorkflowChannel replace WorkflowTransition guards**
-   - Channel-level gates with policy evaluation (condition checks before message delivery)
-   - Gates enforce policies like "coder can't send to reviewer until PR exists and CI passes"
+   - Channel-level gates are **policies** that enforce when messages can flow (e.g., "coder can't send to reviewer until PR exists and CI passes")
+   - Within-node channels: agents share a node "group chat" — all agents on the same node see each other
+   - Cross-node channels: agents address specific nodes/roles — the router checks policy and evaluates gates before delivery
+   - There is only one addressing mechanism (`target`); whether it's "group chat" or "DM" depends on how many recipients match
 
 4. **advance() is fully removed**
    - Agents drive themselves by sending messages through gated channels
@@ -72,7 +75,7 @@ The target system treats workflows as collaboration graphs of agents:
 
 6. **Lazy target-node activation**: When a cross-node channel fires but the target node has no active agents, the router lazily creates tasks/sessions for that node on demand. No pre-spawning or Task Agent orchestration needed.
 
-7. **Structured cross-node targets only**: Cross-node `send_message` uses `{ role, node }` object syntax (no `role@node` string parsing) to avoid ambiguity.
+7. **Slack-like target addressing**: Cross-node `send_message` uses a flexible target syntax — string for within-node, `{ node }` for all agents in a node, `{ node, role }` for a specific role, `{ node, agent }` for a specific agent by index. The router matches targets against channel policies at delivery time.
 
 8. **Dynamic migration numbers**: DB migration numbers are not hardcoded in the plan (they drift over time). Implementation must use the next available migration number at implementation time.
 

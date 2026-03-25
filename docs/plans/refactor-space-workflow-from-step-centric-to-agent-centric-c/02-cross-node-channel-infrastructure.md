@@ -16,7 +16,9 @@ Extend the channel system to support cross-node channels (channels that span bet
 
 ### Task 2.1: Define CrossNodeChannel Types
 
-**Description**: Create new types for channels that span between workflow nodes, as opposed to the current within-node `WorkflowChannel`.
+**Description**: Create new types for channels that span between workflow nodes. These channels define the **policy layer** — which agents can communicate across nodes and under what conditions. The agent-facing **addressing layer** (the `target` parameter in `send_message`) is implemented in Milestone 4 and matched against these policies at delivery time.
+
+Think of `CrossNodeChannel` as channel configuration (like Slack channel settings: who can post, restrictions), while `target` in `send_message` is addressing (who the agent wants to talk to). The router matches them at delivery time.
 
 **Subtasks**:
 1. In `packages/shared/src/types/space.ts`, create `CrossNodeChannel` interface:
@@ -27,6 +29,7 @@ Extend the channel system to support cross-node channels (channels that span bet
      fromRole: string | '*';              // source role in the from-node
      toNode: string;                      // target node ID
      toRole: string | string[] | '*';     // target role(s) in the to-node
+     toAgent?: number;                    // target specific agent by index (for DM addressing)
      direction: 'one-way' | 'bidirectional';
      gate?: WorkflowCondition;            // policy enforcement
      label?: string;                      // human-readable label

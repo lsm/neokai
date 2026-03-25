@@ -2,15 +2,17 @@
 
 ## Goal
 
-Enable agents to drive workflow progression through gated cross-node channels. When an agent sends a message through a gated cross-node channel, the gate is evaluated and if it passes, the message is delivered to the target agent in the next node. This replaces `advance()` as the workflow driver.
+Enable agents to drive workflow progression through gated cross-node channels. When an agent sends a message to a target (within-node or cross-node), the router matches the target against channel policies and evaluates gates before delivery. This replaces `advance()` as the workflow driver.
+
+The agent-facing API uses a **Slack-like addressing model**: nodes are like group chats (all agents on the same node share a channel), and cross-node communication uses a flexible `target` parameter. Channels are implicit from the agent's perspective — they just specify who they want to reach.
 
 ## Scope
 
 - Implement gated message delivery for cross-node channels
-- Create the channel-routing + gate-enforcement layer
+- Create the channel-routing + gate-enforcement layer (policy side)
 - Implement lazy target-node activation
-- Update `send_message` to support cross-node delivery
-- Add `check_cross_node_channels` tool to step agents
+- Update `send_message` with Slack-like target addressing (addressing side)
+- Add `list_reachable_agents` tool to step agents
 - Remove `advance()` and replace with agent-driven progression
 - Wire gate evaluation into the message delivery path
 
@@ -41,7 +43,8 @@ Enable agents to drive workflow progression through gated cross-node channels. W
      async canDeliver(params: {
        workflowRunId: string;
        fromRole: string;
-       toRole: string;
+       toRole?: string;
+       toAgent?: number;
        fromNode: string;
        toNode: string;
        context: ChannelGateContext;
@@ -57,7 +60,8 @@ Enable agents to drive workflow progression through gated cross-node channels. W
        workflowRunId: string;
        fromRole: string;
        fromSessionId: string;
-       toRole: string;
+       toRole?: string;
+       toAgent?: number;
        fromNode: string;
        toNode: string;
        message: string;
@@ -122,7 +126,7 @@ Enable agents to drive workflow progression through gated cross-node channels. W
 
 ### Task 4.2: Extend send_message for Cross-Node Delivery
 
-**Description**: Update the `send_message` tool in step-agent-tools.ts to support cross-node delivery via gated channels.
+**Description**: Update the `send_message` tool in step-agent-tools.ts to support cross-node delivery via gated channels, using a Slack-like addressing model. There is only one addressing mechanism (`target`) — whether the message is "group chat" or "DM" depends on how many recipients match.
 
 **Subtasks**:
 1. Add `CrossNodeChannelRouter` as an optional dependency to `StepAgentToolsConfig`
@@ -130,23 +134,27 @@ Enable agents to drive workflow progression through gated cross-node channels. W
    - If no within-node match is found, check cross-node channels
    - If a cross-node channel matches, use `CrossNodeChannelRouter.deliverMessage()`
    - Return appropriate results for both within-node and cross-node delivery
-3. The `target` parameter in `SendMessageSchema` uses a **structured object** for cross-node targets (no `role@node` string syntax):
-   - Current behavior: `target: 'coder'` (within-node only, plain string)
-   - New cross-node behavior: `target: { role: 'reviewer', node: 'verify' }` (structured object)
-   - **No `role@node` string syntax is supported** — the structured form is unambiguous
+3. The `target` parameter in `SendMessageSchema` supports multiple addressing forms:
+   - Within-node (group chat — posting to own node): `target: 'coder'` (plain string, existing behavior)
+   - Cross-node to all agents in a node: `target: { node: 'review' }` (like posting to another node's group chat)
+   - Cross-node to specific role in a node: `target: { node: 'review', role: 'senior_reviewer' }` (like posting to a role within another node)
+   - Cross-node DM to a specific agent: `target: { node: 'review', agent: 2 }` (like a DM to agent index 2)
 4. Update `SendMessageSchema` in `step-agent-tool-schemas.ts`:
    ```
    target: z.union([
-     z.string(),                          // within-node: 'coder'
-     z.object({ role: z.string(), node: z.string() })  // cross-node
+     z.string(),                                              // within-node: 'coder'
+     z.object({ node: z.string() }),                         // cross-node to all agents in node
+     z.object({ node: z.string(), role: z.string() }),       // cross-node to specific role
+     z.object({ node: z.string(), agent: z.number() }),      // cross-node DM by agent index
    ])
    ```
+5. The router matches the target against `CrossNodeChannel` policies at delivery time and evaluates gates
 
 **Acceptance Criteria**:
 - `send_message` can deliver messages within a node (existing behavior) and across nodes (new)
-- Cross-node delivery is gated -- blocked if gate condition fails
+- Cross-node delivery is gated — blocked if gate condition fails
+- All four target forms work correctly
 - Plain role strings still work for within-node delivery
-- Cross-node targets must use `{ role, node }` object syntax
 - Clear error messages when cross-node delivery is blocked by a gate
 
 **Dependencies**: Tasks 4.1
@@ -175,21 +183,23 @@ Enable agents to drive workflow progression through gated cross-node channels. W
 
 ---
 
-### Task 4.4: Add check_cross_node_channels Tool
+### Task 4.4: Add list_reachable_agents Tool
 
-**Description**: Add a tool that lets step agents query which cross-node channels are available to them and whether the gates currently allow delivery.
+**Description**: Add a tool that lets step agents query who they can reach. This follows the Slack-like model — from the agent's perspective, channels are implicit and the tool just answers "who can I message?"
 
 **Subtasks**:
-1. Create schema `CheckCrossNodeChannelsSchema` in `step-agent-tool-schemas.ts`
-2. Add `check_cross_node_channels` handler in `step-agent-tools.ts`:
-   - Lists outbound cross-node channels from the current node for the agent's role
-   - For each channel, shows: target node, target role, gate type, gate status (open/closed), gate description
+1. Create schema `ListReachableAgentsSchema` in `step-agent-tool-schemas.ts`
+2. Add `list_reachable_agents` handler in `step-agent-tools.ts`:
+   - Lists all agents the calling agent can reach (within-node peers + cross-node targets)
+   - For each reachable agent/target, shows: node, role, agent index (if applicable), gate status (open/closed)
+   - Returns a flat list — no channel internals exposed
 3. Add the tool to `createStepAgentMcpServer()`
 
 **Acceptance Criteria**:
-- Step agents can query available cross-node channels
-- Gate status information is included (open/closed and reason)
-- The tool helps agents make informed decisions about when to send cross-node messages
+- Step agents can query who they can reach
+- Gate status information is included (open/closed and reason) for cross-node targets
+- Within-node peers are listed separately from cross-node targets
+- The tool uses agent-friendly terminology (not "channels" or "policies")
 
 **Dependencies**: Tasks 4.1
 
@@ -251,6 +261,9 @@ Enable agents to drive workflow progression through gated cross-node channels. W
 3. Create `packages/daemon/tests/unit/space/step-agent-cross-node-messaging.test.ts`
 4. Test cases for `send_message` cross-node extension:
    - Within-node delivery still works
+   - Cross-node delivery with `{ node }` target (all agents in node)
+   - Cross-node delivery with `{ node, role }` target (specific role)
+   - Cross-node delivery with `{ node, agent }` target (specific agent DM)
    - Cross-node delivery with open gate succeeds
    - Cross-node delivery with closed gate returns reason
    - Mixed within-node and cross-node routing
