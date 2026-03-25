@@ -64,6 +64,18 @@ function makeThrowRunner(message: string): ChannelCommandRunner {
 	};
 }
 
+/** Returns a runner that records the timeoutMs argument it was called with. */
+function makeCapturingRunner(): { runner: ChannelCommandRunner; getTimeout: () => number } {
+	let capturedTimeout = -1;
+	return {
+		runner: async (_args, _cwd, timeoutMs) => {
+			capturedTimeout = timeoutMs;
+			return { exitCode: 0 };
+		},
+		getTimeout: () => capturedTimeout,
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Tests: no gate
 // ---------------------------------------------------------------------------
@@ -275,6 +287,12 @@ describe('ChannelGateEvaluator — task_result gate', () => {
 
 // ---------------------------------------------------------------------------
 // Tests: evaluateCondition (public method, direct access)
+//
+// These tests intentionally exercise evaluateCondition() as a public API
+// contract — callers can evaluate conditions outside of a channel (e.g.
+// testing individual gate expressions in isolation).  The condition/task_result
+// cases intentionally overlap with the evaluate() tests above to confirm the
+// public method returns the same results regardless of call path.
 // ---------------------------------------------------------------------------
 
 describe('ChannelGateEvaluator.evaluateCondition', () => {
@@ -302,6 +320,8 @@ describe('ChannelGateEvaluator.evaluateCondition', () => {
 		expect(result.allowed).toBe(true);
 	});
 
+	// These confirm evaluateCondition() returns the same result as evaluate()
+	// for condition/task_result, verifying the public API is a faithful delegate.
 	test('evaluates condition gate directly — allowed on exit 0', async () => {
 		const evaluator = new ChannelGateEvaluator(makeOkRunner());
 		const result = await evaluator.evaluateCondition(
@@ -347,71 +367,53 @@ describe('ChannelGateEvaluator.evaluateCondition', () => {
 
 describe('ChannelGateEvaluator — condition gate timeoutMs', () => {
 	test('default timeout (60 000 ms) is used when no timeoutMs specified', async () => {
-		let capturedTimeout = -1;
-		const capturingRunner: ChannelCommandRunner = async (_args, _cwd, timeoutMs) => {
-			capturedTimeout = timeoutMs;
-			return { exitCode: 0 };
-		};
-		const evaluator = new ChannelGateEvaluator(capturingRunner);
-		const channel = makeChannel({ gate: { type: 'condition', expression: 'true' } });
-		await evaluator.evaluate(channel, makeContext());
-		expect(capturedTimeout).toBe(60_000);
+		const { runner, getTimeout } = makeCapturingRunner();
+		const evaluator = new ChannelGateEvaluator(runner);
+		await evaluator.evaluate(
+			makeChannel({ gate: { type: 'condition', expression: 'true' } }),
+			makeContext()
+		);
+		expect(getTimeout()).toBe(60_000);
 	});
 
 	test('custom timeoutMs within valid range is passed to the command runner', async () => {
-		let capturedTimeout = -1;
-		const capturingRunner: ChannelCommandRunner = async (_args, _cwd, timeoutMs) => {
-			capturedTimeout = timeoutMs;
-			return { exitCode: 0 };
-		};
-		const evaluator = new ChannelGateEvaluator(capturingRunner);
-		const channel = makeChannel({
-			gate: { type: 'condition', expression: 'true', timeoutMs: 5_000 },
-		});
-		await evaluator.evaluate(channel, makeContext());
-		expect(capturedTimeout).toBe(5_000);
+		const { runner, getTimeout } = makeCapturingRunner();
+		const evaluator = new ChannelGateEvaluator(runner);
+		await evaluator.evaluate(
+			makeChannel({ gate: { type: 'condition', expression: 'true', timeoutMs: 5_000 } }),
+			makeContext()
+		);
+		expect(getTimeout()).toBe(5_000);
 	});
 
 	test('timeoutMs above 300 000 ms is clamped to 300 000', async () => {
-		let capturedTimeout = -1;
-		const capturingRunner: ChannelCommandRunner = async (_args, _cwd, timeoutMs) => {
-			capturedTimeout = timeoutMs;
-			return { exitCode: 0 };
-		};
-		const evaluator = new ChannelGateEvaluator(capturingRunner);
-		const channel = makeChannel({
-			gate: { type: 'condition', expression: 'true', timeoutMs: 999_999 },
-		});
-		await evaluator.evaluate(channel, makeContext());
-		expect(capturedTimeout).toBe(300_000);
+		const { runner, getTimeout } = makeCapturingRunner();
+		const evaluator = new ChannelGateEvaluator(runner);
+		await evaluator.evaluate(
+			makeChannel({ gate: { type: 'condition', expression: 'true', timeoutMs: 999_999 } }),
+			makeContext()
+		);
+		expect(getTimeout()).toBe(300_000);
 	});
 
 	test('timeoutMs of 0 falls back to default 60 000 ms', async () => {
-		let capturedTimeout = -1;
-		const capturingRunner: ChannelCommandRunner = async (_args, _cwd, timeoutMs) => {
-			capturedTimeout = timeoutMs;
-			return { exitCode: 0 };
-		};
-		const evaluator = new ChannelGateEvaluator(capturingRunner);
-		const channel = makeChannel({
-			gate: { type: 'condition', expression: 'true', timeoutMs: 0 },
-		});
-		await evaluator.evaluate(channel, makeContext());
-		expect(capturedTimeout).toBe(60_000);
+		const { runner, getTimeout } = makeCapturingRunner();
+		const evaluator = new ChannelGateEvaluator(runner);
+		await evaluator.evaluate(
+			makeChannel({ gate: { type: 'condition', expression: 'true', timeoutMs: 0 } }),
+			makeContext()
+		);
+		expect(getTimeout()).toBe(60_000);
 	});
 
 	test('negative timeoutMs falls back to default 60 000 ms', async () => {
-		let capturedTimeout = -1;
-		const capturingRunner: ChannelCommandRunner = async (_args, _cwd, timeoutMs) => {
-			capturedTimeout = timeoutMs;
-			return { exitCode: 0 };
-		};
-		const evaluator = new ChannelGateEvaluator(capturingRunner);
-		const channel = makeChannel({
-			gate: { type: 'condition', expression: 'true', timeoutMs: -100 },
-		});
-		await evaluator.evaluate(channel, makeContext());
-		expect(capturedTimeout).toBe(60_000);
+		const { runner, getTimeout } = makeCapturingRunner();
+		const evaluator = new ChannelGateEvaluator(runner);
+		await evaluator.evaluate(
+			makeChannel({ gate: { type: 'condition', expression: 'true', timeoutMs: -100 } }),
+			makeContext()
+		);
+		expect(getTimeout()).toBe(60_000);
 	});
 });
 
