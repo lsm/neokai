@@ -111,26 +111,6 @@ export async function createGoal(
 // ─── Delete Helpers ───────────────────────────────────────────────────────────
 
 /**
- * Delete a task via RPC. Best-effort — silently ignores errors so it can be
- * used safely in afterEach without masking test failures.
- */
-export async function deleteTask(page: Page, roomId: string, taskId: string): Promise<void> {
-	if (!taskId) return;
-	try {
-		await page.evaluate(
-			async ({ rId, tId }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) return;
-				await hub.request('task.delete', { roomId: rId, taskId: tId });
-			},
-			{ rId: roomId, tId: taskId }
-		);
-	} catch {
-		// Best-effort cleanup
-	}
-}
-
-/**
  * Delete a goal via RPC. Best-effort — silently ignores errors so it can be
  * used safely in afterEach without masking test failures.
  */
@@ -262,14 +242,15 @@ export async function cleanupRoom(page: Page, roomId: string): Promise<void> {
 /**
  * Entity IDs collected during a test for bulk cleanup.
  *
- * - `roomIds`: Rooms to delete. Cascades to all tasks/goals inside them.
- * - `tasks`: Standalone tasks created in an existing room (not covered by room cascade).
- * - `goals`: Standalone goals created in an existing room (not covered by room cascade).
+ * - `roomIds`: Rooms to delete. Deletion cascades to all tasks inside them.
+ *   Tasks have no standalone delete RPC (`task.delete` does not exist), so
+ *   they must always be cleaned up by deleting their parent room.
+ * - `goals`: Standalone goals created in an existing room that will NOT be
+ *   deleted (use `deleteGoal` directly when the room survives the test).
  * - `filePaths`: Workspace-relative file paths created by `createTestFile`.
  */
 export interface CreatedEntities {
 	roomIds?: string[];
-	tasks?: Array<{ roomId: string; taskId: string }>;
 	goals?: Array<{ roomId: string; goalId: string }>;
 	filePaths?: string[];
 }
@@ -277,7 +258,7 @@ export interface CreatedEntities {
 /**
  * Bulk cleanup of all created entities.
  *
- * Deletes rooms (cascades tasks/goals), individual tasks/goals in existing rooms,
+ * Deletes rooms (cascades all tasks), individual goals in surviving rooms,
  * and workspace files. Best-effort — silently ignores errors.
  */
 export async function cleanupAllCreatedEntities(
@@ -285,12 +266,9 @@ export async function cleanupAllCreatedEntities(
 	entities: CreatedEntities
 ): Promise<void> {
 	const roomCleanups = (entities.roomIds ?? []).map((id) => cleanupRoom(page, id));
-	const taskCleanups = (entities.tasks ?? []).map(({ roomId, taskId }) =>
-		deleteTask(page, roomId, taskId)
-	);
 	const goalCleanups = (entities.goals ?? []).map(({ roomId, goalId }) =>
 		deleteGoal(page, roomId, goalId)
 	);
 	const fileCleanups = (entities.filePaths ?? []).map((fp) => deleteTestFile(page, fp));
-	await Promise.allSettled([...roomCleanups, ...taskCleanups, ...goalCleanups, ...fileCleanups]);
+	await Promise.allSettled([...roomCleanups, ...goalCleanups, ...fileCleanups]);
 }
