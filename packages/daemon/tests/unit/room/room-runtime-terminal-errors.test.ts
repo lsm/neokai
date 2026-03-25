@@ -309,5 +309,45 @@ describe('RoomRuntime - terminal error detection', () => {
 			const payload = JSON.parse(rateLimitedEvents[0].payloadJson ?? '{}');
 			expect(payload.text).toContain('Usage limit');
 		});
+
+		it('does NOT re-set rate limit when group.rateLimit is already set (usage_limit re-trigger after expiry)', async () => {
+			// Production flow:
+			//   1. Initial usage_limit → setRateLimit(resetsAt) → scheduleTickAfterRateLimitReset
+			//   2. Timer fires after reset time → does NOT clear rateLimit (sentinel remains)
+			//   3. recoverStuckWorkers → onWorkerTerminalState called again with same usage_limit text
+			//   4. group.rateLimit is non-null (expired but present) → guard skips re-detection
+			//   5. Falls through to worktree check → routes to leader — no infinite loop
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [
+					makeWorkerMessage("You've hit your limit · resets 1pm (America/New_York)"),
+				],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Simulate the limit having already expired (timer fired, resetsAt now in past,
+			// but rateLimit is still non-null because the sentinel is never cleared by the timer).
+			const expiredRateLimit = {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1, // already expired
+				sessionRole: 'worker' as const,
+			};
+			ctx.groupRepo.setRateLimit(group.id, expiredRateLimit);
+
+			// Re-trigger as recoverStuckWorkers would
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Rate limit must NOT have been pushed to a new future timestamp —
+			// the guard should have skipped re-detection.
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+
+			// Worker should have been routed to leader (worktree is clean in tests).
+			// Routing is confirmed by feedbackIteration incrementing.
+			expect(updatedGroup!.feedbackIteration).toBeGreaterThan(0);
+		});
 	});
 });
