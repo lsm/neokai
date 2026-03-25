@@ -3166,7 +3166,9 @@ export function runMigration49(db: BunDatabase): void {
  * Uses ADD COLUMN IF NOT EXISTS (SQLite 3.37+) for idempotency.
  */
 export function runMigration51(db: BunDatabase): void {
-	db.exec(`ALTER TABLE space_tasks ADD COLUMN IF NOT EXISTS completion_summary TEXT`);
+	if (!tableHasColumn(db, 'space_tasks', 'completion_summary')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN completion_summary TEXT`);
+	}
 }
 
 /**
