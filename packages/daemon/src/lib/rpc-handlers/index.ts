@@ -455,6 +455,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			setSessionMcpServers: () => false as const,
 			removeWorktree: async () => false as const,
 			getProcessingState: (_sessionId: string) => undefined,
+			switchModel: async (_sessionId: string, _model: string, _provider: string) => ({
+				success: false,
+				model: '',
+				error: 'switchModel not supported for global session factory',
+			}),
 		};
 
 		provisionGlobalSpacesAgent({

@@ -505,6 +505,13 @@ export class RoomRuntimeService {
 					return false;
 				}
 			},
+			switchModel: async (sessionId, model, provider) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) {
+					return { success: false, model: '', error: 'Session not found in runtime' };
+				}
+				return session.handleModelSwitch(model, provider);
+			},
 		};
 	}
 

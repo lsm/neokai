@@ -329,6 +329,13 @@ export function setupRoomRuntimeHandlers(
 		if (!result.success) {
 			throw new Error(result.error ?? 'Model switch failed');
 		}
+		// Emit session.updated event for parity with session.model.switch handler.
+		// This allows listeners to react to model changes on task sessions.
+		messageHub.event(
+			'session.updated',
+			{ sessionId: params.sessionId, model: result.model },
+			{ channel: `session:${params.sessionId}` }
+		);
 		return result;
 	});
 
