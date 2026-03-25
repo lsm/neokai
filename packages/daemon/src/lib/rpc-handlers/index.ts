@@ -378,6 +378,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		defaultModel: deps.config.defaultModel,
 		sessionGroupRepo: spaceSessionGroupRepo,
+		appMcpManager: deps.appMcpManager,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -465,6 +466,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			db: deps.db.getDatabase(),
 			state: globalSpacesState,
 			daemonHub: deps.daemonHub,
+			appMcpManager: deps.appMcpManager,
 		}).catch((error) => {
 			log.error('Failed to provision global spaces agent:', error);
 		});
