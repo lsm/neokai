@@ -128,9 +128,7 @@ export interface SessionFactory {
 	 * Get the current model/provider for a session from DB (source of truth).
 	 * Returns null if the session is not found.
 	 */
-	getCurrentModel(
-		sessionId: string
-	): Promise<{ currentModel: string; currentProvider: string } | null>;
+	getCurrentModel(sessionId: string): Promise<{ currentModel: string; provider: string } | null>;
 }
 
 /**

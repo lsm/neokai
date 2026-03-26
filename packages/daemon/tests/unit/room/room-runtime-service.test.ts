@@ -559,3 +559,64 @@ describe('RoomRuntimeService restart recovery', () => {
 		runtime.stop();
 	});
 });
+
+describe('SessionFactory.getCurrentModel', () => {
+	it('returns model/provider from DB and null for missing sessions', async () => {
+		const getSession = mock(() => null);
+		const config: RoomRuntimeServiceConfig = {
+			db: { getSession } as never,
+			messageHub: {} as never,
+			daemonHub: {} as never,
+			getApiKey: async () => null,
+			roomManager: { getRoom: () => null } as never,
+			sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
+			defaultWorkspacePath: '/tmp',
+			defaultModel: 'default',
+			getGlobalSettings: () => ({}) as never,
+			settingsManager: { getEnabledMcpServersConfig: () => ({}) } as never,
+			reactiveDb: {} as never,
+		};
+
+		const service = new RoomRuntimeService(config);
+		const serviceAny = service as unknown as {
+			createSessionFactory: () => ReturnType<
+				typeof import('../../../src/lib/room/runtime/room-runtime-service').RoomRuntimeService.prototype.createSessionFactory
+			>;
+		};
+		const factory = serviceAny.createSessionFactory();
+
+		// Missing session → null
+		expect(await factory.getCurrentModel('non-existent')).toBeNull();
+		expect(getSession).toHaveBeenCalledWith('non-existent');
+
+		// Session with model and provider
+		getSession.mockReturnValueOnce({
+			config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
+		} as never);
+		const result = await factory.getCurrentModel('session-1');
+		expect(result).toEqual({
+			currentModel: 'claude-sonnet-4-20250514',
+			provider: 'anthropic',
+		});
+
+		// Session with model but no provider → defaults to 'anthropic'
+		getSession.mockReturnValueOnce({
+			config: { model: 'glm-5-turbo' },
+		} as never);
+		const result2 = await factory.getCurrentModel('session-2');
+		expect(result2).toEqual({
+			currentModel: 'glm-5-turbo',
+			provider: 'anthropic',
+		});
+
+		// Reads from DB, not in-memory cache: cache is empty but DB returns data
+		getSession.mockReturnValueOnce({
+			config: { model: 'cached-model', provider: 'glm' },
+		} as never);
+		const result3 = await factory.getCurrentModel('session-not-in-cache');
+		expect(result3).toEqual({
+			currentModel: 'cached-model',
+			provider: 'glm',
+		});
+	});
+});
