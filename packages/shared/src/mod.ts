@@ -20,6 +20,7 @@ export * from './types/space.ts';
 export * from './types/space-utils.ts';
 export * from './types/tools.ts';
 export * from './types/app-mcp-server.ts';
+export * from './types/skills.ts';
 export * from './types/reference.ts';
 export * from './live-query-types.ts';
 export * from './prompts/index.ts';
