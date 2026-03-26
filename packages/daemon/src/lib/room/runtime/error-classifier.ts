@@ -4,19 +4,19 @@
  * Single point of truth for classifying API errors from agent output:
  * - terminal:    unrecoverable errors (4xx) → fail task immediately
  * - rate_limit:  HTTP 429 rate limits with parseable retry-after → pause with backoff
- * - usage_limit: daily/weekly usage cap limits (e.g. "You've hit your limit · resets 2pm")
- *                → immediately attempt fallback model, skip backoff
+ * - usage_limit: daily/weekly usage cap limits → immediately attempt fallback model, skip backoff
+ *                Detected via: SDK rate_limit_event (status:'rejected') OR
+ *                Anthropic usage-limit text "You've hit your limit · resets …"
  * - recoverable: transient errors (5xx) → bounce/retry
  *
- * Detection strategy: match only structured "API Error: NNN" messages from the
- * Claude Agent SDK. Free-form text patterns are intentionally avoided because
- * they cause false positives when workers discuss error handling in prose
- * (e.g. "implemented handling for invalid model errors").
+ * Detection strategy:
+ * 1. Structured "API Error: NNN" messages from the Claude Agent SDK (HTTP status code determines class)
+ * 2. SDK rate_limit_event JSON: only 'rejected' status is an actual error;
+ *    'allowed' / 'allowed_warning' are informational (orange badge in UI) → returns null
+ * 3. Anthropic usage-limit text pattern "You've hit your limit · resets …" (actual 4xx response)
  *
- * The Anthropic usage-limit text pattern ("You've hit your limit · resets …")
- * is classified as usage_limit (not rate_limit) because waiting for the reset
- * can mean hours of downtime. Falling back to an alternative model keeps the
- * task moving without requiring the user to wait.
+ * Free-form prose does NOT trigger classification to avoid false positives
+ * (e.g. "implemented handling for invalid model errors").
  */
 
 import { parseRateLimitReset } from './rate-limit-utils';
@@ -63,18 +63,17 @@ function extractHttpStatus(message: string): number | undefined {
 /**
  * Classify an error message from agent output.
  *
- * Only matches structured "API Error: NNN" messages produced by the Claude
- * Agent SDK, plus the Anthropic usage-limit text for usage_limit detection.
- * Free-form prose does NOT trigger classification.
- *
  * Evaluation order (first match wins):
  * 1. "API Error: NNN" — HTTP status code determines class
  *    - 400/401/403/404/422 → terminal
  *    - 429               → rate_limit (with resetsAt if parseable)
  *    - 5xx              → recoverable
- * 2. Anthropic usage-limit text → usage_limit (immediate fallback, no backoff)
+ * 2. SDK rate_limit_event JSON (from mirrorSession event streaming):
+ *    - status 'rejected'              → usage_limit (actual limit hit, trigger fallback)
+ *    - status 'allowed'/'allowed_warning' → null (informational only, do NOT pause)
+ * 3. Anthropic usage-limit text "You've hit your limit · resets …" → usage_limit
  *
- * Returns null when the message is not an API error.
+ * Returns null when the message is not an API error (including SDK info messages).
  *
  * @example
  * classifyError('API Error: 400 {"error":{"message":"Invalid model: xyz"}}')
@@ -88,6 +87,12 @@ function extractHttpStatus(message: string): number | undefined {
  *
  * classifyError('API Error: 500 Internal Server Error')
  * // → { class: 'recoverable', reason: '...', statusCode: 500 }
+ *
+ * classifyError('{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1749600000},...}')
+ * // → null  (SDK info message — orange badge in UI, agent can continue)
+ *
+ * classifyError('{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1749600000},...}')
+ * // → { class: 'usage_limit', reason: '...', resetsAt: 1749600000000 }
  *
  * classifyError('implemented handling for invalid model errors')
  * // → null  (prose — no false positive)
@@ -125,7 +130,35 @@ export function classifyError(message: string): ErrorClassification | null {
 		}
 	}
 
-	// ── 2. Anthropic usage-limit text (specific, cannot appear in normal prose).
+	// ── 2. SDK rate_limit_event JSON (from mirrorSession event streaming) ────
+	//     These messages are emitted for ALL rate limit state changes, not just errors.
+	//     Only 'rejected' status means the API actually blocked the request.
+	//     'allowed' / 'allowed_warning' are informational (orange badge in UI) — never pause.
+	if (message.includes('"type":"rate_limit_event"')) {
+		try {
+			const parsed = JSON.parse(message) as {
+				type?: string;
+				rate_limit_info?: { status?: string; resetsAt?: number };
+			};
+			if (parsed.type === 'rate_limit_event') {
+				const info = parsed.rate_limit_info;
+				if (info?.status === 'rejected') {
+					const resetsAt = typeof info.resetsAt === 'number' ? info.resetsAt * 1000 : undefined;
+					return {
+						class: 'usage_limit',
+						reason: `Usage limit reached (rate_limit_event: rejected)${resetsAt ? ` — resets at ${new Date(resetsAt).toLocaleTimeString()}` : ''}`,
+						resetsAt,
+					};
+				}
+				// 'allowed' / 'allowed_warning' → informational, not an error; skip all text matching
+				return null;
+			}
+		} catch {
+			// JSON parse failed — fall through to text patterns
+		}
+	}
+
+	// ── 3. Anthropic usage-limit text (specific, cannot appear in normal prose).
 	//     Classified as usage_limit — falling back to an alternative model keeps the
 	//     task moving instead of waiting hours until the daily/weekly cap resets.
 	const usageLimitResetsAt = parseRateLimitReset(message);

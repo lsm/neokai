@@ -107,6 +107,84 @@ describe('error-classifier', () => {
 			});
 		});
 
+		describe('SDK rate_limit_event JSON messages', () => {
+			it('returns null for rate_limit_event with status allowed (informational — orange badge)', () => {
+				const json = JSON.stringify({
+					type: 'rate_limit_event',
+					rate_limit_info: {
+						status: 'allowed',
+						rateLimitType: 'five_hour',
+						resetsAt: 1749600000,
+					},
+					uuid: 'abc',
+					session_id: 'def',
+				});
+				expect(classifyError(json)).toBeNull();
+			});
+
+			it('returns null for rate_limit_event with status allowed_warning (informational)', () => {
+				const json = JSON.stringify({
+					type: 'rate_limit_event',
+					rate_limit_info: {
+						status: 'allowed_warning',
+						rateLimitType: 'five_hour',
+						resetsAt: 1749600000,
+					},
+					uuid: 'abc',
+					session_id: 'def',
+				});
+				expect(classifyError(json)).toBeNull();
+			});
+
+			it('classifies rate_limit_event with status rejected as usage_limit with correct resetsAt', () => {
+				const resetsAtSeconds = 1749600000;
+				const json = JSON.stringify({
+					type: 'rate_limit_event',
+					rate_limit_info: {
+						status: 'rejected',
+						rateLimitType: 'five_hour',
+						resetsAt: resetsAtSeconds,
+					},
+					uuid: 'abc',
+					session_id: 'def',
+				});
+				const result = classifyError(json);
+				expect(result).not.toBeNull();
+				expect(result!.class).toBe('usage_limit');
+				expect(result!.resetsAt).toBe(resetsAtSeconds * 1000);
+			});
+
+			it('classifies rate_limit_event with status rejected and no resetsAt as usage_limit', () => {
+				const json = JSON.stringify({
+					type: 'rate_limit_event',
+					rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' },
+					uuid: 'abc',
+					session_id: 'def',
+				});
+				const result = classifyError(json);
+				expect(result).not.toBeNull();
+				expect(result!.class).toBe('usage_limit');
+				expect(result!.resetsAt).toBeUndefined();
+			});
+
+			it('does NOT classify rate_limit_event with allowed even if JSON contains time-like strings', () => {
+				// The SDK info message "Rate limit Five Hour — allowed Resets at 01:00 AM" when
+				// serialized should never trigger the classifier — only rejected status should.
+				const json = JSON.stringify({
+					type: 'rate_limit_event',
+					rate_limit_info: {
+						status: 'allowed',
+						rateLimitType: 'five_hour',
+						resetsAt: 1749603600,
+						overageDisabledReason: 'org_level_disabled',
+					},
+					uuid: 'abc',
+					session_id: 'def',
+				});
+				expect(classifyError(json)).toBeNull();
+			});
+		});
+
 		describe('prose / explanatory text does NOT trigger false positives', () => {
 			it('returns null for "implemented handling for invalid model errors"', () => {
 				expect(
