@@ -880,6 +880,111 @@ describe('RoomTasks', () => {
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
 			expect(badge?.getAttribute('title')).toBe('Mission: Specific Goal Name');
 		});
+
+		it('should render goal badge on a separate line below the title row', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			const titleEl = container.querySelector('h4');
+			// The badge must NOT be inside the same element as the title (it is on its own line)
+			expect(titleEl?.parentElement?.contains(badge)).toBe(false);
+			// The badge must share a common ancestor with the title (both inside the task card)
+			expect(titleEl?.closest('[class*="flex-1"]')?.contains(badge)).toBe(true);
+		});
+
+		it('should use target icon (concentric circles) not lightning bolt on goal badge', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			// Target icon uses SVG circle elements (concentric circles)
+			const circles = badge?.querySelectorAll('circle');
+			expect(circles?.length).toBeGreaterThanOrEqual(2);
+			// Lightning bolt used a path element, not circles
+			const lightningPath = badge?.querySelector('path[d*="M13 10V3L4 14h7v7l9-11h-7z"]');
+			expect(lightningPath).toBeNull();
+		});
+	});
+
+	describe('PR Badge', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
+		it('should show purple PR badge when task has prUrl and prNumber', () => {
+			const tasks = [
+				createTask('t1', 'in_progress', {
+					prUrl: 'https://github.com/org/repo/pull/42',
+					prNumber: 42,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/42"]');
+			expect(prLink).toBeTruthy();
+			expect(prLink?.textContent).toContain('PR #42');
+			expect(prLink?.getAttribute('target')).toBe('_blank');
+		});
+
+		it('should show PR badge with "?" when prNumber is not set', () => {
+			const tasks = [
+				createTask('t1', 'in_progress', { prUrl: 'https://github.com/org/repo/pull/99' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/99"]');
+			expect(prLink).toBeTruthy();
+			expect(prLink?.textContent).toContain('PR #?');
+		});
+
+		it('should NOT show PR badge when task has no prUrl', () => {
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLinks = container.querySelectorAll('a[href*="github.com"]');
+			expect(prLinks).toHaveLength(0);
+		});
+
+		it('should NOT propagate click on PR badge to task item', () => {
+			const onTaskClick = vi.fn();
+			const tasks = [
+				createTask('t1', 'in_progress', {
+					prUrl: 'https://github.com/org/repo/pull/5',
+					prNumber: 5,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} onTaskClick={onTaskClick} />);
+
+			const prLink = container.querySelector(
+				'a[href="https://github.com/org/repo/pull/5"]'
+			) as HTMLAnchorElement;
+			fireEvent.click(prLink);
+
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should not render prUrl as plain text', () => {
+			const prUrl = 'https://github.com/org/repo/pull/42';
+			const tasks = [createTask('t1', 'in_progress', { prUrl, prNumber: 42 })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// The URL itself should not appear as visible text
+			expect(container.textContent).not.toContain(prUrl);
+		});
 	});
 
 	describe('Short ID Badge', () => {
