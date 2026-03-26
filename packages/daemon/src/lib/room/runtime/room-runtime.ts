@@ -1876,8 +1876,31 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group || group.completedAt !== null) return false;
 
+		// clearRateLimit does not increment the group version (raw metadata update),
+		// so group.version remains valid for the updateLastForwardedMessageId call below.
 		this.groupRepo.clearRateLimit(group.id);
 		await this.clearTaskRestriction(taskId);
+
+		// Advance lastForwardedMessageId past any stale error messages so that the
+		// next onWorkerTerminalState call does not re-detect them via classifyError.
+		// Without this, clearing group.rateLimit resets the !group.rateLimit guard,
+		// causing the re-detection to re-apply the backoff on the very next tick.
+		if (this.getWorkerMessages) {
+			const staleMessages = this.getWorkerMessages(
+				group.workerSessionId,
+				group.lastForwardedMessageId
+			);
+			const lastStaleMessage = staleMessages.at(-1);
+			if (lastStaleMessage) {
+				this.groupRepo.updateLastForwardedMessageId(group.id, lastStaleMessage.id, group.version);
+				log.info(
+					`Cleared rate limit for group ${group.id} (task ${taskId}): ` +
+						`advanced lastForwardedMessageId to ${lastStaleMessage.id} (skipped ${staleMessages.length} stale message(s))`
+				);
+				return true;
+			}
+		}
+
 		log.info(`Cleared rate limit for group ${group.id} (task ${taskId})`);
 		return true;
 	}

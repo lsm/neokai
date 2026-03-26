@@ -453,6 +453,71 @@ describe('RoomRuntime - rate limit restriction persistence', () => {
 			expect(taskAfter!.restrictions).toBeNull();
 			expect(taskAfter!.status).toBe('in_progress');
 		});
+
+		it('advances lastForwardedMessageId past stale error messages', async () => {
+			// The stale error message has id 'msg-1' (from makeWorkerMessages).
+			// After clearGroupRateLimit, the group's lastForwardedMessageId must be advanced
+			// to 'msg-1' so the next getWorkerMessages call returns nothing for it.
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => makeWorkerMessages(USAGE_LIMIT_MSG),
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+
+			// The stale error message is 'msg-1'; lastForwardedMessageId should still be null
+			// before clearGroupRateLimit (error was detected before forwarding completed).
+			const groupBefore = ctx.groupRepo.getGroup(group.id)!;
+			expect(groupBefore.lastForwardedMessageId).toBeNull();
+
+			await ctx.runtime.clearGroupRateLimit(task.id);
+
+			// lastForwardedMessageId should now be advanced to 'msg-1'
+			const groupAfter = ctx.groupRepo.getGroup(group.id)!;
+			expect(groupAfter.lastForwardedMessageId).toBe('msg-1');
+		});
+
+		it('does not re-detect usage_limit on next onWorkerTerminalState after manual clear (stale messages)', async () => {
+			// Bug: after manual status change (clearGroupRateLimit), the same stale "You've hit
+			// your limit" message is still returned by getWorkerMessages because
+			// lastForwardedMessageId was not advanced. classifyError re-detects it and re-applies
+			// the backoff — the fix must advance the pointer so the stale message is skipped.
+			//
+			// The mock respects afterMessageId: messages with id <= afterMessageId are excluded.
+			const allMessages = makeWorkerMessages(USAGE_LIMIT_MSG); // [{id:'msg-1', ...}]
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: (_sessionId, afterMessageId) => {
+					if (afterMessageId === null) return allMessages;
+					// Filter: only return messages whose id sorts after afterMessageId
+					return allMessages.filter((m) => m.id > afterMessageId);
+				},
+				getGlobalSettings: () => ({}) as never,
+			});
+
+			const { group, task } = await spawnAndTriggerWorkerTerminal('');
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('usage_limited');
+
+			// Manual clear (simulates user clicking "resume" in the UI)
+			await ctx.runtime.clearGroupRateLimit(task.id);
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			// Re-trigger onWorkerTerminalState — getWorkerMessages still returns the stale
+			// error message, but lastForwardedMessageId now points past it so the call returns [].
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// The backoff must NOT have been re-applied
+			expect(ctx.groupRepo.getGroup(group.id)!.rateLimit).toBeNull();
+
+			// Task must remain in_progress (not re-paused as usage_limited)
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.status).not.toBe('usage_limited');
+			expect(taskAfter!.status).not.toBe('rate_limited');
+		});
 	});
 
 	// ─── integration: manual status change clears backoff, allows normal routing ──────────
