@@ -8,10 +8,20 @@
 
 import { mock } from 'bun:test';
 
-// Mock the Claude Agent SDK — the installed version in CI may not export
-// createSdkMcpServer at runtime (it is declared in @neokai/shared's sdk.d.ts as a
-// type-only stub).  All test files that need real SDK behaviour call mock.module()
-// at the top of their own file and will override this default stub.
+// Mock the Claude Agent SDK.  The real SDK must be mocked in unit tests for two reasons:
+//
+// 1. Unit tests must not make real API calls — query/interrupt are stubbed out.
+//
+// 2. The real createSdkMcpServer returns an McpServer whose _registeredTools is
+//    PRIVATE (no public listTools() API, no way to inspect or invoke handlers
+//    outside the MCP protocol).  Several test suites (task-agent-tools, leader-agent,
+//    room-agent-tools, provision-global-agent) rely on inspecting
+//    server.instance._registeredTools to verify tool names, descriptions, schemas,
+//    and to invoke handlers directly.  The mock provides a testable surface area
+//    that the real McpServer class does not expose.
+//
+// Individual test files that need different mock behaviour call mock.module() at the
+// top of their own file to override this default.
 mock.module('@anthropic-ai/claude-agent-sdk', () => {
 	// ---------------------------------------------------------------------------
 	// MockMcpServer — replicates the MCP server surface area needed by tests.
