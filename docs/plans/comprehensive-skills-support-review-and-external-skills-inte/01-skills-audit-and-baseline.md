@@ -34,7 +34,7 @@ Conduct a full code-level audit of the existing Skills, MCP, and Plugin integrat
     - Current planner `WebSearch` configuration
     - Gaps: no registry, no UI, no plugin management, no per-room skill overrides
     - Recommended architecture (Skills registry backed by SQLite `skills` table, using existing repository pattern)
-    - Security considerations: input validation for `pluginPath`, `command`, `env` fields
+    - Security considerations: input validation for `pluginPath` (no `../` traversal); for `mcp_server` skills `appMcpServerId` must reference an existing `app_mcp_servers` entry; for `builtin` skills `commandName` must be non-empty
     - `strictMcpConfig` compatibility: how skill-injected MCP servers must be handled
 
 **Acceptance criteria:**
@@ -60,7 +60,7 @@ Design the `AppSkill` data model, the `SkillsManager` interface, and the RPC API
 3. Design source-specific config sub-types:
    - `BuiltinSkillConfig`: references an SDK slash command name from `.claude/commands/`
    - `PluginSkillConfig`: `{ pluginPath: string }` — a local plugin directory
-   - `McpServerSkillConfig`: `{ command: string; args?: string[]; env?: Record<string, string> }` — an MCP server
+   - `McpServerSkillConfig`: `{ appMcpServerId: string }` — references an existing `app_mcp_servers` entry by ID (MCP server config is owned by the app-level MCP registry, not duplicated in the skill)
 4. Design `SkillsManager` interface: `listSkills()`, `getSkill(id)`, `addSkill(skill)`, `updateSkill(id, updates)`, `removeSkill(id)`, `getEnabledSkills()`.
 5. Design persistence: **SQLite** — a new `skills` table in the existing NeoKai database, using the same `Repository` pattern as `goal-repository.ts`. Justify: SQLite is the established persistence pattern in the codebase; it provides concurrency safety via WAL mode; no file-locking or atomic-write logic needed; consistent with all other managers.
 6. Design RPC API: `skills.list`, `skills.add`, `skills.update`, `skills.remove`, `skills.get`.

@@ -56,7 +56,7 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
 2. Create `packages/daemon/src/storage/repositories/skill-repository.ts` following the same pattern as `goal-repository.ts`:
    - `ensureTable()` — creates `skills` table with columns: `id TEXT PRIMARY KEY`, `name TEXT UNIQUE NOT NULL`, `display_name TEXT NOT NULL`, `description TEXT NOT NULL`, `source_type TEXT NOT NULL`, `config TEXT NOT NULL` (JSON), `enabled INTEGER NOT NULL DEFAULT 1`, `built_in INTEGER NOT NULL DEFAULT 0`, `created_at TEXT NOT NULL`
    - `findAll(): Promise<AppSkill[]>`
-   - `findById(id: string): Promise<AppSkill | null>`
+   - `get(id: string): AppSkill | null` — synchronous, consistent with `AppMcpServerRepository.get()` convention
    - `findEnabled(): Promise<AppSkill[]>`
    - `insert(skill: AppSkill): Promise<void>`
    - `update(id: string, fields: Partial<AppSkill>): Promise<void>`
@@ -65,7 +65,7 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
 3. Create `packages/daemon/src/lib/skills-manager.ts` with class `SkillsManager`:
    - Constructor: `(repo: SkillRepository)`
    - `listSkills(): Promise<AppSkill[]>`
-   - `getSkill(id: string): Promise<AppSkill | null>`
+   - `getSkill(id: string): AppSkill | null` — delegates to `repo.get(id)`
    - `addSkill(params: CreateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` first, then generates UUID, sets `createdAt`, `builtIn=false`
    - `updateSkill(id: string, params: UpdateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` on any updated config
    - `removeSkill(id: string): Promise<boolean>` — returns false if built-in or not found
