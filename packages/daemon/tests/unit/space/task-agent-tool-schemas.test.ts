@@ -11,6 +11,7 @@ import {
 	SpawnNodeAgentSchema,
 	CheckNodeStatusSchema,
 	ReportResultSchema,
+	ReportWorkflowDoneSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
@@ -243,6 +244,40 @@ describe('RequestHumanInputSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
+// report_workflow_done
+// ---------------------------------------------------------------------------
+
+describe('ReportWorkflowDoneSchema', () => {
+	test('accepts empty object (summary is optional)', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.summary).toBeUndefined();
+		}
+	});
+
+	test('accepts valid input with summary', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({
+			summary: 'All agents completed successfully. PR #42 merged.',
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.summary).toBe('All agents completed successfully. PR #42 merged.');
+		}
+	});
+
+	test('rejects non-string summary', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({ summary: 123 });
+		expect(result.success).toBe(false);
+	});
+
+	test('rejects null summary', () => {
+		const result = ReportWorkflowDoneSchema.safeParse({ summary: null });
+		expect(result.success).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // TASK_AGENT_TOOL_SCHEMAS aggregate
 // ---------------------------------------------------------------------------
 
@@ -262,6 +297,13 @@ describe('TASK_AGENT_TOOL_SCHEMAS', () => {
 		for (const schema of Object.values(TASK_AGENT_TOOL_SCHEMAS)) {
 			expect(typeof schema.safeParse).toBe('function');
 		}
+	});
+
+	test('does not contain advance_workflow or any old step-advancement tool', () => {
+		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
+		expect(keys).not.toContain('advance_workflow');
+		expect(keys).not.toContain('spawn_step_agent');
+		expect(keys).not.toContain('check_step_status');
 	});
 });
 

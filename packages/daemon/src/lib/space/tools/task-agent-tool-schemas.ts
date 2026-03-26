@@ -1,11 +1,13 @@
 /**
- * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 5
- * tools available to the Task Agent session.
+ * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 6
+ * tools available to the Task Agent session (send_message schema is shared
+ * from node-agent-tool-schemas.ts, making 7 tools total in the MCP server).
  *
- * Tools:
+ * Tools (defined in this file):
  *   spawn_node_agent      — spawn a sub-session for a specific workflow node
  *   check_node_status     — check the status of the current or a specific node's sub-session
  *   report_result         — report the final task result (terminal tool)
+ *   report_workflow_done  — explicitly mark the entire workflow run as completed
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
  *
