@@ -109,7 +109,7 @@ Plan ---[human gate]--> Code ---[always gate]--> Review ---[task_result gate: pa
 - The human gate only fires once (Plan → Code), not on every iteration
 - The Coder can iterate on feedback from both Reviewer and QA independently
 
-**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow run transitions to `needs_attention` status with error metadata `{ reason: 'maxIterationsReached' }`, and a notification is sent to the human requesting manual intervention. Note: the current `WorkflowRunStatus` type in `packages/shared/src/types/space.ts` does not include `'failed'` — a type expansion is needed in M5 (see Task 5.1 subtask 5).
+**Iteration cap**: `maxIterations` is a global counter on the workflow run, incremented each time ANY cyclic channel is traversed. When the cap is reached, the workflow run transitions to `failed` status with a `failureReason` of `'maxIterationsReached'` (see M5 Task 5.1 for the `WorkflowRunStatus` type expansion and `failureReason` field addition). A notification is sent to the human requesting manual intervention. Note: the current `WorkflowRunStatus` type in `packages/shared/src/types/space.ts` does not include `'failed'` — until M5 lands, this uses `needs_attention` with error metadata as an interim.
 
 ## Cross-Milestone Dependencies
 
