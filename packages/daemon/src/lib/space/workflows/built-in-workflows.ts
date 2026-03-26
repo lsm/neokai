@@ -9,9 +9,9 @@
  * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
  *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
  *   replaced with real SpaceAgent UUIDs by `seedBuiltInWorkflows`.
- * - Workflows are directed graphs: nodes are nodes, transitions are edges.
- *   A node with no outgoing transitions is a terminal node — the run
- *   completes when that node is reached and advance() is called.
+ * - Workflows use gated channels for inter-agent communication (agent-centric
+ *   model). Transitions are empty for agent-centric workflows; completion is
+ *   detected when all agents report done.
  * - At Space creation time, preset SpaceAgent records are seeded for each
  *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
  *   exist so that the `agentId` values resolve correctly.
@@ -25,7 +25,7 @@ import type { SpaceWorkflow } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 
 // ---------------------------------------------------------------------------
-// Template step ID constants (used to wire up transitions)
+// Template node ID constants (used as stable IDs for nodes and startNodeId)
 // ---------------------------------------------------------------------------
 
 const CODING_PLANNER_STEP = 'tpl-coding-planner';
@@ -46,10 +46,11 @@ const REVIEW_CODER_STEP = 'tpl-review-coder';
  * Coding Workflow
  *
  * Four-node graph: Plan → Code → Verify → Done (with cycle).
- * - Plan → Code: `human` condition — a human must approve the plan.
- * - Code → Verify: `always` condition — automatically verify after coding.
- * - Verify → Plan: `task_result` condition on 'failed' — loops back (cyclic).
- * - Verify → Done: `task_result` condition on 'passed' — completes the workflow.
+ * Routing is channel-based (agent-centric model); transitions are empty.
+ * - Plan → Code: `human` gate — a human must approve the plan.
+ * - Code → Verify: `always` gate — automatically verify after coding.
+ * - Verify → Plan: `task_result` gate on 'failed' — loops back (cyclic).
+ * - Verify → Done: `task_result` gate on 'passed' — completes the workflow.
  * - `maxIterations: 3` caps the number of Plan→Code→Verify cycles.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
@@ -84,51 +85,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			agentId: 'general',
 		},
 	],
-	transitions: [
-		{
-			id: 'tpl-coding-plan-to-code',
-			from: CODING_PLANNER_STEP,
-			to: CODING_CODER_STEP,
-			condition: {
-				type: 'human',
-				description: 'Review and approve the plan before coding begins',
-			},
-			order: 0,
-		},
-		{
-			id: 'tpl-coding-code-to-verify',
-			from: CODING_CODER_STEP,
-			to: CODING_VERIFY_STEP,
-			condition: {
-				type: 'always',
-				description: 'Automatically verify after coding is complete',
-			},
-			order: 0,
-		},
-		{
-			id: 'tpl-coding-verify-to-plan',
-			from: CODING_VERIFY_STEP,
-			to: CODING_PLANNER_STEP,
-			condition: {
-				type: 'task_result',
-				expression: 'failed',
-				description: 'Loop back to planning when verification fails',
-			},
-			order: 0,
-			isCyclic: true,
-		},
-		{
-			id: 'tpl-coding-verify-to-done',
-			from: CODING_VERIFY_STEP,
-			to: CODING_DONE_STEP,
-			condition: {
-				type: 'task_result',
-				expression: 'passed',
-				description: 'Complete workflow when verification passes',
-			},
-			order: 1,
-		},
-	],
+	transitions: [],
 	startNodeId: CODING_PLANNER_STEP,
 	rules: [],
 	tags: ['coding', 'default'],
@@ -185,8 +142,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  * Research Workflow
  *
  * Two-node graph: Planner → General.
- * Both transitions use `always` conditions — the workflow advances without
- * human intervention, suited for fully autonomous research and summarisation tasks.
+ * Routing is channel-based (agent-centric model); transitions are empty.
+ * - Plan Research → Research: `always` gate — advances without human intervention.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -206,18 +163,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			agentId: 'general',
 		},
 	],
-	transitions: [
-		{
-			id: 'tpl-research-plan-to-research',
-			from: RESEARCH_PLANNER_STEP,
-			to: RESEARCH_GENERAL_STEP,
-			condition: {
-				type: 'always',
-				description: 'Automatically advance after planning is complete',
-			},
-			order: 0,
-		},
-	],
+	transitions: [],
 	startNodeId: RESEARCH_PLANNER_STEP,
 	rules: [],
 	tags: ['research'],
