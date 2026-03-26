@@ -99,6 +99,17 @@ export interface UpdateSkillParams {
 	config?: AppSkillConfig;
 }
 
+/**
+ * Per-room override for a skill's enabled state.
+ * When an override exists for a (skillId, roomId) pair, the `enabled` field
+ * takes precedence over the skill's global `enabled` value.
+ */
+export interface RoomSkillOverride {
+	skillId: string;
+	roomId: string;
+	enabled: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Type guards
 // ---------------------------------------------------------------------------

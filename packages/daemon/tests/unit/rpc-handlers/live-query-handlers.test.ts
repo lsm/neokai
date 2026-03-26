@@ -48,12 +48,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('goals.byRoom')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('sessionGroupMessages.byGroup')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(true);
 	});
 
 	test('all registry entries have correct paramCount', () => {
 		expect(NAMED_QUERY_REGISTRY.get('tasks.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('goals.byRoom')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('skills.byRoom')!.paramCount).toBe(1);
 	});
 
 	// -------------------------------------------------------------------------
@@ -366,6 +368,122 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		test('ORDER BY is createdAt ASC, id ASC (deterministic tiebreaker)', () => {
 			const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
 			expect(sql).toContain('ORDER BY createdAt ASC, id ASC');
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// skills.byRoom — global skills with per-room override via LEFT JOIN
+	// -------------------------------------------------------------------------
+
+	describe('skills.byRoom', () => {
+		function insertSkill(
+			id: string,
+			name: string,
+			opts: { enabled?: boolean; builtIn?: boolean } = {}
+		): void {
+			const enabled = opts.enabled ?? true;
+			const builtIn = opts.builtIn ? 1 : 0;
+			const config = JSON.stringify({ type: 'builtin', commandName: name });
+			db.exec(`
+				INSERT INTO skills (id, name, display_name, description, source_type, config, enabled, built_in, validation_status, created_at)
+				VALUES ('${id}', '${name}', '${name}', '${name} skill', 'builtin', '${config}', ${enabled ? 1 : 0}, ${builtIn}, 'valid', ${now})
+			`);
+		}
+
+		function setOverride(roomId: string, skillId: string, enabled: boolean): void {
+			db.exec(`
+				INSERT INTO room_skill_overrides (skill_id, room_id, enabled)
+				VALUES ('${skillId}', '${roomId}', ${enabled ? 1 : 0})
+			`);
+		}
+
+		function queryAndMap(): Record<string, unknown>[] {
+			const entry = NAMED_QUERY_REGISTRY.get('skills.byRoom')!;
+			const rows = db.prepare(entry.sql).all(roomId) as Record<string, unknown>[];
+			return entry.mapRow ? rows.map(entry.mapRow) : rows;
+		}
+
+		test('returns global enabled when no room override row exists', () => {
+			insertSkill('s-1', 'alpha', { enabled: true });
+			insertSkill('s-2', 'beta', { enabled: false });
+
+			const rows = queryAndMap();
+			expect(rows).toHaveLength(2);
+			const alpha = rows.find((r) => r.name === 'alpha')!;
+			const beta = rows.find((r) => r.name === 'beta')!;
+			expect(alpha.enabled).toBe(true);
+			expect(beta.enabled).toBe(false);
+			expect(alpha.overriddenByRoom).toBe(false);
+			expect(beta.overriddenByRoom).toBe(false);
+		});
+
+		test('returns room override enabled when override row exists', () => {
+			insertSkill('s-1', 'alpha', { enabled: true });
+			insertSkill('s-2', 'beta', { enabled: true });
+
+			// Override alpha to disabled in the room
+			setOverride(roomId, 's-1', false);
+
+			const rows = queryAndMap();
+			const alpha = rows.find((r) => r.name === 'alpha')!;
+			const beta = rows.find((r) => r.name === 'beta')!;
+			expect(alpha.enabled).toBe(false);
+			expect(alpha.overriddenByRoom).toBe(true);
+			expect(beta.enabled).toBe(true);
+			expect(beta.overriddenByRoom).toBe(false);
+		});
+
+		test('room override can enable a globally disabled skill', () => {
+			insertSkill('s-1', 'alpha', { enabled: false });
+			setOverride(roomId, 's-1', true);
+
+			const [row] = queryAndMap();
+			expect(row.enabled).toBe(true);
+			expect(row.overriddenByRoom).toBe(true);
+		});
+
+		test('config is parsed as JSON object', () => {
+			insertSkill('s-1', 'alpha');
+			const [row] = queryAndMap();
+			expect(typeof row.config).toBe('object');
+			expect(row.config).toEqual({ type: 'builtin', commandName: 'alpha' });
+		});
+
+		test('builtIn is converted from SQLite integer to boolean', () => {
+			insertSkill('s-1', 'builtin-skill', { builtIn: true });
+			insertSkill('s-2', 'custom-skill', { builtIn: false });
+
+			const rows = queryAndMap();
+			const builtin = rows.find((r) => r.name === 'builtin-skill')!;
+			const custom = rows.find((r) => r.name === 'custom-skill')!;
+			expect(builtin.builtIn).toBe(true);
+			expect(custom.builtIn).toBe(false);
+		});
+
+		test('displayName and sourceType are camelCase aliases', () => {
+			insertSkill('s-1', 'alpha');
+			const [row] = queryAndMap();
+			expect(row).toHaveProperty('displayName', 'alpha');
+			expect(row).toHaveProperty('sourceType', 'builtin');
+			expect(row).not.toHaveProperty('display_name');
+			expect(row).not.toHaveProperty('source_type');
+		});
+
+		test('ORDER BY is built_in DESC, created_at ASC, id ASC (deterministic)', () => {
+			const sql = NAMED_QUERY_REGISTRY.get('skills.byRoom')!.sql;
+			expect(sql).toContain('ORDER BY s.built_in DESC, s.created_at ASC, s.id ASC');
+		});
+
+		test('LEFT JOIN preserves skills with no override row', () => {
+			insertSkill('s-1', 'no-override');
+			const rows = queryAndMap();
+			expect(rows).toHaveLength(1);
+			expect(rows[0].overriddenByRoom).toBe(false);
+		});
+
+		test('has mapRow function', () => {
+			const entry = NAMED_QUERY_REGISTRY.get('skills.byRoom')!;
+			expect(typeof entry.mapRow).toBe('function');
 		});
 	});
 

@@ -384,6 +384,16 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// Per-room skill enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_skill_overrides (
+        skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (skill_id, room_id)
+      )
+    `);
+
 	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,

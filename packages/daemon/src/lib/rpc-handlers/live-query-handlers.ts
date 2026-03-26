@@ -275,6 +275,34 @@ function mapMcpEnablementRow(row: Record<string, unknown>): Record<string, unkno
 	};
 }
 
+const SKILLS_BY_ROOM_SQL = `
+SELECT
+  s.id,
+  s.name,
+  s.display_name AS displayName,
+  s.description,
+  s.source_type AS sourceType,
+  s.config,
+  s.built_in AS builtIn,
+  s.validation_status AS validationStatus,
+  s.created_at AS createdAt,
+  CASE WHEN rso.enabled IS NOT NULL THEN rso.enabled ELSE s.enabled END AS enabled,
+  CASE WHEN rso.skill_id IS NOT NULL THEN 1 ELSE 0 END AS overriddenByRoom
+FROM skills s
+LEFT JOIN room_skill_overrides rso ON rso.skill_id = s.id AND rso.room_id = ?
+ORDER BY s.built_in DESC, s.created_at ASC, s.id ASC
+`.trim();
+
+function mapSkillByRoomRow(row: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...row,
+		config: JSON.parse(row.config as string),
+		enabled: row.enabled === 1,
+		builtIn: row.builtIn === 1,
+		overriddenByRoom: row.overriddenByRoom === 1,
+	};
+}
+
 /**
  * Canonical task timeline query (no projection table):
  * - SDK messages are read directly from sdk_messages joined through session_group_members.
@@ -390,6 +418,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			mapRow: mapMcpEnablementRow,
 		},
 	],
+	[
+		'skills.byRoom',
+		{
+			sql: SKILLS_BY_ROOM_SQL,
+			paramCount: 1,
+			mapRow: mapSkillByRoomRow,
+		},
+	],
 ]);
 
 // ============================================================================
@@ -453,7 +489,8 @@ export function setupLiveQueryHandlers(
 		if (
 			queryName === 'tasks.byRoom' ||
 			queryName === 'goals.byRoom' ||
-			queryName === 'mcpEnablement.byRoom'
+			queryName === 'mcpEnablement.byRoom' ||
+			queryName === 'skills.byRoom'
 		) {
 			const roomId = params[0] as string;
 			if (!stmtRoom.get(roomId)) {
