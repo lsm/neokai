@@ -209,7 +209,11 @@ For planning tasks the planner must run a second phase to create tasks.
    2. Read the plan file under docs/plans/
    3. Create all tasks 1:1 from the plan using the \`create_task\` tool
    4. Finish your response after all tasks are created"
-2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N", call \`complete_task\` with a summary.
+2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N":
+   a. Read the plan document under \`docs/plans/\` in the workspace.
+   b. Review each listed task against the plan: verify title, description, dependencies, priority, completeness, and no scope creep.
+   c. Use \`update_task\` to fix any discrepancies found.
+   d. Call \`complete_task\` with a summary after all tasks are verified.
 
 **IMPORTANT**: The planner must use the \`create_task\` tool to register tasks. You cannot call \`complete_task\` until tasks are created — the runtime gate will reject it.`;
 	}
@@ -338,7 +342,11 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 ${prMergeabilityCheckBlock('Step 5', false)}
 
-Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`;
+Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`:
+1. Read the plan document under \`docs/plans/\` in the workspace.
+2. Review each listed task against the plan for accuracy, completeness, correct dependencies, and no scope creep.
+3. Use \`update_task\` to fix any discrepancies found.
+4. Call \`complete_task\` with a summary after all tasks are verified.`;
 }
 
 function leaderPlanReviewSimpleSection(helperNames: string[]): string {
@@ -361,7 +369,17 @@ ${helperSection}## Plan Review Guidelines
 6. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
 7. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
 
-**Phase 2 (task creation)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N", call \`complete_task\` with a summary of the tasks created.`;
+**Phase 2 (task review + completion)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N":
+1. Read the plan document under \`docs/plans/\` in the workspace.
+2. Review each listed task against the plan. For each task, verify:
+   - **Title** — accurately reflects the scope and intent from the plan
+   - **Description** — covers all relevant details (root cause, fix approach, files)
+   - **Dependencies** — correctly reflect the dependency order in the plan
+   - **Priority** — matches the priority assigned in the plan
+   - **Completeness** — no plan items were missed or incorrectly merged
+   - **No scope creep** — tasks contain only work from their plan section
+3. Use \`update_task\` to fix any discrepancies found.
+4. Call \`complete_task\` with a summary after all tasks are verified.`;
 }
 
 function leaderCodeReviewGuidelinesSection(reviewerNames: string[], helperNames: string[]): string {

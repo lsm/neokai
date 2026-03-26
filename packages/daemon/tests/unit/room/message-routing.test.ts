@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
 	formatWorkerToLeaderEnvelope,
+	formatPlanEnvelope,
 	formatLeaderToWorkerFeedback,
 	formatLeaderContractNudge,
 	priorityOrder,
@@ -69,6 +70,107 @@ describe('Message Routing', () => {
 			});
 
 			expect(result).toContain('Terminal state: interrupted');
+		});
+	});
+
+	describe('formatPlanEnvelope', () => {
+		it('should format Phase 1 envelope without review instructions', () => {
+			const result = formatPlanEnvelope({
+				iteration: 1,
+				goalTitle: 'Build auth system',
+				terminalState: 'idle',
+				workerOutput: 'Created plan PR #42',
+				draftTasks: [],
+				approved: false,
+			});
+
+			expect(result).toContain('[PLANNER OUTPUT] Iteration: 1');
+			expect(result).toContain('Phase 1 (plan document)');
+			expect(result).toContain('Goal: Build auth system');
+			expect(result).toContain('Plan PR created — ready for review');
+			expect(result).not.toContain('Review Instructions');
+		});
+
+		it('should format Phase 2 envelope with task details and review instructions', () => {
+			const result = formatPlanEnvelope({
+				iteration: 2,
+				goalTitle: 'Build auth system',
+				terminalState: 'idle',
+				workerOutput: 'Created 2 tasks',
+				draftTasks: [
+					{
+						id: 'task-1',
+						title: 'Add login endpoint',
+						description: 'Create POST /login',
+						priority: 'high',
+						assignedAgent: 'coder',
+						dependsOn: [],
+					},
+					{
+						id: 'task-2',
+						title: 'Add logout endpoint',
+						description: 'Create POST /logout',
+						priority: 'normal',
+						assignedAgent: 'coder',
+						dependsOn: ['task-1'],
+					},
+				],
+				approved: true,
+			});
+
+			expect(result).toContain('Phase 2 (task creation)');
+			expect(result).toContain('Tasks created: 2');
+			expect(result).toContain('Add login endpoint');
+			expect(result).toContain('Add logout endpoint');
+			expect(result).toContain('Task ID: task-1');
+			expect(result).toContain('Task ID: task-2');
+			expect(result).toContain('Review Instructions');
+			expect(result).toContain('update_task');
+			expect(result).toContain('complete_task');
+		});
+
+		it('should show dependencies for tasks that have them', () => {
+			const result = formatPlanEnvelope({
+				iteration: 2,
+				goalTitle: 'Build feature',
+				terminalState: 'idle',
+				workerOutput: 'Tasks created',
+				draftTasks: [
+					{
+						id: 'task-1',
+						title: 'Task A',
+						description: 'First task',
+						priority: 'normal',
+						assignedAgent: 'coder',
+						dependsOn: [],
+					},
+					{
+						id: 'task-2',
+						title: 'Task B',
+						description: 'Second task',
+						priority: 'normal',
+						assignedAgent: 'coder',
+						dependsOn: ['task-1'],
+					},
+				],
+				approved: true,
+			});
+
+			expect(result).not.toMatch(/Depends on:.*\n.*Task A/);
+			expect(result).toContain('Depends on: task-1');
+		});
+
+		it('should not show review instructions for Phase 2 with no tasks', () => {
+			const result = formatPlanEnvelope({
+				iteration: 2,
+				goalTitle: 'Build feature',
+				terminalState: 'idle',
+				workerOutput: 'No tasks created',
+				draftTasks: [],
+				approved: true,
+			});
+
+			expect(result).not.toContain('Review Instructions');
 		});
 	});
 
