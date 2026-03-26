@@ -46,7 +46,7 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 
 **Approach**: Write an online integration test (using dev proxy) that performs a model switch mid-session and observes the `system:init` message from the SDK subprocess. The `system:init` message's `model` field is the authoritative source for which model the SDK is actually using. By comparing the `model` field before and after the switch, we can determine whether the new model takes effect.
 
-**Observability mechanism**: Subscribe to `state.sdkMessages.delta` events on the session channel via WebSocket. Listen for `type === 'system' && subtype === 'init'` messages and read the `.model` field. This pattern is already used in `packages/daemon/tests/online/agent/agent-session-sdk.test.ts` (lines 300-326).
+**Observability mechanism**: Subscribe to `state.sdkMessages.delta` events on the session channel via `daemon.messageHub.onEvent()`. Listen for `type === 'system' && subtype === 'init'` messages and read the `.model` field. Use the `waitForSystemInit()` helper pattern from `packages/daemon/tests/online/coordinator/coordinator-mode-switch.test.ts` (lines 54-97), which joins the session channel via `daemon.messageHub.joinChannel('session:' + sessionId)`, parses the `added` array from the delta payload, and matches on `msg.type === 'system' && msg.subtype === 'init'`. Adapt this helper to also extract and return the `model` field.
 
 **Decision point**: After this investigation task completes, the human reviewer will decide the Bug 2 approach based on the evidence:
 - **If the test passes** (new model appears in `system:init` after switch): model switching works without forking — the bug may be elsewhere (e.g., UI-only, race condition in restart, or already fixed). No `forkSession` implementation needed.
@@ -62,20 +62,24 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 
 **File**: `packages/daemon/tests/online/rpc/rpc-model-switching.test.ts` (append to existing file)
 
-**Key observability mechanism**: The SDK's `system:init` message (first message emitted by a new query) carries a `model` field that is the authoritative source for which model the subprocess is using. By subscribing to `state.sdkMessages.delta` events on the session channel and listening for `system:init` messages before and after the switch, we can determine whether the new model takes effect. This pattern is already used in `packages/daemon/tests/online/agent/agent-session-sdk.test.ts` (lines 300-326).
+**Key observability mechanism**: The SDK's `system:init` message (first message emitted by a new query) carries a `model` field that is the authoritative source for which model the subprocess is using. By subscribing to `state.sdkMessages.delta` events on the session channel and listening for `system:init` messages before and after the switch, we can determine whether the new model takes effect. Use the `waitForSystemInit()` helper pattern from `packages/daemon/tests/online/coordinator/coordinator-mode-switch.test.ts` (lines 54-97) — it uses `daemon.messageHub.onEvent('state.sdkMessages.delta', ...)` and `daemon.messageHub.joinChannel(...)`, which is the modern API (the old raw WebSocket `SUBSCRIBE` pattern in `agent-session-sdk.test.ts` is inside a `describe.skip` block marked "DEPRECATED").
 
 **Subtasks**:
-1. Create a helper that subscribes to `state.sdkMessages.delta` on a session channel and returns a Promise that resolves with the next `system:init` message's `model` field. Use the WebSocket subscription pattern from `agent-session-sdk.test.ts`.
+1. Create a `waitForSystemInit(sessionId)` helper adapted from `packages/daemon/tests/online/coordinator/coordinator-mode-switch.test.ts` (lines 54-97). It should:
+   - Join the session channel via `daemon.messageHub.joinChannel('session:' + sessionId)`
+   - Return a Promise that resolves with the `model` field from the next `system:init` delta event
+   - Listen via `daemon.messageHub.onEvent('state.sdkMessages.delta', ...)` and parse the `added` array
+   - Match on `msg.type === 'system' && msg.subtype === 'init'`
+   - Clean up the event listener after resolving
 
 2. Write a test (using dev proxy via `NEOKAI_USE_DEV_PROXY=1`) that:
    - Creates a session and sends a message to start a query.
-   - Captures the first `system:init` message's `model` field → `initialModel`.
-   - Waits for the query response to confirm the agent is working.
-   - Calls `session.model.switch` with a different model (e.g., `claude-sonnet-4-20250514` → `claude-haiku-4-5-20251001`).
-   - Waits for the model switch RPC to complete (the restart should happen automatically).
-   - Captures the next `system:init` message's `model` field → `postSwitchModel`.
+   - **Before sending**: call `waitForSystemInit(sessionId)` to capture the initial `model` field → `initialModel`. Wait for the query response to confirm the agent is working.
+   - Calls `session.model.switch` with a different model (e.g., `claude-sonnet-4-20250514` → `claude-haiku-4-5-20251001`) and awaits completion. The `restart()` happens internally — the RPC returns after the old query is stopped.
+   - **After the RPC returns, before sending the next message**: call `waitForSystemInit(sessionId)` to capture the post-switch `model` field → `postSwitchModel`. Do NOT subscribe before the RPC call — `restart()` may emit teardown-related events that could race with the subscription. The subscription must be set up after the RPC completes but before the post-switch message triggers a new query turn.
+   - Sends another message (this triggers the new query turn, which emits the `system:init` that `waitForSystemInit` is waiting for).
    - Asserts that `postSwitchModel !== initialModel` (the SDK subprocess is using the new model).
-   - Sends another message and waits for a response (verifying the agent is not stuck after the switch).
+   - Waits for the response (verifying the agent is not stuck after the switch).
 
 3. If the dev proxy does not support observing different models (it mocks all responses uniformly), the test can still verify that a NEW `system:init` is emitted after the switch (the `session_id` may or may not change). Document the limitation clearly.
 
@@ -192,7 +196,7 @@ The root cause is that `session.model.switch` RPC handler in `session-handlers.t
 - Restore path also registers sessions.
 - No regression in existing SessionCache tests.
 
-**Dependencies**: Task 3
+**Dependencies**: Task 2
 
 **Agent type**: coder
 
