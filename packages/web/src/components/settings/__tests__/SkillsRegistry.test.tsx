@@ -53,12 +53,12 @@ vi.mock('../../../lib/skills-store.ts', () => ({
 	},
 }));
 
-// Mock useSkills hook
+// Mock useSkills hook — returns plain values matching the new UseSkillsResult interface
 vi.mock('../../../hooks/useSkills.ts', () => ({
 	useSkills: () => ({
-		skills: mockSkillsSignal,
-		isLoading: mockIsLoadingSignal,
-		error: mockErrorSignal,
+		skills: mockSkillsSignal.value,
+		isLoading: mockIsLoadingSignal.value,
+		error: mockErrorSignal.value,
 	}),
 }));
 

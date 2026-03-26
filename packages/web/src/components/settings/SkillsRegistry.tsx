@@ -30,7 +30,11 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
 };
 
 export function SkillsRegistry() {
-	const { skills, isLoading, error } = useSkills();
+	// useSkills() bridges signal changes into plain useState values so that this
+	// component never reads signal.value directly. This prevents the
+	// @preact/preset-vite transform from creating extra signal subscriptions
+	// that cause double-render artifacts when the LiveQuery snapshot fires.
+	const { skills: skillsList, isLoading: isLoadingVal, error: errorVal } = useSkills();
 
 	const [showAddDialog, setShowAddDialog] = useState(false);
 	const [editingSkill, setEditingSkill] = useState<AppSkill | null>(null);
@@ -68,7 +72,7 @@ export function SkillsRegistry() {
 		}
 	};
 
-	if (isLoading.value && skills.value.length === 0) {
+	if (isLoadingVal && skillsList.length === 0) {
 		return (
 			<SettingsSection title="Skills">
 				<div class="text-sm text-gray-500 py-2">Loading skills...</div>
@@ -76,10 +80,10 @@ export function SkillsRegistry() {
 		);
 	}
 
-	if (error.value) {
+	if (errorVal) {
 		return (
 			<SettingsSection title="Skills">
-				<div class="text-sm text-red-400 py-2">Error: {error.value}</div>
+				<div class="text-sm text-red-400 py-2">Error: {errorVal}</div>
 			</SettingsSection>
 		);
 	}
@@ -97,11 +101,11 @@ export function SkillsRegistry() {
 					</Button>
 				</div>
 
-				{skills.value.length === 0 ? (
+				{skillsList.length === 0 ? (
 					<div class="text-sm text-gray-500 py-4">No skills added yet. Add your first skill.</div>
 				) : (
 					<div class="space-y-2">
-						{skills.value.map((skill) => (
+						{skillsList.map((skill) => (
 							<div
 								key={skill.id}
 								class={cn(

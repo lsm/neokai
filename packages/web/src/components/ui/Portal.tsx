@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { render } from 'preact';
+import { useMemo, useEffect } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 
 interface PortalProps {
 	children: ComponentChildren;
@@ -10,8 +10,10 @@ interface PortalProps {
 /**
  * Portal component for Preact 10+
  *
- * Renders children into a DOM node outside the parent component's DOM hierarchy.
- * Compatible with Preact 10.x (unlike preact-portal which uses deprecated APIs).
+ * Renders children into a DOM node outside the parent component's DOM hierarchy
+ * using Preact's built-in createPortal. Because createPortal keeps children inside
+ * the main Preact VNode tree, cleanup is guaranteed when the parent unmounts —
+ * no stale portal overlays can persist after navigation.
  *
  * @example
  * <Portal into="body">
@@ -19,41 +21,23 @@ interface PortalProps {
  * </Portal>
  */
 export function Portal({ children, into = 'body' }: PortalProps) {
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	const [mounted, setMounted] = useState(false);
+	const container = useMemo(() => {
+		const el = document.createElement('div');
+		el.setAttribute('data-portal', 'true');
+		return el;
+	}, []);
 
 	useEffect(() => {
-		// Create a container element
-		const container = document.createElement('div');
-		container.setAttribute('data-portal', 'true');
-		containerRef.current = container;
-
-		// Find target element
 		const target = typeof into === 'string' ? document.querySelector(into) : into;
-
 		if (target) {
 			target.appendChild(container);
-			setMounted(true);
 		}
-
-		// Cleanup on unmount
 		return () => {
-			if (containerRef.current?.parentNode) {
-				// Unmount any rendered content first
-				render(null, containerRef.current);
-				containerRef.current.parentNode.removeChild(containerRef.current);
+			if (container.parentNode) {
+				container.parentNode.removeChild(container);
 			}
-			containerRef.current = null;
 		};
-	}, [into]);
+	}, [into, container]);
 
-	// Render children into the container
-	useEffect(() => {
-		if (mounted && containerRef.current) {
-			render(<>{children}</>, containerRef.current);
-		}
-	}, [mounted, children]);
-
-	// Portal renders nothing in its original location
-	return null;
+	return createPortal(children, container);
 }
