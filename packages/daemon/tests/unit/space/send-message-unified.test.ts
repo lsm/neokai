@@ -6,10 +6,14 @@
  *      - Agent name target → DM delivery
  *      - Unknown target → clear error
  *      - Unauthorized target → error
+ *      - Broadcast '*' → broadcast
  *   2. send_message without ChannelRouter (legacy):
  *      - Role target → DM
  *      - Broadcast '*' → broadcast
  *   3. Both paths produce same behavior for role-based DM
+ *   4. send_message: node name→fan-out (via nodeGroups in AgentMessageRouter)
+ *   5. send_message: cross-node delivery (sender and receiver in different nodes)
+ *   6. send_message: gate blocked (topology-based blocking — no declared channel)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -431,5 +435,278 @@ describe('both paths produce same behavior for role-based DM', () => {
 		// Both should inject the same prefixed message
 		expect(injectedLegacy[0].message).toBe('[Message from coder]: test message');
 		expect(injectedRouter[0].message).toBe('[Message from coder]: test message');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: send_message — node name→fan-out (via nodeGroups in AgentMessageRouter)
+// ---------------------------------------------------------------------------
+
+describe('send_message: node name→fan-out via AgentMessageRouter', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('node name target fans out to all agents mapped to that node', async () => {
+		// Add a security reviewer who shares the 'review-node' with the reviewer
+		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-security-unified', {
+			role: 'security',
+			status: 'active',
+			orderIndex: 3,
+		});
+
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeResolvedChannel('coder', 'reviewer'),
+			makeResolvedChannel('coder', 'security'),
+		]);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		// Configure AgentMessageRouter with nodeGroups so 'review-node' expands to both roles
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+			nodeGroups: {
+				'review-node': ['reviewer', 'security'],
+			},
+		});
+
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({
+			target: 'review-node',
+			message: 'fan-out to review node',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(2);
+		const sessionIds = data.delivered.map((d: { sessionId: string }) => d.sessionId);
+		expect(sessionIds).toContain(ctx.reviewerSessionId);
+		expect(sessionIds).toContain('session-security-unified');
+		// Both injections should carry the sender prefix
+		expect(injected).toHaveLength(2);
+		expect(
+			injected.every((i) => i.message === '[Message from coder]: fan-out to review node')
+		).toBe(true);
+	});
+
+	test('unknown node name returns an error when nodeGroups not configured', async () => {
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeResolvedChannel('coder', 'reviewer'),
+		]);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		// No nodeGroups configured — node names are not resolvable
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+		});
+
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({
+			target: 'review-node',
+			message: 'should fail',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('no agent or node found');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: send_message — cross-node delivery
+// ---------------------------------------------------------------------------
+
+describe('send_message: cross-node delivery', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('coder in Node A can send to reviewer in Node B via agent name', async () => {
+		// This simulates cross-node delivery: coder (Node A) → reviewer (Node B).
+		// At the session-group level, both agents are members of the same group;
+		// the AgentMessageRouter resolves cross-node delivery by role without
+		// requiring any knowledge of which workflow node each session belongs to.
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeResolvedChannel('coder', 'reviewer'),
+		]);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+		});
+
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'cross-node message from coder',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(1);
+		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
+		expect(injected[0].message).toBe('[Message from coder]: cross-node message from coder');
+	});
+
+	test('cross-node delivery via fan-out: coder fans out to all agents across nodes', async () => {
+		// Add a third agent from a different conceptual node
+		ctx.sessionGroupRepo.addMember(ctx.groupId, 'session-tester-unified', {
+			role: 'tester',
+			status: 'active',
+			orderIndex: 3,
+		});
+
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeResolvedChannel('coder', 'reviewer'),
+			makeResolvedChannel('coder', 'tester'),
+		]);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+		});
+
+		// Broadcast to all permitted targets (reviewer + tester across nodes)
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({ target: '*', message: 'cross-node broadcast' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(2);
+		const sessionIds = data.delivered.map((d: { sessionId: string }) => d.sessionId);
+		expect(sessionIds).toContain(ctx.reviewerSessionId);
+		expect(sessionIds).toContain('session-tester-unified');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: send_message — gate blocked (topology-based blocking)
+// ---------------------------------------------------------------------------
+
+describe('send_message: gate blocked via topology', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('send is blocked when no channel is declared from sender to target', async () => {
+		// Topology only declares reviewer→coder; coder has no outgoing channels
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeResolvedChannel('reviewer', 'coder'),
+		]);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+		});
+
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'should be blocked by gate',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		// No message was injected — gate blocked it
+		expect(injected).toHaveLength(0);
+		expect(data.error).toContain("does not permit 'coder' to send to: reviewer");
+	});
+
+	test('send is blocked when topology is empty (no channels declared)', async () => {
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+		});
+
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'no channels declared',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(injected).toHaveLength(0);
+		expect(data.error).toContain('No channel topology declared');
+	});
+
+	test('send is allowed when channel is declared in the correct direction', async () => {
+		// Topology declares coder→reviewer; send should succeed
+		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeResolvedChannel('coder', 'reviewer'),
+		]);
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
+
+		const agentMessageRouter = new AgentMessageRouter({
+			sessionGroupRepo: ctx.sessionGroupRepo,
+			getGroupId: () => ctx.groupId,
+			workflowRunRepo: ctx.workflowRunRepo,
+			workflowRunId,
+			messageInjector: baseConfig.messageInjector,
+		});
+
+		const handlers = createNodeAgentToolHandlers({ ...baseConfig, agentMessageRouter });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'gate open — allowed by topology',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(injected).toHaveLength(1);
+		expect(injected[0].message).toBe('[Message from coder]: gate open — allowed by topology');
 	});
 });
