@@ -259,6 +259,23 @@ export class SessionManager {
 	}
 
 	/**
+	 * Remove an AgentSession from the session cache.
+	 *
+	 * Called when a session ends (e.g. room task completion) so that subsequent
+	 * getSessionAsync() calls fall through to DB loading rather than returning
+	 * a stale, already-cleaned-up instance.
+	 *
+	 * Also clears any in-flight load lock via SessionCache.remove(), preventing
+	 * a concurrent getAsync() from re-inserting the stale session after removal.
+	 *
+	 * Currently called by TaskAgentManager when a task agent session is torn down.
+	 * Space runtime callers will be added as that subsystem is wired up.
+	 */
+	unregisterSession(sessionId: string): void {
+		this.sessionCache.remove(sessionId);
+	}
+
+	/**
 	 * Inject a message into a session bypassing the RPC/UI message flow.
 	 *
 	 * Used for internal daemon-to-session communication (e.g. SpaceRuntime → global agent).
