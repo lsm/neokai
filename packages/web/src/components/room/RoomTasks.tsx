@@ -53,7 +53,13 @@ function getTabCounts(tasks: TaskSummary[]) {
 		active: tasks.filter(
 			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
 		).length,
-		review: tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention').length,
+		review: tasks.filter(
+			(t) =>
+				t.status === 'review' ||
+				t.status === 'needs_attention' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
+		).length,
 		done: tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled').length,
 		archived: tasks.filter((t) => t.status === 'archived').length,
 	};
@@ -67,7 +73,13 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 				(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
 			);
 		case 'review':
-			return tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+			return tasks.filter(
+				(t) =>
+					t.status === 'review' ||
+					t.status === 'needs_attention' ||
+					t.status === 'rate_limited' ||
+					t.status === 'usage_limited'
+			);
 		case 'done':
 			return tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled');
 		case 'archived':
@@ -348,23 +360,14 @@ function TaskList({
 	}
 
 	if (tab === 'review') {
-		const reviewTasks = tasks.filter((t) => t.status === 'review');
 		const needsAttention = tasks.filter((t) => t.status === 'needs_attention');
+		const rateLimited = tasks.filter(
+			(t) => t.status === 'rate_limited' || t.status === 'usage_limited'
+		);
+		const reviewTasks = tasks.filter((t) => t.status === 'review');
 
 		return (
 			<div class="space-y-4">
-				{reviewTasks.length > 0 && (
-					<TaskGroup
-						title="Awaiting Review"
-						count={reviewTasks.length}
-						variant="purple"
-						tasks={reviewTasks}
-						allTasks={allTasks}
-						goalByTaskId={goalByTaskId}
-						onTaskClick={onTaskClick}
-						onGoalClick={onGoalClick}
-					/>
-				)}
 				{needsAttention.length > 0 && (
 					<TaskGroup
 						title="Needs Attention"
@@ -376,6 +379,31 @@ function TaskList({
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
 						showAlert
+					/>
+				)}
+				{rateLimited.length > 0 && (
+					<TaskGroup
+						title="Rate / Usage Limited"
+						count={rateLimited.length}
+						variant="orange"
+						tasks={rateLimited}
+						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
+						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
+						showClock
+					/>
+				)}
+				{reviewTasks.length > 0 && (
+					<TaskGroup
+						title="Awaiting Review"
+						count={reviewTasks.length}
+						variant="purple"
+						tasks={reviewTasks}
+						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
+						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 					/>
 				)}
 			</div>
@@ -447,10 +475,11 @@ function TaskGroup({
 	onGoalClick,
 	onReactivate,
 	showAlert = false,
+	showClock = false,
 }: {
 	title: string;
 	count: number;
-	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
+	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'orange' | 'gray';
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
 	goalByTaskId?: Map<string, RoomGoal>;
@@ -458,6 +487,7 @@ function TaskGroup({
 	onGoalClick?: () => void;
 	onReactivate?: (taskId: string) => void;
 	showAlert?: boolean;
+	showClock?: boolean;
 }) {
 	const headerStyles: Record<string, string> = {
 		default: '',
@@ -465,6 +495,7 @@ function TaskGroup({
 		purple: 'bg-purple-900/20',
 		green: 'bg-green-900/20',
 		red: 'bg-red-900/20',
+		orange: 'bg-orange-900/20',
 		gray: 'bg-dark-800',
 	};
 
@@ -474,6 +505,7 @@ function TaskGroup({
 		purple: 'text-purple-400',
 		green: 'text-green-400',
 		red: 'text-red-400',
+		orange: 'text-orange-400',
 		gray: 'text-gray-500',
 	};
 
@@ -483,6 +515,7 @@ function TaskGroup({
 		purple: 'border-dark-700',
 		green: 'border-dark-700',
 		red: 'border-red-800/60',
+		orange: 'border-orange-800/60',
 		gray: 'border-dark-700',
 	};
 
@@ -503,6 +536,21 @@ function TaskGroup({
 							stroke-linejoin="round"
 							stroke-width={1.5}
 							d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+						/>
+					</svg>
+				)}
+				{showClock && (
+					<svg
+						class="w-4 h-4 text-orange-400 flex-shrink-0"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={1.5}
+							d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
 						/>
 					</svg>
 				)}
@@ -669,6 +717,11 @@ function TaskItem({
 			)}
 			{task.status === 'needs_attention' && task.error && (
 				<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={task.error}>
+					{task.error}
+				</p>
+			)}
+			{(task.status === 'rate_limited' || task.status === 'usage_limited') && task.error && (
+				<p class="text-xs text-orange-400 mt-1.5 line-clamp-2" title={task.error}>
 					{task.error}
 				</p>
 			)}

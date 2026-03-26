@@ -192,21 +192,22 @@ class RoomStore {
 		return this.tasks.value.filter((t) => !linkedIds.has(t.id));
 	});
 
-	/** Orphan tasks that are active (draft, pending, in_progress, rate_limited, or usage_limited) */
+	/** Orphan tasks that are active (draft, pending, or in_progress) */
 	readonly orphanTasksActive = computed(() =>
 		this.orphanTasks.value.filter(
-			(t) =>
-				t.status === 'draft' ||
-				t.status === 'pending' ||
-				t.status === 'in_progress' ||
-				t.status === 'rate_limited' ||
-				t.status === 'usage_limited'
+			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
 		)
 	);
 
-	/** Orphan tasks in review (review or needs_attention) */
+	/** Orphan tasks in review (review, needs_attention, rate_limited, or usage_limited) */
 	readonly orphanTasksReview = computed(() =>
-		this.orphanTasks.value.filter((t) => t.status === 'review' || t.status === 'needs_attention')
+		this.orphanTasks.value.filter(
+			(t) =>
+				t.status === 'review' ||
+				t.status === 'needs_attention' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
+		)
 	);
 
 	/** Orphan tasks that are done (completed or cancelled) */
@@ -368,13 +369,19 @@ class RoomStore {
 				}
 				if (event.updated?.length) {
 					const updatedTasks = event.updated as TaskSummary[];
-					// Show toast when a known task transitions into review status.
+					// Show toast when a known task transitions into review/rate-limited/usage-limited status.
 					// Skip when prevTask is absent to avoid spurious toasts during hydration.
 					for (const updatedTask of updatedTasks) {
-						if (updatedTask.status === 'review') {
-							const prevTask = current.find((t) => t.id === updatedTask.id);
-							if (prevTask && prevTask.status !== 'review') {
+						const prevTask = current.find((t) => t.id === updatedTask.id);
+						if (prevTask) {
+							if (updatedTask.status === 'review' && prevTask.status !== 'review') {
 								toast.info(`Task ready for review: ${updatedTask.title}`);
+							} else if (
+								(updatedTask.status === 'rate_limited' || updatedTask.status === 'usage_limited') &&
+								prevTask.status !== updatedTask.status
+							) {
+								const limitType = updatedTask.status === 'rate_limited' ? 'rate' : 'usage';
+								toast.warning(`Task paused (${limitType} limit): ${updatedTask.title}`);
 							}
 						}
 					}
