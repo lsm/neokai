@@ -172,6 +172,7 @@ SELECT
   short_id            AS shortId
 FROM tasks
 WHERE room_id = ?
+  AND status != 'archived'
 ORDER BY created_at DESC, id DESC
 `.trim();
 

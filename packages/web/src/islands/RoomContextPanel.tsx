@@ -98,7 +98,6 @@ interface RoomContextPanelProps {
 export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) {
 	const sessions = roomStore.sessions.value;
 	const tasks = roomStore.tasks.value;
-	const [showArchived, setShowArchived] = useState(false);
 	const [expandedGoals, setExpandedGoals] = useState<Set<string>>(() => new Set());
 	const [orphanTab, setOrphanTab] = useState<OrphanTab>('active');
 	const [showCompletedTasks, setShowCompletedTasks] = useState(getShowCompletedTasksInitial);
@@ -137,17 +136,6 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			: orphanTab === 'review'
 				? roomStore.orphanTasksReview.value
 				: roomStore.orphanTasksDone.value;
-
-	// Sessions
-	const filteredSessions = useMemo(() => {
-		if (showArchived) return sessions;
-		return sessions.filter((s) => s.status !== 'archived');
-	}, [sessions, showArchived]);
-
-	const hasArchivedSessions = useMemo(
-		() => sessions.some((s) => s.status === 'archived'),
-		[sessions]
-	);
 
 	// Selection state
 	const selectedSessionId = currentRoomSessionIdSignal.value;
@@ -334,8 +322,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 									t.status === 'needs_attention'
 							);
 							const completedLinkedTasks = linkedTasks.filter(
-								(t) =>
-									t.status === 'completed' || t.status === 'cancelled' || t.status === 'archived'
+								(t) => t.status === 'completed' || t.status === 'cancelled'
 							);
 							const hasCompletedTasks = completedLinkedTasks.length > 0;
 							return (
@@ -438,7 +425,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				{/* Sessions section */}
 				<CollapsibleSection
 					title="Sessions"
-					count={filteredSessions.length}
+					count={sessions.length}
 					defaultExpanded={false}
 					headerRight={
 						<button
@@ -457,21 +444,10 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 						</button>
 					}
 				>
-					{/* Archived toggle */}
-					{hasArchivedSessions && (
-						<div class="px-3 py-1.5 flex items-center justify-end">
-							<button
-								onClick={() => setShowArchived(!showArchived)}
-								class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-							>
-								{showArchived ? 'Hide archived' : 'Show archived'}
-							</button>
-						</div>
-					)}
-					{filteredSessions.length === 0 ? (
+					{sessions.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No sessions yet</div>
 					) : (
-						filteredSessions.map((session) => (
+						sessions.map((session) => (
 							<button
 								key={session.id}
 								onClick={() => handleSessionClick(session.id)}
