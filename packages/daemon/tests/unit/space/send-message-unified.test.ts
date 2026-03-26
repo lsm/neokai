@@ -24,7 +24,7 @@ import {
 	createStepAgentToolHandlers,
 	type StepAgentToolsConfig,
 } from '../../../src/lib/space/tools/step-agent-tools.ts';
-import { SessionChannelRouter } from '../../../src/lib/space/runtime/session-channel-router.ts';
+import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
 
-		const channelRouter = new SessionChannelRouter({
+		const agentMessageRouter = new AgentMessageRouter({
 			sessionGroupRepo: ctx.sessionGroupRepo,
 			getGroupId: () => ctx.groupId,
 			workflowRunRepo: ctx.workflowRunRepo,
@@ -210,7 +210,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, channelRouter });
+		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello via router' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -227,7 +227,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
 
-		const channelRouter = new SessionChannelRouter({
+		const agentMessageRouter = new AgentMessageRouter({
 			sessionGroupRepo: ctx.sessionGroupRepo,
 			getGroupId: () => ctx.groupId,
 			workflowRunRepo: ctx.workflowRunRepo,
@@ -235,7 +235,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, channelRouter });
+		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: 'ghost-agent', message: 'knock knock' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -250,7 +250,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
 
-		const channelRouter = new SessionChannelRouter({
+		const agentMessageRouter = new AgentMessageRouter({
 			sessionGroupRepo: ctx.sessionGroupRepo,
 			getGroupId: () => ctx.groupId,
 			workflowRunRepo: ctx.workflowRunRepo,
@@ -258,7 +258,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, channelRouter });
+		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: 'reviewer', message: 'unauthorized' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -266,14 +266,14 @@ describe('send_message with ChannelRouter injected', () => {
 		expect(data.error).toContain("does not permit 'coder' to send to: reviewer");
 	});
 
-	test("broadcast '*' → broadcast via SessionChannelRouter", async () => {
+	test("broadcast '*' → broadcast via AgentMessageRouter", async () => {
 		const workflowRunId = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const baseConfig = makeBaseConfig(ctx, workflowRunId, injected);
 
-		const channelRouter = new SessionChannelRouter({
+		const agentMessageRouter = new AgentMessageRouter({
 			sessionGroupRepo: ctx.sessionGroupRepo,
 			getGroupId: () => ctx.groupId,
 			workflowRunRepo: ctx.workflowRunRepo,
@@ -281,7 +281,7 @@ describe('send_message with ChannelRouter injected', () => {
 			messageInjector: baseConfig.messageInjector,
 		});
 
-		const handlers = createStepAgentToolHandlers({ ...baseConfig, channelRouter });
+		const handlers = createStepAgentToolHandlers({ ...baseConfig, agentMessageRouter });
 		const result = await handlers.send_message({ target: '*', message: 'broadcast via router' });
 		const data = JSON.parse(result.content[0].text);
 
@@ -314,7 +314,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 		]);
 		const injected: Array<{ sessionId: string; message: string }> = [];
 		const config = makeBaseConfig(ctx, workflowRunId, injected);
-		// No channelRouter — uses legacy path
+		// No agentMessageRouter — uses legacy path
 
 		const handlers = createStepAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'legacy DM' });
@@ -382,14 +382,14 @@ describe('both paths produce same behavior for role-based DM', () => {
 		// ChannelRouter path
 		const injectedRouter: Array<{ sessionId: string; message: string }> = [];
 		const routerBaseConfig = makeBaseConfig(ctx, workflowRunId, injectedRouter);
-		const channelRouter = new SessionChannelRouter({
+		const agentMessageRouter = new AgentMessageRouter({
 			sessionGroupRepo: ctx.sessionGroupRepo,
 			getGroupId: () => ctx.groupId,
 			workflowRunRepo: ctx.workflowRunRepo,
 			workflowRunId,
 			messageInjector: routerBaseConfig.messageInjector,
 		});
-		const routerHandlers = createStepAgentToolHandlers({ ...routerBaseConfig, channelRouter });
+		const routerHandlers = createStepAgentToolHandlers({ ...routerBaseConfig, agentMessageRouter });
 		const routerResult = await routerHandlers.send_message({
 			target: 'reviewer',
 			message: 'test message',

@@ -33,7 +33,7 @@ import type { SpaceSessionGroupRepository } from '../../../storage/repositories/
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
-import type { SessionChannelRouter } from '../runtime/session-channel-router';
+import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -98,12 +98,12 @@ export interface StepAgentToolsConfig {
 	 */
 	daemonHub?: DaemonHub;
 	/**
-	 * Optional SessionChannelRouter for unified message delivery.
-	 * When provided, send_message delegates all routing to SessionChannelRouter.
+	 * Optional AgentMessageRouter for unified message delivery.
+	 * When provided, send_message delegates all routing to AgentMessageRouter.
 	 * When absent, legacy topology-based routing is used directly.
-	 * TODO: Remove legacy path once TaskAgentManager injects SessionChannelRouter for all sub-sessions.
+	 * TODO: Remove legacy path once TaskAgentManager injects AgentMessageRouter for all sub-sessions.
 	 */
-	channelRouter?: SessionChannelRouter;
+	agentMessageRouter?: AgentMessageRouter;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		messageInjector,
 		taskManager,
 		daemonHub,
-		channelRouter,
+		agentMessageRouter,
 	} = config;
 
 	type GroupLoaded = {
@@ -257,7 +257,7 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		 * Send a message to a peer agent by name (DM), a node by name (fan-out),
 		 * or broadcast to all permitted targets.
 		 *
-		 * When a SessionChannelRouter is configured, delegates all routing to it.
+		 * When a AgentMessageRouter is configured, delegates all routing to it.
 		 * Otherwise uses legacy topology-based routing directly.
 		 *
 		 * Validates against declared channel topology — returns an error with
@@ -266,9 +266,9 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message } = args;
 
-			// --- New path: delegate to SessionChannelRouter when available ---
-			if (channelRouter) {
-				const result = await channelRouter.deliverMessage({
+			// --- New path: delegate to AgentMessageRouter when available ---
+			if (agentMessageRouter) {
+				const result = await agentMessageRouter.deliverMessage({
 					fromRole: myRole,
 					fromSessionId: mySessionId,
 					target,

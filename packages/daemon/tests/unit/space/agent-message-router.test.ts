@@ -1,5 +1,5 @@
 /**
- * Unit tests for SessionChannelRouter
+ * Unit tests for AgentMessageRouter
  *
  * Covers all message routing scenarios:
  *   - Agent name (role) target → DM
@@ -21,8 +21,8 @@ import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/space-session-group-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SessionChannelRouter } from '../../../src/lib/space/runtime/session-channel-router.ts';
-import type { SessionChannelRouterConfig } from '../../../src/lib/space/runtime/session-channel-router.ts';
+import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
+import type { AgentMessageRouterConfig } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -169,9 +169,9 @@ function makeRouter(
 	ctx: TestCtx,
 	workflowRunId: string,
 	injected: Array<{ sessionId: string; message: string }>,
-	overrides: Partial<SessionChannelRouterConfig> = {}
-): SessionChannelRouter {
-	return new SessionChannelRouter({
+	overrides: Partial<AgentMessageRouterConfig> = {}
+): AgentMessageRouter {
+	return new AgentMessageRouter({
 		sessionGroupRepo: ctx.sessionGroupRepo,
 		getGroupId: () => ctx.groupId,
 		workflowRunRepo: ctx.workflowRunRepo,
@@ -187,7 +187,7 @@ function makeRouter(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('SessionChannelRouter: agent name (role) target → DM', () => {
+describe('AgentMessageRouter: agent name (role) target → DM', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -222,7 +222,7 @@ describe('SessionChannelRouter: agent name (role) target → DM', () => {
 	});
 });
 
-describe('SessionChannelRouter: multiple agents sharing a role → fan-out', () => {
+describe('AgentMessageRouter: multiple agents sharing a role → fan-out', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -263,7 +263,7 @@ describe('SessionChannelRouter: multiple agents sharing a role → fan-out', () 
 	});
 });
 
-describe('SessionChannelRouter: broadcast * → all permitted targets', () => {
+describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -325,7 +325,7 @@ describe('SessionChannelRouter: broadcast * → all permitted targets', () => {
 	});
 });
 
-describe('SessionChannelRouter: unknown target → clear error', () => {
+describe('AgentMessageRouter: unknown target → clear error', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -373,7 +373,7 @@ describe('SessionChannelRouter: unknown target → clear error', () => {
 	});
 });
 
-describe('SessionChannelRouter: unauthorized target → error with permitted targets', () => {
+describe('AgentMessageRouter: unauthorized target → error with permitted targets', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -405,7 +405,7 @@ describe('SessionChannelRouter: unauthorized target → error with permitted tar
 	});
 });
 
-describe('SessionChannelRouter: unauthorized target → error with structured fields', () => {
+describe('AgentMessageRouter: unauthorized target → error with structured fields', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -440,7 +440,7 @@ describe('SessionChannelRouter: unauthorized target → error with structured fi
 	});
 });
 
-describe('SessionChannelRouter: empty topology → error', () => {
+describe('AgentMessageRouter: empty topology → error', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -483,7 +483,7 @@ describe('SessionChannelRouter: empty topology → error', () => {
 	});
 });
 
-describe('SessionChannelRouter: partial delivery failure → partial success', () => {
+describe('AgentMessageRouter: partial delivery failure → partial success', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -529,7 +529,7 @@ describe('SessionChannelRouter: partial delivery failure → partial success', (
 	});
 });
 
-describe('SessionChannelRouter: all deliveries fail → false success', () => {
+describe('AgentMessageRouter: all deliveries fail → false success', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -564,7 +564,7 @@ describe('SessionChannelRouter: all deliveries fail → false success', () => {
 	});
 });
 
-describe('SessionChannelRouter: node name target with nodeGroups → fan-out', () => {
+describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -612,7 +612,7 @@ describe('SessionChannelRouter: node name target with nodeGroups → fan-out', (
 	});
 });
 
-describe('SessionChannelRouter: node name target without nodeGroups → unknown target error', () => {
+describe('AgentMessageRouter: node name target without nodeGroups → unknown target error', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -644,7 +644,7 @@ describe('SessionChannelRouter: node name target without nodeGroups → unknown 
 	});
 });
 
-describe('SessionChannelRouter: missing group → error', () => {
+describe('AgentMessageRouter: missing group → error', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -695,7 +695,7 @@ describe('SessionChannelRouter: missing group → error', () => {
 	});
 });
 
-describe('SessionChannelRouter: notFoundRoles structured field', () => {
+describe('AgentMessageRouter: notFoundRoles structured field', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {

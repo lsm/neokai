@@ -1,5 +1,5 @@
 /**
- * SessionChannelRouter — unified message delivery for step agents.
+ * AgentMessageRouter — unified message delivery for step agents.
  *
  * Handles all message routing through a single code path — no separate within-node
  * vs cross-node logic. Target resolution:
@@ -22,7 +22,7 @@ import type { SpaceSessionGroupRepository } from '../../../storage/repositories/
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ChannelResolver } from './channel-resolver';
 
-export interface SessionChannelRouterConfig {
+export interface AgentMessageRouterConfig {
 	/** Session group repository for looking up group members. */
 	sessionGroupRepo: SpaceSessionGroupRepository;
 	/** Returns the group ID for the current task. */
@@ -40,7 +40,7 @@ export interface SessionChannelRouterConfig {
 	nodeGroups?: Record<string, string[]>;
 }
 
-export interface SessionDeliverMessageParams {
+export interface AgentMessageParams {
 	/** Role of the sending agent. */
 	fromRole: string;
 	/** Session ID of the sending agent (excluded from delivery). */
@@ -54,7 +54,7 @@ export interface SessionDeliverMessageParams {
 	message: string;
 }
 
-export interface SessionDeliverMessageResult {
+export interface AgentMessageResult {
 	success: boolean | 'partial';
 	delivered: Array<{ role: string; sessionId: string }>;
 	failed: Array<{ role: string; sessionId: string; error: string }>;
@@ -77,8 +77,8 @@ export interface SessionDeliverMessageResult {
 	notFoundRoles?: string[];
 }
 
-export class SessionChannelRouter {
-	constructor(private readonly config: SessionChannelRouterConfig) {}
+export class AgentMessageRouter {
+	constructor(private readonly config: AgentMessageRouterConfig) {}
 
 	/**
 	 * Deliver a message to the specified target.
@@ -92,7 +92,7 @@ export class SessionChannelRouter {
 	 * Authorization is checked against the declared channel topology before delivery.
 	 * Returns a structured result — never throws.
 	 */
-	async deliverMessage(params: SessionDeliverMessageParams): Promise<SessionDeliverMessageResult> {
+	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
 		const { fromRole, fromSessionId, target, message } = params;
 		const {
 			sessionGroupRepo,
