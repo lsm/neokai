@@ -128,8 +128,12 @@ class SpaceStore {
 		const map = new Map<string, SpaceTask[]>();
 		for (const task of this.tasks.value) {
 			if (task.workflowNodeId) {
-				const existing = map.get(task.workflowNodeId) ?? [];
-				map.set(task.workflowNodeId, [...existing, task]);
+				let arr = map.get(task.workflowNodeId);
+				if (!arr) {
+					arr = [];
+					map.set(task.workflowNodeId, arr);
+				}
+				arr.push(task);
 			}
 		}
 		return map;

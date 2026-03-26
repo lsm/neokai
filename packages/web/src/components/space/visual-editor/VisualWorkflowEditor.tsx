@@ -143,6 +143,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const agents = filterAgents(spaceStore.agents.value);
 	const tasksByNodeId = spaceStore.tasksByNodeId.value;
 
+	// Determine which workflow run to use for completion indicators.
+	// Prefer an active run; fall back to the most recently updated run.
+	const relevantRunId = (() => {
+		if (!workflow?.id) return null;
+		const runs = spaceStore.workflowRuns.value.filter((r) => r.workflowId === workflow.id);
+		if (!runs.length) return null;
+		const active = runs.find((r) => r.status === 'pending' || r.status === 'in_progress');
+		if (active) return active.id;
+		return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
+	})();
+
 	// Collect all agent slot names from nodes for ChannelEditor from/to suggestions
 	const agentRoles = useMemo(() => {
 		const roles = new Set<string>();
@@ -304,7 +315,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const nodeData = useMemo<WorkflowNodeData[]>(() => {
 		return nodes.map((node, i) => {
 			const nodeId = node.step.id;
-			const nodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
+			const allNodeTasks = nodeId ? (tasksByNodeId.get(nodeId) ?? []) : [];
+			// Filter to the most relevant run to avoid mixing state from past runs.
+			const nodeTasks = relevantRunId
+				? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
+				: allNodeTasks;
 			const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
 				agentName: t.agentName ?? null,
 				status: t.status,
@@ -319,7 +334,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nodeTaskStates: nodeTaskStates.length > 0 ? nodeTaskStates : undefined,
 			};
 		});
-	}, [nodes, agents, nodeIsStart, tasksByNodeId]);
+	}, [nodes, agents, nodeIsStart, tasksByNodeId, relevantRunId]);
 
 	// ------------------------------------------------------------------
 	// Derived: selected node / edge

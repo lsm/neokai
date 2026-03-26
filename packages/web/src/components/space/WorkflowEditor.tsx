@@ -192,6 +192,18 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const agents = filterAgents(spaceStore.agents.value);
 	const tasksByNodeId = spaceStore.tasksByNodeId.value;
 
+	// Determine which workflow run to use for completion indicators.
+	// Prefer an active run; fall back to the most recently updated run.
+	// When no run exists yet (e.g. new workflow), relevantRunId is null.
+	const relevantRunId = (() => {
+		if (!workflow?.id) return null;
+		const runs = spaceStore.workflowRuns.value.filter((r) => r.workflowId === workflow.id);
+		if (!runs.length) return null;
+		const active = runs.find((r) => r.status === 'pending' || r.status === 'in_progress');
+		if (active) return active.id;
+		return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
+	})();
+
 	// ---- Step operations ----
 
 	function addStep() {
@@ -527,8 +539,13 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 
 					<div class="space-y-2">
 						{steps.map((step, i) => {
-							// Derive per-agent completion states from live task data for this node.
-							const nodeTasks = step.id ? (tasksByNodeId.get(step.id) ?? []) : [];
+							// Derive per-agent completion states from live task data for this node,
+							// scoped to the most relevant workflow run to avoid mixing state from
+							// past runs with the current one.
+							const allNodeTasks = step.id ? (tasksByNodeId.get(step.id) ?? []) : [];
+							const nodeTasks = relevantRunId
+								? allNodeTasks.filter((t) => t.workflowRunId === relevantRunId)
+								: allNodeTasks;
 							const nodeTaskStates: AgentTaskState[] = nodeTasks.map((t) => ({
 								agentName: t.agentName ?? null,
 								status: t.status,
