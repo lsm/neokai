@@ -42,6 +42,7 @@ import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { autoCompleteStuckAgents } from './agent-liveness';
+import { CompletionDetector } from './completion-detector';
 
 const log = new Logger('space-runtime');
 
@@ -82,6 +83,16 @@ export interface SpaceRuntimeConfig {
 	 * in a real sink after construction (e.g. once the Space Agent session exists).
 	 */
 	notificationSink?: NotificationSink;
+	/**
+	 * Completion detector for the all-agents-done completion model.
+	 *
+	 * When provided (or defaulted from taskRepo), used in processRunTick() to
+	 * detect when all agents in a workflow run have reached a terminal status and
+	 * mark the run as completed. Replaces the old terminal-node detection model.
+	 *
+	 * Defaults to `new CompletionDetector(taskRepo)` if not provided.
+	 */
+	completionDetector?: CompletionDetector;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +157,12 @@ export class SpaceRuntime {
 	private notificationSink: NotificationSink;
 
 	/**
+	 * Completion detector for the all-agents-done model.
+	 * Initialized from config or defaulted to `new CompletionDetector(taskRepo)`.
+	 */
+	private completionDetector: CompletionDetector;
+
+	/**
 	 * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:needs_attention`
 	 * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
 	 * Entries are cleared when the task leaves the flagged state.
@@ -159,6 +176,7 @@ export class SpaceRuntime {
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
+		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
 	}
 
 	/**
@@ -744,6 +762,18 @@ export class SpaceRuntime {
 				log.warn(
 					`SpaceRuntime: auto-completed ${autoCompleted.length} stuck agent(s) for run ${runId}`
 				);
+			}
+
+			// Step 1.6: All-agents-done completion detection.
+			// After liveness checks and auto-completion, inspect whether every task
+			// in the run has reached a terminal status. If so, mark the run as
+			// completed — cleanupTerminalExecutors() will emit the notification and
+			// remove the executor on the same tick.
+			if (
+				this.completionDetector.isComplete(runId, meta.workflow.channels ?? [], meta.workflow.nodes)
+			) {
+				this.config.workflowRunRepo.updateStatus(runId, 'completed');
+				return;
 			}
 
 			// Step 2: Spawn Task Agents for pending tasks without an agent session.
