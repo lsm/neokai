@@ -14,14 +14,22 @@
 
 export type SkillSourceType = 'builtin' | 'plugin' | 'mcp_server';
 
-/** Config for a built-in skill backed by a .claude/commands/ slash command. */
+/**
+ * Config for a built-in skill backed by a .claude/commands/ slash command.
+ * The `type` discriminator enables safe JSON round-tripping from SQLite.
+ */
 export interface BuiltinSkillConfig {
+	type: 'builtin';
 	/** The slash-command name (e.g. "update-config", "claude-api"). */
 	commandName: string;
 }
 
-/** Config for a skill backed by a local plugin directory. */
+/**
+ * Config for a skill backed by a local plugin directory.
+ * The `type` discriminator enables safe JSON round-tripping from SQLite.
+ */
 export interface PluginSkillConfig {
+	type: 'plugin';
 	/** Absolute path to the plugin directory on disk. */
 	pluginPath: string;
 }
@@ -29,8 +37,10 @@ export interface PluginSkillConfig {
 /**
  * Config for a skill backed by an existing app-level MCP server.
  * References the server by its UUID in app_mcp_servers — no config duplication.
+ * The `type` discriminator enables safe JSON round-tripping from SQLite.
  */
 export interface McpServerSkillConfig {
+	type: 'mcp_server';
 	/** UUID of the corresponding `app_mcp_servers` row. */
 	appMcpServerId: string;
 }
@@ -48,13 +58,13 @@ export type SkillValidationStatus = 'pending' | 'valid' | 'invalid' | 'unknown';
 export interface AppSkill {
 	/** Unique identifier (UUID). */
 	id: string;
-	/** Internal unique name (slug-style, e.g. "web-search"). */
+	/** Internal unique name (slug-style, e.g. "web-search"). Immutable after creation. */
 	name: string;
 	/** Human-readable display name shown in the UI. */
 	displayName: string;
 	/** Short description of what the skill does (used for agent discovery). */
 	description: string;
-	/** Where the skill comes from. */
+	/** Where the skill comes from. Immutable after creation. */
 	sourceType: SkillSourceType;
 	/** Source-type-specific configuration. */
 	config: AppSkillConfig;
@@ -62,10 +72,12 @@ export interface AppSkill {
 	enabled: boolean;
 	/** True when the skill is shipped with NeoKai and cannot be deleted. */
 	builtIn: boolean;
-	/** Current validation state (set by the async validation job). */
+	/**
+	 * Current validation state (set by the async validation job — not user-editable).
+	 */
 	validationStatus: SkillValidationStatus;
-	/** ISO-8601 timestamp when the record was created. */
-	createdAt: string;
+	/** Unix timestamp (ms) when the record was created. Consistent with other NeoKai tables. */
+	createdAt: number;
 }
 
 /**
@@ -76,6 +88,32 @@ export type CreateSkillParams = Omit<AppSkill, 'id' | 'createdAt' | 'builtIn'>;
 
 /**
  * Payload for updating an existing skill entry.
- * All CreateSkillParams fields are optional.
+ * Restricted to user-editable fields only:
+ * - `name` and `sourceType` are immutable after creation
+ * - `validationStatus` is managed by the async validation job
  */
-export type UpdateSkillParams = Partial<CreateSkillParams>;
+export interface UpdateSkillParams {
+	displayName?: string;
+	description?: string;
+	enabled?: boolean;
+	config?: AppSkillConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Type guards
+// ---------------------------------------------------------------------------
+
+/** Returns true when `config` is a {@link BuiltinSkillConfig}. */
+export function isBuiltinSkillConfig(config: AppSkillConfig): config is BuiltinSkillConfig {
+	return config.type === 'builtin';
+}
+
+/** Returns true when `config` is a {@link PluginSkillConfig}. */
+export function isPluginSkillConfig(config: AppSkillConfig): config is PluginSkillConfig {
+	return config.type === 'plugin';
+}
+
+/** Returns true when `config` is a {@link McpServerSkillConfig}. */
+export function isMcpServerSkillConfig(config: AppSkillConfig): config is McpServerSkillConfig {
+	return config.type === 'mcp_server';
+}

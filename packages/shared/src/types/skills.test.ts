@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { isBuiltinSkillConfig, isMcpServerSkillConfig, isPluginSkillConfig } from './skills.ts';
 import type {
 	AppSkill,
 	AppSkillConfig,
@@ -12,28 +13,15 @@ import type {
 } from './skills.ts';
 
 // ---------------------------------------------------------------------------
-// Type guards
-// ---------------------------------------------------------------------------
-
-function isBuiltinSkillConfig(config: AppSkillConfig): config is BuiltinSkillConfig {
-	return 'commandName' in config;
-}
-
-function isPluginSkillConfig(config: AppSkillConfig): config is PluginSkillConfig {
-	return 'pluginPath' in config;
-}
-
-function isMcpServerSkillConfig(config: AppSkillConfig): config is McpServerSkillConfig {
-	return 'appMcpServerId' in config;
-}
-
-// ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const builtinConfig: BuiltinSkillConfig = { commandName: 'update-config' };
-const pluginConfig: PluginSkillConfig = { pluginPath: '/home/user/.neokai/skills/my-skill' };
-const mcpConfig: McpServerSkillConfig = { appMcpServerId: 'mcp-uuid-1234' };
+const builtinConfig: BuiltinSkillConfig = { type: 'builtin', commandName: 'update-config' };
+const pluginConfig: PluginSkillConfig = {
+	type: 'plugin',
+	pluginPath: '/home/user/.neokai/skills/my-skill',
+};
+const mcpConfig: McpServerSkillConfig = { type: 'mcp_server', appMcpServerId: 'mcp-uuid-1234' };
 
 const baseSkill: AppSkill = {
 	id: 'skill-uuid-1',
@@ -45,7 +33,7 @@ const baseSkill: AppSkill = {
 	enabled: true,
 	builtIn: false,
 	validationStatus: 'valid',
-	createdAt: '2026-01-01T00:00:00.000Z',
+	createdAt: 1735689600000, // 2026-01-01T00:00:00.000Z in Unix ms
 };
 
 // ---------------------------------------------------------------------------
@@ -66,26 +54,50 @@ describe('SkillValidationStatus', () => {
 	});
 });
 
-describe('AppSkillConfig discriminated union', () => {
-	it('identifies BuiltinSkillConfig correctly', () => {
+describe('AppSkillConfig discriminated union — type guards', () => {
+	it('identifies BuiltinSkillConfig via type discriminator', () => {
 		const config: AppSkillConfig = builtinConfig;
 		expect(isBuiltinSkillConfig(config)).toBe(true);
 		expect(isPluginSkillConfig(config)).toBe(false);
 		expect(isMcpServerSkillConfig(config)).toBe(false);
 	});
 
-	it('identifies PluginSkillConfig correctly', () => {
+	it('identifies PluginSkillConfig via type discriminator', () => {
 		const config: AppSkillConfig = pluginConfig;
 		expect(isBuiltinSkillConfig(config)).toBe(false);
 		expect(isPluginSkillConfig(config)).toBe(true);
 		expect(isMcpServerSkillConfig(config)).toBe(false);
 	});
 
-	it('identifies McpServerSkillConfig correctly', () => {
+	it('identifies McpServerSkillConfig via type discriminator', () => {
 		const config: AppSkillConfig = mcpConfig;
 		expect(isBuiltinSkillConfig(config)).toBe(false);
 		expect(isPluginSkillConfig(config)).toBe(false);
 		expect(isMcpServerSkillConfig(config)).toBe(true);
+	});
+
+	it('BuiltinSkillConfig has commandName', () => {
+		if (isBuiltinSkillConfig(builtinConfig)) {
+			expect(builtinConfig.commandName).toBe('update-config');
+		} else {
+			throw new Error('Expected BuiltinSkillConfig');
+		}
+	});
+
+	it('PluginSkillConfig has pluginPath', () => {
+		if (isPluginSkillConfig(pluginConfig)) {
+			expect(pluginConfig.pluginPath).toBe('/home/user/.neokai/skills/my-skill');
+		} else {
+			throw new Error('Expected PluginSkillConfig');
+		}
+	});
+
+	it('McpServerSkillConfig has appMcpServerId', () => {
+		if (isMcpServerSkillConfig(mcpConfig)) {
+			expect(mcpConfig.appMcpServerId).toBe('mcp-uuid-1234');
+		} else {
+			throw new Error('Expected McpServerSkillConfig');
+		}
 	});
 });
 
@@ -99,7 +111,11 @@ describe('AppSkill', () => {
 		expect(baseSkill.enabled).toBe(true);
 		expect(baseSkill.builtIn).toBe(false);
 		expect(baseSkill.validationStatus).toBe('valid');
-		expect(baseSkill.createdAt).toBeTruthy();
+	});
+
+	it('createdAt is a number (Unix ms)', () => {
+		expect(typeof baseSkill.createdAt).toBe('number');
+		expect(baseSkill.createdAt).toBe(1735689600000);
 	});
 
 	it('config is accessible as McpServerSkillConfig when sourceType is mcp_server', () => {
@@ -153,17 +169,38 @@ describe('CreateSkillParams', () => {
 			enabled: true,
 			validationStatus: 'pending',
 		};
-		// TypeScript would error if id/createdAt/builtIn were required — verify shape at runtime
 		expect('id' in params).toBe(false);
 		expect('createdAt' in params).toBe(false);
 		expect('builtIn' in params).toBe(false);
 		expect(params.name).toBe('my-skill');
 	});
+
+	it('includes name, sourceType, and validationStatus (immutable post-creation fields)', () => {
+		const params: CreateSkillParams = {
+			name: 'my-skill',
+			displayName: 'My Skill',
+			description: 'Desc',
+			sourceType: 'builtin',
+			config: builtinConfig,
+			enabled: true,
+			validationStatus: 'pending',
+		};
+		expect(params.name).toBe('my-skill');
+		expect(params.sourceType).toBe('builtin');
+		expect(params.validationStatus).toBe('pending');
+	});
 });
 
 describe('UpdateSkillParams', () => {
-	it('allows partial updates', () => {
-		const patch: UpdateSkillParams = { enabled: false };
+	it('restricts to user-editable fields only', () => {
+		const patch: UpdateSkillParams = {
+			displayName: 'New Name',
+			description: 'New description',
+			enabled: false,
+			config: pluginConfig,
+		};
+		expect(patch.displayName).toBe('New Name');
+		expect(patch.description).toBe('New description');
 		expect(patch.enabled).toBe(false);
 	});
 
@@ -172,14 +209,17 @@ describe('UpdateSkillParams', () => {
 		expect(Object.keys(patch)).toHaveLength(0);
 	});
 
-	it('allows updating multiple fields', () => {
-		const patch: UpdateSkillParams = {
-			displayName: 'Updated Name',
-			validationStatus: 'invalid',
-			enabled: false,
-		};
-		expect(patch.displayName).toBe('Updated Name');
-		expect(patch.validationStatus).toBe('invalid');
+	it('allows partial update with only enabled', () => {
+		const patch: UpdateSkillParams = { enabled: false };
 		expect(patch.enabled).toBe(false);
+	});
+
+	it('does not include name, sourceType, or validationStatus', () => {
+		// TypeScript would error if these were set — verify at runtime that
+		// a valid patch object does not contain immutable fields
+		const patch: UpdateSkillParams = { displayName: 'Test' };
+		expect('name' in patch).toBe(false);
+		expect('sourceType' in patch).toBe(false);
+		expect('validationStatus' in patch).toBe(false);
 	});
 });
