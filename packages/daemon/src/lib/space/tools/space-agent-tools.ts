@@ -165,7 +165,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					});
 				}
 
-				workflowRunRepo.updateStatus(run.id, 'cancelled');
+				workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 				try {
 					const newDescription = args.description ?? run.description;
@@ -367,7 +367,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const task = await taskManager.cancelTask(args.task_id);
 
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
+					workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
 					return jsonResult({
 						success: true,
 						task,

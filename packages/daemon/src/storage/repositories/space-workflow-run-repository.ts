@@ -8,11 +8,13 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRun, WorkflowRunStatus, CreateWorkflowRunParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
+import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 
 export interface UpdateWorkflowRunParams {
 	title?: string;
 	description?: string;
 	status?: WorkflowRunStatus;
+	currentNodeId?: string;
 	config?: Record<string, unknown>;
 	iterationCount?: number;
 	maxIterations?: number;
@@ -29,8 +31,8 @@ export class SpaceWorkflowRunRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, current_step_index, current_node_id, status, config, iteration_count, max_iterations, goal_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -39,6 +41,8 @@ export class SpaceWorkflowRunRepository {
 			params.workflowId,
 			params.title,
 			params.description ?? '',
+			0, // keep current_step_index for backward compat
+			params.currentNodeId ?? null,
 			'pending',
 			null,
 			0,
@@ -132,6 +136,10 @@ export class SpaceWorkflowRunRepository {
 				values.push(Date.now());
 			}
 		}
+		if (params.currentNodeId !== undefined) {
+			fields.push('current_node_id = ?');
+			values.push(params.currentNodeId);
+		}
 		if (params.config !== undefined) {
 			fields.push('config = ?');
 			values.push(JSON.stringify(params.config));
@@ -159,10 +167,35 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * Update only the status of a run
+	 * Advance the current node ID for a run
+	 */
+	updateCurrentNode(id: string, nodeId: string): SpaceWorkflowRun | null {
+		return this.updateRun(id, { currentNodeId: nodeId });
+	}
+
+	/**
+	 * Update only the status of a run (no transition guard — use transitionStatus() for guarded updates).
 	 */
 	updateStatus(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
 		return this.updateRun(id, { status });
+	}
+
+	/**
+	 * Atomically validate and apply a lifecycle status transition.
+	 *
+	 * Reads the current status from the DB, validates the requested transition
+	 * against the WorkflowRunStatusMachine, and persists the new status only
+	 * when the transition is allowed.
+	 *
+	 * @returns The updated run on success.
+	 * @throws {Error} when the run is not found.
+	 * @throws {Error} when the transition is not permitted by the lifecycle rules.
+	 */
+	transitionStatus(id: string, to: WorkflowRunStatus): SpaceWorkflowRun {
+		const run = this.getRun(id);
+		if (!run) throw new Error(`WorkflowRun not found: ${id}`);
+		assertValidTransition(run.status, to, id);
+		return this.updateRun(id, { status: to })!;
 	}
 
 	/**
@@ -207,6 +240,7 @@ export class SpaceWorkflowRunRepository {
 			workflowId: row.workflow_id as string,
 			title: row.title as string,
 			description: (row.description as string | null) ?? undefined,
+			currentNodeId: (row.current_node_id as string | null) ?? undefined,
 			status: row.status as WorkflowRunStatus,
 			config,
 			iterationCount: (row.iteration_count as number | undefined) ?? 0,

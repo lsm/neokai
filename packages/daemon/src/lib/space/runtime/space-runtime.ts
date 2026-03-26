@@ -327,7 +327,7 @@ export class SpaceRuntime {
 			maxIterations: workflow.maxIterations,
 		});
 
-		const run = this.config.workflowRunRepo.updateStatus(pendingRun.id, 'in_progress')!;
+		const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
 
 		// Register executor and meta. If a later step fails, we must clean these up.
 		const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
@@ -340,7 +340,7 @@ export class SpaceRuntime {
 		if (!startStep) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
-			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
+			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
 			throw new Error(`Start step "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
 		}
 
@@ -374,7 +374,7 @@ export class SpaceRuntime {
 			// Cancel the DB run record so rehydrateExecutors() does not silently loop
 			// over it on next server restart (an in_progress run with no tasks would
 			// sit in the executor map indefinitely, never advancing and never erroring).
-			this.config.workflowRunRepo.updateStatus(run.id, 'cancelled');
+			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
 			throw err;
 		}
 
@@ -737,7 +737,7 @@ export class SpaceRuntime {
 			if (
 				this.completionDetector.isComplete(runId, meta.workflow.channels ?? [], meta.workflow.nodes)
 			) {
-				this.config.workflowRunRepo.updateStatus(runId, 'completed');
+				this.config.workflowRunRepo.transitionStatus(runId, 'completed');
 				return;
 			}
 
