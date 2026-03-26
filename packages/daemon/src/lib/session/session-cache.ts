@@ -136,10 +136,15 @@ export class SessionCache {
 	}
 
 	/**
-	 * Remove a session from the cache
+	 * Remove a session from the cache.
+	 *
+	 * Also clears any in-flight load lock for this session ID so that a
+	 * concurrent getAsync() that has already started loading does NOT
+	 * re-insert a stale session into the cache after the remove completes.
 	 */
 	remove(sessionId: string): void {
 		this.sessions.delete(sessionId);
+		this.sessionLoadLocks.delete(sessionId);
 	}
 
 	/**
