@@ -1988,7 +1988,13 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for in_progress task with prUrl', async () => {
-		roomStore.tasks.value = [{ ...makeTask('task-1', 'in_progress'), prUrl: 'https://github.com/org/repo/pull/42', prNumber: 42 } as unknown as NeoTask];
+		roomStore.tasks.value = [
+			{
+				...makeTask('task-1', 'in_progress'),
+				prUrl: 'https://github.com/org/repo/pull/42',
+				prNumber: 42,
+			} as unknown as NeoTask,
+		];
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -2021,7 +2027,13 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header AND in review bar for review task (both render)', async () => {
-		roomStore.tasks.value = [{ ...makeTask('task-1', 'review'), prUrl: 'https://github.com/org/repo/pull/99', prNumber: 99 } as unknown as NeoTask];
+		roomStore.tasks.value = [
+			{
+				...makeTask('task-1', 'review'),
+				prUrl: 'https://github.com/org/repo/pull/99',
+				prNumber: 99,
+			} as unknown as NeoTask,
+		];
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
@@ -2039,7 +2051,13 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for needs_attention task with prUrl', async () => {
-		roomStore.tasks.value = [{ ...makeTask('task-1', 'needs_attention'), prUrl: 'https://github.com/org/repo/pull/7', prNumber: 7 } as unknown as NeoTask];
+		roomStore.tasks.value = [
+			{
+				...makeTask('task-1', 'needs_attention'),
+				prUrl: 'https://github.com/org/repo/pull/7',
+				prNumber: 7,
+			} as unknown as NeoTask,
+		];
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: null };
 			return {};
@@ -2056,7 +2074,13 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for review task even without submittedForReview (no review bar)', async () => {
-		roomStore.tasks.value = [{ ...makeTask('task-1', 'review'), prUrl: 'https://github.com/org/repo/pull/55', prNumber: 55 } as unknown as NeoTask];
+		roomStore.tasks.value = [
+			{
+				...makeTask('task-1', 'review'),
+				prUrl: 'https://github.com/org/repo/pull/55',
+				prNumber: 55,
+			} as unknown as NeoTask,
+		];
 		mockRequest.mockImplementation(async (method) => {
 			// group not awaiting_human, so submittedForReview is false → review bar hidden
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -2075,7 +2099,13 @@ describe('TaskView — PR link in header', () => {
 	});
 
 	it('shows PR link in header for completed task with prUrl', async () => {
-		roomStore.tasks.value = [{ ...makeTask('task-1', 'completed'), prUrl: 'https://github.com/org/repo/pull/101', prNumber: 101 } as unknown as NeoTask];
+		roomStore.tasks.value = [
+			{
+				...makeTask('task-1', 'completed'),
+				prUrl: 'https://github.com/org/repo/pull/101',
+				prNumber: 101,
+			} as unknown as NeoTask,
+		];
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: null };
 			return {};
@@ -2629,7 +2659,6 @@ describe('TaskView — SetStatusModal', () => {
 		});
 	});
 });
-
 
 import { currentRoomTabSignal } from '../../lib/signals.ts';
 
