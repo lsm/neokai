@@ -38,29 +38,17 @@ const IDLE_TIMEOUT = IS_MOCK ? 10000 : 20000;
 const FORCED_STARTUP_TIMEOUT_MS = '10';
 
 /**
- * Poll the `state.session` RPC until the session error field is populated,
- * or return null if the timeout elapses.
+ * Read the current session error directly from the `state.session` RPC.
+ * Returns null if no error is set.
  */
-async function waitForSessionError(
+async function getSessionError(
 	daemon: DaemonServerContext,
-	sessionId: string,
-	timeout = 10000
+	sessionId: string
 ): Promise<{ message: string; details?: unknown } | null> {
-	const start = Date.now();
-	while (Date.now() - start < timeout) {
-		try {
-			const state = (await daemon.messageHub.request('state.session', {
-				sessionId,
-			})) as { error?: { message: string; details?: unknown } | null };
-			if (state.error) {
-				return state.error;
-			}
-		} catch {
-			// Session may not be ready yet; keep polling.
-		}
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-	return null;
+	const state = (await daemon.messageHub.request('state.session', {
+		sessionId,
+	})) as { error?: { message: string; details?: unknown } | null };
+	return state.error ?? null;
 }
 
 describe('Startup Timeout Error Surfacing', () => {
@@ -149,7 +137,9 @@ describe('Startup Timeout Error Surfacing', () => {
 				expect(finalState.status).toBe('idle');
 
 				// ── Assertion 2: error is visible in session state (handleError was called) ─
-				const sessionError = await waitForSessionError(daemon, sessionId, 3000);
+				// handleError() is called before setIdle(), so the error is already present
+				// by the time waitForIdle() returns.  A single RPC read is sufficient here.
+				const sessionError = await getSessionError(daemon, sessionId);
 				expect(sessionError).not.toBeNull();
 
 				// ── Assertion 3: error message has actionable recovery hints ──────────────
@@ -209,28 +199,29 @@ describe('Startup Timeout Error Surfacing', () => {
 				const finalState = await getProcessingState(daemon, sessionId);
 				expect(finalState.status).toBe('idle');
 
-				// ── Assertion 2: exactly one error was surfaced (no retry loops) ─────────
+				// ── Assertion 2: error count bounded — proves no retry occurred ──────────
 				// Allow a brief extra window for any late-arriving duplicate events.
 				await new Promise((resolve) => setTimeout(resolve, 300));
 
-				// The original auto-recovery code (removed in Task 2.1) would have triggered
-				// a second query attempt, producing a second error event before settling idle.
-				// With the current code, exactly one error is emitted and the session stays idle.
+				// Fan-out analysis for a single timeout (no retry):
+				//   1. errorManager.handleError() → daemonHub.emit('session.error')
+				//      → StateManager.broadcastSessionStateChange()         [+1 event]
+				//   2. catch-block stateManager.setIdle()
+				//      → daemonHub.emit('session.updated')
+				//      → StateManager.broadcastSessionStateChange()         [+1 event]
+				//   3. finally-block stateManager.setIdle() (second call, same path) [+1 event]
+				// Total: 3 error-state events for one timeout with no retry.
+				//
+				// If auto-recovery (removed in Task 2.1) were still present it would kick off
+				// a second query attempt with the same 10 ms timeout, tripling the count to ≥ 6.
+				// Asserting ≤ 5 therefore makes the "no retry" claim machine-verifiable.
 				expect(errorEvents.length).toBeGreaterThan(0);
+				expect(errorEvents.length).toBeLessThanOrEqual(5);
 
-				// All emitted errors must be startup-timeout errors (no other error category).
+				// All emitted errors must be startup-timeout errors (not a different category).
 				for (const ev of errorEvents) {
 					expect(ev.message).toContain('failed to start');
 				}
-
-				// Deduplicated: the state broadcaster may fan-out the same logical error
-				// into multiple state.session events (e.g. on reconnect / channel join).
-				// What we must NOT see is a second *distinct* error from a retry attempt.
-				// A retry would also contain 'failed to start', but the key guard is that the
-				// session is now idle with no ongoing query — verified above.
-				const uniqueErrors = new Set(errorEvents.map((e) => e.message));
-				// Only startup-timeout errors — not two different error categories.
-				expect(uniqueErrors.size).toBeLessThanOrEqual(2);
 			} finally {
 				unsubscribe();
 			}
