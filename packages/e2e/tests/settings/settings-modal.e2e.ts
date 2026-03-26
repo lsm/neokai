@@ -81,7 +81,7 @@ test.describe('Settings Modal - Authentication Status', () => {
 
 		// Verify all settings navigation sections are visible in the ContextPanel
 		await expect(page.locator('button:has-text("General")')).toBeVisible();
-		await expect(page.locator('button:has-text("MCP Servers")')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'MCP Servers', exact: true })).toBeVisible();
 		await expect(page.locator('button:has-text("About")')).toBeVisible();
 	});
 
@@ -225,7 +225,7 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 		await openSettingsModal(page);
 
 		// Navigate to MCP Servers section via nav button
-		await page.locator('button:has-text("MCP Servers")').click();
+		await page.getByRole('button', { name: 'MCP Servers', exact: true }).click();
 
 		// Verify MCP Servers section is shown
 		await expect(page.locator('h3:has-text("MCP Servers")')).toBeVisible();
@@ -352,7 +352,7 @@ test.describe('Settings Modal - MCP Servers', () => {
 		await openSettingsModal(page);
 
 		// Navigate to MCP Servers section via the settings nav
-		await page.locator('button:has-text("MCP Servers")').click();
+		await page.getByRole('button', { name: 'MCP Servers', exact: true }).click();
 
 		// Verify MCP Servers section heading is displayed
 		await expect(page.locator('h3:has-text("MCP Servers")')).toBeVisible();

@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
@@ -26,9 +26,18 @@ import type { Point } from './types';
 // ============================================================================
 
 /** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({ step }: { step: NodeDraft }) {
-	const channels = step.channels;
-	if (!channels || channels.length === 0) return null;
+function ChannelTopologyBadge({
+	workflowChannels,
+	nodeAgentNames,
+}: {
+	workflowChannels?: WorkflowChannel[];
+	nodeAgentNames: string[];
+}) {
+	if (!workflowChannels || workflowChannels.length === 0) return null;
+
+	// Show only channels where the source agent is in this node's agent list
+	const visibleChannels = (workflowChannels ?? []).filter((ch) => nodeAgentNames.includes(ch.from));
+	if (visibleChannels.length === 0) return null;
 
 	/** Truncate a role string for compact display. Channels already use role strings as identifiers. */
 	const roleLabel = (role: string) => (role.length > 8 ? role.slice(0, 8) + '…' : role);
@@ -40,7 +49,7 @@ function ChannelTopologyBadge({ step }: { step: NodeDraft }) {
 
 	return (
 		<div class="mt-1.5 space-y-0.5" data-testid="channel-topology-badge">
-			{channels.map((ch, i) => (
+			{visibleChannels.map((ch, i) => (
 				<div key={i} class="flex items-center gap-0.5 text-xs text-gray-500">
 					<span class="font-mono">{roleLabel(ch.from)}</span>
 					<span class="text-gray-600">{ch.direction === 'bidirectional' ? '↔' : '→'}</span>
@@ -66,6 +75,8 @@ export interface WorkflowNodeProps {
 	position: Point;
 	/** Full agents list — used to resolve the agent name from step.agentId */
 	agents: SpaceAgent[];
+	/** Workflow-level channels — shown filtered by this node's agent roles */
+	workflowChannels?: WorkflowChannel[];
 	isSelected?: boolean;
 	/** First step in the workflow — hides input port, adds green border + START badge */
 	isStartNode?: boolean;
@@ -99,6 +110,7 @@ export function WorkflowNode({
 	step,
 	position,
 	agents,
+	workflowChannels = [],
 	isSelected = false,
 	isStartNode = false,
 	isDropTarget = false,
@@ -115,6 +127,15 @@ export function WorkflowNode({
 
 	const multi = isMultiAgentNode(step);
 	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
+
+	// Derive agent slot names for this node (used to filter workflow-level channels)
+	const nodeAgentNames: string[] = isTaskAgent
+		? ['task-agent']
+		: multi
+		  ? step.agents!.map((a) => a.name)
+		  : step.agentId
+		    ? [step.agentId]
+		    : [];
 
 	// Build a lookup: agentName → AgentTaskState
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(
@@ -318,7 +339,7 @@ export function WorkflowNode({
 						{step.name || 'Task Agent'}
 					</p>
 					{/* Channel topology */}
-					<ChannelTopologyBadge step={step} />
+					<ChannelTopologyBadge workflowChannels={workflowChannels} nodeAgentNames={nodeAgentNames} />
 				</div>
 			</div>
 		);
@@ -430,7 +451,7 @@ export function WorkflowNode({
 				)}
 
 				{/* Channel topology */}
-				<ChannelTopologyBadge step={step} />
+				<ChannelTopologyBadge workflowChannels={workflowChannels} nodeAgentNames={nodeAgentNames} />
 			</div>
 
 			{/* Bottom port */}
