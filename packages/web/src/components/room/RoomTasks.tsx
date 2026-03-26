@@ -612,7 +612,9 @@ function TaskItem({
 								Blocked
 							</span>
 						)}
-						{goal && (
+					</div>
+					{goal && (
+						<div class="mt-1">
 							<button
 								data-testid={`task-goal-badge-${task.id}`}
 								onClick={(e) => {
@@ -623,17 +625,14 @@ function TaskItem({
 								title={`Mission: ${goal.title}`}
 							>
 								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M13 10V3L4 14h7v7l9-11h-7z"
-									/>
+									<circle cx="12" cy="12" r="10" stroke-width="2" />
+									<circle cx="12" cy="12" r="6" stroke-width="2" />
+									<circle cx="12" cy="12" r="2" stroke-width="2" />
 								</svg>
 								<span class="flex-1 truncate">{goal.title}</span>
 							</button>
-						)}
-					</div>
+						</div>
+					)}
 				</div>
 				<div class="ml-4 flex items-center gap-2 flex-shrink-0">
 					{task.progress != null && task.progress > 0 && (

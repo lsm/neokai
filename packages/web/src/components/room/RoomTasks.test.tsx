@@ -880,6 +880,40 @@ describe('RoomTasks', () => {
 			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
 			expect(badge?.getAttribute('title')).toBe('Mission: Specific Goal Name');
 		});
+
+		it('should render goal badge on a separate line below the title row', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			// Badge should be wrapped in a mt-1 div (separate line), not inside the title flex row
+			const badgeParent = badge?.parentElement;
+			expect(badgeParent?.classList.contains('mt-1')).toBe(true);
+			// The title flex row should NOT contain the badge
+			const titleRow = container.querySelector('h4')?.parentElement;
+			expect(titleRow?.contains(badge)).toBe(false);
+		});
+
+		it('should use target icon (concentric circles) not lightning bolt on goal badge', () => {
+			const task = createTask('task-1', 'in_progress');
+			const goal = createGoal('goal-1', 'My Mission', ['task-1']);
+
+			const { container } = render(
+				<RoomTasks tasks={[task]} goalByTaskId={new Map([['task-1', goal]])} />
+			);
+
+			const badge = container.querySelector('[data-testid="task-goal-badge-task-1"]');
+			// Target icon uses SVG circle elements (concentric circles)
+			const circles = badge?.querySelectorAll('circle');
+			expect(circles?.length).toBeGreaterThanOrEqual(2);
+			// Lightning bolt used a path element, not circles
+			const lightningPath = badge?.querySelector('path[d*="M13 10V3L4 14h7v7l9-11h-7z"]');
+			expect(lightningPath).toBeNull();
+		});
 	});
 
 	describe('Short ID Badge', () => {
