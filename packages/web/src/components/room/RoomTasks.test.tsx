@@ -3,7 +3,8 @@
  *
  * Tests task filter tabs, tab switching, task grouping by status,
  * empty states, click handling, and section rendering for all tabs:
- * Active (draft + pending + in_progress), Review (review + needs_attention),
+ * Active (draft + pending + in_progress),
+ * Review (needs_attention → rate_limited/usage_limited → review),
  * Done (completed + cancelled), Archived (archived, hidden by default).
  */
 
@@ -106,6 +107,24 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Active');
 			expect(container.textContent).toContain('3');
 		});
+
+		it('should include rate_limited and usage_limited in review tab count', () => {
+			const tasks = [
+				createTask('t1', 'review'),
+				createTask('t2', 'needs_attention'),
+				createTask('t3', 'rate_limited'),
+				createTask('t4', 'usage_limited'),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Review tab count: 4 (review + needs_attention + rate_limited + usage_limited)
+			const tabBar = container.querySelector('.border-b.border-dark-700');
+			const reviewTabBtn = Array.from(tabBar?.querySelectorAll('button') ?? []).find((b) =>
+				b.textContent?.includes('Review')
+			);
+			expect(reviewTabBtn?.textContent).toContain('4');
+		});
 	});
 
 	describe('Active Tab', () => {
@@ -176,6 +195,67 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Needs Attention');
 			expect(container.textContent).toContain('Review task');
 			expect(container.textContent).toContain('Attention task');
+		});
+
+		it('should show rate_limited tasks under Review tab with orange styling', () => {
+			const tasks = [createTask('t1', 'rate_limited', { title: 'Rate limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Rate / Usage Limited');
+			expect(container.textContent).toContain('Rate limited task');
+			const header = container.querySelector('.text-orange-400');
+			expect(header).toBeTruthy();
+		});
+
+		it('should show usage_limited tasks under Review tab with orange styling', () => {
+			const tasks = [createTask('t1', 'usage_limited', { title: 'Usage limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Rate / Usage Limited');
+			expect(container.textContent).toContain('Usage limited task');
+		});
+
+		it('should show rate_limited and usage_limited tasks together in the same group', () => {
+			const tasks = [
+				createTask('t1', 'rate_limited', { title: 'Rate task' }),
+				createTask('t2', 'usage_limited', { title: 'Usage task' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Rate / Usage Limited (2)');
+		});
+
+		it('should display rate_limited error message in orange', () => {
+			const tasks = [
+				createTask('t1', 'rate_limited', { title: 'Rate task', error: 'API rate limit hit' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const errorEl = container.querySelector('p.text-orange-400');
+			expect(errorEl).toBeTruthy();
+			expect(errorEl?.textContent).toContain('API rate limit hit');
+		});
+
+		it('should display visual order: needs_attention above rate/usage limited above review', () => {
+			const tasks = [
+				createTask('t1', 'review', { title: 'Normal review' }),
+				createTask('t2', 'rate_limited', { title: 'Rate limited' }),
+				createTask('t3', 'needs_attention', { title: 'Needs attention' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const headers = Array.from(container.querySelectorAll('h3')).map((h) => h.textContent ?? '');
+			const needsIdx = headers.findIndex((t) => t.includes('Needs Attention'));
+			const rateIdx = headers.findIndex((t) => t.includes('Rate / Usage Limited'));
+			const reviewIdx = headers.findIndex((t) => t.includes('Awaiting Review'));
+
+			expect(needsIdx).toBeLessThan(rateIdx);
+			expect(rateIdx).toBeLessThan(reviewIdx);
 		});
 
 		it('should show empty state when no review tasks', () => {
@@ -631,6 +711,27 @@ describe('RoomTasks', () => {
 
 			expect(container.textContent).toContain('Draft (1)');
 			expect(container.textContent).toContain('Draft task');
+		});
+
+		it('rate_limited tasks appear under review tab, not active tab', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'rate_limited', { title: 'Rate limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Active tab should show empty state since rate_limited is not active
+			expect(container.textContent).toContain('No active tasks');
+			expect(container.textContent).not.toContain('Rate limited task');
+		});
+
+		it('usage_limited tasks appear under review tab, not active tab', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'usage_limited', { title: 'Usage limited task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('No active tasks');
+			expect(container.textContent).not.toContain('Usage limited task');
 		});
 
 		it('there is no needs_attention tab button in the tab bar', () => {

@@ -3,7 +3,7 @@
  * - tasksByGoalId: Map of goal ID → linked TaskSummary[]
  * - orphanTasks: Tasks not linked to any goal
  * - orphanTasksActive: Orphan tasks with draft/pending/in_progress
- * - orphanTasksReview: Orphan tasks with review/needs_attention
+ * - orphanTasksReview: Orphan tasks with review/needs_attention/rate_limited/usage_limited
  * - orphanTasksDone: Orphan tasks with completed/cancelled
  * - orphanTasksArchived: Orphan tasks with archived
  */
@@ -170,16 +170,18 @@ describe('RoomStore — computed goal/task signals', () => {
 	});
 
 	describe('orphanTasksReview', () => {
-		it('includes review and needs_attention orphan tasks', () => {
+		it('includes review, needs_attention, rate_limited, and usage_limited orphan tasks', () => {
 			roomStore.tasks.value = [
 				makeTask('t1', 'draft'),
 				makeTask('t2', 'review'),
 				makeTask('t3', 'needs_attention'),
 				makeTask('t4', 'completed'),
+				makeTask('t5', 'rate_limited'),
+				makeTask('t6', 'usage_limited'),
 			];
 			roomStore.goals.value = [];
 			const ids = roomStore.orphanTasksReview.value.map((t) => t.id);
-			expect(ids).toEqual(['t2', 't3']);
+			expect(ids).toEqual(['t2', 't3', 't5', 't6']);
 		});
 	});
 
@@ -246,10 +248,10 @@ describe('RoomStore — computed goal/task signals', () => {
 				}
 			}
 
-			// All covered — rate_limited and usage_limited fall into the active bucket
+			// All covered — rate_limited and usage_limited fall into the review bucket
 			expect(active.size + review.size + done.size + archived.size).toBe(10);
-			expect(active.has('rate_limited')).toBe(true);
-			expect(active.has('usage_limited')).toBe(true);
+			expect(review.has('rate_limited')).toBe(true);
+			expect(review.has('usage_limited')).toBe(true);
 		});
 	});
 
