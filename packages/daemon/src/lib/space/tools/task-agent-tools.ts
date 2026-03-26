@@ -316,20 +316,20 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			}
 
 			// Find the WorkflowNodeAgent slot that spawned this task.
-			// When slotRole is stored on the task (migration 46+), use it for an exact match.
+			// When agentName is stored on the task (migration 51+), use it for an exact match.
 			// This correctly handles nodes where the same agentId appears multiple times with
-			// different slot roles (e.g. "strict-reviewer" and "quick-reviewer"): each task
-			// was created with its own slotRole, so the lookup is unambiguous.
-			// For tasks created before migration 46 (no slotRole), fall back to find-by-agentId,
+			// different agent names (e.g. "strict-reviewer" and "quick-reviewer"): each task
+			// was created with its own agentName, so the lookup is unambiguous.
+			// For tasks created before migration 51 (no agentName), fall back to find-by-agentId,
 			// which always returns the first matching slot — acceptable for legacy data.
-			const agentSlot = effectiveTask.slotRole
-				? nodeAgents.find((a) => a.name === effectiveTask.slotRole)
+			const agentSlot = effectiveTask.agentName
+				? nodeAgents.find((a) => a.name === effectiveTask.agentName)
 				: nodeAgents.find((a) => a.agentId === effectiveTask.customAgentId);
 
 			// Extract slot-level overrides (model and systemPrompt) if present.
 			// Always construct the object; undefined values are handled downstream
 			// (createCustomAgentInit guards on !== undefined for each field).
-			// When agentSlot is undefined (stale slotRole: the workflow was edited after
+			// When agentSlot is undefined (stale agentName: the workflow was edited after
 			// the task was created and the slot no longer exists), both fields are undefined
 			// and no override is applied — the base agent config is used as-is.
 			const slotOverrides = { model: agentSlot?.model, systemPrompt: agentSlot?.systemPrompt };

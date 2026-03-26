@@ -451,7 +451,7 @@ export class WorkflowExecutor {
 		// Per-agent instructions override step-level instructions when present.
 		//
 		// Idempotency: if the target node already has active tasks for a given agent slot
-		// (detected via UNIQUE constraint violation on workflow_run_id+workflow_node_id+slot_role),
+		// (detected via UNIQUE constraint violation on workflow_run_id+workflow_node_id+agent_name),
 		// reuse the existing task. This handles both cyclic re-activation and concurrent
 		// activateNode() calls racing with followTransition().
 		const tasks: SpaceTask[] = [];
@@ -478,7 +478,7 @@ export class WorkflowExecutor {
 					workflowNodeId: nextStep.id,
 					taskType: resolved?.taskType as import('@neokai/shared').SpaceTaskType | undefined,
 					customAgentId: resolved !== undefined ? resolved.customAgentId : agentEntry.agentId,
-					slotRole: agentEntry.name,
+					agentName: agentEntry.name,
 					status: 'pending',
 					goalId: this.run.goalId,
 				});
@@ -489,7 +489,7 @@ export class WorkflowExecutor {
 					const existingTasks = (await this.taskManager.listTasksByWorkflowRun(this.run.id)).filter(
 						(t) =>
 							t.workflowNodeId === nextStep.id &&
-							t.slotRole === agentEntry.name &&
+							t.agentName === agentEntry.name &&
 							ACTIVE_STATUSES.has(t.status)
 					);
 					if (existingTasks.length > 0) {

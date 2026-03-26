@@ -382,7 +382,10 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 		expect(indexes).toContain('idx_space_tasks_status');
 		expect(indexes).toContain('idx_space_tasks_workflow_run_id');
 		expect(indexes).toContain('idx_space_tasks_custom_agent_id');
-		expect(indexes).toContain('idx_space_tasks_workflow_step_id');
+		// Migration 39 rebuilds with workflow_step_id, but migration 51 later
+		// rebuilds with workflow_node_id (agent_name rename), so the final index name
+		// reflects the post-migration-51 schema.
+		expect(indexes).toContain('idx_space_tasks_workflow_node_id');
 		expect(indexes).toContain('idx_space_tasks_task_agent_session_id');
 	});
 

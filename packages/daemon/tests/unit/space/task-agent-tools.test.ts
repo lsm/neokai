@@ -2073,11 +2073,11 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		expect(promptText).toContain(overridePrompt);
 	});
 
-	test('same agent twice in one node: last task uses its own slot role (not the first slot)', async () => {
+	test('same agent twice in one node: last task uses its own agent name (not the first slot)', async () => {
 		// Regression test for the slot disambiguation bug:
-		// When the same agentId appears twice in a node with different slot roles,
-		// spawn_step_agent must select the task's own slot role — not always the first match.
-		// The fix stores slotRole on the task at creation time so the lookup is exact.
+		// When the same agentId appears twice in a node with different agent names,
+		// spawn_step_agent must select the task's own agent name — not always the first match.
+		// The fix stores agentName on the task at creation time so the lookup is exact.
 		const agentId = ctx.agentId;
 		const stepId = `step-dual-${Math.random().toString(36).slice(2)}`;
 
@@ -2103,14 +2103,14 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		// The executor creates two tasks for this step (one per agent slot)
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Verify two tasks were created with the correct slotRole each
+		// Verify two tasks were created with the correct agentName each
 		const stepTasks = ctx.taskRepo
 			.listByWorkflowRun(run.id)
 			.filter((t) => t.workflowNodeId === stepId)
 			.sort((a, b) => a.createdAt - b.createdAt);
 		expect(stepTasks).toHaveLength(2);
-		expect(stepTasks[0]?.slotRole).toBe('strict-reviewer');
-		expect(stepTasks[1]?.slotRole).toBe('quick-reviewer');
+		expect(stepTasks[0]?.agentName).toBe('strict-reviewer');
+		expect(stepTasks[1]?.agentName).toBe('quick-reviewer');
 
 		// spawn_step_agent picks stepTasks[last] = the quick-reviewer task
 		const factory = makeMockSessionFactory();
@@ -2120,7 +2120,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		expect(parsed.success).toBe(true);
 
 		// The spawned session must use 'quick-reviewer' — NOT 'strict-reviewer' (the first slot),
-		// confirming that slotRole-based lookup picks the correct slot.
+		// confirming that agentName-based lookup picks the correct slot.
 		// Note: this test only covers the last-created (quick-reviewer) task because
 		// spawn_step_agent selects stepTasks[last]. In practice the Task Agent calls
 		// spawn_step_agent once per task; the strict-reviewer task is covered by the
@@ -2133,7 +2133,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		expect(capturedInfo?.role).not.toBe('coder');
 	});
 
-	test('stale slotRole (slot removed after task creation) falls back to base agent config', async () => {
+	test('stale agentName (slot removed after task creation) falls back to base agent config', async () => {
 		// If the workflow is edited after a task was created and the slot no longer exists,
 		// agentSlot will be undefined. slotOverrides becomes { model: undefined, systemPrompt: undefined }
 		// so no override is applied — the base agent config is used as-is.
@@ -2157,12 +2157,12 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Inject a stale slotRole directly via raw SQL (no public API for this scenario —
+		// Inject a stale agentName directly via raw SQL (no public API for this scenario —
 		// it simulates the workflow definition being edited and removing the 'reviewer' slot
 		// after the task was already created).
 		ctx.db
-			.prepare(`UPDATE space_tasks SET slot_role = ? WHERE workflow_node_id = ?`)
-			.run('deleted-slot-role', stepId);
+			.prepare(`UPDATE space_tasks SET agent_name = ? WHERE workflow_node_id = ?`)
+			.run('deleted-agent-name', stepId);
 
 		// Capture the init to verify no model override is applied
 		let capturedInit: { model?: string } | null = null;
@@ -2177,7 +2177,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		const result = await handlers.spawn_step_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 
-		// Spawn must succeed — stale slotRole is not a hard error
+		// Spawn must succeed — stale agentName is not a hard error
 		expect(parsed.success).toBe(true);
 		// The slot model override ('claude-opus-4-6') must NOT be applied because the slot
 		// was not found; base agent config is used instead (no model set → DEFAULT_CUSTOM_AGENT_MODEL)

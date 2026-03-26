@@ -167,7 +167,12 @@ export interface SpaceTask {
 	 * Stored at task creation time so `spawn_step_agent` can unambiguously map the task
 	 * back to the correct slot even when the same `agentId` appears multiple times in the node.
 	 */
-	slotRole?: string;
+	agentName?: string;
+	/**
+	 * Brief human-readable summary written by the agent when the task reaches a terminal state
+	 * (completed, needs_attention, cancelled). Populated by the executing agent; null until set.
+	 */
+	completionSummary?: string | null;
 	/** ID of the workflow run that spawned this task (if any) */
 	workflowRunId?: string;
 	/** ID of the workflow node that spawned this task (if any) */
@@ -207,15 +212,6 @@ export interface SpaceTask {
 	 * session is created. Null when no Task Agent has been spawned yet.
 	 */
 	taskAgentSessionId?: string | null;
-	/**
-	 * Human-readable summary written by the agent when it marks the task as done.
-	 *
-	 * This field, together with `status` (set to 'completed') and `completedAt`
-	 * (auto-stamped on terminal status change), forms the complete agent completion
-	 * state. All three live on space_tasks — not on SpaceSessionGroupMember, which
-	 * is being removed in the agent-centric refactor.
-	 */
-	completionSummary?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Start timestamp (milliseconds since epoch) */
@@ -240,9 +236,9 @@ export interface CreateSpaceTaskParams {
 	customAgentId?: string;
 	/**
 	 * The `WorkflowNodeAgent.name` of the specific slot that spawned this task.
-	 * See `SpaceTask.slotRole` for details.
+	 * See `SpaceTask.agentName` for details.
 	 */
-	slotRole?: string;
+	agentName?: string;
 	/** Workflow run that spawned this task */
 	workflowRunId?: string;
 	/** Workflow node that spawned this task */
@@ -292,8 +288,8 @@ export interface UpdateSpaceTaskParams {
 	 */
 	taskAgentSessionId?: string | null;
 	/**
-	 * Human-readable summary written by the agent when it marks the task as done.
-	 * Set alongside `status: 'completed'`; null to clear.
+	 * Brief human-readable summary written by the agent at task completion.
+	 * Null to clear.
 	 */
 	completionSummary?: string | null;
 }
@@ -900,7 +896,7 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	rules?: WorkflowRule[] | null;
 	/**
-	 * Replaces the entire channel list. Pass `[]` or `null` to clear all channels.
+	 * Replaces the channel list. Pass `[]` or `null` to clear all channels.
 	 */
 	channels?: WorkflowChannel[] | null;
 	/**

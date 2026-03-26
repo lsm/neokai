@@ -15,7 +15,7 @@
  * - activateNode() is idempotent: if tasks already exist for the node the
  *   existing tasks are returned unchanged.
  * - Concurrency is handled via a DB UNIQUE partial index on
- *   (workflow_run_id, workflow_node_id, slot_role). A duplicate INSERT throws
+ *   (workflow_run_id, workflow_node_id, agent_name). A duplicate INSERT throws
  *   a SQLiteError; the handler re-reads and returns the tasks created by the
  *   winning writer.
  * - No session group creation — that is the responsibility of TaskAgentManager.
@@ -202,7 +202,7 @@ export class ChannelRouter {
 					workflowNodeId: nodeId,
 					taskType: resolved.taskType,
 					customAgentId: resolved.customAgentId,
-					slotRole: agentEntry.name,
+					agentName: agentEntry.name,
 					status: 'pending',
 					goalId: run.goalId,
 				});
