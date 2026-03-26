@@ -66,7 +66,7 @@ The `Skill` tool (the SDK-built-in tool for invoking slash commands) is explicit
 
 | Agent | Has `Skill`? | File |
 |-------|-------------|------|
-| Coordinator (main thread) | No | `packages/daemon/src/lib/agent/coordinator/coordinator.ts` |
+| Coordinator (main thread) | **Yes** | `query-options-builder.ts` (via `allTools` in coordinator mode) |
 | Coder | **Yes** | `packages/daemon/src/lib/agent/coordinator/coder.ts` |
 | Debugger | **Yes** | `packages/daemon/src/lib/agent/coordinator/debugger.ts` |
 | Tester | **Yes** | `packages/daemon/src/lib/agent/coordinator/tester.ts` |
@@ -76,13 +76,16 @@ The `Skill` tool (the SDK-built-in tool for invoking slash commands) is explicit
 
 ### Room Agents
 
-| Agent | Has `Skill`? | Has `WebSearch`? | File |
+**Note:** The Planner, room Coder, and General agents all use the `claude_code` preset with explicit `tools` arrays. The Coordinator main thread and all Coordinator specialists explicitly list `Skill` in their tools arrays. Room agents (Planner, room Coder, General) do **not** list `Skill` in their tools arrays — they rely on the SDK preset.
+
+| Agent | Has `Skill` explicitly listed? | Has `WebSearch` explicitly listed? | File |
 |-------|-------------|-----------------|------|
-| Planner | **Yes** | **Yes** | `packages/daemon/src/lib/room/agents/planner-agent.ts` |
+| Planner | No | **Yes** | `packages/daemon/src/lib/room/agents/planner-agent.ts` |
 | Plan Writer (sub-agent) | No | **Yes** | `packages/daemon/src/lib/room/agents/planner-agent.ts` (via `buildPlanWriterAgentDef`) |
 | Leader | No | No | `packages/daemon/src/lib/room/agents/leader-agent.ts` |
-| Coder | **Yes** (with helpers) | **Yes** | `packages/daemon/src/lib/room/agents/coder-agent.ts` |
-| General | **Yes** | **Yes** | `packages/daemon/src/lib/room/agents/general-agent.ts` |
+| Coder (with helpers) | No | **Yes** | `packages/daemon/src/lib/room/agents/coder-agent.ts` |
+| Coder (simple path) | No | Inferred from `claude_code` preset | `packages/daemon/src/lib/room/agents/coder-agent.ts` |
+| General | No | Inferred from `claude_code` preset | `packages/daemon/src/lib/room/agents/general-agent.ts` |
 
 ### Coordinator Mode Main Thread
 
@@ -120,7 +123,7 @@ Both use the string `"Skill"` as the tool identifier in agent tools arrays.
 
 ## 4. Current Planner `WebSearch` Configuration
 
-The Planner agent receives `WebSearch` through its tools array:
+The Planner agent and its Plan Writer sub-agent both have `WebSearch` explicitly listed in their tools arrays. Neither has `Skill`.
 
 **Planner agent definition** (`packages/daemon/src/lib/room/agents/planner-agent.ts`):
 ```typescript
@@ -134,6 +137,8 @@ const plannerAgentDef: AgentDefinition = {
 };
 ```
 
+Note: `Skill` is **not** in the Planner's tools array. The Planner does not have access to the `Skill` tool.
+
 The Plan Writer sub-agent (spawned via `Task` tool) also has `WebSearch`:
 ```typescript
 return {
@@ -146,7 +151,7 @@ return {
 };
 ```
 
-`WebSearch` is a **built-in SDK tool**, not an MCP tool. It does not require any additional MCP server configuration. It is enabled by default in the SDK and is available to any agent that lists it in its tools array.
+`WebSearch` is a **built-in SDK tool**, not an MCP tool. It does not require any additional MCP server configuration. It is available to any agent that lists it in its tools array.
 
 The Planner does **not** currently have a dedicated web search Skill (e.g., Brave, Tavily). It uses the SDK's built-in `WebSearch` which routes through the SDK's internal search implementation.
 
@@ -435,15 +440,14 @@ There is **no `skills.*` handler** currently.
 | `packages/daemon/src/lib/agent/coordinator/reviewer.ts` | Coordinator Reviewer (has `Skill`) |
 | `packages/daemon/src/lib/agent/coordinator/vcs.ts` | Coordinator VCS (has `Skill`) |
 | `packages/daemon/src/lib/agent/coordinator/verifier.ts` | Coordinator Verifier (has `Skill`) |
-| `packages/daemon/src/lib/room/agents/planner-agent.ts` | Planner + Plan Writer sub-agent; both have `Skill` + `WebSearch` |
-| `packages/daemon/src/lib/room/agents/leader-agent.ts` | Leader agent; no `Skill` |
-| `packages/daemon/src/lib/room/agents/coder-agent.ts` | Room Coder (has `Skill` + `WebSearch`) |
-| `packages/daemon/src/lib/room/agents/general-agent.ts` | General agent (has `Skill` + `WebSearch`) |
+| `packages/daemon/src/lib/room/agents/planner-agent.ts` | Planner + Plan Writer sub-agent; both have `WebSearch`, no `Skill` |
+| `packages/daemon/src/lib/room/agents/leader-agent.ts` | Leader agent; no `Skill`, no `WebSearch` |
+| `packages/daemon/src/lib/room/agents/coder-agent.ts` | Room Coder; helpers path has `WebSearch`, no `Skill`; simple path uses `claude_code` preset |
+| `packages/daemon/src/lib/room/agents/general-agent.ts` | General agent; uses `claude_code` preset, no explicit tools array |
 | `packages/daemon/src/lib/rpc-handlers/mcp-handlers.ts` | MCP/global tools RPC handlers |
 | `packages/shared/src/sdk/sdk.d.ts` | SDK types: `SlashCommand`, `AgentDefinition.skills`, `Query.supportedCommands()` |
 | `packages/shared/src/types/sdk-config.ts` | `PluginConfig`, `SDKConfig.plugins` |
 | `packages/shared/src/types.ts` | `ToolsConfig`, `GlobalToolsConfig`, `DEFAULT_GLOBAL_TOOLS_CONFIG` |
-| `packages/web/src/components/space/SpaceAgentEditor.tsx` | Only UI file referencing "Skill" (in system prompt template strings) |
 | `packages/web/src/components/sdk/tools/__tests__/ToolResultCard.test.tsx` | Test categorizing `Skill` as a "command tool" |
 
 ---
