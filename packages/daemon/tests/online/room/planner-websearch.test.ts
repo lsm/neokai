@@ -31,10 +31,14 @@ const WEBSEARCH_PROBE_FRAGMENT = 'planner-websearch-probe-2025-v1';
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 
-// Faster timeouts in mock mode; generous timeouts for real API
+// Faster timeouts in mock mode; generous timeouts for real API.
+// GROUP_POLL_TIMEOUT is shorter than WEBSEARCH_POLL_TIMEOUT — in mock mode the group
+// is created almost immediately after the task, so a long budget is wasteful and
+// would eat into the WebSearch poll budget if the group creation is slow.
 const SETUP_TIMEOUT = IS_MOCK ? 15_000 : 60_000;
 const TEST_TIMEOUT = IS_MOCK ? 60_000 : 300_000;
-const POLL_TIMEOUT = IS_MOCK ? 30_000 : 180_000;
+const GROUP_POLL_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
+const WEBSEARCH_POLL_TIMEOUT = IS_MOCK ? 30_000 : 180_000;
 
 // Use Sonnet for room agents
 const savedModel = process.env.DEFAULT_MODEL;
@@ -87,18 +91,17 @@ describe('Planner WebSearch Capability (API-dependent)', () => {
 					taskType: 'planning',
 					status: ['pending', 'in_progress', 'completed', 'review', 'needs_attention'],
 				},
-				POLL_TIMEOUT
+				WEBSEARCH_POLL_TIMEOUT
 			);
 			expect(planningTask.taskType).toBe('planning');
 
 			// Poll for the session group to be created (may not exist yet if task is pending)
-			const group = await waitForGroup(daemon, roomId, planningTask.id, POLL_TIMEOUT);
-			expect(group).toBeTruthy();
-			const { workerSessionId } = group!;
+			const group = await waitForGroup(daemon, roomId, planningTask.id, GROUP_POLL_TIMEOUT);
+			const { workerSessionId } = group;
 
 			// Poll the planner's SDK messages until we see a WebSearch tool_use block
 			// or until the timeout expires.
-			const found = await pollForWebSearchToolUse(daemon, workerSessionId, POLL_TIMEOUT);
+			const found = await pollForWebSearchToolUse(daemon, workerSessionId, WEBSEARCH_POLL_TIMEOUT);
 
 			// Hard assertion: WebSearch must appear in the planner's message history.
 			// If this fails, the planner lacks WebSearch capability or the mock is misconfigured.
@@ -110,7 +113,7 @@ describe('Planner WebSearch Capability (API-dependent)', () => {
 
 /**
  * Poll `task.getGroup` until the session group is created for the given task,
- * or until `timeout` ms elapses.
+ * or throw with diagnostic context if the timeout elapses.
  */
 async function waitForGroup(
 	daemon: DaemonServerContext,
@@ -122,7 +125,7 @@ async function waitForGroup(
 	workerSessionId: string;
 	leaderSessionId: string;
 	workerRole: string;
-} | null> {
+}> {
 	const deadline = Date.now() + timeout;
 
 	while (Date.now() < deadline) {
@@ -142,7 +145,16 @@ async function waitForGroup(
 		await Bun.sleep(500);
 	}
 
-	return null;
+	// Include task status in the error to help diagnose whether the task was still
+	// pending, failed, or was never picked up by the room runtime.
+	const { tasks } = (await daemon.messageHub.request('task.list', { roomId })) as {
+		tasks: Array<{ id: string; taskType: string; status: string; title: string }>;
+	};
+	const taskSummary = tasks.map((t) => `  ${t.taskType}:${t.status} (${t.title})`).join('\n');
+	throw new Error(
+		`Timeout (${timeout}ms) waiting for session group on task ${taskId} in room ${roomId}\n` +
+			`Current tasks:\n${taskSummary}`
+	);
 }
 
 /**
@@ -150,6 +162,7 @@ async function waitForGroup(
  * block appears in any assistant message, or until `timeout` ms elapses.
  *
  * Returns true if found, false if timeout expires without finding it.
+ * Logs a diagnostic summary of message types on timeout to aid debugging.
  */
 async function pollForWebSearchToolUse(
 	daemon: DaemonServerContext,
@@ -157,6 +170,7 @@ async function pollForWebSearchToolUse(
 	timeout: number
 ): Promise<boolean> {
 	const deadline = Date.now() + timeout;
+	let lastMessages: Array<Record<string, unknown>> = [];
 
 	while (Date.now() < deadline) {
 		const result = (await daemon.messageHub.request('message.sdkMessages', {
@@ -164,12 +178,28 @@ async function pollForWebSearchToolUse(
 			limit: 200,
 		})) as { sdkMessages: Array<Record<string, unknown>> };
 
-		if (containsWebSearchToolUse(result.sdkMessages)) {
+		lastMessages = result.sdkMessages;
+		if (containsWebSearchToolUse(lastMessages)) {
 			return true;
 		}
 
 		await Bun.sleep(1_000);
 	}
+
+	// Log message type summary to help diagnose what the planner produced instead.
+	const summary = lastMessages
+		.map((m) => {
+			const blocks = (
+				(m['message'] as { content?: Array<{ type: string; name?: string }> } | undefined)
+					?.content ?? []
+			).map((b) => (b.name ? `${b.type}:${b.name}` : b.type));
+			return `  [${m['type']}] ${blocks.join(', ') || '(no content)'}`;
+		})
+		.join('\n');
+	console.log(
+		`pollForWebSearchToolUse timed out after ${timeout}ms. ` +
+			`Session ${sessionId} had ${lastMessages.length} messages:\n${summary}`
+	);
 
 	return false;
 }
