@@ -1,6 +1,6 @@
 /**
  * Tests for TaskAgentManager + AppMcpLifecycleManager integration (Task 3.4).
- * Also covers ChannelResolver injection into step agent MCP servers (Task 3.3).
+ * Also covers ChannelResolver injection into node agent MCP servers (Task 3.3).
  *
  * Verifies that:
  * 1. Task agent sessions receive registry-sourced MCP servers merged into their
@@ -11,8 +11,8 @@
  * 4. appMcpManager is optional — omitting it does not throw; task-agent server is
  *    still injected.
  * 5. Multiple registry servers are all included in the merged map.
- * 6. buildStepAgentMcpServerForSession creates a ChannelResolver from the workflow
- *    run config and injects it into the step agent MCP server config (Task 3.3).
+ * 6. buildNodeAgentMcpServerForSession creates a ChannelResolver from the workflow
+ *    run config and injects it into the node agent MCP server config (Task 3.3).
  */
 
 import { describe, test, expect, afterEach, spyOn, beforeEach } from 'bun:test';
@@ -32,7 +32,7 @@ import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../src/lib/agent/agent-session.ts';
-import * as stepAgentToolsModule from '../../../src/lib/space/tools/step-agent-tools.ts';
+import * as nodeAgentToolsModule from '../../../src/lib/space/tools/node-agent-tools.ts';
 import type { Space, SpaceTask, McpServerConfig, ResolvedChannel } from '@neokai/shared';
 import type { AgentProcessingState } from '@neokai/shared';
 
@@ -468,7 +468,7 @@ describe('TaskAgentManager.rehydrate — registry MCP merge (Task 3.4)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ChannelResolver injection into step agent MCP servers (Task 3.3)
+// ChannelResolver injection into node agent MCP servers (Task 3.3)
 // ---------------------------------------------------------------------------
 
 /**
@@ -533,7 +533,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		}
 	});
 
-	test('buildStepAgentMcpServerForSession injects ChannelResolver with declared channels', () => {
+	test('buildNodeAgentMcpServerForSession injects ChannelResolver with declared channels', () => {
 		const { manager, fromInitSpy, bunDb, dir, space } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
@@ -543,14 +543,14 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 
-		// Spy on createStepAgentMcpServer to capture the config it receives
+		// Spy on createNodeAgentMcpServer to capture the config it receives
 		let capturedConfig: Record<string, unknown> | null = null;
-		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
 			(config) => {
 				capturedConfig = config as unknown as Record<string, unknown>;
 				// Return minimal stub
 				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
-					typeof stepAgentToolsModule.createStepAgentMcpServer
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
 				>;
 			}
 		);
@@ -558,7 +558,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 
 		// Call the private method directly via cast
 		const mgr = manager as unknown as {
-			buildStepAgentMcpServerForSession(
+			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
 				role: string,
@@ -566,7 +566,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				workflowRunId: string
 			): unknown;
 		};
-		mgr.buildStepAgentMcpServerForSession(
+		mgr.buildNodeAgentMcpServerForSession(
 			'task-1',
 			'sub-session-1',
 			'coder',
@@ -584,7 +584,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		expect(resolver.canSend('reviewer', 'coder')).toBe(false);
 	});
 
-	test('buildStepAgentMcpServerForSession injects empty ChannelResolver when run has no channels', () => {
+	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when run has no channels', () => {
 		const { manager, fromInitSpy, bunDb, dir, space } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
@@ -593,18 +593,18 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		const workflowRunId = seedWorkflowRunWithChannels(bunDb, space.id, []);
 
 		let capturedConfig: Record<string, unknown> | null = null;
-		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
 			(config) => {
 				capturedConfig = config as unknown as Record<string, unknown>;
 				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
-					typeof stepAgentToolsModule.createStepAgentMcpServer
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
 				>;
 			}
 		);
 		spies.push(mcpServerSpy);
 
 		const mgr = manager as unknown as {
-			buildStepAgentMcpServerForSession(
+			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
 				role: string,
@@ -612,7 +612,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				workflowRunId: string
 			): unknown;
 		};
-		mgr.buildStepAgentMcpServerForSession(
+		mgr.buildNodeAgentMcpServerForSession(
 			'task-1',
 			'sub-session-1',
 			'coder',
@@ -627,24 +627,24 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		expect(resolver.isEmpty()).toBe(true);
 	});
 
-	test('buildStepAgentMcpServerForSession injects empty ChannelResolver when workflowRunId is empty', () => {
+	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when workflowRunId is empty', () => {
 		const { manager, fromInitSpy, dir, space } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
 		let capturedConfig: Record<string, unknown> | null = null;
-		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
 			(config) => {
 				capturedConfig = config as unknown as Record<string, unknown>;
 				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
-					typeof stepAgentToolsModule.createStepAgentMcpServer
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
 				>;
 			}
 		);
 		spies.push(mcpServerSpy);
 
 		const mgr = manager as unknown as {
-			buildStepAgentMcpServerForSession(
+			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
 				role: string,
@@ -653,7 +653,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			): unknown;
 		};
 		// Empty workflowRunId — no run will be found
-		mgr.buildStepAgentMcpServerForSession('task-1', 'sub-session-1', 'coder', space.id, '');
+		mgr.buildNodeAgentMcpServerForSession('task-1', 'sub-session-1', 'coder', space.id, '');
 
 		expect(capturedConfig).not.toBeNull();
 		const resolver = (capturedConfig as { channelResolver: { isEmpty: () => boolean } })
@@ -662,24 +662,24 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		expect(resolver.isEmpty()).toBe(true);
 	});
 
-	test('buildStepAgentMcpServerForSession passes correct mySessionId, myRole, and taskId', () => {
+	test('buildNodeAgentMcpServerForSession passes correct mySessionId, myRole, and taskId', () => {
 		const { manager, fromInitSpy, dir, space } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
 
 		let capturedConfig: Record<string, unknown> | null = null;
-		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
 			(config) => {
 				capturedConfig = config as unknown as Record<string, unknown>;
 				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
-					typeof stepAgentToolsModule.createStepAgentMcpServer
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
 				>;
 			}
 		);
 		spies.push(mcpServerSpy);
 
 		const mgr = manager as unknown as {
-			buildStepAgentMcpServerForSession(
+			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
 				role: string,
@@ -687,7 +687,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				workflowRunId: string
 			): unknown;
 		};
-		mgr.buildStepAgentMcpServerForSession(
+		mgr.buildNodeAgentMcpServerForSession(
 			'my-task-id',
 			'my-sub-session-id',
 			'reviewer',

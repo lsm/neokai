@@ -1,7 +1,7 @@
 /**
- * Step Agent Tools — MCP tool handlers for step agent sub-sessions.
+ * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
  *
- * These handlers implement peer communication tools for step agents within
+ * These handlers implement peer communication tools for node agents within
  * the same workflow step group:
  *
  *   list_peers   — discover other group members with roles and permitted channels
@@ -9,7 +9,7 @@
  *   report_done  — signal that this agent has completed its step task
  *
  * Communication model:
- * - Step agents communicate via declared channel topology (`send_message`).
+ * - Node agents communicate via declared channel topology (`send_message`).
  * - `list_peers` reveals who is in the group and what channels are available.
  *
  * Channel topology patterns supported:
@@ -20,7 +20,7 @@
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
- * - Dependencies are injected via `StepAgentToolsConfig`.
+ * - Dependencies are injected via `NodeAgentToolsConfig`.
  * - `messageInjector` is backed by `injectSubSessionMessage` → `injectMessageIntoSession`
  *   → `session.messageQueue.enqueueWithId()`, which provides per-session write ordering.
  */
@@ -40,31 +40,31 @@ import {
 	SendMessageSchema,
 	ReportDoneSchema,
 	ListReachableAgentsSchema,
-} from './step-agent-tool-schemas';
+} from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
 	SendMessageInput,
 	ReportDoneInput,
 	ListReachableAgentsInput,
-} from './step-agent-tool-schemas';
+} from './node-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
 
-const log = new Logger('step-agent-tools');
+const log = new Logger('node-agent-tools');
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
 /**
- * Dependencies injected into createStepAgentToolHandlers().
+ * Dependencies injected into createNodeAgentToolHandlers().
  * All fields are required unless noted — the caller (TaskAgentManager) wires them up.
  */
-export interface StepAgentToolsConfig {
-	/** Session ID of this step agent (used to exclude self from list_peers). */
+export interface NodeAgentToolsConfig {
+	/** Session ID of this node agent (used to exclude self from list_peers). */
 	mySessionId: string;
-	/** Role of this step agent (e.g., 'coder', 'reviewer'). */
+	/** Role of this node agent (e.g., 'coder', 'reviewer'). */
 	myRole: string;
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
@@ -114,10 +114,10 @@ export interface StepAgentToolsConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * Create handler functions for the step agent peer communication tools.
+ * Create handler functions for the node agent peer communication tools.
  * Returns a map of tool name → async handler function.
  */
-export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
+export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 	const {
 		mySessionId,
 		myRole,
@@ -496,12 +496,12 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 		},
 
 		/**
-		 * Signal that this step agent has completed its work.
+		 * Signal that this node agent has completed its work.
 		 *
 		 * Marks the step's SpaceTask as 'completed', persists the optional summary
 		 * as the task result, and emits a `space.task.updated` event for real-time UI.
 		 *
-		 * After calling this tool, the step agent should stop and not perform
+		 * After calling this tool, the node agent should stop and not perform
 		 * further work — the task lifecycle is closed.
 		 */
 		async report_done(args: ReportDoneInput): Promise<ToolResult> {
@@ -550,11 +550,11 @@ export function createStepAgentToolHandlers(config: StepAgentToolsConfig) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an MCP server exposing all step agent peer communication tools.
- * Pass the returned server to the AgentSessionInit.mcpServers for step agent sessions.
+ * Create an MCP server exposing all node agent peer communication tools.
+ * Pass the returned server to the AgentSessionInit.mcpServers for node agent sessions.
  */
-export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
-	const handlers = createStepAgentToolHandlers(config);
+export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
+	const handlers = createNodeAgentToolHandlers(config);
 
 	const tools = [
 		tool(
@@ -586,7 +586,7 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 		),
 		tool(
 			'report_done',
-			'Signal that this step agent has completed its work. ' +
+			'Signal that this node agent has completed its work. ' +
 				'Marks the step task as completed and persists an optional summary as the result. ' +
 				'Call this when you have finished all assigned work. ' +
 				'After calling this tool, stop — do not continue with further actions.',
@@ -595,7 +595,7 @@ export function createStepAgentMcpServer(config: StepAgentToolsConfig) {
 		),
 	];
 
-	return createSdkMcpServer({ name: 'step-agent', tools });
+	return createSdkMcpServer({ name: 'node-agent', tools });
 }
 
-export type StepAgentMcpServer = ReturnType<typeof createStepAgentMcpServer>;
+export type NodeAgentMcpServer = ReturnType<typeof createNodeAgentMcpServer>;

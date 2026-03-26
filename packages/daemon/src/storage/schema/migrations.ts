@@ -2964,7 +2964,7 @@ function runMigration45(db: BunDatabase): void {
  * Migration 46: Add slot_role column to space_tasks.
  *
  * Stores the `WorkflowNodeAgent.role` of the specific agent slot that spawned a task.
- * This allows `spawn_step_agent` to unambiguously identify the correct slot even when
+ * This allows `spawn_node_agent` to unambiguously identify the correct slot even when
  * the same `agentId` appears multiple times in a node with different slot roles and overrides.
  *
  * Existing rows get NULL for slot_role (backward compatible — the old lookup-by-agentId

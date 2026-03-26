@@ -1723,8 +1723,8 @@ describe('TaskAgentManager', () => {
 			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
 			const msgs = session._enqueuedMessages.map((m) => m.msg);
 			expect(msgs.some((m) => m.includes('resuming after a daemon restart'))).toBe(true);
-			// Workflow tasks should reference check_step_status to resume the workflow
-			expect(msgs.some((m) => m.includes('check_step_status'))).toBe(true);
+			// Workflow tasks should reference check_node_status to resume the workflow
+			expect(msgs.some((m) => m.includes('check_node_status'))).toBe(true);
 		});
 
 		test('restore returning null skips task and does not add to map', async () => {
@@ -1979,7 +1979,7 @@ describe('TaskAgentManager', () => {
 			restoreSpy.mockRestore();
 		});
 
-		test('step-agent MCP server is re-attached on rehydrated sub-sessions', async () => {
+		test('node-agent MCP server is re-attached on rehydrated sub-sessions', async () => {
 			// Seed a workflow run so sub-sessions are rebuilt
 			const wfId = 'wf-rehydrate-step-mcp';
 			const now = Date.now();
@@ -2045,10 +2045,10 @@ describe('TaskAgentManager', () => {
 
 			await ctx.manager.rehydrate();
 
-			// The rehydrated sub-session should have the step-agent MCP server attached
+			// The rehydrated sub-session should have the node-agent MCP server attached
 			const subSession = ctx.createdSessions.get(subSessionId)!;
 			expect(subSession).toBeDefined();
-			expect(Object.keys(subSession._mcpServers)).toContain('step-agent');
+			expect(Object.keys(subSession._mcpServers)).toContain('node-agent');
 
 			restoreSpy.mockRestore();
 		});

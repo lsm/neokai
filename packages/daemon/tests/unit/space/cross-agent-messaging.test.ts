@@ -1,7 +1,7 @@
 /**
  * Unit tests for cross-agent messaging.
  *
- * Exercises the step agent peer communication tools (send_message, list_peers)
+ * Exercises the node agent peer communication tools (send_message, list_peers)
  * and the Task Agent list_group_members tool in isolation with a real SQLite DB.
  *
  * Test patterns covered:
@@ -42,9 +42,9 @@ import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-man
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import {
-	createStepAgentToolHandlers,
-	type StepAgentToolsConfig,
-} from '../../../src/lib/space/tools/step-agent-tools.ts';
+	createNodeAgentToolHandlers,
+	type NodeAgentToolsConfig,
+} from '../../../src/lib/space/tools/node-agent-tools.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
@@ -158,8 +158,8 @@ function makeStepConfig(
 	ctx: StepCtx,
 	mySessionId: string,
 	myRole: string,
-	overrides: Partial<StepAgentToolsConfig> = {}
-): StepAgentToolsConfig & {
+	overrides: Partial<NodeAgentToolsConfig> = {}
+): NodeAgentToolsConfig & {
 	injectedMessages: Array<{ sessionId: string; message: string }>;
 } {
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
@@ -361,7 +361,7 @@ describe('send_message — point-to-point (target: role)', () => {
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'LGTM' }));
 		expect(result.success).toBe(true);
@@ -380,7 +380,7 @@ describe('send_message — point-to-point (target: role)', () => {
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('reviewer', 'coder')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hello' }));
 		expect(result.success).toBe(false);
@@ -405,7 +405,7 @@ describe('send_message — broadcast (target: "*")', () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
 			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
 		expect(result.success).toBe(true);
@@ -422,7 +422,7 @@ describe('send_message — broadcast (target: "*")', () => {
 		const cfg = makeStepConfig(ctx, 'sess-spoke', 'spoke', {
 			channelResolver: new ChannelResolver([ch('hub', 'spoke')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Hi' }));
 		expect(result.success).toBe(false);
@@ -446,7 +446,7 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
 			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
 		expect(result.success).toBe(true);
@@ -464,7 +464,7 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
 			channelResolver: new ChannelResolver([ch('hub', 'B')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
 		expect(result.success).toBe(false);
@@ -487,7 +487,7 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 				cfg.injectedMessages.push({ sessionId, message });
 			},
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(
 			await handlers.send_message({ target: ['B', 'C'], message: 'Multicast partial' })
@@ -524,7 +524,7 @@ describe('send_message — no channels declared', () => {
 		// No channels declared — empty topology (default empty resolver)
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hi' }));
 		expect(result.success).toBe(false);
@@ -556,14 +556,14 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 
 	test('hub can send to B', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'B', message: 'Go!' }));
 		expect(result.success).toBe(true);
 	});
 
 	test('hub broadcasts to all spokes via *', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: '*', message: 'All go!' }));
 		expect(result.success).toBe(true);
 		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
@@ -572,7 +572,7 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 
 	test('spoke B cannot send back to hub (one-way enforcement)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'hub', message: 'Hello hub' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('hub')).toBe(true);
@@ -580,7 +580,7 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 
 	test('spoke B cannot send to spoke C (spoke isolation)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
@@ -615,7 +615,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 
 	test('hub can send to B', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'B', message: 'Review this' }));
 		expect(result.success).toBe(true);
 		expect(cfg.injectedMessages[0].sessionId).toBe('sess-B');
@@ -623,7 +623,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 
 	test('hub can broadcast to all spokes via *', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast' }));
 		expect(result.success).toBe(true);
 		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
@@ -632,7 +632,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 
 	test('spoke B can reply to hub', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'hub', message: 'Reviewed, LGTM' }));
 		expect(result.success).toBe(true);
 		expect(cfg.injectedMessages[0].sessionId).toBe('sess-hub');
@@ -640,7 +640,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 
 	test('spoke B cannot send to spoke C (spoke isolation enforced)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-B', 'B');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
@@ -648,7 +648,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 
 	test('spoke C cannot send to spoke B (spoke isolation, other direction)', async () => {
 		const cfg = makeStepConfig(ctx, 'sess-C', 'C');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'B', message: 'Hi B' }));
 		expect(result.success).toBe(false);
 		expect((result.unauthorizedRoles as string[]).includes('B')).toBe(true);
@@ -674,7 +674,7 @@ describe('list_peers — peer discovery with channel info', () => {
 		]);
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.success).toBe(true);
@@ -693,7 +693,7 @@ describe('list_peers — peer discovery with channel info', () => {
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(true);
@@ -708,7 +708,7 @@ describe('list_peers — peer discovery with channel info', () => {
 		// No channels declared (default empty resolver)
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
@@ -720,7 +720,7 @@ describe('list_peers — peer discovery with channel info', () => {
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			getGroupId: () => undefined,
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.success).toBe(false);
@@ -839,7 +839,7 @@ describe('list_group_members — Task Agent group view', () => {
 //   - When a channel to/from Task Agent is declared, it appears in permittedTargets
 //   - When the channel is removed (topology changes), permittedTargets updates
 //
-// Note: Task Agent does not have a send_message tool. When a step agent calls
+// Note: Task Agent does not have a send_message tool. When a node agent calls
 // send_message targeting 'task-agent', the channel resolver check passes (if channel
 // declared), but the task-agent is filtered from delivery targets, so the message
 // is never delivered. This is by design — Task Agent communicates via its own mechanisms,
@@ -1060,7 +1060,7 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 // ===========================================================================
 
 describe('Group scoping — messages cannot leak between task groups', () => {
-	test('send_message only delivers within the step agent own group', async () => {
+	test('send_message only delivers within the node agent own group', async () => {
 		// Two independent step contexts (different groups, different DBs)
 		const ctxA = makeStepCtx([
 			{ sessionId: 'sess-hub-A', role: 'hub' },
@@ -1076,7 +1076,7 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 
 		try {
 			const cfgA = makeStepConfig(ctxA, 'sess-hub-A', 'hub');
-			const handlersA = createStepAgentToolHandlers(cfgA);
+			const handlersA = createNodeAgentToolHandlers(cfgA);
 
 			// Group A hub sends to its own B — succeeds
 			const resultA = parse(await handlersA.send_message({ target: 'B', message: 'To A.B' }));
@@ -1111,7 +1111,7 @@ describe('Error cases — non-existent targets and injection failures', () => {
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'ghost')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'ghost', message: 'Hello ghost' }));
 		expect(result.success).toBe(false);
@@ -1129,7 +1129,7 @@ describe('Error cases — non-existent targets and injection failures', () => {
 				throw new Error('Session closed');
 			},
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hi' }));
 		expect(result.success).toBe(false);
@@ -1157,7 +1157,7 @@ describe('Step with no channels declared', () => {
 		// No channels declared — resolver is empty
 
 		const cfgA = makeStepConfig(ctx, 'sess-a', 'agent-a');
-		const handlersA = createStepAgentToolHandlers(cfgA);
+		const handlersA = createNodeAgentToolHandlers(cfgA);
 
 		const fbResult = parse(
 			await handlersA.send_message({ target: 'agent-b', message: 'Direct msg' })
@@ -1172,7 +1172,7 @@ describe('Step with no channels declared', () => {
 		]);
 
 		const cfg = makeStepConfig(ctx, 'sess-a', 'agent-a');
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.channelTopologyDeclared).toBe(false);
@@ -1199,7 +1199,7 @@ describe('send_message — sender attribution prefix', () => {
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
 		});
-		const handlers = createStepAgentToolHandlers(cfg);
+		const handlers = createNodeAgentToolHandlers(cfg);
 
 		await handlers.send_message({ target: 'reviewer', message: 'Here is my patch' });
 

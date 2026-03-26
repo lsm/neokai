@@ -413,8 +413,8 @@ export class SpaceRuntime {
 	 *   agent not found                   → taskType: 'coding',    customAgentId: agentId
 	 */
 	resolveTaskTypesForStep(step: WorkflowNode): ResolvedTaskType[] {
-		const stepAgents = resolveNodeAgents(step);
-		return stepAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
+		const nodeAgents = resolveNodeAgents(step);
+		return nodeAgents.map((sa) => this.resolveTaskTypeForAgent(sa.agentId));
 	}
 
 	/**

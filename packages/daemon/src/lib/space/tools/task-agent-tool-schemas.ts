@@ -3,8 +3,8 @@
  * tools available to the Task Agent session.
  *
  * Tools:
- *   spawn_step_agent      — spawn a sub-session for a specific workflow step
- *   check_step_status     — check the status of the current or a specific step's sub-session
+ *   spawn_node_agent      — spawn a sub-session for a specific workflow node
+ *   check_node_status     — check the status of the current or a specific node's sub-session
  *   report_result         — report the final task result (terminal tool)
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
@@ -21,35 +21,35 @@
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
-// spawn_step_agent
+// spawn_node_agent
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `spawn_step_agent` input.
- * Spawns a sub-session for the given workflow step.
+ * Schema for `spawn_node_agent` input.
+ * Spawns a sub-session for the given workflow node.
  */
-export const SpawnStepAgentSchema = z.object({
+export const SpawnNodeAgentSchema = z.object({
 	/** ID of the workflow step to execute. */
 	step_id: z.string().describe('ID of the workflow step to spawn a sub-session for'),
-	/** Optional override instructions to pass to the step agent. */
+	/** Optional override instructions to pass to the node agent. */
 	instructions: z
 		.string()
-		.describe('Optional instructions to pass to the step agent, overriding the default step prompt')
+		.describe('Optional instructions to pass to the node agent, overriding the default step prompt')
 		.optional(),
 });
 
-export type SpawnStepAgentInput = z.infer<typeof SpawnStepAgentSchema>;
+export type SpawnNodeAgentInput = z.infer<typeof SpawnNodeAgentSchema>;
 
 // ---------------------------------------------------------------------------
-// check_step_status
+// check_node_status
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `check_step_status` input.
+ * Schema for `check_node_status` input.
  * Checks the processing state, completion, and any errors for the current or
- * a specific step's sub-session.
+ * a specific node's sub-session.
  */
-export const CheckStepStatusSchema = z.object({
+export const CheckNodeStatusSchema = z.object({
 	/** Optional step ID to check. Omit to check the current active step. */
 	step_id: z
 		.string()
@@ -57,7 +57,7 @@ export const CheckStepStatusSchema = z.object({
 		.optional(),
 });
 
-export type CheckStepStatusInput = z.infer<typeof CheckStepStatusSchema>;
+export type CheckNodeStatusInput = z.infer<typeof CheckNodeStatusSchema>;
 
 // ---------------------------------------------------------------------------
 // report_result
@@ -132,8 +132,8 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
  * The MCP server factory can iterate this map to register tools.
  */
 export const TASK_AGENT_TOOL_SCHEMAS = {
-	spawn_step_agent: SpawnStepAgentSchema,
-	check_step_status: CheckStepStatusSchema,
+	spawn_node_agent: SpawnNodeAgentSchema,
+	check_node_status: CheckNodeStatusSchema,
 	report_result: ReportResultSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,

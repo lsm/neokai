@@ -18,9 +18,9 @@ import { SpaceTaskRepository } from '../../../src/storage/repositories/space-tas
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import {
-	createStepAgentToolHandlers,
-	type StepAgentToolsConfig,
-} from '../../../src/lib/space/tools/step-agent-tools.ts';
+	createNodeAgentToolHandlers,
+	type NodeAgentToolsConfig,
+} from '../../../src/lib/space/tools/node-agent-tools.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
@@ -235,7 +235,7 @@ describe('Migration 51 — rename slot_role → agent_name, add completion_summa
 });
 
 // ---------------------------------------------------------------------------
-// Tests: list_peers — completion state (step-agent-tools.ts)
+// Tests: list_peers — completion state (node-agent-tools.ts)
 // ---------------------------------------------------------------------------
 
 describe('list_peers — completion state via SpaceTaskRepository', () => {
@@ -288,7 +288,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	function makeConfig(overrides: Partial<StepAgentToolsConfig> = {}): StepAgentToolsConfig {
+	function makeConfig(overrides: Partial<NodeAgentToolsConfig> = {}): NodeAgentToolsConfig {
 		return {
 			mySessionId: coderSessionId,
 			myRole: 'coder',
@@ -312,7 +312,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Review passed');
 
-		const handlers = createStepAgentToolHandlers(
+		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
 		);
 		const result = await handlers.list_peers({});
@@ -333,7 +333,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'completed', 'Done');
 
-		const handlers = createStepAgentToolHandlers(
+		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
 		);
 		const result = await handlers.list_peers({});
@@ -351,7 +351,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	test('list_peers returns null completionState when no tasks on node', async () => {
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 
-		const handlers = createStepAgentToolHandlers(
+		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: 'node-empty' })
 		);
 		const result = await handlers.list_peers({});
@@ -370,7 +370,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const workflowRunId = seedWorkflowRun(db, spaceId);
 		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'unknown-role', 'completed', 'Done');
 
-		const handlers = createStepAgentToolHandlers(
+		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
 		);
 		const result = await handlers.list_peers({});

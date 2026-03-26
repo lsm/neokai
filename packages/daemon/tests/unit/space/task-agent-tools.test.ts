@@ -2,12 +2,12 @@
  * Unit tests for createTaskAgentToolHandlers()
  *
  * Covers Task Agent tools:
- *   spawn_step_agent    — creates sub-session, registers callback, injects message
- *   check_step_status   — polling detection of sub-session completion
+ *   spawn_node_agent    — creates sub-session, registers callback, injects message
+ *   check_node_status   — polling detection of sub-session completion
  *   report_result       — transitions main task to final status
  *   request_human_input — pauses execution, marks task needs_attention
  *   list_group_members  — lists group members with session IDs and channel info
- *   send_message        — sends message to peer step agents via channel topology
+ *   send_message        — sends message to peer node agents via channel topology
  *
  * Tests use a real SQLite database (via runMigrations) and mock SubSessionFactory
  * so no real agent sessions are created.
@@ -386,10 +386,10 @@ async function startRun(
 }
 
 // ===========================================================================
-// spawn_step_agent tests
+// spawn_node_agent tests
 // ===========================================================================
 
-describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
+describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		ctx = makeCtx();
@@ -406,7 +406,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -426,7 +426,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		const before = ctx.taskRepo.getTask(mainTask.id);
 		expect(before?.status).toBe('pending');
 
-		await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 
 		const after = ctx.taskRepo.getTask(mainTask.id);
 		expect(after?.status).toBe('in_progress');
@@ -439,7 +439,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		const updatedStepTask = ctx.taskRepo.getTask(stepTask.id);
@@ -465,7 +465,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 			})
 		);
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		// Trigger sub-session completion
@@ -490,7 +490,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 			})
 		);
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(injections).toHaveLength(1);
@@ -513,7 +513,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 			})
 		);
 
-		await handlers.spawn_step_agent({
+		await handlers.spawn_node_agent({
 			step_id: wf.startNodeId,
 			instructions: 'Custom override instructions here',
 		});
@@ -530,7 +530,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: 'step-does-not-exist' });
+		const result = await handlers.spawn_node_agent({ step_id: 'step-does-not-exist' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -546,7 +546,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 
 		// The second step has no task yet because the workflow has not advanced to it
 		const step2Id = wf.nodes[1].id;
-		const result = await handlers.spawn_step_agent({ step_id: step2Id });
+		const result = await handlers.spawn_node_agent({ step_id: step2Id });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -567,7 +567,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 			makeConfig(ctx, mainTask.id, 'run-does-not-exist', factory)
 		);
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -586,7 +586,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -602,7 +602,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -617,14 +617,14 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// First spawn
-		const first = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const first = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const firstParsed = JSON.parse(first.content[0].text);
 		expect(firstParsed.success).toBe(true);
 		const firstSessionId = firstParsed.sessionId;
 
 		// Second spawn for same step — the step task already has taskAgentSessionId set
 		// Handler should detect the existing session and return it without creating a new one
-		const second = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const second = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const secondParsed = JSON.parse(second.content[0].text);
 
 		// Must not error out — should succeed or return existing session info
@@ -639,7 +639,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -656,10 +656,10 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 });
 
 // ===========================================================================
-// check_step_status tests
+// check_node_status tests
 // ===========================================================================
 
-describe('createTaskAgentToolHandlers — check_step_status', () => {
+describe('createTaskAgentToolHandlers — check_node_status', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		ctx = makeCtx();
@@ -676,7 +676,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -690,12 +690,12 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		// Spawn the step agent first
-		const spawnResult = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		// Spawn the node agent first
+		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 
 		// Factory returns isProcessing: true by default
-		const result = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -713,7 +713,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 		// Mark the step task as completed directly (simulating completion callback)
 		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
 
-		const result = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -734,7 +734,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 		// Manually set taskAgentSessionId without spawning (simulate orphaned session)
 		ctx.taskRepo.updateTask(stepTask.id, { taskAgentSessionId: 'orphaned-session-id' });
 
-		const result = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -749,7 +749,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// Call without step_id — should use run.currentNodeId
-		const result = await handlers.check_step_status({});
+		const result = await handlers.check_node_status({});
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -765,7 +765,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 
 		// Check step 2 which has no task (step not yet started)
 		const step2Id = wf.nodes[1].id;
-		const result = await handlers.check_step_status({ step_id: step2Id });
+		const result = await handlers.check_node_status({ step_id: step2Id });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -787,7 +787,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 			makeConfig(ctx, mainTask.id, 'run-missing', factory)
 		);
 
-		const result = await handlers.check_step_status({});
+		const result = await handlers.check_node_status({});
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -802,7 +802,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// Spawn and then trigger complete (but don't update DB task status yet)
-		const spawnResult = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 
 		// Simulate session completing without the completion callback updating DB
@@ -811,7 +811,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 			factory as unknown as { getProcessingState: (id: string) => SubSessionState }
 		).getProcessingState = (_id: string) => ({ isProcessing: false, isComplete: true });
 
-		const result = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -1275,23 +1275,23 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 			})
 		);
 
-		// 1. Spawn step agent
-		const spawnResult = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		// 1. Spawn node agent
+		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 		expect(sessionId).toBeString();
 
 		// 2. Check status — running
-		const checkRunning = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const checkRunning = await handlers.check_node_status({ step_id: wf.startNodeId });
 		expect(JSON.parse(checkRunning.content[0].text).sessionStatus).toBe('running');
 
 		// 3. Trigger sub-session completion (fires onSubSessionComplete callback)
 		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(sessionId);
 
 		// 4. Check status — completed
-		const checkDone = await handlers.check_step_status({ step_id: wf.startNodeId });
+		const checkDone = await handlers.check_node_status({ step_id: wf.startNodeId });
 		expect(JSON.parse(checkDone.content[0].text).taskStatus).toBe('completed');
 
-		// 5. Report result (mainTask is already in_progress after spawn_step_agent)
+		// 5. Report result (mainTask is already in_progress after spawn_node_agent)
 		const reportResult = await handlers.report_result({
 			status: 'completed',
 			summary: 'Workflow completed successfully.',
@@ -1348,27 +1348,27 @@ describe('createTaskAgentMcpServer', () => {
 		const { server } = await makeServerCtx();
 		const registered = Object.keys(server.instance._registeredTools).sort();
 		expect(registered).toEqual([
-			'check_step_status',
+			'check_node_status',
 			'list_group_members',
 			'report_result',
 			'request_human_input',
 			'send_message',
-			'spawn_step_agent',
+			'spawn_node_agent',
 		]);
 	});
 
-	test('spawn_step_agent has correct description', async () => {
+	test('spawn_node_agent has correct description', async () => {
 		const { server } = await makeServerCtx();
-		const entry = server.instance._registeredTools['spawn_step_agent'];
+		const entry = server.instance._registeredTools['spawn_node_agent'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain("Start a sub-session for a workflow step's assigned agent");
+		expect(entry.description).toContain("Start a sub-session for a workflow node's assigned agent");
 	});
 
-	test('check_step_status has correct description', async () => {
+	test('check_node_status has correct description', async () => {
 		const { server } = await makeServerCtx();
-		const entry = server.instance._registeredTools['check_step_status'];
+		const entry = server.instance._registeredTools['check_node_status'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('Poll the status of a running step agent sub-session');
+		expect(entry.description).toContain('Poll the status of a running node agent sub-session');
 	});
 
 	test('report_result has correct description', async () => {
@@ -1390,8 +1390,8 @@ describe('createTaskAgentMcpServer', () => {
 	test('each registered tool has an inputSchema', async () => {
 		const { server } = await makeServerCtx();
 		const toolNames = [
-			'spawn_step_agent',
-			'check_step_status',
+			'spawn_node_agent',
+			'check_node_status',
 			'report_result',
 			'request_human_input',
 		];
@@ -1406,10 +1406,10 @@ describe('createTaskAgentMcpServer', () => {
 	// Handler delegation — invoke via the MCP server's registered handler
 	// ---------------------------------------------------------------------------
 
-	test('check_step_status registered handler returns not_found for an unknown step', async () => {
+	test('check_node_status registered handler returns not_found for an unknown step', async () => {
 		const { server } = await makeServerCtx();
 		// Invoke through the server's registered handler to verify the wiring
-		const handler = server.instance._registeredTools['check_step_status'].handler;
+		const handler = server.instance._registeredTools['check_node_status'].handler;
 		const result = await handler({ step_id: 'step-that-does-not-exist' }, {});
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.taskStatus).toBe('not_found');
@@ -1634,10 +1634,10 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 });
 
 // ===========================================================================
-// spawn_step_agent — slot role and overrides
+// spawn_node_agent — slot role and overrides
 // ===========================================================================
 
-describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrides', () => {
+describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrides', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		ctx = makeCtx();
@@ -1675,7 +1675,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1694,12 +1694,12 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
 		// For agentId shorthand, resolveNodeAgents synthesizes role = agentId (the UUID string).
-		// spawn_step_agent picks memberRole = agentSlot.role (always set to the synthetic UUID),
+		// spawn_node_agent picks memberRole = agentSlot.role (always set to the synthetic UUID),
 		// so no fallback to agentForMember.role ('coder') ever occurs on this path.
 		const sessionId = parsed.sessionId;
 		const capturedInfo = (
@@ -1747,7 +1747,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		});
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1793,7 +1793,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		});
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1805,7 +1805,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 	test('same agent twice in one node: last task uses its own agent name (not the first slot)', async () => {
 		// Regression test for the slot disambiguation bug:
 		// When the same agentId appears twice in a node with different agent names,
-		// spawn_step_agent must select the task's own agent name — not always the first match.
+		// spawn_node_agent must select the task's own agent name — not always the first match.
 		// The fix stores agentName on the task at creation time so the lookup is exact.
 		const agentId = ctx.agentId;
 		const stepId = `step-dual-${Math.random().toString(36).slice(2)}`;
@@ -1841,18 +1841,18 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		expect(stepTasks[0]?.agentName).toBe('strict-reviewer');
 		expect(stepTasks[1]?.agentName).toBe('quick-reviewer');
 
-		// spawn_step_agent picks stepTasks[last] = the quick-reviewer task
+		// spawn_node_agent picks stepTasks[last] = the quick-reviewer task
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
 		// The spawned session must use 'quick-reviewer' — NOT 'strict-reviewer' (the first slot),
 		// confirming that agentName-based lookup picks the correct slot.
 		// Note: this test only covers the last-created (quick-reviewer) task because
-		// spawn_step_agent selects stepTasks[last]. In practice the Task Agent calls
-		// spawn_step_agent once per task; the strict-reviewer task is covered by the
+		// spawn_node_agent selects stepTasks[last]. In practice the Task Agent calls
+		// spawn_node_agent once per task; the strict-reviewer task is covered by the
 		// slot-role membership test above which uses the single-agent (agents[]) path.
 		const sessionId = parsed.sessionId;
 		const capturedInfo = (
@@ -1903,7 +1903,7 @@ describe('createTaskAgentToolHandlers — spawn_step_agent slot role and overrid
 		});
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-		const result = await handlers.spawn_step_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ step_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		// Spawn must succeed — stale agentName is not a hard error

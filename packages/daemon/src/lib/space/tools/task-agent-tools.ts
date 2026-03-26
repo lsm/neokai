@@ -2,20 +2,20 @@
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
  * These handlers implement the business logic for the 6 Task Agent tools:
- *   spawn_step_agent      — Spawn a sub-session for a workflow step's assigned agent
- *   check_step_status     — Poll the status of a running step agent sub-session
+ *   spawn_node_agent      — Spawn a sub-session for a workflow node's assigned agent
+ *   check_node_status     — Poll the status of a running node agent sub-session
  *   report_result         — Mark the task as completed/failed and record the result
  *   request_human_input   — Pause execution and surface a question to the human user
  *   list_group_members    — List all members of the current task's session group
- *   send_message          — Send a message to peer step agents via channel topology
+ *   send_message          — Send a message to peer node agents via channel topology
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
  * - Dependencies are injected via `TaskAgentToolsConfig`.
  * - The `SubSessionFactory` abstraction allows tests to mock session creation/state.
  * - Session completion is signalled via two paths:
- *     1. Completion callback registered in spawn_step_agent (fires automatically)
- *     2. Polling via check_step_status (Task Agent polls this tool)
+ *     1. Completion callback registered in spawn_node_agent (fires automatically)
+ *     2. Polling via check_node_status (Task Agent polls this tool)
  *
  * Following the pattern established in space-agent-tools.ts.
  */
@@ -37,22 +37,22 @@ import { ChannelResolver } from '../runtime/channel-resolver';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
-	SpawnStepAgentSchema,
-	CheckStepStatusSchema,
+	SpawnNodeAgentSchema,
+	CheckNodeStatusSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
 } from './task-agent-tool-schemas';
-import { SendMessageSchema } from './step-agent-tool-schemas';
+import { SendMessageSchema } from './node-agent-tool-schemas';
 import { resolveNodeAgents } from '@neokai/shared';
 import type {
-	SpawnStepAgentInput,
-	CheckStepStatusInput,
+	SpawnNodeAgentInput,
+	CheckNodeStatusInput,
 	ReportResultInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
 } from './task-agent-tool-schemas';
-import type { SendMessageInput } from './step-agent-tool-schemas';
+import type { SendMessageInput } from './node-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -142,7 +142,7 @@ export interface TaskAgentToolsConfig {
 	taskRepo: SpaceTaskRepository;
 	/** Workflow run repository for reading and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** Agent manager for resolving step agents. */
+	/** Agent manager for resolving node agents. */
 	agentManager: SpaceAgentManager;
 	/** Task manager for validated status transitions. */
 	taskManager: SpaceTaskManager;
@@ -177,16 +177,16 @@ export interface TaskAgentToolsConfig {
 	 */
 	daemonHub?: DaemonHub;
 	/**
-	 * Factory to build a step agent MCP server for a spawned sub-session.
-	 * Called in `spawn_step_agent` after resolving the session ID and agent role.
+	 * Factory to build a node agent MCP server for a spawned sub-session.
+	 * Called in `spawn_node_agent` after resolving the session ID and agent role.
 	 * Returns a McpServerConfig to attach to the sub-session's init.mcpServers.
-	 * Optional — if omitted, no step agent MCP server is attached (e.g. in unit tests).
+	 * Optional — if omitted, no node agent MCP server is attached (e.g. in unit tests).
 	 *
 	 * @param sessionId   - The sub-session ID being started.
 	 * @param role        - The slot role for the agent (used for channel routing).
 	 * @param stepTaskId  - The SpaceTask ID for this step (used by report_done).
 	 */
-	buildStepAgentMcpServer?: (
+	buildNodeAgentMcpServer?: (
 		sessionId: string,
 		role: string,
 		stepTaskId: string
@@ -218,7 +218,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		sessionGroupRepo,
 		getGroupId,
 		daemonHub,
-		buildStepAgentMcpServer,
+		buildNodeAgentMcpServer,
 	} = config;
 
 	return {
@@ -233,12 +233,12 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 * 5. Create the sub-session via sessionFactory.create()
 		 * 6. Register completion callback (onSubSessionComplete) via sessionFactory.onComplete()
 		 * 7. Record the sub-session ID on the step task (BEFORE message injection, so
-		 *    check_step_status can track the session even if injection later fails)
+		 *    check_node_status can track the session even if injection later fails)
 		 * 8. Transition main task from pending → in_progress if not already in_progress
 		 * 9. Build and inject the task context message via messageInjector
 		 *    (non-fatal if injection fails — sub-session is already running and trackable)
 		 */
-		async spawn_step_agent(args: SpawnStepAgentInput): Promise<ToolResult> {
+		async spawn_node_agent(args: SpawnNodeAgentInput): Promise<ToolResult> {
 			const { step_id, instructions } = args;
 
 			// Load the workflow run
@@ -279,7 +279,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			// Idempotency guard: if this step already has a tracked sub-session, return it
 			// without creating a duplicate. Prevents double-spawning from orphaning the first
-			// session when the Task Agent retries a spawn_step_agent call.
+			// session when the Task Agent retries a spawn_node_agent call.
 			if (stepTask.taskAgentSessionId) {
 				return jsonResult({
 					success: true,
@@ -291,7 +291,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				});
 			}
 
-			// Ensure customAgentId is set — fall back to the primary step agent ID for preset agents.
+			// Ensure customAgentId is set — fall back to the primary node agent ID for preset agents.
 			// WorkflowExecutor sets customAgentId to undefined for coder/general preset roles,
 			// but those agents are still SpaceAgent records. Use resolveNodeAgents to get the
 			// correct primary agentId regardless of whether the step uses agentId or agents[].
@@ -363,15 +363,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Falls back to the base agent's role, then 'agent' if neither is available.
 			const memberRole = agentSlot?.name ?? agentForMember?.role ?? 'agent';
 
-			// Attach step agent peer communication MCP server if a factory is provided.
+			// Attach node agent peer communication MCP server if a factory is provided.
 			// The server is built with the slot role so it can validate channels using the
 			// same role that was registered in the session group.
 			// Pass stepTask.id so report_done can mark the correct step task as completed.
-			if (buildStepAgentMcpServer) {
-				const stepMcpServer = buildStepAgentMcpServer(subSessionId, memberRole, stepTask.id);
+			if (buildNodeAgentMcpServer) {
+				const stepMcpServer = buildNodeAgentMcpServer(subSessionId, memberRole, stepTask.id);
 				init = {
 					...init,
-					mcpServers: { ...init.mcpServers, 'step-agent': stepMcpServer },
+					mcpServers: { ...init.mcpServers, 'node-agent': stepMcpServer },
 				};
 			}
 
@@ -393,7 +393,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			});
 
 			// Record the sub-session ID on the step task BEFORE message injection.
-			// This ensures check_step_status can locate and track the session even if
+			// This ensures check_node_status can locate and track the session even if
 			// the subsequent message injection fails.
 			taskRepo.updateTask(stepTask.id, {
 				taskAgentSessionId: actualSessionId,
@@ -417,7 +417,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// This is non-fatal: if injection fails the sub-session still runs (and is
 			// already trackable via taskAgentSessionId recorded above), just without its
 			// initial task context. Return success with a warning field so the Task Agent
-			// can still poll check_step_status.
+			// can still poll check_node_status.
 			try {
 				// resolveAgentInit() already validated that the agent exists, so this
 				// getById() call should always succeed. If it somehow returns null after
@@ -449,7 +449,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				const message = err instanceof Error ? err.message : String(err);
 				// Return success:true because the sub-session was created, the completion
 				// callback is registered, and taskAgentSessionId is persisted. The Task Agent
-				// can still track completion via check_step_status. The warning informs it
+				// can still track completion via check_node_status. The warning informs it
 				// that the sub-session started without its initial task context message.
 				return jsonResult({
 					success: true,
@@ -471,16 +471,16 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
-		 * Check the processing state of a step's sub-session.
+		 * Check the processing state of a node's sub-session.
 		 *
 		 * This is the primary mechanism for the Task Agent to detect sub-session completion.
-		 * The Task Agent polls this tool after spawning a step agent.
+		 * The Task Agent polls this tool after spawning a node agent.
 		 *
 		 * If step_id is omitted, checks the workflow run's current step.
 		 * Returns status = 'completed' when the step task has been marked completed in the DB
-		 * (which happens via the completion callback registered in spawn_step_agent).
+		 * (which happens via the completion callback registered in spawn_node_agent).
 		 */
-		async check_step_status(args: CheckStepStatusInput): Promise<ToolResult> {
+		async check_node_status(args: CheckNodeStatusInput): Promise<ToolResult> {
 			// Resolve step ID — use provided step_id or fall back to current step on run
 			let stepId = args.step_id;
 			if (!stepId) {
@@ -494,7 +494,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				if (!run.currentNodeId) {
 					return jsonResult({
 						success: false,
-						error: 'No current step on the workflow run. Call spawn_step_agent first.',
+						error: 'No current step on the workflow run. Call spawn_node_agent first.',
 					});
 				}
 				stepId = run.currentNodeId;
@@ -511,7 +511,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					stepId,
 					taskStatus: 'not_found',
 					sessionStatus: 'not_started',
-					message: 'No task found for this step. Has spawn_step_agent been called?',
+					message: 'No task found for this step. Has spawn_node_agent been called?',
 				});
 			}
 
@@ -537,7 +537,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					taskId: stepTask.id,
 					taskStatus: stepTask.status,
 					sessionStatus: 'not_started',
-					message: 'Sub-session not yet started for this step. Call spawn_step_agent.',
+					message: 'Sub-session not yet started for this step. Call spawn_node_agent.',
 				});
 			}
 
@@ -660,7 +660,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					success: false,
 					error:
 						`No session group found for task ${taskId}. ` +
-						`The group may not have been created yet — try after spawn_step_agent.`,
+						`The group may not have been created yet — try after spawn_node_agent.`,
 				});
 			}
 
@@ -730,11 +730,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		},
 
 		/**
-		 * Send a message directly to one or more peer step agents.
+		 * Send a message directly to one or more peer node agents.
 		 *
 		 * Validates the requested direction(s) against the declared channel topology
 		 * before routing. The Task Agent uses `send_message` for all inter-agent
-		 * communication with step agents.
+		 * communication with node agents.
 		 *
 		 * Target forms:
 		 *   - `target: 'coder'` — point-to-point to a single role
@@ -754,7 +754,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					success: false,
 					error:
 						`No session group found for task ${taskId}. ` +
-						`The group may not have been created yet — try after spawn_step_agent.`,
+						`The group may not have been created yet — try after spawn_node_agent.`,
 				});
 			}
 
@@ -964,19 +964,19 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 
 	const tools = [
 		tool(
-			'spawn_step_agent',
-			"Start a sub-session for a workflow step's assigned agent. " +
+			'spawn_node_agent',
+			"Start a sub-session for a workflow node's assigned agent. " +
 				'Call this to execute each workflow step. ' +
 				'Returns the session ID of the spawned sub-session.',
-			SpawnStepAgentSchema.shape,
-			(args) => handlers.spawn_step_agent(args)
+			SpawnNodeAgentSchema.shape,
+			(args) => handlers.spawn_node_agent(args)
 		),
 		tool(
-			'check_step_status',
-			'Poll the status of a running step agent sub-session. ' +
-				'Call this periodically after spawn_step_agent to detect when a step has completed.',
-			CheckStepStatusSchema.shape,
-			(args) => handlers.check_step_status(args)
+			'check_node_status',
+			'Poll the status of a running node agent sub-session. ' +
+				'Call this periodically after spawn_node_agent to detect when a step has completed.',
+			CheckNodeStatusSchema.shape,
+			(args) => handlers.check_node_status(args)
 		),
 		tool(
 			'report_result',
@@ -1002,7 +1002,7 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 		),
 		tool(
 			'send_message',
-			'Send a message directly to one or more peer step agents via declared channel topology. ' +
+			'Send a message directly to one or more peer node agents via declared channel topology. ' +
 				"Supports point-to-point ('coder'), broadcast ('*'), and multicast (['coder','reviewer']). " +
 				'Validates against declared channels — returns an error with available channels if unauthorized. ' +
 				'The Task Agent has default bidirectional channels to all node agents.',

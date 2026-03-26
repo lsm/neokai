@@ -172,14 +172,14 @@ describe('buildTaskAgentSystemPrompt — basic structure', () => {
 });
 
 describe('buildTaskAgentSystemPrompt — MCP tools', () => {
-	test('includes spawn_step_agent tool', () => {
+	test('includes spawn_node_agent tool', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('spawn_step_agent');
+		expect(prompt).toContain('spawn_node_agent');
 	});
 
-	test('includes check_step_status tool', () => {
+	test('includes check_node_status tool', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('check_step_status');
+		expect(prompt).toContain('check_node_status');
 	});
 
 	test('includes report_result tool', () => {
@@ -194,14 +194,14 @@ describe('buildTaskAgentSystemPrompt — MCP tools', () => {
 });
 
 describe('buildTaskAgentSystemPrompt — workflow execution instructions', () => {
-	test('mentions spawning step agents', () => {
+	test('mentions spawning node agents', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('spawn_step_agent');
+		expect(prompt).toContain('spawn_node_agent');
 	});
 
-	test('mentions monitoring completion via check_step_status', () => {
+	test('mentions monitoring completion via check_node_status', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('check_step_status');
+		expect(prompt).toContain('check_node_status');
 	});
 
 	test('includes instructions to call report_result on terminal step', () => {
@@ -386,7 +386,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('Review');
 	});
 
-	test('includes step agent names', () => {
+	test('includes node agent names', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
 		expect(msg).toContain('Coder');
 		expect(msg).toContain('Planner');
@@ -608,16 +608,16 @@ describe('buildTaskAgentInitialMessage — previous task results', () => {
 });
 
 describe('buildTaskAgentInitialMessage — start instruction', () => {
-	test('instructs to begin with spawn_step_agent for workflow tasks', () => {
+	test('instructs to begin with spawn_node_agent for workflow tasks', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('spawn_step_agent');
+		expect(msg).toContain('spawn_node_agent');
 		expect(msg).toContain('step-plan');
 	});
 
 	test('instructs to spawn agent for tasks without workflow', () => {
 		const ctx = makeContext({ workflow: undefined, workflowRun: undefined });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('spawn_step_agent');
+		expect(msg).toContain('spawn_node_agent');
 	});
 });
 

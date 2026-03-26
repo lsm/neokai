@@ -2,7 +2,7 @@
  * TaskAgentManager
  *
  * Central integration point that manages the lifecycle of Task Agent sessions
- * and their sub-sessions (step agents). Each SpaceTask gets exactly one Task
+ * and their sub-sessions (node agents). Each SpaceTask gets exactly one Task
  * Agent session, and that session spawns sub-sessions for each workflow step.
  *
  * ## Session hierarchy
@@ -67,7 +67,7 @@ import type {
 	SubSessionState,
 } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
-import { createStepAgentMcpServer } from '../tools/step-agent-tools';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { ChannelResolver } from './channel-resolver';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
 import { Logger } from '../../logger';
@@ -299,8 +299,8 @@ export class TaskAgentManager {
 				sessionGroupRepo: this.config.sessionGroupRepo,
 				getGroupId: () => this.taskGroupIds.get(taskId),
 				daemonHub: this.config.daemonHub,
-				buildStepAgentMcpServer: (subSessionId, role, stepTaskId) =>
-					this.buildStepAgentMcpServerForSession(
+				buildNodeAgentMcpServer: (subSessionId, role, stepTaskId) =>
+					this.buildNodeAgentMcpServerForSession(
 						taskId,
 						subSessionId,
 						role,
@@ -694,13 +694,13 @@ export class TaskAgentManager {
 	private createSubSessionFactory(taskId: string, spaceId: string): SubSessionFactory {
 		// Capture workflowRunId once at factory-creation time to avoid a DB round-trip
 		// on every spawn. The run ID is immutable once assigned, so this is safe.
-		// Log a warning if the task lacks a workflow run — step-agent tools will
+		// Log a warning if the task lacks a workflow run — node-agent tools will
 		// produce an empty ChannelResolver (no declared channels) in that case.
 		const taskWorkflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId ?? '';
 		if (!taskWorkflowRunId) {
 			log.warn(
 				`TaskAgentManager.createSubSessionFactory: task ${taskId} has no workflowRunId — ` +
-					`step-agent channel topology will be unavailable`
+					`node-agent channel topology will be unavailable`
 			);
 		}
 
@@ -903,7 +903,7 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Called by the MCP onSubSessionComplete callback (registered in spawn_step_agent).
+	 * Called by the MCP onSubSessionComplete callback (registered in spawn_node_agent).
 	 * Updates the step task status to 'completed' and notifies the Task Agent.
 	 */
 	private async handleSubSessionComplete(
@@ -990,7 +990,7 @@ export class TaskAgentManager {
 					: '';
 				await this.injectMessageIntoSession(
 					taskAgentSession,
-					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_step_status to verify completion status.`,
+					`[STEP_COMPLETE] Step "${stepId}" sub-session (${subSessionId}) has completed.${resultSummary}\nCall check_node_status to verify completion status.`,
 					'defer'
 				);
 			} catch (err) {
@@ -1147,8 +1147,8 @@ export class TaskAgentManager {
 			daemonHub: this.config.daemonHub,
 			sessionGroupRepo: this.config.sessionGroupRepo,
 			getGroupId: () => this.taskGroupIds.get(taskId),
-			buildStepAgentMcpServer: (subSessionId, role, stepTaskId) =>
-				this.buildStepAgentMcpServerForSession(
+			buildNodeAgentMcpServer: (subSessionId, role, stepTaskId) =>
+				this.buildNodeAgentMcpServerForSession(
 					taskId,
 					subSessionId,
 					role,
@@ -1197,11 +1197,11 @@ export class TaskAgentManager {
 		await agentSession.startStreamingQuery();
 
 		// --- Inject re-orientation message so the agent checks state and continues.
-		// For workflow tasks: ask the agent to use check_step_status to resume workflow execution.
+		// For workflow tasks: ask the agent to use check_node_status to resume workflow execution.
 		// For standalone tasks (no workflowRunId): ask the agent to check status and continue.
 		const reorientMessage = task.workflowRunId
 			? 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-				'Please use `check_step_status` to determine the current state of your workflow and continue from where you left off.'
+				'Please use `check_node_status` to determine the current state of your workflow and continue from where you left off.'
 			: 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
 				'Please check the current task status and continue from where you left off.';
 		await this.injectMessageIntoSession(agentSession, reorientMessage);
@@ -1236,12 +1236,12 @@ export class TaskAgentManager {
 				);
 				if (!subSession) continue;
 
-				// Re-attach step-agent MCP tools (runtime-only, not persisted to DB).
+				// Re-attach node-agent MCP tools (runtime-only, not persisted to DB).
 				// Look up the member's role from the session group; fall back to 'agent'.
 				const memberRole =
 					group?.members.find((m) => m.sessionId === subSessionId)?.role ?? 'agent';
 
-				const stepAgentMcpServer = this.buildStepAgentMcpServerForSession(
+				const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
 					taskId,
 					subSessionId,
 					memberRole,
@@ -1251,7 +1251,7 @@ export class TaskAgentManager {
 					taskManager
 				);
 				subSession.setRuntimeMcpServers({
-					'step-agent': stepAgentMcpServer as unknown as McpServerConfig,
+					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
 				});
 
 				if (!this.subSessions.has(taskId)) {
@@ -1384,18 +1384,18 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Build a step agent MCP server for a newly spawned sub-session.
-	 * Called from the `buildStepAgentMcpServer` callback passed to createTaskAgentMcpServer().
+	 * Build a node agent MCP server for a newly spawned sub-session.
+	 * Called from the `buildNodeAgentMcpServer` callback passed to createTaskAgentMcpServer().
 	 *
 	 * Creates a ChannelResolver from the workflow run's config at spawn time and injects
-	 * it directly into the step agent MCP server config. This avoids a per-call DB lookup
+	 * it directly into the node agent MCP server config. This avoids a per-call DB lookup
 	 * and ensures each sub-session has its own resolver scoped to the channels declared
 	 * at step-start (stored in the run config by SpaceRuntime.storeResolvedChannels()).
 	 *
-	 * The server gives the step agent peer communication tools (list_peers, send_message,
+	 * The server gives the node agent peer communication tools (list_peers, send_message,
 	 * report_done) that are scoped to its group, channel topology, and step task.
 	 */
-	private buildStepAgentMcpServerForSession(
+	private buildNodeAgentMcpServerForSession(
 		taskId: string,
 		subSessionId: string,
 		role: string,
@@ -1413,7 +1413,7 @@ export class TaskAgentManager {
 			run?.config as Record<string, unknown> | undefined
 		);
 
-		return createStepAgentMcpServer({
+		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
 			taskId,
