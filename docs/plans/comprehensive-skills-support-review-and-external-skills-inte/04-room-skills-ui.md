@@ -23,7 +23,7 @@ The `skills.byRoom` named query (registered in Task 2.4) already JOINs `skills` 
 1. Run `bun install` at the worktree root.
 2. Add a `roomSkills` signal and subscription logic to `packages/web/src/lib/room-store.ts` (following the same pattern as `goals` and `tasks` subscriptions):
    - Signal: `readonly roomSkills = signal<EffectiveRoomSkill[]>([])`
-   - Where `EffectiveRoomSkill = AppSkill & { effectivelyEnabled: boolean; overriddenByRoom: boolean }`
+   - Where `EffectiveRoomSkill = AppSkill & { overriddenByRoom: boolean }` — the `enabled` field on `AppSkill` already carries the effective (merged) value from the `skills.byRoom` LiveQuery JOIN; no separate `effectivelyEnabled` alias needed
    - In `subscribeRoom(roomId)`: generate `skillsSubId = \`skills-byRoom-${roomId}\``
    - Register `liveQuery.snapshot` and `liveQuery.delta` handlers with stale-event guard (check `activeSubscriptionIds`)
    - Issue `liveQuery.subscribe` RPC with `queryName: 'skills.byRoom'`, `params: [roomId]`, `subscriptionId: skillsSubId`

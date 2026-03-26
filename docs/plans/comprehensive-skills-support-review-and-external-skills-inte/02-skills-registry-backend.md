@@ -54,13 +54,15 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
 
 1. Run `bun install` at the worktree root.
 2. Create `packages/daemon/src/storage/repositories/skill-repository.ts` following the same pattern as `goal-repository.ts`:
-   - `ensureTable()` — creates `skills` table with columns: `id TEXT PRIMARY KEY`, `name TEXT UNIQUE NOT NULL`, `display_name TEXT NOT NULL`, `description TEXT NOT NULL`, `source_type TEXT NOT NULL`, `config TEXT NOT NULL` (JSON), `enabled INTEGER NOT NULL DEFAULT 1`, `built_in INTEGER NOT NULL DEFAULT 0`, `created_at TEXT NOT NULL`
+   - `ensureTable()` — creates `skills` table with columns: `id TEXT PRIMARY KEY`, `name TEXT UNIQUE NOT NULL`, `display_name TEXT NOT NULL`, `description TEXT NOT NULL`, `source_type TEXT NOT NULL`, `config TEXT NOT NULL` (JSON), `enabled INTEGER NOT NULL DEFAULT 1`, `built_in INTEGER NOT NULL DEFAULT 0`, `validation_status TEXT NOT NULL DEFAULT 'pending'`, `created_at TEXT NOT NULL`
    - `findAll(): Promise<AppSkill[]>`
    - `get(id: string): AppSkill | null` — synchronous, consistent with `AppMcpServerRepository.get()` convention
    - `findEnabled(): Promise<AppSkill[]>`
-   - `insert(skill: AppSkill): Promise<void>`
-   - `update(id: string, fields: Partial<AppSkill>): Promise<void>`
-   - `delete(id: string): Promise<void>`
+   - `insert(skill: AppSkill): void`
+   - `update(id: string, fields: Partial<AppSkill>): void`
+   - `setEnabled(id: string, enabled: boolean): void` — targeted UPDATE for enabled flag; calls `notifyChange('skills')`
+   - `setValidationStatus(id: string, status: SkillValidationStatus): void` — targeted UPDATE for validation_status; calls `notifyChange('skills')`
+   - `delete(id: string): void`
    - Use the shared `Database` instance from `packages/daemon/src/storage/database.ts`; do NOT open a separate DB file.
 3. Create `packages/daemon/src/lib/skills-manager.ts` with class `SkillsManager`:
    - Constructor: `(repo: SkillRepository)`
@@ -68,9 +70,11 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
    - `getSkill(id: string): AppSkill | null` — delegates to `repo.get(id)`
    - `addSkill(params: CreateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` first, then generates UUID, sets `createdAt`, `builtIn=false`
    - `updateSkill(id: string, params: UpdateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` on any updated config
-   - `removeSkill(id: string): Promise<boolean>` — returns false if built-in or not found
-   - `getEnabledSkills(): Promise<AppSkill[]>`
-   - `initializeBuiltins(): Promise<void>` — upserts default built-in skills on startup
+   - `setSkillEnabled(id: string, enabled: boolean): AppSkill` — delegates to `repo.setEnabled()`; returns updated skill
+   - `setSkillValidationStatus(id: string, status: SkillValidationStatus): void` — delegates to `repo.setValidationStatus()`; used by job handler
+   - `removeSkill(id: string): boolean` — returns false if built-in or not found
+   - `getEnabledSkills(): AppSkill[]`
+   - `initializeBuiltins(): void` — upserts default built-in skills on startup
    - **Private `validateSkillConfig(sourceType, config)`** — enforces:
      - `plugin`: `pluginPath` must be an absolute path (starts with `/`), must not contain `../`, must not be empty
      - `mcp_server`: `appMcpServerId` must be a non-empty string; the referenced `app_mcp_servers` entry must exist (validated via `AppMcpServerRepository.get(appMcpServerId)` — throw if null)
@@ -226,7 +230,7 @@ Implement a `SKILL_VALIDATE` job queue so that when a skill is added or updated,
    jobProcessor.register(SKILL_VALIDATE, (job) => handleSkillValidate(job, skillsManager));
    ```
 5. In `SkillsManager.addSkill()` and `SkillsManager.updateSkill()`: after persisting, enqueue a `SKILL_VALIDATE` job via `jobQueue.enqueue({ queue: SKILL_VALIDATE, payload: { skillId } })`.
-6. Add a `validationStatus` field to `AppSkill`: `'pending' | 'valid' | 'invalid' | 'unknown'`. Default `'pending'` on create; updated to `'valid'`/`'invalid'` when the job completes. The job handler updates this via `SkillsManager.updateSkill()`.
+6. The `validationStatus` field is already part of `AppSkill` (defined in Task 2.1) and the `skills` table DDL (defined in Task 2.2). The job handler updates it via `SkillsManager.setSkillValidationStatus(skillId, 'valid' | 'invalid')` on completion.
 7. Run `bun run typecheck`.
 8. Write unit tests in `packages/daemon/tests/unit/job-handlers/skill-validate.handler.test.ts`:
    - Test that a valid plugin path passes

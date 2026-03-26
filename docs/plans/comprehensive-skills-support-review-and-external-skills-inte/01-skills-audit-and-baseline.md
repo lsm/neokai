@@ -64,7 +64,7 @@ Design the `AppSkill` data model, the `SkillsManager` interface, and the RPC API
 4. Design `SkillsManager` interface: `listSkills()`, `getSkill(id)`, `addSkill(skill)`, `updateSkill(id, updates)`, `removeSkill(id)`, `getEnabledSkills()`.
 5. Design persistence: **SQLite** — a new `skills` table in the existing NeoKai database, using the same `Repository` pattern as `goal-repository.ts`. Justify: SQLite is the established persistence pattern in the codebase; it provides concurrency safety via WAL mode; no file-locking or atomic-write logic needed; consistent with all other managers.
 6. Design RPC API: `skills.list`, `skills.add`, `skills.update`, `skills.remove`, `skills.get`.
-7. Design per-room skill enablement: `roomSkills: { skillId: string; enabled: boolean }[]` stored in the `rooms` table's `config` JSON column.
+7. Design per-room skill enablement: a dedicated `room_skill_overrides` table (`skill_id TEXT`, `room_id TEXT`, `enabled INTEGER`, `PRIMARY KEY (skill_id, room_id)`) — NOT the `rooms.config` JSON column. This allows `skills.byRoom` LiveQuery to reactively JOIN across both tables and receive change events when an override is added or removed.
 8. Design session injection: how `PluginSkillConfig` maps to `SDKConfig.plugins`, how `McpServerSkillConfig` maps to `mcpServers`, how `BuiltinSkillConfig` is surfaced.
 9. Write `docs/architecture/skills-registry-design.md` covering all above.
 
