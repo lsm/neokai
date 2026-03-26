@@ -115,6 +115,9 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-1');
@@ -195,6 +198,9 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-2');
@@ -266,6 +272,9 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-3');
@@ -332,6 +341,9 @@ describe('RoomRuntimeService MCP merge — setupRoomAgentSession', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-4');
@@ -404,6 +416,9 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-hot');
@@ -484,6 +499,9 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-no-agent-tools');
@@ -532,6 +550,9 @@ describe('RoomRuntimeService — mcp.registry.changed hot-reload', () => {
 		const sessionManager = {
 			// Always returns null — no session found
 			getSessionAsync: async () => null,
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-no-session');
@@ -606,6 +627,9 @@ describe('RoomRuntimeService MCP merge — collision resolution', () => {
 				return null;
 			},
 			updateSession: async () => {},
+
+			registerSession: () => {},
+			unregisterSession: () => {},
 		};
 
 		const room = makeRoom('room-collision');

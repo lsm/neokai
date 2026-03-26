@@ -68,7 +68,7 @@ function makeConfig(overrides: Partial<RoomRuntimeServiceConfig> = {}): RoomRunt
 		daemonHub: makeDaemonHub() as never,
 		getApiKey: async () => null,
 		roomManager: makeRoomManager() as never,
-		sessionManager: {} as never,
+		sessionManager: { registerSession: () => {}, unregisterSession: () => {} } as never,
 		defaultWorkspacePath: '/tmp',
 		defaultModel: 'test-model',
 		getGlobalSettings: () => ({}) as never,
