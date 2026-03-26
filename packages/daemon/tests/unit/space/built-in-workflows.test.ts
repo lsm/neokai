@@ -106,40 +106,36 @@ describe('CODING_WORKFLOW template', () => {
 		expect(verifyStep?.instructions).toContain('failed');
 	});
 
-	test('has four transitions forming Plan→Code→Verify→Plan/Done graph', () => {
-		expect(CODING_WORKFLOW.transitions).toHaveLength(4);
+	test('has four channels with correct gate conditions', () => {
+		expect(CODING_WORKFLOW.channels).toHaveLength(4);
 
-		const planToCode = CODING_WORKFLOW.transitions.find((t) => t.id === 'tpl-coding-plan-to-code');
-		expect(planToCode?.condition?.type).toBe('human');
+		const planToCode = CODING_WORKFLOW.channels!.find((c) => c.from === 'Plan' && c.to === 'Code');
+		expect(planToCode?.gate?.type).toBe('human');
+		expect(planToCode?.direction).toBe('one-way');
 
-		const codeToVerify = CODING_WORKFLOW.transitions.find(
-			(t) => t.id === 'tpl-coding-code-to-verify'
+		const codeToVerify = CODING_WORKFLOW.channels!.find(
+			(c) => c.from === 'Code' && c.to === 'Verify & Test'
 		);
-		expect(codeToVerify?.condition?.type).toBe('always');
+		expect(codeToVerify?.gate?.type).toBe('always');
+		expect(codeToVerify?.direction).toBe('one-way');
 
-		const verifyToPlan = CODING_WORKFLOW.transitions.find(
-			(t) => t.id === 'tpl-coding-verify-to-plan'
+		const verifyToPlan = CODING_WORKFLOW.channels!.find(
+			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
 		);
-		expect(verifyToPlan?.condition?.type).toBe('task_result');
-		expect(verifyToPlan?.condition?.expression).toBe('failed');
+		expect(verifyToPlan?.gate?.type).toBe('task_result');
+		expect((verifyToPlan?.gate as { expression?: string })?.expression).toBe('failed');
 		expect(verifyToPlan?.isCyclic).toBe(true);
 
-		const verifyToDone = CODING_WORKFLOW.transitions.find(
-			(t) => t.id === 'tpl-coding-verify-to-done'
+		const verifyToDone = CODING_WORKFLOW.channels!.find(
+			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
-		expect(verifyToDone?.condition?.type).toBe('task_result');
-		expect(verifyToDone?.condition?.expression).toBe('passed');
+		expect(verifyToDone?.gate?.type).toBe('task_result');
+		expect((verifyToDone?.gate as { expression?: string })?.expression).toBe('passed');
 		expect(verifyToDone?.isCyclic).toBeUndefined();
 	});
 
-	test('Verify→Plan transition has lower order than Verify→Done', () => {
-		const verifyToPlan = CODING_WORKFLOW.transitions.find(
-			(t) => t.id === 'tpl-coding-verify-to-plan'
-		);
-		const verifyToDone = CODING_WORKFLOW.transitions.find(
-			(t) => t.id === 'tpl-coding-verify-to-done'
-		);
-		expect(verifyToPlan!.order).toBeLessThan(verifyToDone!.order);
+	test('has no transitions (routing is channel-based)', () => {
+		expect(CODING_WORKFLOW.transitions).toHaveLength(0);
 	});
 
 	test('maxIterations is set to 3', () => {
@@ -174,9 +170,17 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.nodes[1].agentId).toBe('general');
 	});
 
-	test('has one transition (planner → general) with always condition', () => {
-		expect(RESEARCH_WORKFLOW.transitions).toHaveLength(1);
-		expect(RESEARCH_WORKFLOW.transitions[0].condition?.type).toBe('always');
+	test('has no transitions (routing is channel-based)', () => {
+		expect(RESEARCH_WORKFLOW.transitions).toHaveLength(0);
+	});
+
+	test('has one channel (Plan Research → Research) with always gate', () => {
+		expect(RESEARCH_WORKFLOW.channels).toHaveLength(1);
+		const ch = RESEARCH_WORKFLOW.channels![0];
+		expect(ch.from).toBe('Plan Research');
+		expect(ch.to).toBe('Research');
+		expect(ch.direction).toBe('one-way');
+		expect(ch.gate?.type).toBe('always');
 	});
 
 	test('startNodeId points to the planner step', () => {
@@ -205,6 +209,10 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 
 	test('has no transitions (terminal step — run completes immediately on advance)', () => {
 		expect(REVIEW_ONLY_WORKFLOW.transitions).toHaveLength(0);
+	});
+
+	test('has no channels (single-node workflow needs no inter-agent channels)', () => {
+		expect(REVIEW_ONLY_WORKFLOW.channels ?? []).toHaveLength(0);
 	});
 
 	test('startNodeId points to the coder step', () => {
@@ -337,42 +345,42 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[3].agentId).toBe(GENERAL_ID);
 	});
 
-	test('CODING_WORKFLOW seeded with four transitions and correct conditions', async () => {
+	test('CODING_WORKFLOW seeded with no transitions (routing is channel-based)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		expect(wf!.transitions).toHaveLength(4);
-
-		// Find transitions by condition type and expression
-		const humanTransition = wf!.transitions.find((t) => t.condition?.type === 'human');
-		expect(humanTransition).toBeDefined();
-
-		const alwaysTransition = wf!.transitions.find((t) => t.condition?.type === 'always');
-		expect(alwaysTransition).toBeDefined();
-
-		const failedTransition = wf!.transitions.find(
-			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'failed'
-		);
-		expect(failedTransition).toBeDefined();
-
-		const passedTransition = wf!.transitions.find(
-			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'passed'
-		);
-		expect(passedTransition).toBeDefined();
+		expect(wf!.transitions).toHaveLength(0);
 	});
 
-	test('CODING_WORKFLOW seeded with isCyclic on Verify→Plan transition', async () => {
+	test('CODING_WORKFLOW seeded with four channels and correct gate types', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
-		const failedTransition = wf!.transitions.find(
-			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'failed'
-		);
-		expect(failedTransition!.isCyclic).toBe(true);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		expect(wf.channels).toHaveLength(4);
 
-		// Verify→Done should NOT be cyclic
-		const passedTransition = wf!.transitions.find(
-			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'passed'
+		const humanChannel = wf.channels!.find((c) => c.gate?.type === 'human');
+		expect(humanChannel).toBeDefined();
+		expect(humanChannel!.from).toBe('Plan');
+		expect(humanChannel!.to).toBe('Code');
+
+		const alwaysChannel = wf.channels!.find((c) => c.gate?.type === 'always');
+		expect(alwaysChannel).toBeDefined();
+		expect(alwaysChannel!.from).toBe('Code');
+		expect(alwaysChannel!.to).toBe('Verify & Test');
+
+		const failedChannel = wf.channels!.find(
+			(c) =>
+				c.gate?.type === 'task_result' &&
+				(c.gate as { expression?: string }).expression === 'failed'
 		);
-		expect(passedTransition!.isCyclic).toBeUndefined();
+		expect(failedChannel).toBeDefined();
+		expect(failedChannel!.isCyclic).toBe(true);
+
+		const passedChannel = wf.channels!.find(
+			(c) =>
+				c.gate?.type === 'task_result' &&
+				(c.gate as { expression?: string }).expression === 'passed'
+		);
+		expect(passedChannel).toBeDefined();
+		expect(passedChannel!.isCyclic).toBeUndefined();
 	});
 
 	test('CODING_WORKFLOW seeded with maxIterations', async () => {
@@ -389,15 +397,30 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(verifyStep!.instructions).toContain('Run tests');
 	});
 
-	test('RESEARCH_WORKFLOW seeded correctly — planner + general with always transition', async () => {
+	test('RESEARCH_WORKFLOW seeded with one channel (Plan Research → Research, always gate)', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		expect(wf.channels).toHaveLength(1);
+		const ch = wf.channels![0];
+		expect(ch.from).toBe('Plan Research');
+		expect(ch.to).toBe('Research');
+		expect(ch.gate?.type).toBe('always');
+	});
+
+	test('RESEARCH_WORKFLOW seeded correctly — planner + general, no transitions', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		expect(wf!.nodes).toHaveLength(2);
 		expect(wf!.nodes[0].agentId).toBe(PLANNER_ID);
 		expect(wf!.nodes[1].agentId).toBe(GENERAL_ID);
-		expect(wf!.transitions).toHaveLength(1);
-		expect(wf!.transitions[0].condition?.type).toBe('always');
+		expect(wf!.transitions).toHaveLength(0);
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with no channels', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.channels ?? []).toHaveLength(0);
 	});
 
 	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step, no transitions', async () => {
@@ -584,49 +607,57 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	test('exported Coding Workflow preserves isCyclic on Verify→Plan transition', () => {
+	test('exported Coding Workflow has no transitions (routing is channel-based)', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
 		const exported = exportWorkflow(wf, mockAgents);
+		expect(exported.transitions).toHaveLength(0);
+	});
 
-		const verifyToPlan = exported.transitions.find(
-			(t) => t.fromNode === 'Verify & Test' && t.toNode === 'Plan'
+	test('exported Coding Workflow preserves isCyclic on Verify→Plan channel', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+
+		const exported = exportWorkflow(wf, mockAgents);
+		expect(exported.channels).toBeDefined();
+
+		const verifyToPlan = exported.channels!.find(
+			(c) => c.from === 'Verify & Test' && c.to === 'Plan'
 		);
 		expect(verifyToPlan).toBeDefined();
 		expect(verifyToPlan!.isCyclic).toBe(true);
 
-		// Non-cyclic transitions should not have isCyclic
-		const verifyToDone = exported.transitions.find(
-			(t) => t.fromNode === 'Verify & Test' && t.toNode === 'Done'
+		const verifyToDone = exported.channels!.find(
+			(c) => c.from === 'Verify & Test' && c.to === 'Done'
 		);
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.isCyclic).toBeUndefined();
 	});
 
-	test('exported Coding Workflow preserves task_result conditions', () => {
+	test('exported Coding Workflow preserves task_result gate conditions on channels', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
 		const exported = exportWorkflow(wf, mockAgents);
 
-		const taskResultTransitions = exported.transitions.filter(
-			(t) => t.condition?.type === 'task_result'
+		const taskResultChannels = (exported.channels ?? []).filter(
+			(c) => c.gate?.type === 'task_result'
 		);
-		expect(taskResultTransitions).toHaveLength(2);
+		expect(taskResultChannels).toHaveLength(2);
 
-		const failedTransition = taskResultTransitions.find(
-			(t) => t.condition?.expression === 'failed'
+		const failedChannel = taskResultChannels.find(
+			(c) => (c.gate as { expression?: string }).expression === 'failed'
 		);
-		expect(failedTransition).toBeDefined();
+		expect(failedChannel).toBeDefined();
 
-		const passedTransition = taskResultTransitions.find(
-			(t) => t.condition?.expression === 'passed'
+		const passedChannel = taskResultChannels.find(
+			(c) => (c.gate as { expression?: string }).expression === 'passed'
 		);
-		expect(passedTransition).toBeDefined();
+		expect(passedChannel).toBeDefined();
 	});
 
-	test('re-imported Coding Workflow preserves isCyclic and task_result conditions', () => {
+	test('re-imported Coding Workflow preserves channels with isCyclic and task_result gates', () => {
 		// Seed → export → re-import → verify round-trip fidelity
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -638,12 +669,6 @@ describe('Coding Workflow export/import round-trip', () => {
 		}
 		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
 
-		// Re-import using the same mechanism as seedBuiltInWorkflows but from the exported format
-		const stepNameToId = new Map<string, string>();
-		for (const step of exported.nodes) {
-			stepNameToId.set(step.name, `reimport-${step.name}`);
-		}
-
 		// Build agent name → ID map for resolving agentRef
 		const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.name, a.id]));
 
@@ -652,21 +677,15 @@ describe('Coding Workflow export/import round-trip', () => {
 			name: exported.name,
 			description: exported.description,
 			nodes: exported.nodes.map((s) => ({
-				id: stepNameToId.get(s.name)!,
 				name: s.name,
 				agentId: agentNameToId.get(s.agentRef) ?? s.agentRef,
 				instructions: s.instructions,
 			})),
-			transitions: exported.transitions.map((t) => ({
-				from: stepNameToId.get(t.fromNode)!,
-				to: stepNameToId.get(t.toNode)!,
-				condition: t.condition,
-				order: t.order,
-				isCyclic: t.isCyclic,
-			})),
-			startNodeId: stepNameToId.get(exported.startNode),
+			transitions: [],
+			startNodeId: undefined,
 			rules: [],
 			tags: exported.tags,
+			channels: exported.channels,
 		});
 
 		// Verify the re-imported workflow
@@ -675,27 +694,26 @@ describe('Coding Workflow export/import round-trip', () => {
 			.find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(reimported).toBeDefined();
 		expect(reimported.nodes).toHaveLength(4);
-		expect(reimported.transitions).toHaveLength(4);
+		expect(reimported.transitions).toHaveLength(0);
+		expect(reimported.channels).toHaveLength(4);
 
-		// isCyclic preserved on Verify→Plan
-		const verifyToPlan = reimported.transitions.find(
-			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'failed'
+		// isCyclic preserved on Verify→Plan channel
+		const verifyToPlan = reimported.channels!.find(
+			(c) =>
+				c.gate?.type === 'task_result' &&
+				(c.gate as { expression?: string }).expression === 'failed'
 		);
 		expect(verifyToPlan).toBeDefined();
 		expect(verifyToPlan!.isCyclic).toBe(true);
 
-		// Non-cyclic transition should not have isCyclic
-		const verifyToDone = reimported.transitions.find(
-			(t) => t.condition?.type === 'task_result' && t.condition?.expression === 'passed'
+		// Non-cyclic channel should not have isCyclic
+		const verifyToDone = reimported.channels!.find(
+			(c) =>
+				c.gate?.type === 'task_result' &&
+				(c.gate as { expression?: string }).expression === 'passed'
 		);
 		expect(verifyToDone).toBeDefined();
 		expect(verifyToDone!.isCyclic).toBeUndefined();
-
-		// task_result conditions preserved
-		expect(verifyToPlan!.condition?.type).toBe('task_result');
-		expect(verifyToPlan!.condition?.expression).toBe('failed');
-		expect(verifyToDone!.condition?.type).toBe('task_result');
-		expect(verifyToDone!.condition?.expression).toBe('passed');
 	});
 
 	test('Zod schema accepts task_result condition type with expression', () => {
