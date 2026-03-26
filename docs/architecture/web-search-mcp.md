@@ -25,12 +25,17 @@ The skill is registered in `SkillsManager.initializeBuiltins()` as an `mcp_serve
 
 ### app_mcp_servers entry
 
+The skill reuses the `brave-search` entry already seeded by `seedDefaultMcpEntries()` (which
+runs first in `app.ts`). If the entry is somehow absent, `initializeBuiltins()` creates it as a
+fallback using identical parameters:
+
 ```
-name:        web-search-brave
+name:        brave-search
 sourceType:  stdio
 command:     npx
 args:        ["-y", "@modelcontextprotocol/server-brave-search"]
-enabled:     true
+env:         {}
+enabled:     false
 ```
 
 ### Skill entry
@@ -39,7 +44,7 @@ enabled:     true
 name:         web-search-mcp
 displayName:  Web Search (MCP)
 sourceType:   mcp_server
-config:       { type: "mcp_server", appMcpServerId: <id of web-search-brave entry> }
+config:       { type: "mcp_server", appMcpServerId: <id of brave-search entry> }
 enabled:      false   (opt-in)
 builtIn:      true
 ```
@@ -47,7 +52,10 @@ builtIn:      true
 ## Usage
 
 1. Obtain a Brave Search API key from https://brave.com/search/api/
-2. Set `BRAVE_API_KEY` in the daemon environment (`.env` or shell)
+2. Set `BRAVE_API_KEY` in the daemon process environment (e.g. via `.env` at the worktree root or
+   as a shell environment variable before starting the daemon). The MCP server subprocess inherits
+   the full daemon process environment, so no additional wiring is needed — the key just needs to
+   be present in the daemon's `process.env` at startup.
 3. Enable the skill in the Skills settings UI
 4. The MCP server is automatically injected into new session `mcpServers`
 

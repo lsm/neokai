@@ -689,10 +689,10 @@ describe('SkillsManager', () => {
 		expect(skill!.validationStatus).toBe('valid');
 	});
 
-	test('initializeBuiltins creates backing app_mcp_servers entry web-search-brave', () => {
+	test('initializeBuiltins creates backing app_mcp_servers entry brave-search if absent', () => {
 		mgr.initializeBuiltins();
 
-		const server = mcpRepo.getByName('web-search-brave');
+		const server = mcpRepo.getByName('brave-search');
 		expect(server).not.toBeNull();
 		expect(server!.command).toBe('npx');
 		expect(server!.sourceType).toBe('stdio');
@@ -703,7 +703,7 @@ describe('SkillsManager', () => {
 		mgr.initializeBuiltins();
 
 		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp');
-		const server = mcpRepo.getByName('web-search-brave');
+		const server = mcpRepo.getByName('brave-search');
 		expect(skill).toBeDefined();
 		expect(server).not.toBeNull();
 		expect(skill!.config.type).toBe('mcp_server');
@@ -719,7 +719,7 @@ describe('SkillsManager', () => {
 		const skills = mgr.listSkills().filter((s) => s.name === 'web-search-mcp');
 		expect(skills).toHaveLength(1);
 
-		const servers = mcpRepo.list().filter((s) => s.name === 'web-search-brave');
+		const servers = mcpRepo.list().filter((s) => s.name === 'brave-search');
 		expect(servers).toHaveLength(1);
 	});
 
@@ -751,5 +751,31 @@ describe('SkillsManager', () => {
 
 		const enabledSkills = mgr.getEnabledSkills();
 		expect(enabledSkills.some((s) => s.name === 'web-search-mcp')).toBe(false);
+	});
+
+	test('initializeBuiltins reuses pre-existing brave-search app_mcp_servers entry', () => {
+		// Simulate seed-defaults.ts having already created the brave-search entry
+		const seeded = mcpRepo.create({
+			name: 'brave-search',
+			description: 'Seeded by seed-defaults',
+			sourceType: 'stdio',
+			command: 'npx',
+			args: ['-y', '@modelcontextprotocol/server-brave-search'],
+			env: {},
+			enabled: false,
+		});
+
+		mgr.initializeBuiltins();
+
+		// Should not create a second brave-search entry
+		const servers = mcpRepo.list().filter((s) => s.name === 'brave-search');
+		expect(servers).toHaveLength(1);
+
+		// Skill must reference the pre-existing seeded entry
+		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp')!;
+		expect(skill.config.type).toBe('mcp_server');
+		if (skill.config.type === 'mcp_server') {
+			expect(skill.config.appMcpServerId).toBe(seeded.id);
+		}
 	});
 });

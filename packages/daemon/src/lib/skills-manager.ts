@@ -135,21 +135,23 @@ export class SkillsManager {
 
 	/**
 	 * Ensure the Brave Search MCP built-in skill is registered.
-	 * Step 1: upsert the backing app_mcp_servers entry.
-	 * Step 2: upsert the skill referencing that entry.
-	 * Both are idempotent — safe to call on every startup.
+	 *
+	 * Reuses the existing `brave-search` app_mcp_servers entry seeded by
+	 * seedDefaultMcpEntries() (which always runs before initializeBuiltins()).
+	 * If that entry is somehow absent, creates it as a fallback.
 	 */
 	private initWebSearchBraveMcp(): void {
-		// Step 1: ensure app MCP server entry exists (upsert by name)
+		// Step 1: resolve the backing app_mcp_servers entry (seeded by seed-defaults.ts)
 		const appMcpEntry =
-			this.appMcpServerRepo.getByName('web-search-brave') ??
+			this.appMcpServerRepo.getByName('brave-search') ??
 			this.appMcpServerRepo.create({
-				name: 'web-search-brave',
-				description: 'Brave Search MCP server for web search capability',
+				name: 'brave-search',
+				description: 'Web search via Brave Search API (requires BRAVE_API_KEY env var)',
 				sourceType: 'stdio',
 				command: 'npx',
 				args: ['-y', '@modelcontextprotocol/server-brave-search'],
-				enabled: true,
+				env: {},
+				enabled: false,
 			});
 
 		// Step 2: upsert the skill referencing the app MCP entry
