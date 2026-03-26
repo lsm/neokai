@@ -46,8 +46,17 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(run.workflowId).toBe(WORKFLOW_ID);
 			expect(run.title).toBe('Run #1');
 			expect(run.status).toBe('pending');
+			expect(run.currentNodeId).toBeUndefined();
 			expect(run.config).toBeUndefined();
 			expect(run.completedAt).toBeUndefined();
+		});
+
+		it('maps NULL currentNodeId to undefined (round-trip contract)', () => {
+			// Explicit omission: NULL stored in DB must come back as undefined, not ''
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'No step' });
+			expect(run.currentNodeId).toBeUndefined();
+			// Re-fetch from DB to confirm persistence
+			expect(repo.getRun(run.id)!.currentNodeId).toBeUndefined();
 		});
 
 		it('creates a run with description', () => {
@@ -93,11 +102,11 @@ describe('SpaceWorkflowRunRepository', () => {
 
 			// 'in_progress' — should appear
 			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Active' });
-			repo.updateStatus(r2.id, 'in_progress');
+			repo.transitionStatus(r2.id, 'in_progress');
 
 			// 'completed' — should not appear
 			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
-			repo.updateStatus(r3.id, 'completed');
+			repo.updateStatusUnchecked(r3.id, 'completed');
 
 			const active = repo.getActiveRuns(spaceId);
 			expect(active).toHaveLength(1);
@@ -112,19 +121,19 @@ describe('SpaceWorkflowRunRepository', () => {
 
 			// 'in_progress' — included
 			const r2 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'InProgress' });
-			repo.updateStatus(r2.id, 'in_progress');
+			repo.transitionStatus(r2.id, 'in_progress');
 
 			// 'needs_attention' (human gate blocked) — included so gate can be resolved after restart
 			const r3 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'NeedsAttention' });
-			repo.updateStatus(r3.id, 'needs_attention');
+			repo.updateStatusUnchecked(r3.id, 'needs_attention');
 
 			// 'completed' — excluded
 			const r4 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Completed' });
-			repo.updateStatus(r4.id, 'completed');
+			repo.updateStatusUnchecked(r4.id, 'completed');
 
 			// 'cancelled' — excluded
 			const r5 = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Cancelled' });
-			repo.updateStatus(r5.id, 'cancelled');
+			repo.transitionStatus(r5.id, 'cancelled');
 
 			const rehydratable = repo.getRehydratableRuns(spaceId);
 			expect(rehydratable).toHaveLength(2);
@@ -154,10 +163,18 @@ describe('SpaceWorkflowRunRepository', () => {
 		});
 	});
 
-	describe('updateStatus', () => {
-		it('updates only the status', () => {
+	describe('updateCurrentNode', () => {
+		it('updates the current node ID', () => {
 			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
-			const updated = repo.updateStatus(run.id, 'in_progress');
+			const updated = repo.updateCurrentNode(run.id, 'node-abc');
+			expect(updated!.currentNodeId).toBe('node-abc');
+		});
+	});
+
+	describe('updateStatusUnchecked', () => {
+		it('updates only the status, bypassing transition guards', () => {
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+			const updated = repo.updateStatusUnchecked(run.id, 'in_progress');
 			expect(updated!.status).toBe('in_progress');
 		});
 	});
@@ -248,7 +265,7 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(repo.getRun(run.id)!.goalId).toBeUndefined();
 		});
 
-		it('goalId survives status updates', () => {
+		it('goalId survives status and step updates', () => {
 			const run = repo.createRun({
 				spaceId,
 				workflowId: WORKFLOW_ID,
@@ -256,11 +273,13 @@ describe('SpaceWorkflowRunRepository', () => {
 				goalId: 'goal-456',
 			});
 
-			repo.updateStatus(run.id, 'in_progress');
+			repo.transitionStatus(run.id, 'in_progress');
+			repo.updateCurrentNode(run.id, 'node-xyz');
 
 			const updated = repo.getRun(run.id)!;
 			expect(updated.goalId).toBe('goal-456');
 			expect(updated.status).toBe('in_progress');
+			expect(updated.currentNodeId).toBe('node-xyz');
 		});
 
 		it('goalId is included when listing runs by space', () => {
@@ -291,7 +310,7 @@ describe('SpaceWorkflowRunRepository', () => {
 				title: 'Active Goal',
 				goalId: 'goal-active',
 			});
-			repo.updateStatus(run.id, 'in_progress');
+			repo.transitionStatus(run.id, 'in_progress');
 
 			const active = repo.getActiveRuns(spaceId);
 			expect(active).toHaveLength(1);
@@ -305,7 +324,7 @@ describe('SpaceWorkflowRunRepository', () => {
 				title: 'Needs Attn',
 				goalId: 'goal-rehydrate',
 			});
-			repo.updateStatus(run.id, 'needs_attention');
+			repo.updateStatusUnchecked(run.id, 'needs_attention');
 
 			const rehydratable = repo.getRehydratableRuns(spaceId);
 			expect(rehydratable).toHaveLength(1);

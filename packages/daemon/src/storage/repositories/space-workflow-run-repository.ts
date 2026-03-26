@@ -174,9 +174,12 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
-	 * Update only the status of a run (no transition guard — use transitionStatus() for guarded updates).
+	 * Update only the status of a run, bypassing lifecycle transition guards.
+	 *
+	 * Intended for test fixtures and internal helpers only — use transitionStatus()
+	 * for all production code that changes run status.
 	 */
-	updateStatus(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
+	updateStatusUnchecked(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
 		return this.updateRun(id, { status });
 	}
 

@@ -376,7 +376,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const runId = JSON.parse(startResult.content[0].text).run.id;
 
 		// Mark as completed
-		ctx.workflowRunRepo.updateStatus(runId, 'completed');
+		ctx.workflowRunRepo.transitionStatus(runId, 'completed');
 
 		const result = await makeHandlers(ctx).change_plan({
 			run_id: runId,

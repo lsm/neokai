@@ -32,6 +32,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { canTransition } from '../runtime/workflow-run-status-machine';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -367,11 +368,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const task = await taskManager.cancelTask(args.task_id);
 
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
+					// Only cancel if the run exists and the transition is valid (not already terminal).
+					const existingRun = workflowRunRepo.getRun(task.workflowRunId);
+					const runCancelled =
+						existingRun !== null && canTransition(existingRun.status, 'cancelled');
+					if (runCancelled) {
+						workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
+					}
 					return jsonResult({
 						success: true,
 						task,
-						workflowRunCancelled: true,
+						workflowRunCancelled: runCancelled,
 						workflowRunId: task.workflowRunId,
 					});
 				}
