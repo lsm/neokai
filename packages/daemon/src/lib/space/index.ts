@@ -18,16 +18,11 @@ export {
 	getBuiltInWorkflows,
 	seedBuiltInWorkflows,
 } from './workflows/built-in-workflows';
-export {
-	WorkflowExecutor,
-	WorkflowTransitionError,
-	WorkflowGateError,
-} from './runtime/workflow-executor';
+export { WorkflowExecutor } from './runtime/workflow-executor';
 export type {
 	ConditionContext,
 	ConditionResult,
 	CommandRunner,
-	TaskTypeResolver,
 } from './runtime/workflow-executor';
 export { SpaceRuntime } from './runtime/space-runtime';
 export type { SpaceRuntimeConfig, ResolvedTaskType } from './runtime/space-runtime';
@@ -97,7 +92,6 @@ export {
 	TASK_AGENT_TOOL_SCHEMAS,
 	SpawnStepAgentSchema,
 	CheckStepStatusSchema,
-	AdvanceWorkflowSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
@@ -105,7 +99,6 @@ export {
 export type {
 	SpawnStepAgentInput,
 	CheckStepStatusInput,
-	AdvanceWorkflowInput,
 	ReportResultInput,
 	RequestHumanInputInput,
 	TaskResultStatus,

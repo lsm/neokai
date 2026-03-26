@@ -3,7 +3,9 @@
  *
  * The Task Agent is a workflow orchestrator that manages the execution of a
  * specific Space task. It spawns sub-sessions for each workflow step, monitors
- * their completion, advances the workflow, and surfaces human gates to the user.
+ * their completion, and surfaces human gates to the user. In the agent-centric
+ * model, agents drive workflow progression themselves via send_message and
+ * report_done — the Task Agent no longer calls advance_workflow.
  *
  * ## Behavioral contract
  * - The Task Agent does NOT execute code directly — it delegates to step agents.
@@ -16,7 +18,6 @@
  *
  *   - spawn_step_agent      — Start a sub-session for a workflow step's assigned agent
  *   - check_step_status     — Poll the status/output of a running step agent session
- *   - advance_workflow      — Evaluate transitions from the current step and move to next
  *   - report_result         — Mark the task complete/failed and record the result summary
  *   - request_human_input   — Surface a human gate and block until the user responds
  *   - list_group_members    — List all group members with session IDs and permitted channels
@@ -177,21 +178,13 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`- **spawn_step_agent** — Start a sub-session for the current workflow step. ` +
 			`Pass the \`step_id\` and optional override instructions. ` +
 			`Returns a \`session_id\` for the spawned sub-session. ` +
-			`Call this when advancing to a new step that requires agent execution.`
+			`Call this when a new step task needs to be executed.`
 	);
 	sections.push(
 		`- **check_step_status** — Poll the status and output of a running step agent session. ` +
 			`Pass the \`session_id\` returned by \`spawn_step_agent\`. ` +
 			`Returns the session's current status (\`running\`, \`completed\`, \`error\`) and output. ` +
-			`Call this to determine when a step has finished before advancing.`
-	);
-	sections.push(
-		`- **advance_workflow** — Evaluate transitions from the current workflow step and move ` +
-			`to the next step. Pass the \`step_result\` of the completed step. ` +
-			`Returns the next step ID (or indicates terminal state / human gate). ` +
-			`Call this after a step agent completes successfully. ` +
-			`When a verify, review, or test step completes, set \`step_result\` to 'passed' ` +
-			`if the work is acceptable, or 'failed: <reason>' if issues were found.`
+			`Call this to determine when a step has finished.`
 	);
 	sections.push(
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
@@ -217,44 +210,37 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`message any peer step agent. Use \`list_group_members\` to see permitted targets.`
 	);
 
-	// ---- step_result vs report_result status ---------------------------------
-	sections.push(`\n## Result Fields: \`step_result\` vs \`report_result.status\`\n`);
-	sections.push(`These are two different fields with different purposes:\n`);
-	sections.push(
-		`- **\`step_result\`** (in \`advance_workflow\`): A free-form string ` +
-			`(e.g. 'passed', 'failed: tests failed') used to evaluate ` +
-			`\`task_result\` transition conditions. It controls which path the workflow takes next.\n`
-	);
-	sections.push(
-		`- **\`report_result.status\`**: A named task status (completed/needs_attention/cancelled) ` +
-			`that marks the overall task outcome. Set via \`report_result\` when the workflow ends.\n`
-	);
-
 	// ---- Workflow execution instructions ------------------------------------
 	sections.push(`\n## Workflow Execution Instructions\n`);
-	sections.push(`Follow this execution loop until the workflow reaches a terminal state:\n`);
 	sections.push(
-		`1. **Start the first step** — Call \`spawn_step_agent\` for the workflow's start step.\n` +
-			`2. **Monitor completion** — Call \`check_step_status\` periodically until the step reaches ` +
+		`In the agent-centric model, step agents drive workflow progression themselves ` +
+			`via \`send_message\` and \`report_done\`. Your role is to spawn agents and monitor ` +
+			`their completion — you do not manually advance the workflow.\n`
+	);
+	sections.push(`Follow this loop until all agents have completed:\n`);
+	sections.push(
+		`1. **Spawn pending step agents** — Call \`spawn_step_agent\` for each pending step task ` +
+			`(visible in the task list). Multiple agents may run concurrently in the same node.\n` +
+			`2. **Monitor completion** — Call \`check_step_status\` periodically until agents reach ` +
 			`a terminal state (\`completed\` or \`error\`).\n` +
-			`3. **Advance the workflow** — Call \`advance_workflow\` with the step's result.\n` +
-			`   - If it returns a next step ID, go back to step 1 with the new step.\n` +
-			`   - If it returns a **human gate**, call \`request_human_input\` to get approval, then ` +
-			`resume from step 3.\n` +
-			`   - If it returns **terminal** (no outgoing transitions), call \`report_result\` to ` +
-			`complete the task.\n` +
-			`4. **Handle errors** — If a step agent errors, call \`report_result\` with ` +
-			`\`status: "cancelled"\` and the error details.`
+			`3. **Agents drive their own progression** — When a step agent sends a message to another ` +
+			`agent role via \`send_message\`, the target node is activated automatically. ` +
+			`New pending tasks will appear — spawn agents for them (return to step 1).\n` +
+			`4. **Detect completion** — When all agents have completed (no more pending or ` +
+			`in-progress tasks), call \`report_result\` to complete the task.\n` +
+			`5. **Handle errors** — If a step agent errors, call \`report_result\` with ` +
+			`\`status: "cancelled"\` and the error details.\n` +
+			`6. **Handle human gates** — If a step agent pauses for human input, call ` +
+			`\`request_human_input\` to surface the question, then wait for the human's response.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
 	sections.push(`\n## Human Gate Handling\n`);
 	sections.push(
-		`When \`advance_workflow\` returns a human gate condition:\n` +
+		`When a step agent requires human input or approval:\n` +
 			`1. Call \`request_human_input\` with a clear description of the decision needed.\n` +
 			`2. Wait — do not proceed until the tool returns the human's response.\n` +
-			`3. Use the human's response to decide which transition to take (if multiple exist).\n` +
-			`4. Call \`advance_workflow\` again with the human's decision as the result.\n` +
+			`3. Use the human's response to guide next steps.\n` +
 			`\n` +
 			`**Never bypass a human gate.** Surfacing decisions to the human is a core part of ` +
 			`the supervised autonomy model. Even if you believe you know the right answer, ` +
@@ -285,8 +271,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`summary of what was accomplished. Do not embellish or speculate.\n`
 	);
 	sections.push(
-		`5. **One step at a time.** Do not spawn multiple step agents concurrently unless the ` +
-			`workflow explicitly defines parallel steps. Follow the linear execution loop above.`
+		`5. **Spawn pending agents promptly.** When new pending step tasks appear (activated by ` +
+			`agent-to-agent messaging), spawn their agents without unnecessary delay. ` +
+			`Multiple agents may run concurrently when the workflow activates parallel nodes.`
 	);
 
 	// ---- Channel topology ----------------------------------------------------

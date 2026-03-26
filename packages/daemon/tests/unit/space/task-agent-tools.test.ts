@@ -1,10 +1,9 @@
 /**
  * Unit tests for createTaskAgentToolHandlers()
  *
- * Covers all 7 Task Agent tools:
+ * Covers Task Agent tools:
  *   spawn_step_agent    — creates sub-session, registers callback, injects message
  *   check_step_status   — polling detection of sub-session completion
- *   advance_workflow    — delegates to WorkflowExecutor.advance(), handles gate errors
  *   report_result       — transitions main task to final status
  *   request_human_input — pauses execution, marks task needs_attention
  *   list_group_members  — lists group members with session IDs and channel info
@@ -325,7 +324,6 @@ function makeConfig(
 		space: ctx.space,
 		workflowRunId,
 		workspacePath: ctx.space.workspacePath,
-		runtime: ctx.runtime,
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
@@ -539,14 +537,14 @@ describe('createTaskAgentToolHandlers — spawn_step_agent', () => {
 		expect(parsed.error).toContain('step-does-not-exist');
 	});
 
-	test('returns error when no task found for step (advance_workflow not yet called)', async () => {
+	test('returns error when no task found for step (step not yet started)', async () => {
 		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		// The second step has no task yet because advance_workflow hasn't been called
+		// The second step has no task yet because the workflow has not advanced to it
 		const step2Id = wf.nodes[1].id;
 		const result = await handlers.spawn_step_agent({ step_id: step2Id });
 		const parsed = JSON.parse(result.content[0].text);
@@ -765,7 +763,7 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		// Check step 2 which has no task (advance_workflow not yet called)
+		// Check step 2 which has no task (step not yet started)
 		const step2Id = wf.nodes[1].id;
 		const result = await handlers.check_step_status({ step_id: step2Id });
 		const parsed = JSON.parse(result.content[0].text);
@@ -819,206 +817,6 @@ describe('createTaskAgentToolHandlers — check_step_status', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.sessionStatus).toBe('completed');
 		expect(sessionId).toBeString();
-	});
-});
-
-// ===========================================================================
-// advance_workflow tests
-// ===========================================================================
-
-describe('createTaskAgentToolHandlers — advance_workflow', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('returns error when executor not found for run', async () => {
-		const mainTask = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'Main task',
-			description: '',
-			status: 'in_progress',
-		});
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, 'run-missing', factory)
-		);
-
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('run-missing');
-	});
-
-	test('returns error when current step tasks are not completed', async () => {
-		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick(); // Rehydrate executor
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Step task is still pending — advance should fail
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('not completed yet');
-		expect(parsed.taskStatus).toBe('pending');
-	});
-
-	test('successfully advances to next step when current step is completed', async () => {
-		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick(); // Rehydrate executor
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark the first step task as completed
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.terminal).toBe(false);
-		expect(parsed.nextStep).toBeDefined();
-		expect(parsed.nextStep.name).toBe('Step Two');
-		expect(parsed.newTasks).toHaveLength(1);
-	});
-
-	test('returns terminal status when reaching a terminal step', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick();
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark the single step task as completed
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.terminal).toBe(true);
-		expect(parsed.message).toContain('report_result');
-	});
-
-	test('returns gateBlocked status for human gate condition', async () => {
-		const wf = buildHumanGateWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick();
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark the first step task as completed
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		// Human gate → gateBlocked, not an error
-		expect(parsed.success).toBe(true);
-		expect(parsed.gateBlocked).toBe(true);
-		expect(parsed.instruction).toContain('request_human_input');
-	});
-
-	test('resets main task from needs_attention to in_progress when advancing', async () => {
-		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick();
-		const factory = makeMockSessionFactory();
-
-		// Set main task to in_progress first (required for needs_attention transition)
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-		// Set main task to needs_attention (simulating request_human_input was called)
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'needs_attention');
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark the step task as completed
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		// Main task should be back to in_progress
-		const mainTaskAfter = ctx.taskRepo.getTask(mainTask.id);
-		expect(mainTaskAfter?.status).toBe('in_progress');
-	});
-
-	test('returns error when workflow run is already complete', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick();
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark step completed and advance once to terminal
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-		await handlers.advance_workflow({}); // First advance → terminal
-
-		// Try to advance again — should fail
-		const result = await handlers.advance_workflow({});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('complete');
-	});
-
-	test('forwards step_result to executor.advance() and follows matching task_result transition', async () => {
-		// Build a workflow where the transition from step1→step2 requires task_result='passed'
-		const wf = buildTaskResultWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'passed');
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick(); // Rehydrate executor
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark the first step task as completed
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-
-		// Advance with step_result='passed' — should match the 'passed' condition and go to step2
-		const result = await handlers.advance_workflow({ step_result: 'passed' });
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.terminal).toBe(false);
-		expect(parsed.nextStep.name).toBe('Next Step');
-	});
-
-	test('forwards step_result fallback when no DB result exists', async () => {
-		// Same workflow as above — but we DON'T set the task result in the DB
-		// The step_result passed to advance_workflow should be used as fallback
-		const wf = buildTaskResultWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'verified');
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick(); // Rehydrate executor
-		const factory = makeMockSessionFactory();
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Mark the step as completed but DON'T set result in DB
-		ctx.taskRepo.updateTask(stepTask.id, { status: 'completed', completedAt: Date.now() });
-
-		// Advance with step_result='verified' — should match the 'verified' condition and go to step2
-		const result = await handlers.advance_workflow({ step_result: 'verified' });
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.terminal).toBe(false);
-		expect(parsed.nextStep.name).toBe('Next Step');
 	});
 });
 
@@ -1376,7 +1174,7 @@ describe('createTaskAgentToolHandlers — request_human_input', () => {
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.message).toContain('Wait');
-		expect(parsed.message).toContain('advance_workflow');
+		expect(parsed.message).toContain('human responds');
 	});
 
 	test('returns error when task not found', async () => {
@@ -1441,7 +1239,7 @@ describe('createTaskAgentToolHandlers — request_human_input', () => {
 });
 
 // ===========================================================================
-// Integration: spawn → check → advance → report lifecycle
+// Integration: spawn → check → report lifecycle
 // ===========================================================================
 
 describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
@@ -1454,10 +1252,10 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('full single-step workflow lifecycle: spawn → check(running) → check(done) → advance(terminal) → report', async () => {
+	test('full single-step workflow lifecycle: spawn → check(running) → check(done) → report', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick();
+		void stepTask; // used only for side effects
 
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
@@ -1493,13 +1291,7 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 		const checkDone = await handlers.check_step_status({ step_id: wf.startNodeId });
 		expect(JSON.parse(checkDone.content[0].text).taskStatus).toBe('completed');
 
-		// 5. Advance workflow — terminal step
-		const advanceResult = await handlers.advance_workflow({});
-		const advanceParsed = JSON.parse(advanceResult.content[0].text);
-		expect(advanceParsed.success).toBe(true);
-		expect(advanceParsed.terminal).toBe(true);
-
-		// 6. Report result
+		// 5. Report result (mainTask is already in_progress after spawn_step_agent)
 		const reportResult = await handlers.report_result({
 			status: 'completed',
 			summary: 'Workflow completed successfully.',
@@ -1510,60 +1302,6 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 
 		const finalTask = ctx.taskRepo.getTask(mainTask.id);
 		expect(finalTask?.status).toBe('completed');
-	});
-
-	test('two-step workflow: spawn → advance → spawn step 2 → advance(terminal) → report', async () => {
-		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-		await ctx.runtime.executeTick();
-
-		const completedStepTasks: Set<string> = new Set();
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (stepId) => {
-					const tasks = ctx.taskRepo
-						.listByWorkflowRun(run.id)
-						.filter((t) => t.workflowNodeId === stepId);
-					if (tasks.length > 0) {
-						ctx.taskRepo.updateTask(tasks[0].id, {
-							status: 'completed',
-							completedAt: Date.now(),
-						});
-						completedStepTasks.add(tasks[0].id);
-					}
-				},
-			})
-		);
-
-		// Step 1: Spawn, complete, advance
-		const spawn1 = await handlers.spawn_step_agent({ step_id: wf.nodes[0].id });
-		const { sessionId: sid1 } = JSON.parse(spawn1.content[0].text);
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(sid1);
-
-		const advance1 = await handlers.advance_workflow({});
-		const adv1Parsed = JSON.parse(advance1.content[0].text);
-		expect(adv1Parsed.success).toBe(true);
-		expect(adv1Parsed.terminal).toBe(false);
-
-		const step2Id = wf.nodes[1].id;
-
-		// Step 2: Spawn, complete, advance to terminal
-		const spawn2 = await handlers.spawn_step_agent({ step_id: step2Id });
-		const { sessionId: sid2 } = JSON.parse(spawn2.content[0].text);
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(sid2);
-
-		const advance2 = await handlers.advance_workflow({});
-		const adv2Parsed = JSON.parse(advance2.content[0].text);
-		expect(adv2Parsed.success).toBe(true);
-		expect(adv2Parsed.terminal).toBe(true);
-
-		// Report final result
-		const report = await handlers.report_result({
-			status: 'completed',
-			summary: 'Both steps done.',
-		});
-		expect(JSON.parse(report.content[0].text).success).toBe(true);
 	});
 });
 
@@ -1606,11 +1344,10 @@ describe('createTaskAgentMcpServer', () => {
 		expect(server.name).toBe('task-agent');
 	});
 
-	test('registers all 7 expected tools', async () => {
+	test('registers all 6 expected tools', async () => {
 		const { server } = await makeServerCtx();
 		const registered = Object.keys(server.instance._registeredTools).sort();
 		expect(registered).toEqual([
-			'advance_workflow',
 			'check_step_status',
 			'list_group_members',
 			'report_result',
@@ -1634,13 +1371,6 @@ describe('createTaskAgentMcpServer', () => {
 		expect(entry.description).toContain('Poll the status of a running step agent sub-session');
 	});
 
-	test('advance_workflow has correct description', async () => {
-		const { server } = await makeServerCtx();
-		const entry = server.instance._registeredTools['advance_workflow'];
-		expect(entry).toBeDefined();
-		expect(entry.description).toContain('Advance the workflow to the next step');
-	});
-
 	test('report_result has correct description', async () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['report_result'];
@@ -1662,7 +1392,6 @@ describe('createTaskAgentMcpServer', () => {
 		const toolNames = [
 			'spawn_step_agent',
 			'check_step_status',
-			'advance_workflow',
 			'report_result',
 			'request_human_input',
 		];
@@ -1726,9 +1455,9 @@ describe('createTaskAgentMcpServer', () => {
 
 		// Each call returns a distinct server instance
 		expect(server1.instance).not.toBe(server2.instance);
-		// Both register all 7 tools
-		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(7);
-		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(7);
+		// Both register all 6 tools
+		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(6);
+		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(6);
 	});
 });
 
