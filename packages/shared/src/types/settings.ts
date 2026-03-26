@@ -239,6 +239,14 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 				'api.together.xyz',
 				'groq.com',
 				'*.groq.com',
+				// Search APIs — required for SDK built-in WebSearch tool (used by planner/plan-writer agents)
+				'api.search.brave.com',
+				'search.brave.com',
+				'duckduckgo.com',
+				'api.duckduckgo.com',
+				'api.tavily.com',
+				'serpapi.com',
+				'*.serpapi.com',
 			],
 			// Allow binding to localhost for dev servers (vite, webpack, etc.)
 			allowLocalBinding: true,

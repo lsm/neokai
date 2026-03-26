@@ -240,6 +240,8 @@ export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
 			'Grep',
 			'Glob',
 			'WebFetch',
+			// WebSearch: plan-writer needs internet access to research unfamiliar technologies,
+			// APIs, libraries, and best practices before producing a well-informed plan.
 			'WebSearch',
 		],
 		model: 'inherit',
@@ -590,6 +592,9 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 			'Grep',
 			'Glob',
 			'WebFetch',
+			// WebSearch: Planner needs internet access to research current best practices,
+			// library docs, and external context when editing/refining plan files directly
+			// during feedback rounds (Phase 1) or verifying task scope (Phase 2).
 			'WebSearch',
 		],
 		model: 'inherit',
