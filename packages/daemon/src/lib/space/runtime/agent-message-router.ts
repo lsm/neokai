@@ -47,9 +47,9 @@ export interface AgentMessageParams {
 	fromSessionId: string;
 	/**
 	 * Delivery target: an agent role name (DM), a node name (fan-out),
-	 * or '*' (broadcast to all permitted targets).
+	 * an array of role names (multicast), or '*' (broadcast to all permitted targets).
 	 */
-	target: string;
+	target: string | string[];
 	/** Message content to deliver. */
 	message: string;
 }
@@ -161,6 +161,9 @@ export class AgentMessageRouter {
 				};
 			}
 			targetRoles = permitted;
+		} else if (Array.isArray(target)) {
+			// Multicast: explicit list of role names
+			targetRoles = target;
 		} else {
 			// Try agent name match first (role string within the group)
 			const agentMatchRoles = peers.filter((m) => m.role === target).map((m) => m.role);

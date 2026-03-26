@@ -25,6 +25,9 @@ import {
 	type StepAgentToolsConfig,
 } from '../../../src/lib/space/tools/step-agent-tools.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
+import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -163,19 +166,25 @@ function makeCtx(): TestCtx {
 function makeBaseConfig(
 	ctx: TestCtx,
 	workflowRunId: string,
-	injected: Array<{ sessionId: string; message: string }>
+	injected: Array<{ sessionId: string; message: string }>,
+	channelResolver: ChannelResolver = new ChannelResolver([])
 ): StepAgentToolsConfig {
 	return {
 		mySessionId: ctx.coderSessionId,
 		myRole: 'coder',
 		taskId: 'test-task-unified',
+		stepTaskId: '',
+		spaceId: ctx.spaceId,
+		channelResolver,
 		workflowRunId,
+		workflowNodeId: '',
 		sessionGroupRepo: ctx.sessionGroupRepo,
+		spaceTaskRepo: new SpaceTaskRepository(ctx.db),
 		getGroupId: () => ctx.groupId,
-		workflowRunRepo: ctx.workflowRunRepo,
 		messageInjector: async (sessionId, message) => {
 			injected.push({ sessionId, message });
 		},
+		taskManager: new SpaceTaskManager(ctx.db, ctx.spaceId),
 	};
 }
 
@@ -313,7 +322,12 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		const injected: Array<{ sessionId: string; message: string }> = [];
-		const config = makeBaseConfig(ctx, workflowRunId, injected);
+		const config = makeBaseConfig(
+			ctx,
+			workflowRunId,
+			injected,
+			new ChannelResolver([makeResolvedChannel('coder', 'reviewer')])
+		);
 		// No agentMessageRouter — uses legacy path
 
 		const handlers = createStepAgentToolHandlers(config);
@@ -332,7 +346,12 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 		]);
 		const injected: string[] = [];
 		const config: StepAgentToolsConfig = {
-			...makeBaseConfig(ctx, workflowRunId, []),
+			...makeBaseConfig(
+				ctx,
+				workflowRunId,
+				[],
+				new ChannelResolver([makeResolvedChannel('coder', 'reviewer')])
+			),
 			messageInjector: async (sid) => {
 				injected.push(sid);
 			},
@@ -371,7 +390,12 @@ describe('both paths produce same behavior for role-based DM', () => {
 
 		// Legacy path
 		const injectedLegacy: Array<{ sessionId: string; message: string }> = [];
-		const legacyConfig = makeBaseConfig(ctx, workflowRunId, injectedLegacy);
+		const legacyConfig = makeBaseConfig(
+			ctx,
+			workflowRunId,
+			injectedLegacy,
+			new ChannelResolver([makeResolvedChannel('coder', 'reviewer')])
+		);
 		const legacyHandlers = createStepAgentToolHandlers(legacyConfig);
 		const legacyResult = await legacyHandlers.send_message({
 			target: 'reviewer',

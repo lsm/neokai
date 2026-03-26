@@ -33,6 +33,7 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
+import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { Space } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -292,13 +293,16 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 			mySessionId: coderSessionId,
 			myRole: 'coder',
 			taskId: 'lp-cs-task',
+			stepTaskId: '',
+			spaceId,
+			channelResolver: new ChannelResolver([]),
 			workflowRunId: '',
 			workflowNodeId: '',
 			sessionGroupRepo,
 			spaceTaskRepo,
 			getGroupId: () => groupId,
-			workflowRunRepo,
 			messageInjector: async () => {},
+			taskManager: new SpaceTaskManager(db, spaceId),
 			...overrides,
 		};
 	}

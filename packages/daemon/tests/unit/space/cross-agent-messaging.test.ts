@@ -34,6 +34,7 @@ import { SpaceSessionGroupRepository } from '../../../src/storage/repositories/s
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -118,12 +119,9 @@ interface StepCtx {
 	dir: string;
 	spaceId: string;
 	sessionGroupRepo: SpaceSessionGroupRepository;
-	workflowRunRepo: SpaceWorkflowRunRepository;
-	/** ID of the single workflow run created at context construction time. */
-	runId: string;
 	groupId: string;
-	/** Store resolved channels in the active workflow run config. */
-	setChannels: (channels: ResolvedChannel[]) => void;
+	/** Channel resolver used by makeStepConfig when no override is provided. Defaults to empty. */
+	channelResolver: ChannelResolver;
 }
 
 function makeStepCtx(
@@ -146,37 +144,13 @@ function makeStepCtx(
 		});
 	}
 
-	const workflowRepo = new SpaceWorkflowRepository(db);
-	const runRepo = new SpaceWorkflowRunRepository(db);
-
-	// Create a minimal workflow + run so we can attach a _resolvedChannels config.
-	const wf = workflowRepo.createWorkflow({
-		spaceId,
-		name: 'cam-wf',
-		description: '',
-		nodes: [],
-		transitions: [],
-		startNodeId: '',
-		rules: [],
-	});
-	const run = runRepo.createRun({
-		spaceId,
-		workflowId: wf.id,
-		title: 'cam run',
-		triggeredBy: 'test',
-	});
-
 	return {
 		db,
 		dir,
 		spaceId,
 		sessionGroupRepo,
-		workflowRunRepo: runRepo,
-		runId: run.id,
 		groupId: group.id,
-		setChannels: (channels: ResolvedChannel[]) => {
-			runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
-		},
+		channelResolver: new ChannelResolver([]),
 	};
 }
 
@@ -194,10 +168,9 @@ function makeStepConfig(
 		mySessionId,
 		myRole,
 		taskId: 'cam-task-1',
-		workflowRunId: ctx.runId,
+		channelResolver: ctx.channelResolver,
 		sessionGroupRepo: ctx.sessionGroupRepo,
 		getGroupId: () => ctx.groupId,
-		workflowRunRepo: ctx.workflowRunRepo,
 		messageInjector: async (sessionId: string, message: string) => {
 			injectedMessages.push({ sessionId, message });
 		},
@@ -385,9 +358,9 @@ describe('send_message — point-to-point (target: role)', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'LGTM' }));
@@ -404,9 +377,9 @@ describe('send_message — point-to-point (target: role)', () => {
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
 		// Only reviewer→coder declared; coder→reviewer not present
-		ctx.setChannels([ch('reviewer', 'coder')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('reviewer', 'coder')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hello' }));
@@ -429,9 +402,9 @@ describe('send_message — broadcast (target: "*")', () => {
 			{ sessionId: 'sess-B', role: 'B' },
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
-		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub');
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Broadcast!' }));
@@ -446,14 +419,89 @@ describe('send_message — broadcast (target: "*")', () => {
 			{ sessionId: 'sess-hub', role: 'hub' },
 		]);
 		// Only hub→spoke; spoke has no outgoing channels
-		ctx.setChannels([ch('hub', 'spoke')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-spoke', 'spoke');
+		const cfg = makeStepConfig(ctx, 'sess-spoke', 'spoke', {
+			channelResolver: new ChannelResolver([ch('hub', 'spoke')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Hi' }));
 		expect(result.success).toBe(false);
 		expect(result.availableTargets).toEqual([]);
+	});
+});
+
+describe('send_message — multicast (target: [role1, role2])', () => {
+	let ctx: StepCtx;
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('delivers to all listed roles when all are permitted', async () => {
+		ctx = makeStepCtx([
+			{ sessionId: 'sess-hub', role: 'hub' },
+			{ sessionId: 'sess-B', role: 'B' },
+			{ sessionId: 'sess-C', role: 'C' },
+		]);
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
+		});
+		const handlers = createStepAgentToolHandlers(cfg);
+
+		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
+		expect(result.success).toBe(true);
+		const delivered = (result.delivered as Array<{ sessionId: string }>).map((d) => d.sessionId);
+		expect(delivered.sort()).toEqual(['sess-B', 'sess-C'].sort());
+	});
+
+	test('fails when any listed role is not in permitted targets', async () => {
+		ctx = makeStepCtx([
+			{ sessionId: 'sess-hub', role: 'hub' },
+			{ sessionId: 'sess-B', role: 'B' },
+			{ sessionId: 'sess-C', role: 'C' },
+		]);
+		// Only hub→B; hub→C not declared
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B')]),
+		});
+		const handlers = createStepAgentToolHandlers(cfg);
+
+		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
+		expect(result.success).toBe(false);
+		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
+	});
+
+	test('partial delivery: success reported for injected sessions, failures listed separately', async () => {
+		// hub→B succeeds, hub→C injection throws — partialFailures field populated
+		ctx = makeStepCtx([
+			{ sessionId: 'sess-hub', role: 'hub' },
+			{ sessionId: 'sess-B', role: 'B' },
+			{ sessionId: 'sess-C', role: 'C' },
+		]);
+		let callCount = 0;
+		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
+			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
+			messageInjector: async (sessionId: string, message: string) => {
+				callCount++;
+				if (sessionId === 'sess-C') throw new Error('Session C unavailable');
+				cfg.injectedMessages.push({ sessionId, message });
+			},
+		});
+		const handlers = createStepAgentToolHandlers(cfg);
+
+		const result = parse(
+			await handlers.send_message({ target: ['B', 'C'], message: 'Multicast partial' })
+		);
+		// Partial success: B delivered, C failed → success is 'partial' (not true)
+		expect(result.success).toBe('partial');
+		const delivered = result.delivered as Array<{ sessionId: string }>;
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0].sessionId).toBe('sess-B');
+		const failures = result.failed as Array<{ sessionId: string; error: string }>;
+		expect(failures).toHaveLength(1);
+		expect(failures[0].sessionId).toBe('sess-C');
+		expect(failures[0].error).toContain('Session C unavailable');
+		expect(callCount).toBe(2); // Both injection attempts were made
 	});
 });
 
@@ -473,7 +521,7 @@ describe('send_message — no channels declared', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		// No setChannels call — empty topology
+		// No channels declared — empty topology (default empty resolver)
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
 		const handlers = createStepAgentToolHandlers(cfg);
@@ -503,7 +551,7 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 			{ sessionId: 'sess-D', role: 'D' },
 		]);
 		// Fan-out one-way: hub → B, C, D (no reverse)
-		ctx.setChannels([ch('hub', 'B'), ch('hub', 'C'), ch('hub', 'D')]);
+		ctx.channelResolver = new ChannelResolver([ch('hub', 'B'), ch('hub', 'C'), ch('hub', 'D')]);
 	});
 
 	test('hub can send to B', async () => {
@@ -557,7 +605,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 			{ sessionId: 'sess-C', role: 'C' },
 		]);
 		// Hub-spoke bidirectional: hub↔B, hub↔C (no B↔C)
-		ctx.setChannels([
+		ctx.channelResolver = new ChannelResolver([
 			ch('hub', 'B', true),
 			ch('B', 'hub', true),
 			ch('hub', 'C', true),
@@ -642,9 +690,9 @@ describe('list_peers — peer discovery with channel info', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.list_peers({}));
@@ -657,7 +705,7 @@ describe('list_peers — peer discovery with channel info', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		// No setChannels call
+		// No channels declared (default empty resolver)
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
 		const handlers = createStepAgentToolHandlers(cfg);
@@ -1018,13 +1066,13 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 			{ sessionId: 'sess-hub-A', role: 'hub' },
 			{ sessionId: 'sess-B-A', role: 'B' },
 		]);
-		ctxA.setChannels([ch('hub', 'B')]);
+		ctxA.channelResolver = new ChannelResolver([ch('hub', 'B')]);
 
 		const ctxB = makeStepCtx([
 			{ sessionId: 'sess-hub-B', role: 'hub' },
 			{ sessionId: 'sess-B-B', role: 'B' },
 		]);
-		ctxB.setChannels([ch('hub', 'B')]);
+		ctxB.channelResolver = new ChannelResolver([ch('hub', 'B')]);
 
 		try {
 			const cfgA = makeStepConfig(ctxA, 'sess-hub-A', 'hub');
@@ -1060,9 +1108,9 @@ describe('Error cases — non-existent targets and injection failures', () => {
 
 	test('send_message to non-existent role returns no-active-sessions error', async () => {
 		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
-		ctx.setChannels([ch('coder', 'ghost')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'ghost')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		const result = parse(await handlers.send_message({ target: 'ghost', message: 'Hello ghost' }));
@@ -1075,9 +1123,8 @@ describe('Error cases — non-existent targets and injection failures', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
-
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
 			messageInjector: async () => {
 				throw new Error('Session closed');
 			},
@@ -1149,9 +1196,9 @@ describe('send_message — sender attribution prefix', () => {
 			{ sessionId: 'sess-coder', role: 'coder' },
 			{ sessionId: 'sess-reviewer', role: 'reviewer' },
 		]);
-		ctx.setChannels([ch('coder', 'reviewer')]);
-
-		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
+		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
+			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
+		});
 		const handlers = createStepAgentToolHandlers(cfg);
 
 		await handlers.send_message({ target: 'reviewer', message: 'Here is my patch' });

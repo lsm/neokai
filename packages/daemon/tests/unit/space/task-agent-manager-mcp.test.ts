@@ -1,5 +1,6 @@
 /**
  * Tests for TaskAgentManager + AppMcpLifecycleManager integration (Task 3.4).
+ * Also covers ChannelResolver injection into step agent MCP servers (Task 3.3).
  *
  * Verifies that:
  * 1. Task agent sessions receive registry-sourced MCP servers merged into their
@@ -10,6 +11,8 @@
  * 4. appMcpManager is optional — omitting it does not throw; task-agent server is
  *    still injected.
  * 5. Multiple registry servers are all included in the merged map.
+ * 6. buildStepAgentMcpServerForSession creates a ChannelResolver from the workflow
+ *    run config and injects it into the step agent MCP server config (Task 3.3).
  */
 
 import { describe, test, expect, afterEach, spyOn, beforeEach } from 'bun:test';
@@ -29,7 +32,8 @@ import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { TaskAgentManager } from '../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../src/lib/agent/agent-session.ts';
-import type { Space, SpaceTask, McpServerConfig } from '@neokai/shared';
+import * as stepAgentToolsModule from '../../../src/lib/space/tools/step-agent-tools.ts';
+import type { Space, SpaceTask, McpServerConfig, ResolvedChannel } from '@neokai/shared';
 import type { AgentProcessingState } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -460,5 +464,240 @@ describe('TaskAgentManager.rehydrate — registry MCP merge (Task 3.4)', () => {
 		const mcpServers = session!._mcpServers;
 		expect(mcpServers['registry-mcp']).toBeDefined();
 		expect(mcpServers['task-agent']).toBeDefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// ChannelResolver injection into step agent MCP servers (Task 3.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: seed a workflow run with resolved channels in the run config.
+ * Returns the workflow run ID.
+ */
+function seedWorkflowRunWithChannels(
+	bunDb: BunDatabase,
+	spaceId: string,
+	channels: ResolvedChannel[]
+): string {
+	const workflowRepo = new SpaceWorkflowRepository(bunDb);
+	const workflow = workflowRepo.createWorkflow({
+		spaceId,
+		name: 'Test Workflow',
+		description: '',
+		nodes: [],
+		transitions: [],
+		startNodeId: '',
+		rules: [],
+	});
+	const runRepo = new SpaceWorkflowRunRepository(bunDb);
+	const run = runRepo.createRun({
+		spaceId,
+		workflowId: workflow.id,
+		title: 'Test Run',
+		triggeredBy: 'test',
+	});
+	if (channels.length > 0) {
+		runRepo.updateRun(run.id, { config: { _resolvedChannels: channels } });
+	}
+	return run.id;
+}
+
+function makeResolvedChannel(
+	fromRole: string,
+	toRole: string,
+	isHubSpoke = false
+): ResolvedChannel {
+	return {
+		fromRole,
+		toRole,
+		fromAgentId: `agent-${fromRole}`,
+		toAgentId: `agent-${toRole}`,
+		direction: 'one-way',
+		isHubSpoke,
+	};
+}
+
+describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				/* best-effort */
+			}
+		}
+	});
+
+	test('buildStepAgentMcpServerForSession injects ChannelResolver with declared channels', () => {
+		const { manager, fromInitSpy, bunDb, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		// Seed a workflow run with a channel
+		const workflowRunId = seedWorkflowRunWithChannels(bunDb, space.id, [
+			makeResolvedChannel('coder', 'reviewer'),
+		]);
+
+		// Spy on createStepAgentMcpServer to capture the config it receives
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				// Return minimal stub
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof stepAgentToolsModule.createStepAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		// Call the private method directly via cast
+		const mgr = manager as unknown as {
+			buildStepAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				role: string,
+				spaceId: string,
+				workflowRunId: string
+			): unknown;
+		};
+		mgr.buildStepAgentMcpServerForSession(
+			'task-1',
+			'sub-session-1',
+			'coder',
+			space.id,
+			workflowRunId
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		// channelResolver must be present and have the declared channel
+		const resolver = (
+			capturedConfig as { channelResolver: { canSend: (a: string, b: string) => boolean } }
+		).channelResolver;
+		expect(resolver).toBeDefined();
+		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
+		expect(resolver.canSend('reviewer', 'coder')).toBe(false);
+	});
+
+	test('buildStepAgentMcpServerForSession injects empty ChannelResolver when run has no channels', () => {
+		const { manager, fromInitSpy, bunDb, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		// Seed a workflow run with NO channels
+		const workflowRunId = seedWorkflowRunWithChannels(bunDb, space.id, []);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof stepAgentToolsModule.createStepAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildStepAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				role: string,
+				spaceId: string,
+				workflowRunId: string
+			): unknown;
+		};
+		mgr.buildStepAgentMcpServerForSession(
+			'task-1',
+			'sub-session-1',
+			'coder',
+			space.id,
+			workflowRunId
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		const resolver = (capturedConfig as { channelResolver: { isEmpty: () => boolean } })
+			.channelResolver;
+		expect(resolver).toBeDefined();
+		expect(resolver.isEmpty()).toBe(true);
+	});
+
+	test('buildStepAgentMcpServerForSession injects empty ChannelResolver when workflowRunId is empty', () => {
+		const { manager, fromInitSpy, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof stepAgentToolsModule.createStepAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildStepAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				role: string,
+				spaceId: string,
+				workflowRunId: string
+			): unknown;
+		};
+		// Empty workflowRunId — no run will be found
+		mgr.buildStepAgentMcpServerForSession('task-1', 'sub-session-1', 'coder', space.id, '');
+
+		expect(capturedConfig).not.toBeNull();
+		const resolver = (capturedConfig as { channelResolver: { isEmpty: () => boolean } })
+			.channelResolver;
+		expect(resolver).toBeDefined();
+		expect(resolver.isEmpty()).toBe(true);
+	});
+
+	test('buildStepAgentMcpServerForSession passes correct mySessionId, myRole, and taskId', () => {
+		const { manager, fromInitSpy, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(stepAgentToolsModule, 'createStepAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof stepAgentToolsModule.createStepAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildStepAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				role: string,
+				spaceId: string,
+				workflowRunId: string
+			): unknown;
+		};
+		mgr.buildStepAgentMcpServerForSession(
+			'my-task-id',
+			'my-sub-session-id',
+			'reviewer',
+			space.id,
+			''
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		expect(capturedConfig!['mySessionId']).toBe('my-sub-session-id');
+		expect(capturedConfig!['myRole']).toBe('reviewer');
+		expect(capturedConfig!['taskId']).toBe('my-task-id');
 	});
 });
