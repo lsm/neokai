@@ -6,7 +6,7 @@
  * switching tests (PR #930) by asserting that:
  * - sdkSessionId is preserved across model switches
  * - Message count does not reset
- * - Message history preserved after cross-provider switch (structural, not LLM-dependent)
+ * - sdkSessionId unchanged after post-switch query completes (cross-provider)
  * - sdkSessionId survives multiple rapid switches
  * - DB correctly persists sdkSessionId after switch
  *
@@ -19,12 +19,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import {
-	sendMessage,
-	waitForIdle,
-	waitForSdkMessages,
-	getProcessingState,
-} from '../../helpers/daemon-actions';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import { MinimaxProvider } from '../../../src/lib/providers/minimax-provider';
 import { GlmProvider } from '../../../src/lib/providers/glm-provider';
 import type { DaemonAppContext } from '../../../src/app';
@@ -229,11 +224,11 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		expect(countAfter).toBeGreaterThanOrEqual(countBefore);
 	}, 60000);
 
-	test('message history preserved after model switch (cross-provider)', async () => {
+	test('sdkSessionId unchanged after post-switch message completes (cross-provider)', async () => {
 		// Create session with MiniMax
 		const createResult = (await daemon.messageHub.request('session.create', {
-			workspacePath: `${TMP_DIR}/test-context-persist-${Date.now()}`,
-			title: 'Context Persistence Test',
+			workspacePath: `${TMP_DIR}/test-post-switch-sdk-id-${Date.now()}`,
+			title: 'Post-Switch SDK ID Test',
 			config: {
 				model: 'MiniMax-M2.5',
 				provider: 'minimax',
@@ -243,14 +238,16 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		const { sessionId } = createResult;
 		daemon.trackSession(sessionId);
 
-		// Send a message with a unique marker
-		const preSwitchMarker = 'unique-pre-switch-marker-7x9k2';
-		await sendMessage(daemon, sessionId, `Say "${preSwitchMarker}" and reply with just "ok".`);
+		// Send a message to establish the SDK session and wait for idle
+		await sendMessage(daemon, sessionId, 'Reply with just the word "ok".');
 		await waitForIdle(daemon, sessionId);
 
-		// Count messages before the switch
-		const countBeforeSwitch = await getMessageCount(daemon, sessionId);
-		expect(countBeforeSwitch).toBeGreaterThan(0);
+		// Read sdkSessionId from DB via session.get before the switch
+		const before = (await daemon.messageHub.request('session.get', {
+			sessionId,
+		})) as { session: { sdkSessionId?: string } };
+		const idBefore = before.session.sdkSessionId;
+		expect(idBefore).toBeTruthy();
 
 		// Switch to GLM
 		const switchResult = await switchModel(daemon, sessionId, 'glm-5', 'glm');
@@ -259,36 +256,20 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Wait for restart to complete
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Send a follow-up message after the switch — verifies conversation can continue
-		const postResult = await sendMessage(daemon, sessionId, 'Reply with just "ok".');
-		expect(postResult.messageId).toBeTruthy();
+		// Send a follow-up message on the new provider — this forces the SDK to
+		// emit a fresh system:init. If the SDK resumed, system:init returns the
+		// same session ID; if it recreated, system:init emits a new one.
+		await sendMessage(daemon, sessionId, 'Reply with just the word "ok".');
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Verify the pre-switch user message is still in the message history.
-		// This is a structural check: if the SDK session was recreated from scratch,
-		// the message history would be empty. A resumed session preserves all prior messages.
-		// SDK user message content is MessageParam: string | ContentBlockParam[].
-		const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-			minCount: countBeforeSwitch + 1,
-			timeout: 10000,
-		});
+		// Read sdkSessionId from DB again after the post-switch query completes
+		const after = (await daemon.messageHub.request('session.get', {
+			sessionId,
+		})) as { session: { sdkSessionId?: string } };
+		const idAfter = after.session.sdkSessionId;
 
-		const preSwitchUserMsg = sdkMessages.find((msg) => {
-			if (msg.type !== 'user') return false;
-			const content = msg.message?.content;
-			if (typeof content === 'string') return content.includes(preSwitchMarker);
-			if (Array.isArray(content)) {
-				return content.some(
-					(block) =>
-						block.type === 'text' &&
-						typeof block.text === 'string' &&
-						block.text.includes(preSwitchMarker)
-				);
-			}
-			return false;
-		});
-
-		expect(preSwitchUserMsg).toBeTruthy();
+		// Same ID proves the SDK session was resumed, not recreated
+		expect(idAfter).toBe(idBefore);
 	}, 90000);
 
 	test('sdkSessionId preserved across multiple rapid switches', async () => {
