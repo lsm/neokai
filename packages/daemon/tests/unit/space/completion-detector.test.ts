@@ -1,7 +1,7 @@
 /**
  * Unit tests for CompletionDetector
  *
- * Scenarios:
+ * Scenarios (39 total):
  *   1.  No tasks exist — returns false (workflow not started)
  *   2.  Single agent in_progress — returns false
  *   3.  Single agent completed — returns true
@@ -27,6 +27,20 @@
  *   23. Node with no tasks excluded — does not block when no channel points to it
  *   24. TERMINAL_TASK_STATUSES export — contains exactly the 5 terminal statuses
  *   25. TERMINAL_TASK_STATUSES export — does not contain non-terminal statuses
+ *   26. Orchestration task (null workflowNodeId) in_progress does not block completion
+ *   27. Only an orchestration task (no workflowNodeId) — treated as not started
+ *   28. Mixed terminal statuses: completed + cancelled → true
+ *   29. Mixed terminal statuses: completed + needs_attention → true
+ *   30. All five terminal statuses in one run → true
+ *   31. One non-terminal task blocks completion regardless of terminal count
+ *   32. Tasks from different workflow runs do not interfere
+ *   33. Empty run vs run with tasks — no cross-contamination
+ *   34. Pending-but-blocked: 3-node chain with unactivated downstream
+ *   35. Pending-but-blocked: all nodes activated and terminal → complete
+ *   36. Pending-but-blocked: channel with array target, one unactivated member
+ *   37. Bidirectional channel — both nodes must be activated
+ *   38. Wildcard + downstream channel: wildcard satisfied, downstream blocks
+ *   39. Node with agents that have no tasks excluded from pending-but-blocked guard
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';

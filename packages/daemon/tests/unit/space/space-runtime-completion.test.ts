@@ -223,13 +223,17 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
 
+			// Capture time before tick to verify completedAt is recent
+			const beforeTick = Date.now();
 			await rt.executeTick();
 
 			const completedRun = workflowRunRepo.getRun(run.id);
 			expect(completedRun?.status).toBe('completed');
 			expect(completedRun?.completedAt).toBeDefined();
 			expect(typeof completedRun?.completedAt).toBe('number');
-			expect(completedRun!.completedAt!).toBeGreaterThan(0);
+			// Verify completedAt is set to a recent timestamp (within the tick's execution window)
+			expect(completedRun!.completedAt!).toBeGreaterThanOrEqual(beforeTick);
+			expect(completedRun!.completedAt!).toBeLessThanOrEqual(Date.now() + 100);
 		});
 	});
 
@@ -796,19 +800,28 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			]);
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const taskId = tasks[0].id;
+			const dedupKey = `${taskId}:needs_attention`;
+
+			// Empty dedup set at start
+			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
 
 			// Set task to needs_attention, tick to add dedup key
-			taskRepo.updateTask(tasks[0].id, { status: 'needs_attention', error: 'Fail' });
+			taskRepo.updateTask(taskId, { status: 'needs_attention', error: 'Fail' });
 			await rt.executeTick();
 			expect(sink.events.filter((e) => e.kind === 'task_needs_attention')).toHaveLength(1);
+			// Dedup entry was added
+			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(true);
 
 			// Now resolve the task and complete it
-			taskRepo.updateTask(tasks[0].id, { status: 'completed' });
+			taskRepo.updateTask(taskId, { status: 'completed' });
 			await rt.executeTick();
 
 			// Run should be completed
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
+			// Dedup entry was removed when executor was cleaned up
+			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
 		});
 	});
 });
