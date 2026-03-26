@@ -54,6 +54,7 @@ export {
 	type UseGroupMessagesResult,
 } from './useGroupMessages';
 export { useRoomLiveQuery } from './useRoomLiveQuery';
+export { useRoomSkills, type UseRoomSkillsResult } from './useRoomSkills';
 export {
 	useTurnBlocks,
 	type TurnBlock,

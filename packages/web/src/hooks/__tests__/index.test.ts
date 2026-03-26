@@ -16,6 +16,7 @@ import {
 	useFileAttachments,
 	useGroupMessages,
 	useRoomLiveQuery,
+	useRoomSkills,
 	useReferenceAutocomplete,
 	extractActiveAtQuery,
 } from '../index.ts';
@@ -70,6 +71,11 @@ describe('Hooks Index', () => {
 		it('should export useRoomLiveQuery', () => {
 			expect(useRoomLiveQuery).toBeDefined();
 			expect(typeof useRoomLiveQuery).toBe('function');
+		});
+
+		it('should export useRoomSkills', () => {
+			expect(useRoomSkills).toBeDefined();
+			expect(typeof useRoomSkills).toBe('function');
 		});
 
 		it('should export useReferenceAutocomplete', () => {
