@@ -351,6 +351,20 @@ describe('AgentSession', () => {
 		it('should initialize with false cleaningUp state', () => {
 			expect(agentSession.isCleaningUp()).toBe(false);
 		});
+
+		it('should NOT have startupTimeoutAutoRecoverAttempts field (Task 2.2)', () => {
+			// Regression guard: auto-recovery wiring removed in Task 2.1/2.2
+			expect(
+				'startupTimeoutAutoRecoverAttempts' in (agentSession as unknown as Record<string, unknown>)
+			).toBe(false);
+		});
+
+		it('should NOT have onStartupTimeoutAutoRecover method (Task 2.2)', () => {
+			// Regression guard: auto-recovery wiring removed in Task 2.1/2.2
+			expect(
+				typeof (agentSession as unknown as Record<string, unknown>).onStartupTimeoutAutoRecover
+			).toBe('undefined');
+		});
 	});
 
 	describe('getter methods', () => {
