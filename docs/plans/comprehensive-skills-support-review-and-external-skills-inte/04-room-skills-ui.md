@@ -81,7 +81,7 @@ Add a "Skills" tab or section to the `RoomSettings.tsx` component that uses `use
 - Component tests pass (`bunx vitest run`)
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 4.1: Room Skills Store Hook"]
+**depends_on:** ["Task 4.1: Room Skills LiveQuery Store and Hook"]
 
 ---
 

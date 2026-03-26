@@ -55,9 +55,9 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
 1. Run `bun install` at the worktree root.
 2. Create `packages/daemon/src/storage/repositories/skill-repository.ts` following the same pattern as `goal-repository.ts`:
    - `ensureTable()` — creates `skills` table with columns: `id TEXT PRIMARY KEY`, `name TEXT UNIQUE NOT NULL`, `display_name TEXT NOT NULL`, `description TEXT NOT NULL`, `source_type TEXT NOT NULL`, `config TEXT NOT NULL` (JSON), `enabled INTEGER NOT NULL DEFAULT 1`, `built_in INTEGER NOT NULL DEFAULT 0`, `validation_status TEXT NOT NULL DEFAULT 'pending'`, `created_at TEXT NOT NULL`
-   - `findAll(): Promise<AppSkill[]>`
-   - `get(id: string): AppSkill | null` — synchronous, consistent with `AppMcpServerRepository.get()` convention
-   - `findEnabled(): Promise<AppSkill[]>`
+   - `findAll(): AppSkill[]` — synchronous, consistent with `AppMcpServerRepository` convention
+   - `get(id: string): AppSkill | null`
+   - `findEnabled(): AppSkill[]`
    - `insert(skill: AppSkill): void`
    - `update(id: string, fields: Partial<AppSkill>): void`
    - `setEnabled(id: string, enabled: boolean): void` — targeted UPDATE for enabled flag; calls `notifyChange('skills')`
@@ -65,22 +65,22 @@ Implement the `SkillRepository` class (SQLite persistence) and `SkillsManager` s
    - `delete(id: string): void`
    - Use the shared `Database` instance from `packages/daemon/src/storage/database.ts`; do NOT open a separate DB file.
 3. Create `packages/daemon/src/lib/skills-manager.ts` with class `SkillsManager`:
-   - Constructor: `(repo: SkillRepository)`
-   - `listSkills(): Promise<AppSkill[]>`
+   - Constructor: `(repo: SkillRepository, appMcpServerRepo: AppMcpServerRepository)` — `appMcpServerRepo` is required for `validateSkillConfig()` (MCP ref check) and `initializeBuiltins()` (upsert backing app MCP entries)
+   - `listSkills(): AppSkill[]`
    - `getSkill(id: string): AppSkill | null` — delegates to `repo.get(id)`
-   - `addSkill(params: CreateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` first, then generates UUID, sets `createdAt`, `builtIn=false`
-   - `updateSkill(id: string, params: UpdateSkillParams): Promise<AppSkill>` — calls `validateSkillConfig()` on any updated config
+   - `addSkill(params: CreateSkillParams): AppSkill` — calls `validateSkillConfig()` first, then generates UUID, sets `createdAt`, `builtIn=false`
+   - `updateSkill(id: string, params: UpdateSkillParams): AppSkill` — calls `validateSkillConfig()` on any updated config
    - `setSkillEnabled(id: string, enabled: boolean): AppSkill` — delegates to `repo.setEnabled()`; returns updated skill
    - `setSkillValidationStatus(id: string, status: SkillValidationStatus): void` — delegates to `repo.setValidationStatus()`; used by job handler
    - `removeSkill(id: string): boolean` — returns false if built-in or not found
    - `getEnabledSkills(): AppSkill[]`
-   - `initializeBuiltins(): void` — upserts default built-in skills on startup
+   - `initializeBuiltins(): void` — upserts default built-in skills on startup; uses `appMcpServerRepo.getByName()` / `create()` to ensure backing app MCP entries exist for `mcp_server` type built-ins
    - **Private `validateSkillConfig(sourceType, config)`** — enforces:
      - `plugin`: `pluginPath` must be an absolute path (starts with `/`), must not contain `../`, must not be empty
-     - `mcp_server`: `appMcpServerId` must be a non-empty string; the referenced `app_mcp_servers` entry must exist (validated via `AppMcpServerRepository.get(appMcpServerId)` — throw if null)
+     - `mcp_server`: `appMcpServerId` must be a non-empty string; the referenced `app_mcp_servers` entry must exist (validated via `this.appMcpServerRepo.get(appMcpServerId)` — throw if null)
      - `builtin`: `commandName` must be a non-empty string
      - Throw a descriptive `Error` on validation failure
-4. Register `SkillRepository` and `SkillsManager` in `packages/daemon/src/app.ts`.
+4. Register `SkillRepository` and `SkillsManager` (passing both `skillRepo` and `appMcpServerRepo`) in `packages/daemon/src/app.ts`.
 5. Run `bun run typecheck`.
 6. Write unit tests in `packages/daemon/tests/unit/skills-manager.test.ts`:
    - Test CRUD operations with an in-memory SQLite DB (use `':memory:'` path in test setup)

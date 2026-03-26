@@ -126,4 +126,4 @@ When creating a room session (leader, coder, planner), apply the room's skill ov
 - `bun run typecheck` passes
 - Changes are on a feature branch with a GitHub PR created via `gh pr create`
 
-**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder (with strictMcpConfig handling)", "Task 3.2: Room-Level Skill Enablement Persistence"]
+**depends_on:** ["Task 3.1: Skills Injection in QueryOptionsBuilder (with strictMcpConfig handling)", "Task 3.2: Room-Level Skill Enablement Persistence (room_skill_overrides table)"]

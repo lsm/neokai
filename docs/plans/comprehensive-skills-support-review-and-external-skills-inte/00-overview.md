@@ -51,7 +51,7 @@ The plan spans 7 milestones across 7 files (01–07):
 - Milestone 3 depends on Milestone 2 (data model must exist first)
 - Milestone 4 depends on Milestones 2 and 3 (RPC handlers and room persistence must exist)
 - Milestone 5 depends on Milestone 2 (RPC handlers must exist)
-- Milestone 6 is independent and can proceed in parallel with Milestones 2–5
+- Milestone 6 is mostly independent: Tasks 6.1–6.3 (verification and prompt work) can proceed in parallel with Milestones 2–5; Task 6.4 (WebSearch MCP skill built-in) depends on Task 3.1 (Skills Injection)
 - Milestone 7 depends on all preceding milestones
 
 ## Total Estimated Task Count

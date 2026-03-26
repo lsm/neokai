@@ -118,12 +118,13 @@ Create a built-in `McpServerSkillConfig` entry for a web search MCP server (e.g.
    const appMcpEntry = appMcpServerRepo.getByName('web-search-brave') ??
      appMcpServerRepo.create({
        name: 'web-search-brave',
-       displayName: 'Brave Web Search',
+       description: 'Brave Search MCP server for web search capability',
        sourceType: 'stdio',
        command: 'npx',
        args: ['-y', '@modelcontextprotocol/server-brave-search'],
        enabled: true,
      });
+   // Note: AppMcpServer has no displayName field — use name + description only
 
    // Step 2: register the skill referencing the app MCP entry
    {
